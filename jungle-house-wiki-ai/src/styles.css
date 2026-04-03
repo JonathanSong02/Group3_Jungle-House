@@ -1,7 +1,35 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
+
 :root {
-  font-family: Inter, Arial, sans-serif;
-  color: #1f2937;
-  background: #f3f4f6;
+  font-family: 'Manrope', Arial, sans-serif;
+
+  --bg: #fbf7ee;
+  --bg-soft: #fffdf8;
+  --surface: #fffaf2;
+  --surface-2: #fdf3df;
+  --text: #4a3a26;
+  --muted: #7c6a52;
+  --border: #eadfc8;
+
+  --primary: #d8a437;
+  --primary-hover: #c79322;
+  --primary-soft: #f7e8bd;
+
+  --secondary: #7fa27d;
+  --secondary-hover: #6e8f6d;
+  --secondary-soft: #e8f1e4;
+
+  --accent: #f3d37a;
+  --danger-bg: #fde8e4;
+  --danger-text: #a03d2d;
+
+  --success-bg: #e7f4e8;
+  --success-text: #2f6b3d;
+
+  --warning-bg: #fff4d6;
+  --warning-text: #9a6a11;
+
+  --shadow: 0 8px 24px rgba(133, 98, 40, 0.08);
 }
 
 * {
@@ -11,7 +39,8 @@
 body {
   margin: 0;
   min-width: 320px;
-  background: #f3f4f6;
+  background: var(--bg);
+  color: var(--text);
 }
 
 a {
@@ -25,6 +54,12 @@ p {
   margin-top: 0;
 }
 
+h1,
+h2,
+h3 {
+  letter-spacing: -0.02em;
+}
+
 button,
 input,
 select,
@@ -36,10 +71,20 @@ input,
 select,
 textarea {
   width: 100%;
-  border: 1px solid #d1d5db;
-  border-radius: 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
   padding: 12px 14px;
-  background: #fff;
+  background: #fffdf9;
+  color: var(--text);
+  transition: all 0.2s ease;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(216, 164, 55, 0.14);
 }
 
 textarea {
@@ -48,9 +93,15 @@ textarea {
 
 button {
   border: 0;
-  border-radius: 12px;
+  border-radius: 14px;
   padding: 10px 16px;
   cursor: pointer;
+  transition: all 0.2s ease;
+  font-weight: 600;
+}
+
+button:hover {
+  transform: translateY(-1px);
 }
 
 .app-shell {
@@ -59,17 +110,20 @@ button {
   grid-template-columns: 270px 1fr;
 }
 
+/* Sidebar */
 .sidebar {
-  background: linear-gradient(180deg, #0f172a, #111827);
-  color: #f9fafb;
+  background: linear-gradient(180deg, #f3e7c8, #efe3c1);
+  color: var(--text);
   padding: 24px 18px;
   position: sticky;
   top: 0;
   min-height: 100vh;
+  border-right: 1px solid var(--border);
 }
 
 .sidebar-title {
   margin-bottom: 18px;
+  color: #7d5a14;
 }
 
 .sidebar-nav {
@@ -80,25 +134,28 @@ button {
 
 .sidebar-link {
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: 12px;
   text-decoration: none;
-  color: #d1d5db;
+  color: #6d5b43;
+  transition: all 0.2s ease;
 }
 
 .sidebar-link:hover,
 .sidebar-link.active {
-  background: rgba(255, 255, 255, 0.1);
-  color: #fff;
+  background: rgba(255, 255, 255, 0.72);
+  color: #5b451f;
 }
 
 .sidebar-section-label {
   margin: 16px 8px 6px;
   font-size: 12px;
-  color: #9ca3af;
+  color: #9b896d;
   text-transform: uppercase;
   letter-spacing: 0.08em;
+  font-weight: 700;
 }
 
+/* Main area */
 .main-area {
   padding: 18px;
 }
@@ -108,6 +165,11 @@ button {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 18px;
+  background: rgba(255, 252, 245, 0.88);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 14px 18px;
+  box-shadow: var(--shadow);
 }
 
 .page-content {
@@ -116,12 +178,13 @@ button {
   gap: 18px;
 }
 
+/* Cards */
 .card-like {
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 18px;
+  background: linear-gradient(180deg, #fffdf8, #fff9f0);
+  border: 1px solid var(--border);
+  border-radius: 20px;
   padding: 18px;
-  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.04);
+  box-shadow: var(--shadow);
 }
 
 .login-page {
@@ -129,7 +192,10 @@ button {
   display: grid;
   place-items: center;
   padding: 20px;
-  background: radial-gradient(circle at top, #dbeafe, #f3f4f6 45%);
+  background:
+    radial-gradient(circle at top, #fff1c8 0%, transparent 34%),
+    radial-gradient(circle at bottom right, #eef5e9 0%, transparent 28%),
+    linear-gradient(180deg, #fcf8ef, #f8f1e3);
 }
 
 .login-card {
@@ -142,19 +208,29 @@ button {
   gap: 14px;
 }
 
+/* Buttons */
 .primary-btn {
-  background: #2563eb;
-  color: #fff;
+  background: var(--primary);
+  color: #fffefb;
+}
+
+.primary-btn:hover {
+  background: var(--primary-hover);
 }
 
 .secondary-btn {
-  background: #eef2ff;
-  color: #1f2937;
+  background: #f8f0dc;
+  color: var(--text);
+  border: 1px solid #eddcb0;
+}
+
+.secondary-btn:hover {
+  background: #f4e8cd;
 }
 
 .danger-btn {
-  background: #fee2e2;
-  color: #991b1b;
+  background: var(--danger-bg);
+  color: var(--danger-text);
 }
 
 .link-btn {
@@ -167,26 +243,29 @@ button {
   width: auto;
 }
 
+/* Pills and helper text */
 .role-pill {
   display: inline-block;
   margin-left: 10px;
   padding: 4px 10px;
   border-radius: 999px;
-  background: #eff6ff;
+  background: #faedc5;
+  color: #7b5a16;
   font-size: 12px;
   text-transform: capitalize;
+  font-weight: 700;
 }
 
 .eyebrow {
   font-size: 12px;
-  color: #2563eb;
+  color: var(--secondary-hover);
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  font-weight: 700;
+  font-weight: 800;
 }
 
 .muted {
-  color: #6b7280;
+  color: var(--muted);
 }
 
 .small {
@@ -194,9 +273,10 @@ button {
 }
 
 .error-text {
-  color: #dc2626;
+  color: var(--danger-text);
 }
 
+/* Header */
 .page-header {
   display: flex;
   justify-content: space-between;
@@ -209,6 +289,7 @@ button {
   gap: 10px;
 }
 
+/* Grid helpers */
 .stats-grid,
 .cards-grid,
 .three-column-grid {
@@ -234,8 +315,10 @@ button {
 .stat-card h3 {
   margin: 0;
   font-size: 28px;
+  color: #8d6510;
 }
 
+/* Layout helpers */
 .toolbar,
 .row-between,
 .chat-input-row,
@@ -254,6 +337,7 @@ button {
   flex-wrap: wrap;
 }
 
+/* Chat */
 .chat-layout {
   display: grid;
   grid-template-columns: 2fr 1fr;
@@ -275,7 +359,7 @@ button {
 
 .message-bubble {
   max-width: 80%;
-  border-radius: 16px;
+  border-radius: 18px;
   padding: 14px;
 }
 
@@ -284,12 +368,14 @@ button {
 }
 
 .message-bubble.ai {
-  background: #f3f4f6;
+  background: #fff2cf;
+  color: #654a12;
   align-self: flex-start;
 }
 
 .message-bubble.user {
-  background: #dbeafe;
+  background: #edf5ea;
+  color: #39543b;
   align-self: flex-end;
 }
 
@@ -303,9 +389,9 @@ button {
 }
 
 .text-link {
-  color: #2563eb;
+  color: #6d8d68;
   text-decoration: none;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .stack-gap {
@@ -322,6 +408,7 @@ button {
   margin-top: 4px;
 }
 
+/* Status */
 .status-badge {
   display: inline-flex;
   align-items: center;
@@ -333,25 +420,26 @@ button {
 
 .status-badge.pending,
 .status-badge.reviewing {
-  background: #fef3c7;
-  color: #92400e;
+  background: var(--warning-bg);
+  color: var(--warning-text);
 }
 
 .status-badge.resolved,
 .status-badge.approved,
 .status-badge.active,
 .status-badge.success {
-  background: #dcfce7;
-  color: #166534;
+  background: var(--success-bg);
+  color: var(--success-text);
 }
 
 .status-badge.rejected,
 .status-badge.failed,
 .status-badge.inactive {
-  background: #fee2e2;
-  color: #991b1b;
+  background: var(--danger-bg);
+  color: var(--danger-text);
 }
 
+/* Table */
 .table-card {
   overflow-x: auto;
 }
@@ -365,9 +453,19 @@ th,
 td {
   text-align: left;
   padding: 12px 10px;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--border);
 }
 
+th {
+  color: #7b5a16;
+  font-weight: 700;
+}
+
+tr:hover td {
+  background: rgba(255, 248, 232, 0.72);
+}
+
+/* Checkbox */
 .checkbox-row {
   display: flex;
   align-items: center;
