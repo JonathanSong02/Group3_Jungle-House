@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 export default function Login() {
@@ -10,6 +10,7 @@ export default function Login() {
   });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
   const { login } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -41,7 +42,7 @@ export default function Login() {
         <p className="eyebrow">Jungle House</p>
         <h1>AI-Powered Wiki Training Assistant</h1>
         <p className="muted">
-          Temporary frontend login for development. Choose a role to test the route flow.
+          Temporary frontend login for development.
         </p>
 
         <form onSubmit={handleSubmit} className="form-stack">
@@ -83,6 +84,10 @@ export default function Login() {
           <button className="primary-btn" type="submit" disabled={loading}>
             {loading ? 'Signing in...' : 'Login'}
           </button>
+
+          <Link to="/register" className="text-link">
+            Register new account
+          </Link>
         </form>
       </div>
     </div>

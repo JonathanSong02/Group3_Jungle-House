@@ -3,6 +3,7 @@ import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
 import RoleRoute from './components/RoleRoute';
 import Login from './pages/Login';
+import Register from "./pages/Register";
 import Dashboard from './pages/Dashboard';
 import Chat from './pages/Chat';
 import KnowledgeBase from './pages/KnowledgeBase';
@@ -22,7 +23,8 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
-
+      <Route path="/register" element={<Register />} />
+      
       <Route
         path="/"
         element={
