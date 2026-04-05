@@ -4,9 +4,8 @@ import { useAuth } from '../context/AuthContext';
 
 export default function Login() {
   const [form, setForm] = useState({
-    email: 'jonathan@example.com',
-    password: '123456',
-    role: 'staff',
+    email: '',
+    password: '',
   });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -40,9 +39,9 @@ export default function Login() {
     <div className="login-page">
       <div className="login-card card-like">
         <p className="eyebrow">Jungle House</p>
-        <h1>AI-Powered Wiki Training Assistant</h1>
+        <h1>Welcome Back</h1>
         <p className="muted">
-          Temporary frontend login for development.
+          Sign in with your registered account to access the training assistant.
         </p>
 
         <form onSubmit={handleSubmit} className="form-stack">
@@ -70,24 +69,17 @@ export default function Login() {
             />
           </label>
 
-          <label>
-            Role for testing
-            <select name="role" value={form.role} onChange={handleChange}>
-              <option value="staff">Staff</option>
-              <option value="teamlead">Team Lead</option>
-              <option value="manager">Manager</option>
-            </select>
-          </label>
-
           {error ? <p className="error-text">{error}</p> : null}
 
           <button className="primary-btn" type="submit" disabled={loading}>
             {loading ? 'Signing in...' : 'Login'}
           </button>
 
-          <Link to="/register" className="text-link">
-            Register new account
-          </Link>
+          <div className="row-between wrap-gap top-gap">
+            <Link to="/register" className="text-link">
+              Register new account
+            </Link>
+          </div>
         </form>
       </div>
     </div>

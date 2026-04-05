@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import mysql.connector
-from werkzeug.security import generate_password_hash
+from werkzeug.security import check_password_hash
 
 app = Flask(__name__)
 CORS(app)
@@ -13,6 +13,96 @@ def get_db_connection():
         password="JHapp123!",
         database="jungle_house_ai"
     )
+
+@app.route("/api/auth/login", methods=["POST"])
+def login():
+    data = request.get_json()
+
+    email = data.get("email", "").strip().lower()
+    password = data.get("password", "")
+
+    if not email or not password:
+        return jsonify({"message": "Email and password are required."}), 400
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT 
+                u.user_id,
+                u.full_name,
+                u.email,
+                u.password_hash,
+                u.status,
+                r.role_name
+            FROM users u
+            JOIN roles r ON u.role_id = r.role_id
+            WHERE u.email = %s
+            LIMIT 1
+        """, (email,))
+        user = cursor.fetchone()
+
+        if not user:
+            return jsonify({"message": "Invalid email or password."}), 401
+
+        if user["status"] != "active":
+            return jsonify({"message": "This account is inactive. Please contact the manager."}), 403
+
+        if not check_password_hash(user["password_hash"], password):
+            try:
+                cursor.execute("""
+                    INSERT INTO login_history (user_id, login_status, ip_address, device_info)
+                    VALUES (%s, %s, %s, %s)
+                """, (
+                    user["user_id"],
+                    "failed",
+                    request.remote_addr,
+                    request.headers.get("User-Agent")
+                ))
+                conn.commit()
+            except:
+                pass
+
+            return jsonify({"message": "Invalid email or password."}), 401
+
+        cursor.execute("""
+            INSERT INTO login_history (user_id, login_status, ip_address, device_info)
+            VALUES (%s, %s, %s, %s)
+        """, (
+            user["user_id"],
+            "success",
+            request.remote_addr,
+            request.headers.get("User-Agent")
+        ))
+        conn.commit()
+
+        return jsonify({
+            "message": "Login successful.",
+            "user": {
+                "id": user["user_id"],
+                "name": user["full_name"],
+                "email": user["email"],
+                "role": user["role_name"]
+            }
+        }), 200
+
+    except mysql.connector.Error as err:
+        print("MYSQL ERROR:", err)
+        return jsonify({"message": f"Database error: {str(err)}"}), 500
+
+    except Exception as e:
+        print("GENERAL ERROR:", e)
+        return jsonify({"message": f"Server error: {str(e)}"}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 @app.route("/api/auth/register", methods=["POST"])
 def register():

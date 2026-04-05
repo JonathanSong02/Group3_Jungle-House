@@ -1,24 +1,7 @@
 import { createContext, useContext, useMemo, useState } from 'react';
+import api from '../services/api';
 
 const AuthContext = createContext(null);
-
-const mockUsers = {
-  staff: {
-    name: 'Aina Staff',
-    email: 'staff@junglehouse.test',
-    role: 'staff',
-  },
-  teamlead: {
-    name: 'Brandon Team Lead',
-    email: 'lead@junglehouse.test',
-    role: 'teamlead',
-  },
-  manager: {
-    name: 'Cheryl Manager',
-    email: 'manager@junglehouse.test',
-    role: 'manager',
-  },
-};
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
@@ -26,17 +9,22 @@ export function AuthProvider({ children }) {
     return saved ? JSON.parse(saved) : null;
   });
 
-  const login = async ({ email, password, role }) => {
-    // This is a temporary frontend-only login for development before backend auth is ready.
-    if (!email || !password) {
-      throw new Error('Email and password are required.');
-    }
+  const login = async ({ email, password }) => {
+    try {
+      const response = await api.post('/auth/login', {
+        email,
+        password,
+      });
 
-    const selected = mockUsers[role] ?? mockUsers.staff;
-    const loggedInUser = { ...selected, email };
-    setUser(loggedInUser);
-    localStorage.setItem('jh_user', JSON.stringify(loggedInUser));
-    return loggedInUser;
+      const loggedInUser = response.data.user;
+
+      setUser(loggedInUser);
+      localStorage.setItem('jh_user', JSON.stringify(loggedInUser));
+
+      return loggedInUser;
+    } catch (error) {
+      throw new Error(error.response?.data?.message || 'Login failed.');
+    }
   };
 
   const logout = () => {
