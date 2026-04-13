@@ -33,8 +33,8 @@ ESCALATION_MESSAGE = "No confident answer. Escalate to team lead."
 def get_db_connection():
     return mysql.connector.connect(
         host="localhost",
-        user="jh_app",          # change if your DB user is different
-        password="JHapp123!",   # change if your DB password is different
+        user="jh_app",
+        password="JHapp123!",
         database="jungle_house_ai"
     )
 
@@ -139,9 +139,6 @@ def process_question(question):
             "source": "none",
         }, 400
 
-    print("=" * 70)
-    print("Question received:", question)
-
     model_result = None
     retrieval_result = None
 
@@ -151,7 +148,6 @@ def process_question(question):
                 get_model_answer(question),
                 default_source="pytorch_model"
             )
-            print("Model result:", model_result)
         except Exception as error:
             model_result = {
                 "type": "text",
@@ -164,7 +160,6 @@ def process_question(question):
                 "score": 0.0,
                 "source": "pytorch_model_error",
             }
-            print("Model error:", error)
 
     if RETRIEVAL_AVAILABLE and get_retrieval_answer is not None:
         try:
@@ -172,7 +167,6 @@ def process_question(question):
                 get_retrieval_answer(question),
                 default_source="retrieval"
             )
-            print("Retrieval result:", retrieval_result)
         except Exception as error:
             retrieval_result = {
                 "type": "text",
@@ -185,11 +179,8 @@ def process_question(question):
                 "score": 0.0,
                 "source": "retrieval_error",
             }
-            print("Retrieval error:", error)
 
     final_result = choose_final_result(model_result, retrieval_result)
-
-    print("Final result:", final_result)
 
     return {
         "question": question,
@@ -264,18 +255,13 @@ def register():
         conn.start_transaction()
         cursor = conn.cursor(dictionary=True)
 
-        # Check email already exists
-        cursor.execute(
-            "SELECT user_id FROM users WHERE email = %s",
-            (email,)
-        )
+        cursor.execute("SELECT user_id FROM users WHERE email = %s", (email,))
         existing_user = cursor.fetchone()
 
         if existing_user:
             conn.rollback()
             return jsonify({"message": "Email is already registered."}), 409
 
-        # Check role exists
         cursor.execute(
             "SELECT role_id, role_name FROM roles WHERE role_name = %s",
             (role,)
@@ -286,7 +272,6 @@ def register():
             conn.rollback()
             return jsonify({"message": "Invalid role selected."}), 400
 
-        # Check registration key
         cursor.execute("""
             SELECT rk.key_id, rk.is_used, rk.is_active, rk.expires_at, r.role_name
             FROM registration_keys rk
@@ -304,7 +289,6 @@ def register():
             conn.rollback()
             return jsonify({"message": "Invalid, expired, used, or mismatched registration key."}), 400
 
-        # Insert user
         password_hash = generate_password_hash(password)
 
         cursor.execute("""
@@ -314,7 +298,6 @@ def register():
 
         new_user_id = cursor.lastrowid
 
-        # Mark registration key as used
         cursor.execute("""
             UPDATE registration_keys
             SET is_used = TRUE,
@@ -325,20 +308,16 @@ def register():
 
         conn.commit()
 
-        return jsonify({
-            "message": "Registration successful. You can now log in."
-        }), 201
+        return jsonify({"message": "Registration successful. You can now log in."}), 201
 
     except mysql.connector.Error as err:
         if conn:
             conn.rollback()
-        print("MYSQL ERROR:", err)
         return jsonify({"message": f"Database error: {str(err)}"}), 500
 
     except Exception as e:
         if conn:
             conn.rollback()
-        print("GENERAL ERROR:", e)
         return jsonify({"message": f"Server error: {str(e)}"}), 500
 
     finally:
@@ -406,7 +385,6 @@ def login():
 
             return jsonify({"message": "Invalid email or password."}), 401
 
-        # Save successful login history
         cursor.execute("""
             INSERT INTO login_history (user_id, login_status, ip_address, device_info)
             VALUES (%s, %s, %s, %s)
@@ -429,11 +407,9 @@ def login():
         }), 200
 
     except mysql.connector.Error as err:
-        print("MYSQL ERROR:", err)
         return jsonify({"message": f"Database error: {str(err)}"}), 500
 
     except Exception as e:
-        print("GENERAL ERROR:", e)
         return jsonify({"message": f"Server error: {str(e)}"}), 500
 
     finally:
@@ -460,13 +436,10 @@ def ask():
     return jsonify(result), status_code
 
 
-if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=True)
-
-
-
-    #=========knowledge base============
-    @app.route("/api/articles", methods=["GET"])
+# =========================
+# KNOWLEDGE BASE ROUTES
+# =========================
+@app.route("/api/articles", methods=["GET"])
 def get_articles():
     conn = None
     cursor = None
@@ -475,21 +448,22 @@ def get_articles():
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
 
+        # start with the safest columns only
         cursor.execute("""
-            SELECT article_id, title, content, category, sub_category, display_order
+            SELECT article_id, title, content, category
             FROM wiki_article
-            ORDER BY display_order IS NULL, display_order ASC, article_id ASC
+            ORDER BY article_id ASC
         """)
         articles = cursor.fetchall()
 
         return jsonify(articles), 200
 
     except mysql.connector.Error as err:
-        print("MYSQL ERROR:", err)
+        print("MYSQL ERROR /api/articles:", err)
         return jsonify({"message": f"Database error: {str(err)}"}), 500
 
     except Exception as e:
-        print("GENERAL ERROR:", e)
+        print("GENERAL ERROR /api/articles:", e)
         return jsonify({"message": f"Server error: {str(e)}"}), 500
 
     finally:
@@ -497,3 +471,77 @@ def get_articles():
             cursor.close()
         if conn:
             conn.close()
+
+
+@app.route("/api/articles/<int:article_id>", methods=["GET"])
+def get_article_detail(article_id):
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT article_id, title, content, category
+            FROM wiki_article
+            WHERE article_id = %s
+        """, (article_id,))
+        article = cursor.fetchone()
+
+        if not article:
+            return jsonify({"message": "Article not found."}), 404
+
+        return jsonify(article), 200
+
+    except mysql.connector.Error as err:
+        print("MYSQL ERROR /api/articles/<id>:", err)
+        return jsonify({"message": f"Database error: {str(err)}"}), 500
+
+    except Exception as e:
+        print("GENERAL ERROR /api/articles/<id>:", e)
+        return jsonify({"message": f"Server error: {str(e)}"}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/article-links/<int:article_id>", methods=["GET"])
+def get_article_links(article_id):
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT link_id, article_id, label, url
+            FROM article_links
+            WHERE article_id = %s
+            ORDER BY link_id ASC
+        """, (article_id,))
+        links = cursor.fetchall()
+
+        return jsonify(links), 200
+
+    except mysql.connector.Error as err:
+        print("MYSQL ERROR /api/article-links:", err)
+        return jsonify({"message": f"Database error: {str(err)}"}), 500
+
+    except Exception as e:
+        print("GENERAL ERROR /api/article-links:", e)
+        return jsonify({"message": f"Server error: {str(e)}"}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+if __name__ == "__main__":
+    app.run(host="127.0.0.1", port=5000, debug=True)

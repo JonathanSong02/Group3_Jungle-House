@@ -9,31 +9,24 @@ export default function KnowledgeBase() {
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [articles, setArticles] = useState([]);
 
-  // ✅ FETCH DATA
   useEffect(() => {
-    fetch('http://127.0.0.1:5000/articles')
+    fetch('http://127.0.0.1:5000/api/articles')
       .then((res) => res.json())
       .then((data) => setArticles(data))
-      .catch((err) => console.error(err));
+      .catch((err) => console.error('Fetch error:', err));
   }, []);
 
-  // ✅ FILTER (🔥 IMPORTANT PART FIXED)
-  // ✅ FILTER (🔥 FIXED VERSION)
-const filteredArticles = useMemo(() => {
-  return articles.filter((article) => {
+  const filteredArticles = useMemo(() => {
+    return articles.filter((article) => {
+      const categoryMatch =
+        selectedCategory === 'All' || article.category === selectedCategory;
 
-    // 🔥 ONLY SHOW MAIN Opening SOP (hide Kiosk/Aeon/Spring)
-    if (article.title === "Opening SOP" && article.sub_category) return false;
+      const text = `${article.title || ''} ${article.content || ''}`.toLowerCase();
+      const searchMatch = text.includes(search.toLowerCase());
 
-    const categoryMatch =
-      selectedCategory === 'All' || article.category === selectedCategory;
-
-    const text = `${article.title} ${article.content}`.toLowerCase();
-    const searchMatch = text.includes(search.toLowerCase());
-
-    return categoryMatch && searchMatch;
-  });
-}, [articles, search, selectedCategory]);
+      return categoryMatch && searchMatch;
+    });
+  }, [articles, search, selectedCategory]);
 
   return (
     <div>
@@ -64,28 +57,16 @@ const filteredArticles = useMemo(() => {
       <div className="cards-grid">
         {filteredArticles.map((article) => (
           <article key={article.article_id} className="card-like article-card">
-
             <p className="eyebrow">{article.category}</p>
-
             <h3>{article.title}</h3>
 
-            {/* SHORT CONTENT */}
             <p className="muted">
               {article.content?.slice(0, 80)}...
             </p>
 
-            {/* 🔥 ROUTING FIX */}
-            <Link
-              className="text-link"
-              to={
-                article.title === "Opening SOP"
-                  ? "/sop-selection"
-                  : `/knowledge/${article.article_id}`
-              }
-            >
+            <Link className="text-link" to={`/knowledge/${article.article_id}`}>
               View article details
             </Link>
-
           </article>
         ))}
       </div>
