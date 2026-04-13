@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
 import RoleRoute from './components/RoleRoute';
+
 import Login from './pages/Login';
 import Register from "./pages/Register";
 import Dashboard from './pages/Dashboard';
@@ -12,6 +13,7 @@ import Escalation from './pages/Escalation';
 import Notifications from './pages/Notifications';
 import Profile from './pages/Profile';
 import QuizList from './pages/QuizList';
+
 import ContentManagement from './pages/admin/ContentManagement';
 import ReviewManagement from './pages/admin/ReviewManagement';
 import UserManagement from './pages/admin/UserManagement';
@@ -19,12 +21,18 @@ import AISettings from './pages/admin/AISettings';
 import Analytics from './pages/admin/Analytics';
 import SecurityMonitoring from './pages/admin/SecurityMonitoring';
 
+// 🔥 ADD THIS IMPORT
+import SOPSelection from "./pages/SOPSelection";
+
 export default function App() {
   return (
     <Routes>
+
+      {/* PUBLIC ROUTES */}
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
-      
+
+      {/* PROTECTED ROUTES */}
       <Route
         path="/"
         element={
@@ -34,10 +42,18 @@ export default function App() {
         }
       >
         <Route index element={<Navigate to="/dashboard" replace />} />
+
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="chat" element={<Chat />} />
+
+        {/* KNOWLEDGE BASE */}
         <Route path="knowledge" element={<KnowledgeBase />} />
         <Route path="knowledge/:id" element={<ArticleDetail />} />
+
+        {/* 🔥 NEW SOP SELECTION PAGE */}
+        <Route path="sop-selection" element={<SOPSelection />} />
+
+        {/* OTHER FEATURES */}
         <Route
           path="escalation"
           element={
@@ -50,6 +66,7 @@ export default function App() {
         <Route path="profile" element={<Profile />} />
         <Route path="quiz" element={<QuizList />} />
 
+        {/* ADMIN ROUTES */}
         <Route
           path="admin/content"
           element={
@@ -100,7 +117,9 @@ export default function App() {
         />
       </Route>
 
+      {/* FALLBACK */}
       <Route path="*" element={<Navigate to="/login" replace />} />
+
     </Routes>
   );
 }

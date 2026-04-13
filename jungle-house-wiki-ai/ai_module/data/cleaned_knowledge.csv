@@ -1,0 +1,6 @@
+id,category,title,content,keywords
+1,SOP,Opening SOP,Staff must check cleanliness and product arrangement before opening.,opening sop checklist
+2,SOP,Closing SOP,Staff must clean the kiosk area and ensure products are stored properly before closing.,closing sop clean store
+3,Product,Wild Honey,Wild honey is a natural honey product sold by Jungle House.,wild honey natural product
+4,Sales,Customer Recommendation,Staff should recommend honey based on customer taste and health needs.,recommend honey customer health
+5,FAQ,Escalation Rule,If no confident answer is found the question should be escalated to the team lead.,escalate no answer team lead
