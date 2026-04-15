@@ -545,3 +545,116 @@ def get_article_links(article_id):
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000, debug=True)
+
+
+# =========================
+# STARTUP CHECKS
+# =========================
+def verify_manager_account():
+    """Checks if the manager account has plain text and fixes it."""
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        
+        cursor.execute("SELECT password_hash FROM users WHERE email = 'manager@junglehouse.com'")
+        user = cursor.fetchone()
+        
+        # We are now checking for the exact plain text string you entered in Workbench
+        if user and user['password_hash'] == 'admin1234567':
+            print("🔄 Fixing plain-text manager password on startup...")
+            
+            # Generate a real, secure hash for "admin1234567"
+            new_hash = generate_password_hash("admin1234567")
+            
+            cursor.execute("""
+                UPDATE users 
+                SET password_hash = %s 
+                WHERE email = 'manager@junglehouse.com'
+            """, (new_hash,))
+            conn.commit()
+            print("✅ Manager password successfully hashed! You can now log in.")
+            
+    except Exception as e:
+        print(f"⚠️ Could not verify manager password on startup: {e}")
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+if __name__ == "__main__":
+    verify_manager_account()
+    app.run(host="127.0.0.1", port=5000, debug=True)
+
+@app.route("/api/dashboard", methods=["GET"])
+def get_dashboard():
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        # 📊 Stats
+        cursor.execute("SELECT COUNT(*) AS total FROM wiki_article")
+        articles = cursor.fetchone()["total"]
+
+        cursor.execute("""
+            SELECT COUNT(*) AS total 
+            FROM question 
+            WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+        """)
+        questions = cursor.fetchone()["total"]
+
+        cursor.execute("""
+            SELECT COUNT(*) AS total 
+            FROM escalation 
+            WHERE status = 'pending'
+        """)
+        escalations = cursor.fetchone()["total"]
+
+        cursor.execute("""
+            SELECT COUNT(*) AS total 
+            FROM notification 
+            WHERE is_read = 0
+        """)
+        notifications = cursor.fetchone()["total"]
+
+        # 🤖 AI Insight
+        cursor.execute("""
+            SELECT ROUND(AVG(confidence), 2) AS avg_conf 
+            FROM ai_response
+        """)
+        ai_conf = cursor.fetchone()["avg_conf"] or 0
+
+        # 📢 Recent Notifications (Preview)
+        cursor.execute("""
+            SELECT message 
+            FROM notification 
+            ORDER BY created_at DESC 
+            LIMIT 3
+        """)
+        recent_notifications = cursor.fetchall()
+
+        # 📌 Recent Activity (Audit Log)
+        cursor.execute("""
+            SELECT action 
+            FROM audit_log 
+            ORDER BY created_at DESC 
+            LIMIT 3
+        """)
+        activities = cursor.fetchall()
+
+        return jsonify({
+            "stats": [
+                {"label": "Knowledge Articles", "value": articles},
+                {"label": "Questions This Week", "value": questions},
+                {"label": "Pending Escalations", "value": escalations},
+                {"label": "Unread Notifications", "value": notifications}
+            ],
+            "ai": {
+                "accuracy": f"{ai_conf * 100:.0f}%"
+            },
+            "notifications": recent_notifications,
+            "activities": activities
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500

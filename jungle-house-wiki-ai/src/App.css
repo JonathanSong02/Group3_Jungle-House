@@ -182,3 +182,18 @@
     border-right-color: var(--border);
   }
 }
+
+
+.alert-card {
+  background: #fff3cd;
+  padding: 12px;
+  border-radius: 8px;
+  margin: 12px 0;
+}
+
+.action-buttons button {
+  margin-right: 10px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+}
