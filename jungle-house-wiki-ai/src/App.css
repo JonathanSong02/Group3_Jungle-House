@@ -197,3 +197,108 @@
   border-radius: 6px;
   cursor: pointer;
 }
+
+
+/* ========================================================================= */
+/* ARTICLE DETAIL COMPONENT STYLES                                           */
+/* ========================================================================= */
+
+/* Container sizing */
+.article-container {
+  padding: 40px;
+  max-width: 850px; 
+  margin: 0 auto;
+}
+
+.article-content {
+  font-family: inherit;
+  color: #333;
+  line-height: 1.6;
+}
+
+/* Typography & Hierarchy */
+.sop-section-header {
+  color: #2f6b3d; 
+  font-size: 1.25rem;
+  margin-top: 32px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid #e0e0e0;
+  padding-bottom: 8px;
+}
+
+.sop-paragraph {
+  margin-bottom: 12px;
+}
+
+/* List Formatting */
+.sop-step-main {
+  font-weight: 600;
+  font-size: 1.05rem;
+  margin-top: 16px;
+  margin-bottom: 8px;
+}
+
+.sop-step-sub {
+  margin-left: 24px; 
+  margin-bottom: 6px;
+  color: #555;
+  position: relative;
+}
+
+/* Image Formatting */
+.sop-image-wrapper {
+  margin: 16px 0 24px 0;
+  text-align: center;
+}
+
+.sop-image {
+  max-width: 100%;
+  max-height: 400px; 
+  object-fit: contain;
+  border-radius: 8px;
+  border: 1px solid #eaeaea;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+}
+
+/* Link Formatting */
+.sop-inline-link {
+  color: #2f6b3d;
+  font-weight: 600;
+  text-decoration: none;
+  background-color: #f0f7f2;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+}
+
+.sop-inline-link:hover {
+  background-color: #d1e6d6;
+}
+
+/* Related Links area */
+.related-links-section {
+  margin-top: 48px;
+  padding-top: 24px;
+  border-top: 2px dashed #eee;
+}
+
+
+.alert-card {
+  background: #fff3cd;
+  border: 1px solid #f1d58a;
+  border-radius: 12px;
+  padding: 12px 16px;
+  margin: 16px 0;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.stack-gap {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
