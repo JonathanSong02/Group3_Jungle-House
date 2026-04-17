@@ -40,6 +40,26 @@ def get_db_connection():
 
 
 # =========================
+# HELPER FUNCTIONS
+# =========================
+def safe_count_query(cursor, query, params=None):
+    try:
+        cursor.execute(query, params or ())
+        result = cursor.fetchone()
+        return result["total"] if result and "total" in result and result["total"] is not None else 0
+    except Exception:
+        return 0
+
+
+def safe_list_query(cursor, query, params=None):
+    try:
+        cursor.execute(query, params or ())
+        return cursor.fetchall()
+    except Exception:
+        return []
+
+
+# =========================
 # AI CHAT HELPERS
 # =========================
 def normalize_result(result, default_source="unknown"):
@@ -197,6 +217,52 @@ def process_question(question):
 
 
 # =========================
+# STARTUP CHECKS
+# =========================
+def verify_manager_account():
+    """
+    If the manager password is still plain text in DB, hash it once on startup.
+    Default manager password used here: admin1234567
+    """
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT password_hash
+            FROM users
+            WHERE email = 'manager@junglehouse.com'
+            LIMIT 1
+        """)
+        user = cursor.fetchone()
+
+        if user and user["password_hash"] == "admin1234567":
+            print("🔄 Fixing plain-text manager password on startup...")
+
+            new_hash = generate_password_hash("admin1234567")
+
+            cursor.execute("""
+                UPDATE users
+                SET password_hash = %s
+                WHERE email = 'manager@junglehouse.com'
+            """, (new_hash,))
+            conn.commit()
+
+            print("✅ Manager password successfully hashed.")
+
+    except Exception as e:
+        print(f"⚠️ Could not verify manager password on startup: {e}")
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+# =========================
 # BASIC BACKEND STATUS
 # =========================
 @app.route("/", methods=["GET"])
@@ -226,7 +292,7 @@ def health():
 # =========================
 @app.route("/api/auth/register", methods=["POST"])
 def register():
-    data = request.get_json()
+    data = request.get_json() or {}
 
     full_name = data.get("full_name", "").strip()
     email = data.get("email", "").strip().lower()
@@ -262,10 +328,11 @@ def register():
             conn.rollback()
             return jsonify({"message": "Email is already registered."}), 409
 
-        cursor.execute(
-            "SELECT role_id, role_name FROM roles WHERE role_name = %s",
-            (role,)
-        )
+        cursor.execute("""
+            SELECT role_id, role_name
+            FROM roles
+            WHERE role_name = %s
+        """, (role,))
         role_row = cursor.fetchone()
 
         if not role_row:
@@ -307,7 +374,6 @@ def register():
         """, (new_user_id, key_row["key_id"]))
 
         conn.commit()
-
         return jsonify({"message": "Registration successful. You can now log in."}), 201
 
     except mysql.connector.Error as err:
@@ -332,7 +398,7 @@ def register():
 # =========================
 @app.route("/api/auth/login", methods=["POST"])
 def login():
-    data = request.get_json()
+    data = request.get_json() or {}
 
     email = data.get("email", "").strip().lower()
     password = data.get("password", "")
@@ -420,6 +486,153 @@ def login():
 
 
 # =========================
+# DASHBOARD
+# =========================
+@app.route("/api/dashboard", methods=["GET"])
+def get_dashboard():
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        articles = safe_count_query(cursor, "SELECT COUNT(*) AS total FROM wiki_article")
+        questions = safe_count_query(
+            cursor,
+            "SELECT COUNT(*) AS total FROM question WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)"
+        )
+        escalations = safe_count_query(
+            cursor,
+            "SELECT COUNT(*) AS total FROM escalation WHERE status = 'pending'"
+        )
+        notifications_count = safe_count_query(
+            cursor,
+            "SELECT COUNT(*) AS total FROM notification WHERE is_read = 0"
+        )
+
+        ai_conf = 0
+        try:
+            cursor.execute("SELECT ROUND(AVG(confidence), 2) AS avg_conf FROM ai_response")
+            result = cursor.fetchone()
+            if result and result["avg_conf"] is not None:
+                ai_conf = result["avg_conf"]
+        except Exception:
+            ai_conf = 0
+
+        recent_notifications = safe_list_query(cursor, """
+            SELECT notification_id AS id, title, message, is_read, created_at
+            FROM notification
+            ORDER BY created_at DESC
+            LIMIT 3
+        """)
+
+        activities = safe_list_query(cursor, """
+            SELECT action, created_at
+            FROM audit_log
+            ORDER BY created_at DESC
+            LIMIT 3
+        """)
+
+        return jsonify({
+            "stats": [
+                {"label": "Knowledge Articles", "value": articles},
+                {"label": "Questions This Week", "value": questions},
+                {"label": "Pending Escalations", "value": escalations},
+                {"label": "Unread Notifications", "value": notifications_count}
+            ],
+            "ai": {
+                "accuracy": f"{ai_conf * 100:.0f}%"
+            },
+            "notifications": recent_notifications,
+            "activities": activities
+        }), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+# =========================
+# NOTIFICATIONS
+# =========================
+@app.route("/api/notifications/<int:user_id>", methods=["GET"])
+def get_notifications(user_id):
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT
+                notification_id AS id,
+                title,
+                message AS detail,
+                is_read AS isRead,
+                type,
+                created_at
+            FROM notification
+            WHERE user_id = %s
+            ORDER BY created_at DESC
+        """, (user_id,))
+        notifications = cursor.fetchall()
+
+        return jsonify(notifications), 200
+
+    except mysql.connector.Error as err:
+        print("MYSQL ERROR /api/notifications:", err)
+        return jsonify({"message": f"Database error: {str(err)}"}), 500
+
+    except Exception as e:
+        print("GENERAL ERROR /api/notifications:", e)
+        return jsonify({"message": f"Server error: {str(e)}"}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/notifications/read/<int:notification_id>", methods=["PUT"])
+def mark_notification_as_read(notification_id):
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            UPDATE notification
+            SET is_read = TRUE
+            WHERE notification_id = %s
+        """, (notification_id,))
+        conn.commit()
+
+        return jsonify({"message": "Notification marked as read."}), 200
+
+    except mysql.connector.Error as err:
+        return jsonify({"message": f"Database error: {str(err)}"}), 500
+
+    except Exception as e:
+        return jsonify({"message": f"Server error: {str(e)}"}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+# =========================
 # AI CHAT ROUTES
 # =========================
 @app.route("/chat", methods=["POST"])
@@ -448,7 +661,6 @@ def get_articles():
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
 
-        # start with the safest columns only
         cursor.execute("""
             SELECT article_id, title, content, category
             FROM wiki_article
@@ -543,118 +755,9 @@ def get_article_links(article_id):
             conn.close()
 
 
-if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=True)
-
-
 # =========================
-# STARTUP CHECKS
+# RUN APP
 # =========================
-def verify_manager_account():
-    """Checks if the manager account has plain text and fixes it."""
-    conn = None
-    cursor = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-        
-        cursor.execute("SELECT password_hash FROM users WHERE email = 'manager@junglehouse.com'")
-        user = cursor.fetchone()
-        
-        # We are now checking for the exact plain text string you entered in Workbench
-        if user and user['password_hash'] == 'admin1234567':
-            print("🔄 Fixing plain-text manager password on startup...")
-            
-            # Generate a real, secure hash for "admin1234567"
-            new_hash = generate_password_hash("admin1234567")
-            
-            cursor.execute("""
-                UPDATE users 
-                SET password_hash = %s 
-                WHERE email = 'manager@junglehouse.com'
-            """, (new_hash,))
-            conn.commit()
-            print("✅ Manager password successfully hashed! You can now log in.")
-            
-    except Exception as e:
-        print(f"⚠️ Could not verify manager password on startup: {e}")
-    finally:
-        if cursor: cursor.close()
-        if conn: conn.close()
-
 if __name__ == "__main__":
     verify_manager_account()
     app.run(host="127.0.0.1", port=5000, debug=True)
-
-@app.route("/api/dashboard", methods=["GET"])
-def get_dashboard():
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-
-        # 📊 Stats
-        cursor.execute("SELECT COUNT(*) AS total FROM wiki_article")
-        articles = cursor.fetchone()["total"]
-
-        cursor.execute("""
-            SELECT COUNT(*) AS total 
-            FROM question 
-            WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-        """)
-        questions = cursor.fetchone()["total"]
-
-        cursor.execute("""
-            SELECT COUNT(*) AS total 
-            FROM escalation 
-            WHERE status = 'pending'
-        """)
-        escalations = cursor.fetchone()["total"]
-
-        cursor.execute("""
-            SELECT COUNT(*) AS total 
-            FROM notification 
-            WHERE is_read = 0
-        """)
-        notifications = cursor.fetchone()["total"]
-
-        # 🤖 AI Insight
-        cursor.execute("""
-            SELECT ROUND(AVG(confidence), 2) AS avg_conf 
-            FROM ai_response
-        """)
-        ai_conf = cursor.fetchone()["avg_conf"] or 0
-
-        # 📢 Recent Notifications (Preview)
-        cursor.execute("""
-            SELECT message 
-            FROM notification 
-            ORDER BY created_at DESC 
-            LIMIT 3
-        """)
-        recent_notifications = cursor.fetchall()
-
-        # 📌 Recent Activity (Audit Log)
-        cursor.execute("""
-            SELECT action 
-            FROM audit_log 
-            ORDER BY created_at DESC 
-            LIMIT 3
-        """)
-        activities = cursor.fetchall()
-
-        return jsonify({
-            "stats": [
-                {"label": "Knowledge Articles", "value": articles},
-                {"label": "Questions This Week", "value": questions},
-                {"label": "Pending Escalations", "value": escalations},
-                {"label": "Unread Notifications", "value": notifications}
-            ],
-            "ai": {
-                "accuracy": f"{ai_conf * 100:.0f}%"
-            },
-            "notifications": recent_notifications,
-            "activities": activities
-        })
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
