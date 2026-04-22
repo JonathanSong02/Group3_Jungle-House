@@ -1,6 +1,6 @@
 import PageHeader from '../../components/PageHeader';
 import StatusBadge from '../../components/StatusBadge';
-
+import { mockUsers } from '../../data/mockData';
 
 export default function UserManagement() {
   return (
