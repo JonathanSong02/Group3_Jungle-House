@@ -405,17 +405,6 @@ export default function Chat() {
             </button>
           </div>
         </section>
-
-        <aside className="card-like side-panel">
-          <h3>Frontend notes</h3>
-          <ul className="simple-list">
-            <li>Connected to Flask backend at <code>/chat</code>.</li>
-            <li>Preserves SOP title context from both text and SOP replies.</li>
-            <li>Clears old context when staff starts a new topic or correction.</li>
-            <li>Supports step cards, section flow, image flow, and next-step flow.</li>
-            <li>Now supports broader topic switching for Aeon, Shopify POS, warehouse, printer, booth, backend, and ice bin SOPs.</li>
-          </ul>
-        </aside>
       </div>
     </div>
   );
