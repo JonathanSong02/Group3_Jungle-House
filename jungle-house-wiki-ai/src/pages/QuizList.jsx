@@ -1,7 +1,84 @@
+import { useMemo, useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import { quizItems } from '../data/mockData';
 
 export default function QuizList() {
+  const [activeQuizId, setActiveQuizId] = useState(null);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [selectedAnswers, setSelectedAnswers] = useState({});
+  const [submitted, setSubmitted] = useState(false);
+
+  const activeQuiz = useMemo(
+    () => quizItems.find((quiz) => quiz.id === activeQuizId) || null,
+    [activeQuizId]
+  );
+
+  const questions = activeQuiz?.questions || [];
+  const currentQuestion = questions[currentQuestionIndex];
+
+  const totalQuestions = questions.length;
+
+  const score = useMemo(() => {
+    if (!activeQuiz) return 0;
+
+    let correctCount = 0;
+
+    activeQuiz.questions.forEach((question) => {
+      if (selectedAnswers[question.id] === question.correctAnswer) {
+        correctCount += 1;
+      }
+    });
+
+    return totalQuestions > 0 ? Math.round((correctCount / totalQuestions) * 100) : 0;
+  }, [activeQuiz, selectedAnswers, totalQuestions]);
+
+  const handleStartQuiz = (quizId) => {
+    setActiveQuizId(quizId);
+    setCurrentQuestionIndex(0);
+    setSelectedAnswers({});
+    setSubmitted(false);
+  };
+
+  const handleSelectAnswer = (questionId, optionValue) => {
+    if (submitted) return;
+
+    setSelectedAnswers((prev) => ({
+      ...prev,
+      [questionId]: optionValue,
+    }));
+  };
+
+  const handleNext = () => {
+    if (currentQuestionIndex < totalQuestions - 1) {
+      setCurrentQuestionIndex((prev) => prev + 1);
+    }
+  };
+
+  const handlePrevious = () => {
+    if (currentQuestionIndex > 0) {
+      setCurrentQuestionIndex((prev) => prev - 1);
+    }
+  };
+
+  const handleSubmit = () => {
+    setSubmitted(true);
+  };
+
+  const handleRetake = () => {
+    setCurrentQuestionIndex(0);
+    setSelectedAnswers({});
+    setSubmitted(false);
+  };
+
+  const handleBackToList = () => {
+    setActiveQuizId(null);
+    setCurrentQuestionIndex(0);
+    setSelectedAnswers({});
+    setSubmitted(false);
+  };
+
+  const answeredCount = Object.keys(selectedAnswers).length;
+
   return (
     <div>
       <PageHeader
@@ -9,16 +86,174 @@ export default function QuizList() {
         subtitle="Support onboarding with basic quizzes and learning reinforcement."
       />
 
-      <div className="cards-grid">
-        {quizItems.map((quiz) => (
-          <article key={quiz.id} className="card-like">
-            <h3>{quiz.title}</h3>
-            <p className="muted">Questions: {quiz.questions}</p>
-            <p className="muted">Last score: {quiz.lastScore}%</p>
-            <button className="primary-btn">Attempt Quiz</button>
-          </article>
-        ))}
-      </div>
+      {!activeQuiz ? (
+        <div className="cards-grid">
+          {quizItems.map((quiz) => (
+            <article key={quiz.id} className="card-like quiz-card">
+              <div className="quiz-card-top">
+                <h3>{quiz.title}</h3>
+                <span className="status-badge pending">Training Quiz</span>
+              </div>
+
+              <p className="muted">
+                Questions: {Array.isArray(quiz.questions) ? quiz.questions.length : 0}
+              </p>
+              <p className="muted">Last score: {quiz.lastScore ?? 0}%</p>
+
+              <button
+                className="primary-btn"
+                onClick={() => handleStartQuiz(quiz.id)}
+              >
+                Attempt Quiz
+              </button>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <div className="stack-gap">
+          <div className="card-like">
+            <div className="row-between wrap-gap">
+              <div>
+                <h2 style={{ marginBottom: '8px' }}>{activeQuiz.title}</h2>
+                <p className="muted" style={{ marginBottom: 0 }}>
+                  Question {currentQuestionIndex + 1} of {totalQuestions}
+                </p>
+              </div>
+
+              <div className="button-group wrap-gap">
+                <button className="secondary-btn" onClick={handleBackToList}>
+                  Back to Quiz List
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {!submitted ? (
+            <>
+              <div className="card-like">
+                <div className="quiz-progress-row">
+                  <div className="quiz-progress-bar">
+                    <div
+                      className="quiz-progress-fill"
+                      style={{
+                        width: `${((currentQuestionIndex + 1) / totalQuestions) * 100}%`,
+                      }}
+                    />
+                  </div>
+                  <p className="muted small" style={{ marginBottom: 0 }}>
+                    Answered {answeredCount} / {totalQuestions}
+                  </p>
+                </div>
+              </div>
+
+              {currentQuestion ? (
+                <div className="card-like quiz-question-card">
+                  <p className="eyebrow">Question</p>
+                  <h3 className="quiz-question-title">{currentQuestion.question}</h3>
+
+                  <div className="quiz-options">
+                    {currentQuestion.options.map((option, index) => {
+                      const optionLetter = String.fromCharCode(65 + index);
+                      const isSelected =
+                        selectedAnswers[currentQuestion.id] === option;
+
+                      return (
+                        <label
+                          key={option}
+                          className={`quiz-option ${isSelected ? 'selected' : ''}`}
+                        >
+                          <input
+                            type="radio"
+                            name={`question-${currentQuestion.id}`}
+                            value={option}
+                            checked={isSelected}
+                            onChange={() =>
+                              handleSelectAnswer(currentQuestion.id, option)
+                            }
+                          />
+                          <span className="quiz-option-badge">{optionLetter}</span>
+                          <span>{option}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+
+                  <div className="row-between wrap-gap top-gap">
+                    <button
+                      className="secondary-btn"
+                      onClick={handlePrevious}
+                      disabled={currentQuestionIndex === 0}
+                    >
+                      Previous
+                    </button>
+
+                    <div className="button-group wrap-gap">
+                      {currentQuestionIndex < totalQuestions - 1 ? (
+                        <button
+                          className="primary-btn"
+                          onClick={handleNext}
+                          disabled={!selectedAnswers[currentQuestion.id]}
+                        >
+                          Next
+                        </button>
+                      ) : (
+                        <button
+                          className="primary-btn"
+                          onClick={handleSubmit}
+                          disabled={answeredCount !== totalQuestions}
+                        >
+                          Submit Quiz
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <div className="card-like quiz-result-card">
+              <p className="eyebrow">Quiz Result</p>
+              <h2 style={{ marginBottom: '10px' }}>{score}%</h2>
+              <p className="muted">
+                You answered {Math.round((score / 100) * totalQuestions)} out of{' '}
+                {totalQuestions} questions correctly.
+              </p>
+
+              <div className="stack-gap top-gap">
+                {questions.map((question, index) => {
+                  const selected = selectedAnswers[question.id];
+                  const isCorrect = selected === question.correctAnswer;
+
+                  return (
+                    <div key={question.id} className="quiz-review-card">
+                      <h4 style={{ marginBottom: '8px' }}>
+                        {index + 1}. {question.question}
+                      </h4>
+                      <p className={isCorrect ? 'success-text' : 'error-text'}>
+                        Your answer: {selected || 'No answer'}
+                      </p>
+                      {!isCorrect ? (
+                        <p className="muted" style={{ marginBottom: 0 }}>
+                          Correct answer: {question.correctAnswer}
+                        </p>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="button-group wrap-gap top-gap">
+                <button className="secondary-btn" onClick={handleRetake}>
+                  Retake Quiz
+                </button>
+                <button className="primary-btn" onClick={handleBackToList}>
+                  Back to Quiz List
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

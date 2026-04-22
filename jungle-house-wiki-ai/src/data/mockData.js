@@ -73,9 +73,104 @@ export const escalations = [
 ];
 
 export const quizItems = [
-  { id: 1, title: 'Product Knowledge Quiz', questions: 10, lastScore: 80 },
-  { id: 2, title: 'Opening SOP Quiz', questions: 8, lastScore: 90 },
-  { id: 3, title: 'Sales Communication Quiz', questions: 12, lastScore: 75 },
+  {
+    id: 1,
+    title: 'Opening SOP Basics',
+    lastScore: 80,
+    questions: [
+      {
+        id: 'open-1',
+        question: 'What should staff check first before starting kiosk opening?',
+        options: [
+          'Personal phone battery',
+          'Opening checklist and workstation condition',
+          'Music volume',
+          'Customer feedback form',
+        ],
+        correctAnswer: 'Opening checklist and workstation condition',
+      },
+      {
+        id: 'open-2',
+        question: 'Which action is important during opening preparation?',
+        options: [
+          'Leave tools unorganized',
+          'Skip equipment checking',
+          'Prepare required devices and materials',
+          'Wait for customers first',
+        ],
+        correctAnswer: 'Prepare required devices and materials',
+      },
+      {
+        id: 'open-3',
+        question: 'Why must opening SOP be followed carefully?',
+        options: [
+          'To reduce consistency',
+          'To avoid preparation and service errors',
+          'To delay the store opening',
+          'To create more manual work',
+        ],
+        correctAnswer: 'To avoid preparation and service errors',
+      },
+    ],
+  },
+  {
+    id: 2,
+    title: 'Closing SOP Basics',
+    lastScore: 70,
+    questions: [
+      {
+        id: 'close-1',
+        question: 'What is one main goal of closing SOP?',
+        options: [
+          'Leave the workstation messy',
+          'Ensure the outlet is properly cleaned and secured',
+          'Ignore stock balance',
+          'Skip final checks',
+        ],
+        correctAnswer: 'Ensure the outlet is properly cleaned and secured',
+      },
+      {
+        id: 'close-2',
+        question: 'Which task is usually part of closing procedure?',
+        options: [
+          'Open new promotions',
+          'Check cleaning and stock records',
+          'Change team schedule only',
+          'Ignore unused items',
+        ],
+        correctAnswer: 'Check cleaning and stock records',
+      },
+    ],
+  },
+  {
+    id: 3,
+    title: 'Product Knowledge',
+    lastScore: 90,
+    questions: [
+      {
+        id: 'product-1',
+        question: 'Why is product knowledge important for staff?',
+        options: [
+          'To avoid answering customers',
+          'To support customer questions and recommendations',
+          'To reduce confidence',
+          'To skip training',
+        ],
+        correctAnswer: 'To support customer questions and recommendations',
+      },
+      {
+        id: 'product-2',
+        question: 'When staff do not know an answer, what should they do?',
+        options: [
+          'Guess the answer',
+          'Ignore the customer',
+          'Refer to the knowledge base or ask the team lead',
+          'Create a new policy themselves',
+        ],
+        correctAnswer: 'Refer to the knowledge base or ask the team lead',
+      },
+    ],
+  },
 ];
 
 export const dashboardStats = [

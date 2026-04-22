@@ -340,9 +340,8 @@ button:hover {
 /* Chat */
 .chat-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.8fr) minmax(280px, 0.8fr);
-  gap: 20px;
-  align-items: start;
+  grid-template-columns: 1fr;
+  gap: 16px;
 }
 
 .chat-panel {
@@ -611,6 +610,116 @@ button:hover {
 
 .top-gap-sm {
   margin-top: 4px;
+}
+
+.quiz-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.quiz-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.quiz-progress-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.quiz-progress-bar {
+  width: 100%;
+  height: 12px;
+  border-radius: 999px;
+  background: #f4ead3;
+  overflow: hidden;
+}
+
+.quiz-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--primary), #e6bc60);
+  transition: width 0.25s ease;
+}
+
+.quiz-question-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.quiz-question-title {
+  margin-bottom: 8px;
+}
+
+.quiz-options {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.quiz-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: #fffdf8;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.quiz-option:hover {
+  border-color: var(--primary);
+  background: #fff8ea;
+}
+
+.quiz-option.selected {
+  border-color: var(--primary);
+  background: #fff3d9;
+  box-shadow: 0 0 0 3px rgba(216, 164, 55, 0.12);
+}
+
+.quiz-option input {
+  width: auto;
+  margin: 0;
+}
+
+.quiz-option-badge {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #f4ead3;
+  color: #7b5a16;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.quiz-result-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.quiz-review-card {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 14px;
+  background: #fffdf8;
+}
+
+
+.success-text {
+  color: var(--success-text);
 }
 
 /* Status */
