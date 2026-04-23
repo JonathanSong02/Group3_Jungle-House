@@ -304,7 +304,7 @@ WHERE article_id = 2;
 USE jungle_house_ai;
 
 UPDATE wiki_article
-SET content = 'Opening SOP - Spring:
+SET content = 'Opening SOP - QinSheng:
 
 Steps
 1.Clock in (TimeTec)
