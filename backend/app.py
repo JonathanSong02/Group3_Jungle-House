@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import mysql.connector
 from werkzeug.security import generate_password_hash, check_password_hash
+from datetime import datetime
 
 try:
     from predict_intent import get_model_answer
@@ -31,12 +32,17 @@ ESCALATION_MESSAGE = "No confident answer. Escalate to team lead."
 # DATABASE CONNECTION
 # =========================
 def get_db_connection():
-    return mysql.connector.connect(
-        host="localhost",
-        user="jh_app",
-        password="JHapp123!",
-        database="jungle_house_ai"
-    )
+    try:
+        conn = mysql.connector.connect(
+            host="localhost",
+            user="jh_app",
+            password="JHapp123!",
+            database="jungle_house_ai"
+        )
+        return conn
+    except mysql.connector.Error as err:
+        print("DATABASE CONNECTION ERROR:", err)
+        raise
 
 
 # =========================
@@ -47,7 +53,8 @@ def safe_count_query(cursor, query, params=None):
         cursor.execute(query, params or ())
         result = cursor.fetchone()
         return result["total"] if result and "total" in result and result["total"] is not None else 0
-    except Exception:
+    except Exception as e:
+        print("safe_count_query error:", e)
         return 0
 
 
@@ -55,8 +62,38 @@ def safe_list_query(cursor, query, params=None):
     try:
         cursor.execute(query, params or ())
         return cursor.fetchall()
-    except Exception:
+    except Exception as e:
+        print("safe_list_query error:", e)
         return []
+
+
+def format_datetime_value(value):
+    if isinstance(value, datetime):
+        return value.strftime("%d/%m/%Y %I:%M %p")
+    return value
+
+
+def format_user_dates(user_row):
+    if user_row and "created_at" in user_row:
+        user_row["created_at"] = format_datetime_value(user_row["created_at"])
+    return user_row
+
+
+def get_user_profile_payload(user_row):
+    if not user_row:
+        return None
+
+    user_row = format_user_dates(user_row)
+
+    return {
+        "id": user_row.get("user_id"),
+        "name": user_row.get("full_name"),
+        "full_name": user_row.get("full_name"),
+        "email": user_row.get("email"),
+        "role": user_row.get("role_name"),
+        "status": user_row.get("status"),
+        "created_at": user_row.get("created_at"),
+    }
 
 
 # =========================
@@ -239,7 +276,7 @@ def verify_manager_account():
         user = cursor.fetchone()
 
         if user and user["password_hash"] == "admin1234567":
-            print("🔄 Fixing plain-text manager password on startup...")
+            print("Fixing plain-text manager password on startup...")
 
             new_hash = generate_password_hash("admin1234567")
 
@@ -250,10 +287,10 @@ def verify_manager_account():
             """, (new_hash,))
             conn.commit()
 
-            print("✅ Manager password successfully hashed.")
+            print("Manager password successfully hashed.")
 
     except Exception as e:
-        print(f"⚠️ Could not verify manager password on startup: {e}")
+        print(f"Could not verify manager password on startup: {e}")
 
     finally:
         if cursor:
@@ -287,12 +324,36 @@ def health():
     })
 
 
+@app.route("/api/test-db", methods=["GET"])
+def test_db():
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT 1 AS ok")
+        result = cursor.fetchone()
+        return jsonify({
+            "message": "Database connection successful.",
+            "result": result
+        }), 200
+    except Exception as e:
+        print("TEST DB ERROR:", e)
+        return jsonify({"message": f"Database connection failed: {str(e)}"}), 500
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
 # =========================
 # AUTH - REGISTER
 # =========================
 @app.route("/api/auth/register", methods=["POST"])
 def register():
     data = request.get_json() or {}
+    print("REGISTER ROUTE HIT:", data)
 
     full_name = data.get("full_name", "").strip()
     email = data.get("email", "").strip().lower()
@@ -321,7 +382,7 @@ def register():
         conn.start_transaction()
         cursor = conn.cursor(dictionary=True)
 
-        cursor.execute("SELECT user_id FROM users WHERE email = %s", (email,))
+        cursor.execute("SELECT user_id FROM users WHERE LOWER(email) = %s", (email,))
         existing_user = cursor.fetchone()
 
         if existing_user:
@@ -331,7 +392,7 @@ def register():
         cursor.execute("""
             SELECT role_id, role_name
             FROM roles
-            WHERE role_name = %s
+            WHERE LOWER(role_name) = %s
         """, (role,))
         role_row = cursor.fetchone()
 
@@ -346,7 +407,7 @@ def register():
             WHERE rk.key_code = %s
               AND rk.is_used = FALSE
               AND rk.is_active = TRUE
-              AND r.role_name = %s
+              AND LOWER(r.role_name) = %s
               AND (rk.expires_at IS NULL OR rk.expires_at > NOW())
             FOR UPDATE
         """, (access_key, role))
@@ -377,11 +438,13 @@ def register():
         return jsonify({"message": "Registration successful. You can now log in."}), 201
 
     except mysql.connector.Error as err:
+        print("REGISTER MYSQL ERROR:", err)
         if conn:
             conn.rollback()
         return jsonify({"message": f"Database error: {str(err)}"}), 500
 
     except Exception as e:
+        print("REGISTER GENERAL ERROR:", e)
         if conn:
             conn.rollback()
         return jsonify({"message": f"Server error: {str(e)}"}), 500
@@ -399,6 +462,7 @@ def register():
 @app.route("/api/auth/login", methods=["POST"])
 def login():
     data = request.get_json() or {}
+    print("LOGIN ROUTE HIT:", data)
 
     email = data.get("email", "").strip().lower()
     password = data.get("password", "")
@@ -420,21 +484,50 @@ def login():
                 u.email,
                 u.password_hash,
                 u.status,
+                u.created_at,
                 r.role_name
             FROM users u
             JOIN roles r ON u.role_id = r.role_id
-            WHERE u.email = %s
+            WHERE LOWER(u.email) = %s
             LIMIT 1
         """, (email,))
         user = cursor.fetchone()
 
+        print("LOGIN USER FOUND:", user)
+
         if not user:
             return jsonify({"message": "Invalid email or password."}), 401
 
-        if user["status"] != "active":
+        user_status = str(user.get("status", "")).strip().lower()
+        if user_status != "active":
             return jsonify({"message": "This account is inactive. Please contact the manager."}), 403
 
-        if not check_password_hash(user["password_hash"], password):
+        stored_password = str(user.get("password_hash", "")).strip()
+
+        password_ok = False
+
+        try:
+            password_ok = check_password_hash(stored_password, password)
+        except Exception:
+            password_ok = False
+
+        # fallback for old plain-text passwords
+        if not password_ok and stored_password == password:
+            print("PLAIN TEXT PASSWORD MATCH DETECTED. Auto-fixing hash...")
+            new_hash = generate_password_hash(password)
+
+            cursor.execute("""
+                UPDATE users
+                SET password_hash = %s
+                WHERE user_id = %s
+            """, (new_hash, user["user_id"]))
+            conn.commit()
+
+            password_ok = True
+
+        print("PASSWORD CHECK RESULT:", password_ok)
+
+        if not password_ok:
             try:
                 cursor.execute("""
                     INSERT INTO login_history (user_id, login_status, ip_address, device_info)
@@ -446,36 +539,272 @@ def login():
                     request.headers.get("User-Agent")
                 ))
                 conn.commit()
-            except Exception:
-                pass
+            except Exception as insert_error:
+                print("LOGIN HISTORY INSERT FAILED:", insert_error)
 
             return jsonify({"message": "Invalid email or password."}), 401
 
-        cursor.execute("""
-            INSERT INTO login_history (user_id, login_status, ip_address, device_info)
-            VALUES (%s, %s, %s, %s)
-        """, (
-            user["user_id"],
-            "success",
-            request.remote_addr,
-            request.headers.get("User-Agent")
-        ))
-        conn.commit()
+        try:
+            cursor.execute("""
+                INSERT INTO login_history (user_id, login_status, ip_address, device_info)
+                VALUES (%s, %s, %s, %s)
+            """, (
+                user["user_id"],
+                "success",
+                request.remote_addr,
+                request.headers.get("User-Agent")
+            ))
+            conn.commit()
+        except Exception as insert_error:
+            print("LOGIN HISTORY INSERT FAILED:", insert_error)
+
+        user_payload = get_user_profile_payload({
+            "user_id": user["user_id"],
+            "full_name": user["full_name"],
+            "email": user["email"],
+            "role_name": user["role_name"],
+            "status": user_status,
+            "created_at": user.get("created_at"),
+        })
 
         return jsonify({
             "message": "Login successful.",
-            "user": {
-                "id": user["user_id"],
-                "name": user["full_name"],
-                "email": user["email"],
-                "role": user["role_name"]
-            }
+            "user": user_payload
         }), 200
 
     except mysql.connector.Error as err:
+        print("LOGIN MYSQL ERROR:", err)
         return jsonify({"message": f"Database error: {str(err)}"}), 500
 
     except Exception as e:
+        print("LOGIN GENERAL ERROR:", e)
+        return jsonify({"message": f"Server error: {str(e)}"}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+# =========================
+# PROFILE
+# =========================
+@app.route("/api/profile/<int:user_id>", methods=["GET"])
+def get_profile(user_id):
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT
+                u.user_id,
+                u.full_name,
+                u.email,
+                u.status,
+                u.created_at,
+                r.role_name
+            FROM users u
+            JOIN roles r ON u.role_id = r.role_id
+            WHERE u.user_id = %s
+            LIMIT 1
+        """, (user_id,))
+        user = cursor.fetchone()
+
+        if not user:
+            return jsonify({"message": "User not found."}), 404
+
+        return jsonify(get_user_profile_payload(user)), 200
+
+    except mysql.connector.Error as err:
+        print("GET PROFILE MYSQL ERROR:", err)
+        return jsonify({"message": f"Database error: {str(err)}"}), 500
+
+    except Exception as e:
+        print("GET PROFILE GENERAL ERROR:", e)
+        return jsonify({"message": f"Server error: {str(e)}"}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/profile/<int:user_id>", methods=["PUT"])
+def update_profile(user_id):
+    data = request.get_json() or {}
+
+    full_name = data.get("full_name", "").strip()
+    email = data.get("email", "").strip().lower()
+
+    if not full_name or not email:
+        return jsonify({"message": "Full name and email are required."}), 400
+
+    if len(full_name) < 3:
+        return jsonify({"message": "Full name must be at least 3 characters."}), 400
+
+    if "@" not in email or "." not in email:
+        return jsonify({"message": "Please enter a valid email address."}), 400
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        conn.start_transaction()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT user_id
+            FROM users
+            WHERE user_id = %s
+            LIMIT 1
+        """, (user_id,))
+        existing_user = cursor.fetchone()
+
+        if not existing_user:
+            conn.rollback()
+            return jsonify({"message": "User not found."}), 404
+
+        cursor.execute("""
+            SELECT user_id
+            FROM users
+            WHERE LOWER(email) = %s AND user_id <> %s
+            LIMIT 1
+        """, (email, user_id))
+        email_owner = cursor.fetchone()
+
+        if email_owner:
+            conn.rollback()
+            return jsonify({"message": "Email is already used by another account."}), 409
+
+        cursor.execute("""
+            UPDATE users
+            SET full_name = %s,
+                email = %s
+            WHERE user_id = %s
+        """, (full_name, email, user_id))
+        conn.commit()
+
+        cursor.execute("""
+            SELECT
+                u.user_id,
+                u.full_name,
+                u.email,
+                u.status,
+                u.created_at,
+                r.role_name
+            FROM users u
+            JOIN roles r ON u.role_id = r.role_id
+            WHERE u.user_id = %s
+            LIMIT 1
+        """, (user_id,))
+        updated_user = cursor.fetchone()
+
+        return jsonify({
+            "message": "Profile updated successfully.",
+            "user": get_user_profile_payload(updated_user)
+        }), 200
+
+    except mysql.connector.Error as err:
+        print("UPDATE PROFILE MYSQL ERROR:", err)
+        if conn:
+            conn.rollback()
+        return jsonify({"message": f"Database error: {str(err)}"}), 500
+
+    except Exception as e:
+        print("UPDATE PROFILE GENERAL ERROR:", e)
+        if conn:
+            conn.rollback()
+        return jsonify({"message": f"Server error: {str(e)}"}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/profile/<int:user_id>/change-password", methods=["PUT"])
+def change_password(user_id):
+    data = request.get_json() or {}
+
+    current_password = data.get("current_password", "")
+    new_password = data.get("new_password", "")
+    confirm_password = data.get("confirm_password", "")
+
+    if not current_password or not new_password or not confirm_password:
+        return jsonify({"message": "All password fields are required."}), 400
+
+    if len(new_password) < 6:
+        return jsonify({"message": "New password must be at least 6 characters."}), 400
+
+    if new_password != confirm_password:
+        return jsonify({"message": "New password and confirm password do not match."}), 400
+
+    if new_password == current_password:
+        return jsonify({"message": "New password must be different from current password."}), 400
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        conn.start_transaction()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT user_id, password_hash
+            FROM users
+            WHERE user_id = %s
+            LIMIT 1
+        """, (user_id,))
+        user = cursor.fetchone()
+
+        if not user:
+            conn.rollback()
+            return jsonify({"message": "User not found."}), 404
+
+        stored_password = str(user.get("password_hash", "")).strip()
+
+        password_ok = False
+        try:
+            password_ok = check_password_hash(stored_password, current_password)
+        except Exception:
+            password_ok = False
+
+        if not password_ok and stored_password == current_password:
+            password_ok = True
+
+        if not password_ok:
+            conn.rollback()
+            return jsonify({"message": "Current password is incorrect."}), 401
+
+        new_hash = generate_password_hash(new_password)
+
+        cursor.execute("""
+            UPDATE users
+            SET password_hash = %s
+            WHERE user_id = %s
+        """, (new_hash, user_id))
+        conn.commit()
+
+        return jsonify({"message": "Password updated successfully."}), 200
+
+    except mysql.connector.Error as err:
+        print("CHANGE PASSWORD MYSQL ERROR:", err)
+        if conn:
+            conn.rollback()
+        return jsonify({"message": f"Database error: {str(err)}"}), 500
+
+    except Exception as e:
+        print("CHANGE PASSWORD GENERAL ERROR:", e)
+        if conn:
+            conn.rollback()
         return jsonify({"message": f"Server error: {str(e)}"}), 500
 
     finally:
@@ -549,6 +878,7 @@ def get_dashboard():
         }), 200
 
     except Exception as e:
+        print("DASHBOARD ERROR:", e)
         return jsonify({"error": str(e)}), 500
 
     finally:
@@ -620,9 +950,11 @@ def mark_notification_as_read(notification_id):
         return jsonify({"message": "Notification marked as read."}), 200
 
     except mysql.connector.Error as err:
+        print("READ NOTIFICATION MYSQL ERROR:", err)
         return jsonify({"message": f"Database error: {str(err)}"}), 500
 
     except Exception as e:
+        print("READ NOTIFICATION GENERAL ERROR:", e)
         return jsonify({"message": f"Server error: {str(e)}"}), 500
 
     finally:

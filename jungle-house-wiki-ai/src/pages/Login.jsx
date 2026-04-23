@@ -26,9 +26,13 @@ export default function Login() {
     setError('');
 
     try {
-      await login(form);
+      await login({
+        email: form.email.trim().toLowerCase(),
+        password: form.password,
+      });
       navigate(from, { replace: true });
     } catch (err) {
+      console.error('LOGIN PAGE ERROR:', err);
       setError(err.message || 'Unable to login.');
     } finally {
       setLoading(false);

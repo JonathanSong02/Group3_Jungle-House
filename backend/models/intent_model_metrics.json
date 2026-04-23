@@ -1,0 +1,109 @@
+{
+  "samples": 4827,
+  "train_samples": 3861,
+  "valid_samples": 966,
+  "classes": 45,
+  "vocab_size": 384,
+  "best_epoch": 295,
+  "best_valid_loss": 0.20398,
+  "final_valid_loss": 0.20398,
+  "final_valid_acc": 93.27,
+  "benchmark": {
+    "total": 13,
+    "correct": 12,
+    "accuracy": 92.31,
+    "results": [
+      {
+        "question": "opening sop",
+        "expected": "JHKC Kiosk Opening",
+        "predicted": "JHKC Kiosk Opening",
+        "confidence": 0.8992,
+        "matched": true
+      },
+      {
+        "question": "kiosk closing checklist",
+        "expected": "Kiosk Closing Check List",
+        "predicted": "Kiosk Closing Check List",
+        "confidence": 0.952,
+        "matched": true
+      },
+      {
+        "question": "new packaging price",
+        "expected": "Price for new packaging for HWJ and SHVP",
+        "predicted": "Price for new packaging for HWJ and SHVP",
+        "confidence": 0.9589,
+        "matched": true
+      },
+      {
+        "question": "merchant copy need signature",
+        "expected": "Customer signature for card payment",
+        "predicted": "Promotion",
+        "confidence": 0.3738,
+        "matched": false
+      },
+      {
+        "question": "what to do if someone harasses me",
+        "expected": "Emergency Guide – Responding to Danger or Harassment",
+        "predicted": "Emergency Guide – Responding to Danger or Harassment",
+        "confidence": 0.7281,
+        "matched": true
+      },
+      {
+        "question": "fake jungle house scam",
+        "expected": "Fake Jungle House",
+        "predicted": "Fake Jungle House",
+        "confidence": 0.9981,
+        "matched": true
+      },
+      {
+        "question": "redeem bee points first or not",
+        "expected": "Bee Points: Redeem Only When Needed",
+        "predicted": "Bee Points: Redeem Only When Needed",
+        "confidence": 0.9868,
+        "matched": true
+      },
+      {
+        "question": "when submit ot",
+        "expected": "OT Submission Reminder",
+        "predicted": "OT Submission Reminder",
+        "confidence": 0.7608,
+        "matched": true
+      },
+      {
+        "question": "can block chiller or not",
+        "expected": "Do not Block The Chiller",
+        "predicted": "Do not Block The Chiller",
+        "confidence": 0.8926,
+        "matched": true
+      },
+      {
+        "question": "put tissue on cold drinks",
+        "expected": "Place Tissue on Cold drinks",
+        "predicted": "Place Tissue on Cold drinks",
+        "confidence": 0.9953,
+        "matched": true
+      },
+      {
+        "question": "how much honey for honey juice",
+        "expected": "What is the best answer for client asking how much Honey we are using for our honey Juice?",
+        "predicted": "What is the best answer for client asking how much Honey we are using for our honey Juice?",
+        "confidence": 0.975,
+        "matched": true
+      },
+      {
+        "question": "must wear gloves and mask for juice",
+        "expected": "Hygiene Compliance Notice – Juice Making (Effective Immediately)",
+        "predicted": "Hygiene Compliance Notice – Juice Making (Effective Immediately)",
+        "confidence": 0.9208,
+        "matched": true
+      },
+      {
+        "question": "who can decide cash transactions",
+        "expected": "Cashless",
+        "predicted": "Cashless",
+        "confidence": 0.9527,
+        "matched": true
+      }
+    ]
+  }
+}

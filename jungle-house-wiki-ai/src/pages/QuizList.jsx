@@ -7,6 +7,7 @@ export default function QuizList() {
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [selectedAnswers, setSelectedAnswers] = useState({});
   const [submitted, setSubmitted] = useState(false);
+  const [showWelcome, setShowWelcome] = useState(false);
 
   const activeQuiz = useMemo(
     () => quizItems.find((quiz) => quiz.id === activeQuizId) || null,
@@ -37,6 +38,11 @@ export default function QuizList() {
     setCurrentQuestionIndex(0);
     setSelectedAnswers({});
     setSubmitted(false);
+    setShowWelcome(true);
+  };
+
+  const handleBeginQuestions = () => {
+    setShowWelcome(false);
   };
 
   const handleSelectAnswer = (questionId, optionValue) => {
@@ -68,6 +74,7 @@ export default function QuizList() {
     setCurrentQuestionIndex(0);
     setSelectedAnswers({});
     setSubmitted(false);
+    setShowWelcome(true);
   };
 
   const handleBackToList = () => {
@@ -75,6 +82,7 @@ export default function QuizList() {
     setCurrentQuestionIndex(0);
     setSelectedAnswers({});
     setSubmitted(false);
+    setShowWelcome(false);
   };
 
   const answeredCount = Object.keys(selectedAnswers).length;
@@ -115,9 +123,15 @@ export default function QuizList() {
             <div className="row-between wrap-gap">
               <div>
                 <h2 style={{ marginBottom: '8px' }}>{activeQuiz.title}</h2>
-                <p className="muted" style={{ marginBottom: 0 }}>
-                  Question {currentQuestionIndex + 1} of {totalQuestions}
-                </p>
+                {!showWelcome ? (
+                  <p className="muted" style={{ marginBottom: 0 }}>
+                    Question {currentQuestionIndex + 1} of {totalQuestions}
+                  </p>
+                ) : (
+                  <p className="muted" style={{ marginBottom: 0 }}>
+                    Welcome to this training quiz
+                  </p>
+                )}
               </div>
 
               <div className="button-group wrap-gap">
@@ -128,7 +142,61 @@ export default function QuizList() {
             </div>
           </div>
 
-          {!submitted ? (
+          {showWelcome ? (
+            <div className="card-like quiz-welcome-card">
+              <p className="eyebrow">Welcome</p>
+              <h2 style={{ marginBottom: '10px' }}>
+                Pre-Official Interview Training Session
+              </h2>
+
+              <div className="quiz-welcome-message">
+                <p>Dear Candidate,</p>
+
+                <p>
+                  Welcome to the Pre-Official Interview Training Session!
+                </p>
+
+                <p>
+                  We’re excited to have you here and appreciate your interest in joining
+                  our team. This session is designed to help you better understand our
+                  interview process, set clear expectations, and equip you with valuable
+                  tips to present your best self during the official interview.
+                </p>
+
+                <p>
+                  Whether you're new to our industry or bringing in prior experience,
+                  this training will guide you through the essential aspects of what
+                  we’re looking for, our company culture, and how to confidently
+                  communicate your strengths.
+                </p>
+
+                <p>
+                  Take this opportunity to prepare, learn, and ask questions. Our goal
+                  is to support you in making this journey as smooth and insightful as
+                  possible.
+                </p>
+
+                <p>Let’s get started!</p>
+
+                <p style={{ marginBottom: 0 }}>
+                  Warm regards,
+                  <br />
+                  <strong>Eno Wong</strong>
+                  <br />
+                  King Bee (Kuching)
+                </p>
+              </div>
+
+              <div className="button-group wrap-gap top-gap">
+                <button className="secondary-btn" onClick={handleBackToList}>
+                  Back
+                </button>
+                <button className="primary-btn" onClick={handleBeginQuestions}>
+                  Start Quiz Now
+                </button>
+              </div>
+            </div>
+          ) : !submitted ? (
             <>
               <div className="card-like">
                 <div className="quiz-progress-row">
