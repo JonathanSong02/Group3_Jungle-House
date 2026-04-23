@@ -1,107 +1,128 @@
 {
-  "samples": 4827,
-  "train_samples": 3861,
-  "valid_samples": 966,
-  "classes": 45,
-  "vocab_size": 384,
-  "best_epoch": 295,
-  "best_valid_loss": 0.20398,
-  "final_valid_loss": 0.20398,
-  "final_valid_acc": 93.27,
+  "samples": 6067,
+  "train_samples": 4853,
+  "valid_samples": 1214,
+  "classes": 48,
+  "vocab_size": 410,
+  "best_epoch": 300,
+  "best_valid_loss": 0.136968,
+  "final_valid_loss": 0.136968,
+  "final_valid_acc": 95.22,
   "benchmark": {
-    "total": 13,
-    "correct": 12,
-    "accuracy": 92.31,
+    "total": 16,
+    "correct": 16,
+    "accuracy": 100.0,
     "results": [
       {
         "question": "opening sop",
         "expected": "JHKC Kiosk Opening",
         "predicted": "JHKC Kiosk Opening",
-        "confidence": 0.8992,
+        "confidence": 0.8442,
         "matched": true
       },
       {
         "question": "kiosk closing checklist",
         "expected": "Kiosk Closing Check List",
         "predicted": "Kiosk Closing Check List",
-        "confidence": 0.952,
+        "confidence": 0.9702,
         "matched": true
       },
       {
         "question": "new packaging price",
         "expected": "Price for new packaging for HWJ and SHVP",
         "predicted": "Price for new packaging for HWJ and SHVP",
-        "confidence": 0.9589,
+        "confidence": 0.9088,
         "matched": true
       },
       {
         "question": "merchant copy need signature",
         "expected": "Customer signature for card payment",
-        "predicted": "Promotion",
-        "confidence": 0.3738,
-        "matched": false
+        "predicted": "Customer signature for card payment",
+        "confidence": 0.3634,
+        "matched": true
       },
       {
         "question": "what to do if someone harasses me",
         "expected": "Emergency Guide – Responding to Danger or Harassment",
         "predicted": "Emergency Guide – Responding to Danger or Harassment",
-        "confidence": 0.7281,
+        "confidence": 0.9983,
         "matched": true
       },
       {
         "question": "fake jungle house scam",
         "expected": "Fake Jungle House",
         "predicted": "Fake Jungle House",
-        "confidence": 0.9981,
+        "confidence": 0.9978,
         "matched": true
       },
       {
         "question": "redeem bee points first or not",
         "expected": "Bee Points: Redeem Only When Needed",
         "predicted": "Bee Points: Redeem Only When Needed",
-        "confidence": 0.9868,
+        "confidence": 0.9409,
         "matched": true
       },
       {
         "question": "when submit ot",
         "expected": "OT Submission Reminder",
         "predicted": "OT Submission Reminder",
-        "confidence": 0.7608,
+        "confidence": 0.5103,
         "matched": true
       },
       {
         "question": "can block chiller or not",
         "expected": "Do not Block The Chiller",
         "predicted": "Do not Block The Chiller",
-        "confidence": 0.8926,
+        "confidence": 0.841,
         "matched": true
       },
       {
         "question": "put tissue on cold drinks",
         "expected": "Place Tissue on Cold drinks",
         "predicted": "Place Tissue on Cold drinks",
-        "confidence": 0.9953,
+        "confidence": 0.9936,
         "matched": true
       },
       {
         "question": "how much honey for honey juice",
         "expected": "What is the best answer for client asking how much Honey we are using for our honey Juice?",
         "predicted": "What is the best answer for client asking how much Honey we are using for our honey Juice?",
-        "confidence": 0.975,
+        "confidence": 0.4898,
         "matched": true
       },
       {
         "question": "must wear gloves and mask for juice",
         "expected": "Hygiene Compliance Notice – Juice Making (Effective Immediately)",
         "predicted": "Hygiene Compliance Notice – Juice Making (Effective Immediately)",
-        "confidence": 0.9208,
+        "confidence": 0.7809,
         "matched": true
       },
       {
         "question": "who can decide cash transactions",
         "expected": "Cashless",
         "predicted": "Cashless",
-        "confidence": 0.9527,
+        "confidence": 0.9387,
+        "matched": true
+      },
+      {
+        "question": "new bee 3rd day checklist",
+        "expected": "New Bee 3rd day Check List",
+        "predicted": "New Bee 3rd day Check List",
+        "confidence": 0.9508,
+        "matched": true
+      },
+      {
+        "question": "new bee 1st day checklist",
+        "expected": "New Bee 1st day Check List",
+        "predicted": "New Bee 1st day Check List",
+        "confidence": 0.9856,
+        "matched": true
+      },
+      {
+        "question": "wanna bee onboarding checklist",
+        "expected": "Wanna-Bee onboarding Check list",
+        "predicted": "Wanna-Bee onboarding Check list",
+        "confidence": 0.9977,
         "matched": true
       }
     ]

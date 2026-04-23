@@ -1,3 +1,4 @@
+
 from pathlib import Path
 import re
 from typing import Optional
@@ -16,6 +17,7 @@ MODEL_FILE = MODEL_DIR / "intent_model.pth"
 CONFIDENCE_THRESHOLD = 0.45
 MID_CONFIDENCE_THRESHOLD = 0.60
 HIGH_CONFIDENCE_THRESHOLD = 0.78
+MIN_LEXICAL_OVERLAP = 2
 ESCALATION_MESSAGE = "This question is not related to the SOP system. Please escalate to team lead."
 NO_MATCH_MESSAGE = "No confident SOP match. Please escalate to team lead."
 
@@ -180,12 +182,18 @@ def build_steps(df: pd.DataFrame) -> list[dict]:
         else:
             step_number = int(step_number)
 
+        image_urls = []
+        for path in image_files:
+            url = build_image_url(path)
+            if url:
+                image_urls.append(url)
+
         steps.append({
             "step_number": int(step_number),
             "section": safe_str(row.get("section", "")),
             "content": safe_str(row.get("content", "")),
             "image_files": image_files,
-            "image_urls": [build_image_url(path) for path in image_files if build_image_url(path)],
+            "image_urls": image_urls,
         })
         display_step += 1
 
@@ -227,7 +235,8 @@ def build_section_choice_message(title: str, steps: list[dict]) -> str:
             seen.add(section.lower())
 
     if sections:
-        return f"I found {title}. Available sections: {', '.join(sections)}."
+        bullet_lines = "\n".join([f"- {section}" for section in sections])
+        return f"I found {title}. Available sections:\n{bullet_lines}"
     return f"I found {title}. Which step do you need?"
 
 
@@ -273,11 +282,29 @@ TITLE_REGISTRY.update({
     "Hygiene Compliance Notice – Juice Making (Effective Immediately)": {"aliases": ["juice making hygiene rule", "must wear gloves and mask for juice", "juice making penalty", "rm200 commission penalty hygiene"]},
     "Cashless": {"aliases": ["accept cash or not", "who can decide cash transactions", "cash transaction rule"]},
     "Morning Shift Attendance Responsibility & Penalty Notice": {"aliases": ["morning shift attendance memo", "attendance penalty memo", "morning shift penalty notice"]},
+    "New Bee 3rd day Check List": {"aliases": ["new bee 3rd day checklist", "3rd day new bee", "third day checklist for new bee", "wanna bee 3rd day", "what should new bee do on day 3", "new staff 3rd day checklist"]},
+    "Wanna-Bee onboarding Check list": {"aliases": ["wanna-bee onboarding checklist", "wanna bee onboarding checklist", "wanna bee onboarding", "onboarding checklist", "onboarding check list", "what should i do for onboarding"]},
 })
 
 AMBIGUOUS_GROUPS = {
-    "opening": ["Aeon Roadshow Opening List", "Backend Opening Checklist", "JHKC Kiosk Opening", "Opening Notes", "Receipt printer preparation for opening", "Shopify POS app Opening", "Spring Roadshow Opening List"],
-    "closing": ["Aeon Roadshow Closing List", "Closing Spring Warehouse", "Ice Bin Daily Closing Checklist", "Kiosk Closing Check List", "Kuching Booth Closing dustbin check list", "Shopify POS app Closing", "Spring Roadshow Closing List"],
+    "opening": [
+        "Aeon Roadshow Opening List",
+        "Backend Opening Checklist",
+        "JHKC Kiosk Opening",
+        "Opening Notes",
+        "Receipt printer preparation for opening",
+        "Shopify POS app Opening",
+        "Spring Roadshow Opening List",
+    ],
+    "closing": [
+        "Aeon Roadshow Closing List",
+        "Closing Spring Warehouse",
+        "Ice Bin Daily Closing Checklist",
+        "Kiosk Closing Check List",
+        "Kuching Booth Closing dustbin check list",
+        "Shopify POS app Closing",
+        "Spring Roadshow Closing List",
+    ],
 }
 
 IRRELEVANT_PHRASES = [
@@ -291,7 +318,7 @@ WORK_HINTS = [
     "picture", "photo", "image", "next", "show all", "signature", "card payment",
     "merchant copy", "price", "holiday", "danger", "harassment", "fake", "bee points",
     "bee green", "ot", "overtime", "chiller", "tissue", "customer history", "honey juice",
-    "hygiene", "cashless", "attendance", "penalty",
+    "hygiene", "cashless", "attendance", "penalty", "new bee", "third day", "3rd day", "onboarding", "wanna bee", "google group", "whatsapp group", "shopify", "doraemon pocket", "bee buddy", "availability", "uniform",
 ]
 
 FULL_SOP_PHRASES = ["show all", "all step", "all steps", "full sop", "complete sop", "show everything"]
@@ -321,26 +348,38 @@ def find_ambiguous_group(question: str) -> Optional[list[str]]:
     if find_title_by_alias(q):
         return None
 
-    if q in {"opening", "open", "opening sop", "show opening"}:
+    opening_triggers = {"opening", "open", "opening sop", "show opening", "need opening", "opening checklist"}
+    closing_triggers = {"closing", "close", "closing sop", "show closing", "need closing", "closing checklist"}
+
+    if q in opening_triggers or ("opening" in q and "roadshow" not in q and "kiosk" not in q and "aeon" not in q):
         return AMBIGUOUS_GROUPS["opening"]
-    if q in {"closing", "close", "closing sop", "show closing"}:
+    if q in closing_triggers or ("closing" in q and "roadshow" not in q and "kiosk" not in q and "aeon" not in q):
         return AMBIGUOUS_GROUPS["closing"]
     return None
 
 
-def lexical_title_fallback(question: str) -> Optional[str]:
+def lexical_title_fallback(question: str) -> tuple[Optional[str], int, float]:
     question_tokens = set(tokenize(question))
     best_title = None
     best_overlap = 0
+    best_ratio = 0.0
 
     for title in KNOWLEDGE_DF["title"].dropna().unique():
         title_tokens = set(tokenize(title))
         overlap = len(question_tokens & title_tokens)
-        if overlap > best_overlap:
+        ratio = overlap / max(1, len(title_tokens))
+        if overlap > best_overlap or (overlap == best_overlap and ratio > best_ratio):
             best_overlap = overlap
+            best_ratio = ratio
             best_title = title
 
-    return best_title if best_overlap > 0 else None
+    if best_overlap >= MIN_LEXICAL_OVERLAP:
+        return best_title, best_overlap, best_ratio
+
+    if len(question_tokens) <= 2 and best_overlap >= 1 and best_ratio >= 0.50:
+        return best_title, best_overlap, best_ratio
+
+    return None, best_overlap, best_ratio
 
 
 def choose_best_candidate_from_top_k(question: str, candidates: list[tuple[str, float]]) -> tuple[Optional[str], float]:
@@ -370,11 +409,12 @@ def detect_requested_section(question: str, title_df: pd.DataFrame) -> Optional[
         if section and normalize_lower(section) in q:
             return section
 
+    q_tokens = set(tokenize(q))
     for section in title_df["section"].dropna().unique().tolist():
         section = safe_str(section)
         if section:
             section_tokens = set(tokenize(section))
-            if len(section_tokens & set(tokenize(q))) >= max(1, min(2, len(section_tokens))):
+            if len(section_tokens & q_tokens) >= max(1, min(2, len(section_tokens))):
                 return section
 
     return None
@@ -433,7 +473,7 @@ def is_irrelevant_question(question: str, context: Optional[dict] = None) -> boo
     if find_title_by_alias(q) or find_ambiguous_group(q):
         return False
 
-    return False if len(tokenize(q)) <= 2 else True
+    return False
 
 
 def should_use_context(question: str, context: dict) -> bool:
@@ -576,10 +616,14 @@ def resolve_title(question: str) -> tuple[Optional[str], float, str]:
     if direct_title:
         return direct_title, 1.0, "rule_alias"
 
+    ambiguous_titles = find_ambiguous_group(question)
+    if ambiguous_titles:
+        return None, 1.0, "ambiguous_family"
+
     predicted_label, confidence = predict_intent(question)
     top_candidates = predict_top_k(question, top_k=3)
     top_choice, top_score = choose_best_candidate_from_top_k(question, top_candidates)
-    fallback_title = lexical_title_fallback(question)
+    fallback_title, lexical_overlap, lexical_ratio = lexical_title_fallback(question)
 
     if predicted_label and confidence >= HIGH_CONFIDENCE_THRESHOLD:
         return predicted_label, confidence, "pytorch_model_high"
@@ -588,7 +632,8 @@ def resolve_title(question: str) -> tuple[Optional[str], float, str]:
     if predicted_label and confidence >= CONFIDENCE_THRESHOLD:
         return predicted_label, confidence, "pytorch_model"
     if fallback_title:
-        return fallback_title, max(confidence, 0.50), "lexical_fallback"
+        fallback_score = min(0.74, max(0.50, 0.40 + (0.10 * lexical_overlap) + (0.15 * lexical_ratio)))
+        return fallback_title, round(fallback_score, 4), "lexical_fallback"
 
     return None, confidence, "no_match"
 
@@ -630,22 +675,23 @@ def get_model_answer(question: str, context: Optional[dict] = None) -> dict:
         if context_answer:
             return context_answer
 
+    ambiguous_titles = find_ambiguous_group(question)
+    if ambiguous_titles:
+        message = "Which SOP do you need:\n" + "\n".join([f"- {title}" for title in ambiguous_titles]) + "\nPlease choose one."
+        return {
+            "type": "text",
+            "reply": message,
+            "title": None,
+            "section": None,
+            "answer": message,
+            "steps": [],
+            "score": 1.0,
+            "source": "ambiguous_family",
+        }
+
     matched_title, confidence, source = resolve_title(question)
 
     if not matched_title:
-        ambiguous_titles = find_ambiguous_group(question)
-        if ambiguous_titles:
-            message = f"Which SOP do you need: {', '.join(ambiguous_titles)}?"
-            return {
-                "type": "text",
-                "reply": message,
-                "title": None,
-                "section": None,
-                "answer": message,
-                "steps": [],
-                "score": 1.0,
-                "source": "ambiguous_family",
-            }
         return build_escalation_answer(question, "no_match")
 
     title_df = get_df_by_title(matched_title)

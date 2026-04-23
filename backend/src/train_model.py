@@ -38,6 +38,9 @@ REAL_JH_BENCHMARK = [
     {"question": "how much honey for honey juice", "expected": "What is the best answer for client asking how much Honey we are using for our honey Juice?"},
     {"question": "must wear gloves and mask for juice", "expected": "Hygiene Compliance Notice – Juice Making (Effective Immediately)"},
     {"question": "who can decide cash transactions", "expected": "Cashless"},
+    {"question": "new bee 3rd day checklist", "expected": "New Bee 3rd day Check List"},
+    {"question": "new bee 1st day checklist", "expected": "New Bee 1st day Check List"},
+    {"question": "wanna bee onboarding checklist", "expected": "Wanna-Bee onboarding Check list"},
 ]
 
 

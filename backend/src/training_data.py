@@ -1,3 +1,4 @@
+
 from pathlib import Path
 import re
 
@@ -65,6 +66,9 @@ def title_specific_aliases(title: str) -> list[str]:
         "hygiene compliance notice – juice making (effective immediately)": ["juice making hygiene rule", "must wear gloves and mask for juice", "juice making penalty", "rm200 commission penalty hygiene"],
         "cashless": ["accept cash or not", "who can decide cash transactions", "cash transaction rule"],
         "morning shift attendance responsibility & penalty notice": ["morning shift attendance memo", "attendance penalty memo", "morning shift penalty notice"],
+        "new bee 3rd day check list": ["new bee 3rd day checklist", "3rd day new bee", "third day checklist for new bee", "wanna bee 3rd day", "what should new bee do on day 3", "new staff 3rd day checklist"],
+        "new bee 1st day check list": ["new bee 1st day checklist", "1st day new bee", "first day checklist for new bee", "wanna bee 1st day", "what should new bee do on day 1", "new staff 1st day checklist"],
+        "wanna-bee onboarding check list": ["wanna-bee onboarding checklist", "wanna bee onboarding checklist", "wanna bee onboarding", "onboarding checklist", "onboarding check list", "what should i do for onboarding"],
     }
     return alias_map.get(title_key, [])
 
@@ -92,6 +96,8 @@ def build_title_questions(title: str, category: str, section: str) -> list[str]:
             f"{title} full steps",
             f"step by step for {title}",
             f"full checklist for {title}",
+            f"show full sop for {title}",
+            f"show all steps for {title}",
         ])
     elif family == "promotion":
         questions.extend([
@@ -137,6 +143,7 @@ def build_section_questions(title: str, section: str) -> list[str]:
         f"{title} {section} steps",
         f"{title} {section} checklist",
         f"how to do {section}",
+        f"show the {section} part in {title}",
     ]
     return [normalize_text(q) for q in questions if normalize_text(q)]
 
@@ -149,6 +156,7 @@ def build_step_questions(title: str, step_number: int) -> list[str]:
         f"what is step {step_number} for {title}",
         f"picture for step {step_number} in {title}",
         f"image for step {step_number} in {title}",
+        f"next after step {step_number} in {title}",
     ]
     return [normalize_text(q) for q in questions if normalize_text(q)]
 
@@ -223,6 +231,7 @@ def build_rows(df: pd.DataFrame) -> list[dict]:
             f"what next for {title}",
             f"next step for {title}",
             f"change to {title}",
+            f"continue {title}",
         ]:
             rows.append({"question": normalize_text(question), "label": title})
 
@@ -242,7 +251,11 @@ def build_rows(df: pd.DataFrame) -> list[dict]:
 
     rows.extend([
         {"question": "opening", "label": "JHKC Kiosk Opening"},
+        {"question": "opening sop", "label": "JHKC Kiosk Opening"},
+        {"question": "need opening sop", "label": "JHKC Kiosk Opening"},
         {"question": "closing", "label": "Kiosk Closing Check List"},
+        {"question": "closing sop", "label": "Kiosk Closing Check List"},
+        {"question": "need closing sop", "label": "Kiosk Closing Check List"},
         {"question": "roadshow opening", "label": "Spring Roadshow Opening List"},
         {"question": "roadshow closing", "label": "Spring Roadshow Closing List"},
         {"question": "aeon opening", "label": "Aeon Roadshow Opening List"},
@@ -250,6 +263,12 @@ def build_rows(df: pd.DataFrame) -> list[dict]:
         {"question": "cashless rule", "label": "Cashless"},
         {"question": "juice hygiene", "label": "Hygiene Compliance Notice – Juice Making (Effective Immediately)"},
         {"question": "morning shift attendance", "label": "Morning Shift Attendance Responsibility & Penalty Notice"},
+        {"question": "new bee 3rd day checklist", "label": "New Bee 3rd day Check List"},
+        {"question": "what should new bee do on day 3", "label": "New Bee 3rd day Check List"},
+        {"question": "new bee 1st day checklist", "label": "New Bee 1st day Check List"},
+        {"question": "what should new bee do on day 1", "label": "New Bee 1st day Check List"},
+        {"question": "wanna bee onboarding checklist", "label": "Wanna-Bee onboarding Check list"},
+        {"question": "what should i do for onboarding", "label": "Wanna-Bee onboarding Check list"},
     ])
 
     return rows

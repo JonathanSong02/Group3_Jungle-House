@@ -1,3 +1,4 @@
+
 from datetime import datetime
 from pathlib import Path
 import csv
@@ -8,13 +9,14 @@ from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
 try:
-    from predict_intent import get_model_answer
-    MODEL_AVAILABLE = True
-    MODEL_ERROR = None
+    from predict_intent import get_model_answer, MODEL_ERROR as PREDICT_MODEL_ERROR
+    ENGINE_AVAILABLE = True
+    ENGINE_IMPORT_ERROR = None
 except Exception as error:
     get_model_answer = None
-    MODEL_AVAILABLE = False
-    MODEL_ERROR = str(error)
+    PREDICT_MODEL_ERROR = str(error)
+    ENGINE_AVAILABLE = False
+    ENGINE_IMPORT_ERROR = str(error)
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = (BASE_DIR.parent / "static").resolve()
@@ -42,6 +44,9 @@ REAL_JH_TEST_QUESTIONS = [
     "must wear gloves and mask for juice",
     "who can decide cash transactions",
     "morning shift attendance memo",
+    "new bee 3rd day checklist",
+    "new bee 1st day checklist",
+    "wanna bee onboarding checklist",
 ]
 
 
@@ -75,6 +80,23 @@ def ensure_log_files() -> None:
             ])
 
 
+def is_escalation_result(result: dict | None) -> bool:
+    result = result or {}
+    source = str(result.get("source", "")).strip()
+    reply = str(result.get("reply", "")).lower()
+    answer = str(result.get("answer", "")).lower()
+
+    if source in {
+        "irrelevant_question",
+        "low_confidence_or_model_unavailable",
+        "prediction_error",
+        "engine_unavailable",
+    }:
+        return True
+
+    return "escalate" in reply or "escalate" in answer
+
+
 def log_request(question: str, result: dict | None = None, error: str | None = None) -> None:
     ensure_log_files()
     timestamp = datetime.now().isoformat(timespec="seconds")
@@ -102,11 +124,7 @@ def log_request(question: str, result: dict | None = None, error: str | None = N
             "type": result.get("type", "text"),
             "score": float(result.get("score", 0.0)),
             "source": result.get("source", "unknown"),
-            "escalation_ready": bool(
-                "escalate" in str(result.get("reply", "")).lower()
-                or "escalate" in str(result.get("answer", "")).lower()
-                or result.get("source") in {"irrelevant_question", "low_confidence_or_model_unavailable"}
-            ),
+            "escalation_ready": is_escalation_result(result),
             "reply": str(result.get("reply", "")),
             "error": None,
         }
@@ -184,17 +202,17 @@ def run_single_question(question: str, context: dict | None = None) -> tuple[dic
         }
         return result, 400
 
-    if not MODEL_AVAILABLE or get_model_answer is None:
+    if get_model_answer is None:
         result = {
             "question": question,
             "type": "text",
             "reply": "AI backend is not available.",
             "title": None,
             "section": None,
-            "answer": MODEL_ERROR or "Model not loaded.",
+            "answer": ENGINE_IMPORT_ERROR or "Prediction engine not loaded.",
             "steps": [],
             "score": 0.0,
-            "source": "model_unavailable",
+            "source": "engine_unavailable",
         }
         return result, 500
 
@@ -207,8 +225,9 @@ def run_single_question(question: str, context: dict | None = None) -> tuple[dic
 def home():
     return jsonify({
         "message": "Jungle House AI backend is running.",
-        "model_available": MODEL_AVAILABLE,
-        "model_error": MODEL_ERROR,
+        "engine_available": ENGINE_AVAILABLE,
+        "engine_import_error": ENGINE_IMPORT_ERROR,
+        "model_error": PREDICT_MODEL_ERROR,
     })
 
 
@@ -216,8 +235,9 @@ def home():
 def health():
     return jsonify({
         "status": "ok",
-        "model_available": MODEL_AVAILABLE,
-        "model_error": MODEL_ERROR,
+        "engine_available": ENGINE_AVAILABLE,
+        "engine_import_error": ENGINE_IMPORT_ERROR,
+        "model_error": PREDICT_MODEL_ERROR,
     })
 
 
@@ -231,10 +251,10 @@ def dashboard():
 
 @app.route("/api/chat/test", methods=["GET"])
 def chat_test():
-    if not MODEL_AVAILABLE or get_model_answer is None:
+    if get_model_answer is None:
         return jsonify({
             "status": "error",
-            "message": MODEL_ERROR or "Model not loaded.",
+            "message": ENGINE_IMPORT_ERROR or "Prediction engine not loaded.",
             "results": [],
         }), 500
 
@@ -246,7 +266,7 @@ def chat_test():
         try:
             result, status = run_single_question(question, context={})
             log_request(question, result=result)
-            is_escalation = "escalate" in str(result.get("reply", "")).lower()
+            is_escalation = is_escalation_result(result)
             if status == 200 and not is_escalation:
                 success_count += 1
             if is_escalation:
@@ -260,6 +280,7 @@ def chat_test():
                 "reply": result.get("reply"),
                 "score": result.get("score"),
                 "source": result.get("source"),
+                "escalation_ready": is_escalation,
             })
         except Exception as error:
             traceback.print_exc()
@@ -272,6 +293,7 @@ def chat_test():
                 "reply": "There was a problem while generating the answer.",
                 "score": 0.0,
                 "source": "prediction_error",
+                "escalation_ready": True,
             })
 
     total = len(REAL_JH_TEST_QUESTIONS)
