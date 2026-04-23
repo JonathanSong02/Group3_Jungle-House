@@ -10,7 +10,7 @@ export default function KnowledgeBase() {
   const [articles, setArticles] = useState([]);
 
   useEffect(() => {
-    fetch('http://172.17.99.227:5000/api/articles')
+    fetch('http://192.168.146.1:5000/api/articles')
       .then((res) => res.json())
       .then((data) => setArticles(data))
       .catch((err) => console.error('Fetch error:', err));
