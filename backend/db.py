@@ -3,7 +3,7 @@ import mysql.connector
 def get_db_connection():
     try:
         conn = mysql.connector.connect(
-            host="localhost",
+            host="172.17.99.227",
             user="root",
             password="JHapp123!",   # 🔥 change this
             database="jungle_house_ai"
