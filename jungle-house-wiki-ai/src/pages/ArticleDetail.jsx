@@ -31,20 +31,101 @@ export default function ArticleDetail() {
   // Your existing Notion link mapper
   function renderLineWithLinks(line) {
     const linkMap = {
-      "Important Notes of Stocktake": "https://junglehouse.notion.site/...",
-      "Jerry Can Stocktake Guide": "https://junglehouse.notion.site/...",
-      "Furniture Key Labelling": "https://junglehouse.notion.site/...",
-      "Credit Card Settlement": "https://junglehouse.notion.site/...",
-      "Shopify POS app Closing": "https://junglehouse.notion.site/...",
-      "Ice Bin Daily Closing Checklist": "https://junglehouse.notion.site/...",
-      "Draining Ice Tong": "https://junglehouse.notion.site/...",
-      "Washing Juice Tower": "https://junglehouse.notion.site/...",
-      "Shopify POS app Opening": "https://junglehouse.notion.site/...",
-      "MBB QR auto Log out": "https://junglehouse.notion.site/...",
-      "How to switch on the Digital photo frame?": "https://junglehouse.notion.site/...",
-      "Juice Tower Ice Pack": "https://junglehouse.notion.site/...",
-      "Charging Juice Tower": "https://junglehouse.notion.site/...",
-      "Petty Cash Operation Sop": "https://junglehouse.notion.site/...",
+      "Important Notes of Stocktake":
+        "https://junglehouse.notion.site/Important-Notes-of-Stocktake-265379015087802c8f57d8b3056d24a8",
+      "Jerry Can Stocktake Guide":
+        "https://junglehouse.notion.site/Jerry-Can-Stocktake-Guide-32737901508780a1a2abee94f095a6c7",
+      "Furniture Key Labelling":
+        "https://junglehouse.notion.site/Furniture-Key-Labelling-2ad37901508780c4ad6acac38c7d3e50",
+      "Sales Report":
+        "https://junglehouse.notion.site/Sales-Report-26d37901508780359c96c90c3fd56230",
+      "Credit Card Settlement":
+        "https://junglehouse.notion.site/Credit-Card-Settlement-26537901508780c892f3e5c5ff85a478",
+      "Shopify POS app Closing":
+        "https://junglehouse.notion.site/Shopify-POS-app-Closing-2653790150878088af62e7845afae3a9",
+      "Important Notes of Stocktake":
+        "https://junglehouse.notion.site/Important-Notes-of-Stocktake-265379015087802c8f57d8b3056d24a8",
+      "Updated Daily Sales Report":
+        "https://junglehouse.notion.site/Updated-Daily-Sales-Report-319379015087809fb1c0ceb2d31b0f3b",
+      "Ice Bin Daily Closing Checklist":
+        "https://junglehouse.notion.site/Ice-Bin-Daily-Closing-Checklist-2d9379015087803a80dbea2c5a6e7543",
+      "Draining Ice Tong":
+        "https://junglehouse.notion.site/Draining-Ice-Tong-2ed37901508780c494bbe42302327644",
+      "Washing Juice Tower":
+        "https://junglehouse.notion.site/Washing-Juice-Tower-314379015087803594c2f62dfdb84a0c",
+      "Shopify POS app Opening":
+        "https://junglehouse.notion.site/Shopify-POS-app-Opening-23c37901508780bf8cdfc0d7b2d60535",
+      "MBB QR auto Log out":
+        "https://junglehouse.notion.site/MBB-QR-auto-Log-out-203379015087802297fac9b35423b65c",
+      "How to switch on the Digital photo frame?":
+        "https://junglehouse.notion.site/How-to-switch-on-the-Digital-photo-frame-20f37901508780adb845c1368aee23c2",
+      "Juice Tower Ice Pack":
+        "https://junglehouse.notion.site/Juice-Tower-Ice-Pack-302379015087802c89cecc918bcf05f0",
+      "Charging Juice Tower":
+        "https://junglehouse.notion.site/Charging-Juice-Tower-3043790150878060aab4fd81aa6c85e8",
+      "Petty Cash Operation Sop":
+        "https://junglehouse.notion.site/Petty-Cash-Operation-Sop-2fe37901508780fe8ffefbb30d2b9bf7",
+      "Jerry Can Stocktake Guide":
+        "https://junglehouse.notion.site/Jerry-Can-Stocktake-Guide-32737901508780a1a2abee94f095a6c7",
+      "Opening Notes":
+        "https://junglehouse.notion.site/Opening-Notes-29f379015087801cb872d7f39f7ae7d6",
+      "Soak cloth":
+        "https://junglehouse.notion.site/Soak-cloth-266379015087802ea541d734394e0dd7",
+      "DailySales Report":
+        "https://junglehouse.notion.site/Daily-Sales-Report-2653790150878036b52aef4adb9cda98",
+      "How to keep Credit card receipt & settlement slip?":
+        "https://junglehouse.notion.site/How-to-keep-Credit-card-receipt-settlement-slip-1db3790150878090aafce483a59cfc08",
+      "What to close every night? (Booth)":
+        "https://junglehouse.notion.site/What-to-close-every-night-Booth-23f37901508780548350c9b5ee2e9f66",
+      "How to lock the chiller?":
+        "https://junglehouse.notion.site/How-to-lock-the-chiller-2403790150878044ada8d41aa70a82b3",
+      "Kuching Booth Closing dustbin check list":
+        "https://junglehouse.notion.site/Kuching-Booth-Closing-dustbin-check-list-264379015087801ab6c8fc2f17230ad9",
+      "Cover Fabric":
+        "https://junglehouse.notion.site/Cover-Fabric-2833790150878044848fcd6f14c40519",
+      "What to on every morning?":
+        "https://junglehouse.notion.site/What-to-on-every-morning-28237901508780f383d4cc1bb8f8fd88",
+      "Proper way to replace rubbish bag":
+        "https://junglehouse.notion.site/Proper-way-to-replace-rubbish-bag-26337901508780c1b80acaf8f6829005",
+      "Receipt printer preparation for opening":
+        "https://junglehouse.notion.site/Receipt-printer-preparation-for-opening-23c37901508780d2a6bbe128d6cb8b0a",
+      " Gift & Compensation System (Lark Tutorial)":
+        "https://junglehouse.notion.site/Gift-Compensation-System-Lark-Tutorial-33d37901508780c5be74d62a068ddc35",
+      "How to Handle Unhappy Customers Like a Pro":
+        "https://junglehouse.notion.site/How-to-Handle-Unhappy-Customers-Like-a-Pro-2b737901508780a58078f8968fc429d3",
+      "Important Notes of Stocktake":
+        "https://junglehouse.notion.site/Important-Notes-of-Stocktake-265379015087802c8f57d8b3056d24a8",
+      "Important Notes of Stocktake":
+        "https://junglehouse.notion.site/Important-Notes-of-Stocktake-265379015087802c8f57d8b3056d24a8",
+      "Important Notes of Stocktake":
+        "https://junglehouse.notion.site/Important-Notes-of-Stocktake-265379015087802c8f57d8b3056d24a8",
+      "Important Notes of Stocktake":
+        "https://junglehouse.notion.site/Important-Notes-of-Stocktake-265379015087802c8f57d8b3056d24a8",
+      "Important Notes of Stocktake":
+        "https://junglehouse.notion.site/Important-Notes-of-Stocktake-265379015087802c8f57d8b3056d24a8",
+      "Important Notes of Stocktake":
+        "https://junglehouse.notion.site/Important-Notes-of-Stocktake-265379015087802c8f57d8b3056d24a8",
+      "Important Notes of Stocktake":
+        "https://junglehouse.notion.site/Important-Notes-of-Stocktake-265379015087802c8f57d8b3056d24a8",
+      "Important Notes of Stocktake":
+        "https://junglehouse.notion.site/Important-Notes-of-Stocktake-265379015087802c8f57d8b3056d24a8",
+      "Important Notes of Stocktake":
+        "https://junglehouse.notion.site/Important-Notes-of-Stocktake-265379015087802c8f57d8b3056d24a8",
+      "Important Notes of Stocktake":
+        "https://junglehouse.notion.site/Important-Notes-of-Stocktake-265379015087802c8f57d8b3056d24a8",
+      "Important Notes of Stocktake":
+        "https://junglehouse.notion.site/Important-Notes-of-Stocktake-265379015087802c8f57d8b3056d24a8",
+      "Important Notes of Stocktake":
+        "https://junglehouse.notion.site/Important-Notes-of-Stocktake-265379015087802c8f57d8b3056d24a8",
+      "Important Notes of Stocktake":
+        "https://junglehouse.notion.site/Important-Notes-of-Stocktake-265379015087802c8f57d8b3056d24a8",
+      "Important Notes of Stocktake":
+        "https://junglehouse.notion.site/Important-Notes-of-Stocktake-265379015087802c8f57d8b3056d24a8",
+      "Important Notes of Stocktake":
+        "https://junglehouse.notion.site/Important-Notes-of-Stocktake-265379015087802c8f57d8b3056d24a8",
+      "Important Notes of Stocktake":
+        "https://junglehouse.notion.site/Important-Notes-of-Stocktake-265379015087802c8f57d8b3056d24a8",
+
     };
 
     let elements = [line];
