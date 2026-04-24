@@ -1,3 +1,5 @@
+USE railway;
+
 CREATE TABLE wiki_article (
     article_id INT AUTO_INCREMENT PRIMARY KEY,
     title VARCHAR(200),
@@ -19,11 +21,7 @@ VALUES
 INSERT INTO wiki_article (title, content, category)
 VALUES ('Aeon RoadShow Closing', 'Test steps here...', 'SOP');
 
-#delete row 
-USE jungle_house_ai;
 
-DELETE FROM wiki_article
-WHERE article_id = x;
 
 
 
@@ -52,7 +50,6 @@ UPDATE wiki_article
 SET sub_category = 'AEON OPENING'
 WHERE article_id = 29;
 
-USE jungle_house_ai;
 
 INSERT INTO wiki_article (title, category, sub_category, content)
 VALUES
@@ -65,7 +62,7 @@ VALUES
 ALTER TABLE wiki_article
 ADD display_order INT;
 
-USE jungle_house_ai;
+
 
 UPDATE wiki_article SET display_order = 1 WHERE article_id = 28;
 UPDATE wiki_article SET display_order = 2 WHERE article_id = 30;
@@ -78,13 +75,12 @@ UPDATE wiki_article SET display_order = 6 WHERE article_id = 2;
 SELECT article_id, title FROM wiki_article;
 
 #------------------------------------------------JHKCH KIOSK OPENING LIST------------------------------------------------------------------------
-USE jungle_house_ai;
 
 UPDATE wiki_article
 SET title = 'JHKCH Kiosk Opening List'
 WHERE article_id = 28;
 
-USE jungle_house_ai;
+
 
 UPDATE wiki_article
 SET content = 'Opening SOP-JHKC Kiosk:
@@ -191,14 +187,12 @@ WHERE article_id = 28;
 
 
 #----------------------------------------------------JHKC KIOSK CLOSING LIST------------------------------------------------------------------------------------------------------
-USE jungle_house_ai;
 
 UPDATE wiki_article
 SET title = 'JHKCH Kiosk Closing'
 WHERE article_id = 2;
 
 
-USE jungle_house_ai;
 
 UPDATE wiki_article
 SET content = 'JHKCH Kiosk Closing:
@@ -301,7 +295,7 @@ Additional:
 WHERE article_id = 2;
 
 #----------------------------------------------------Opening SOP - Spring-----------------------------------------------------------------
-USE jungle_house_ai;
+
 
 UPDATE wiki_article
 SET content = 'Opening SOP - QinSheng:
