@@ -141,10 +141,17 @@ def normalize_context(context) -> dict:
     if not isinstance(context, dict):
         return {}
 
+    try:
+        unclear_count = int(context.get("unclear_count", 0) or 0)
+    except Exception:
+        unclear_count = 0
+
     return {
         "title": str(context.get("title", "")).strip(),
+        "category": str(context.get("category", "")).strip(),
         "section": str(context.get("section", "")).strip(),
         "last_step_number": context.get("last_step_number"),
+        "unclear_count": unclear_count,
     }
 
 
@@ -256,6 +263,8 @@ def normalize_result(result, default_source="unknown"):
             "notes": result.get("notes", []),
             "score": float(result.get("score", 0.0)),
             "source": result.get("source", default_source),
+            "context": result.get("context", {}),
+            "escalation_ready": result.get("escalation_ready", False),
         }
 
     return {
@@ -374,19 +383,21 @@ def process_question(question, context=None):
     final_result = choose_final_result(model_result, None)
 
     return {
-        "question": question,
-        "type": final_result.get("type", "text"),
-        "category": final_result["category"],
-        "title": final_result["title"],
-        "section": final_result.get("section"),
-        "reply": final_result.get("reply", final_result["answer"]),
-        "answer": final_result["answer"],
-        "purpose": final_result.get("purpose"),
-        "steps": final_result.get("steps", []),
-        "notes": final_result.get("notes", []),
-        "score": final_result["score"],
-        "source": final_result["source"],
-    }, 200
+    "question": question,
+    "type": final_result.get("type", "text"),
+    "category": final_result["category"],
+    "title": final_result["title"],
+    "section": final_result.get("section"),
+    "reply": final_result.get("reply", final_result["answer"]),
+    "answer": final_result["answer"],
+    "purpose": final_result.get("purpose"),
+    "steps": final_result.get("steps", []),
+    "notes": final_result.get("notes", []),
+    "score": final_result["score"],
+    "source": final_result["source"],
+    "context": final_result.get("context", {}),
+    "escalation_ready": final_result.get("escalation_ready", False),
+}, 200
 
 
 # =========================

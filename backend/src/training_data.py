@@ -1,298 +1,752 @@
-
-from pathlib import Path
 import re
+from typing import Dict, List
 
-import pandas as pd
 
-BASE_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR.parent / "data"
-KNOWLEDGE_FILE = DATA_DIR / "cleaned_knowledge.csv"
-OUTPUT_FILE = DATA_DIR / "training_intents.csv"
-
+# =========================
+# BASIC HELPERS
+# =========================
 
 def normalize_text(text: str) -> str:
-    text = str(text).strip()
-    text = re.sub(r"\s+", " ", text)
-    return text
+    return re.sub(r"\s+", " ", str(text or "").strip()).lower()
 
 
-def slug_text(text: str) -> str:
-    return normalize_text(text).lower()
+def unique_keep_order(items: List[str]) -> List[str]:
+    seen = set()
+    output = []
+    for item in items:
+        key = normalize_text(item)
+        if key and key not in seen:
+            seen.add(key)
+            output.append(item)
+    return output
 
 
-def safe_str(value) -> str:
-    if pd.isna(value):
-        return ""
-    return normalize_text(str(value))
+# =========================
+# MASTER TITLE LIST
+# =========================
+
+ALL_WIKI_TITLES = [
+    "Aeon Roadshow Closing List",
+    "Aeon Roadshow Opening List",
+    "Backend Opening Checklist",
+    "Closing Spring Warehouse",
+    "Ice Bin Daily Closing Checklist",
+    "JHKC Kiosk Opening",
+    "Kiosk Closing Check List",
+    "Kuching Booth Closing dustbin check list",
+    "Opening Notes",
+    "Receipt printer preparation for opening",
+    "Sales Closing Reminders Material",
+    "Shopify POS app Closing",
+    "Shopify POS app Opening",
+    "Spring Roadshow Closing List",
+    "Spring Roadshow Opening List",
+    "Win the Heart Gift Guide",
+    "Promotion",
+    "Lab Report in Website - temporarily removed",
+    "Golden Passion Honey (New Product)",
+    "How shifts arrangements are given",
+    "Bee Point Policy – Crew Member Guideline",
+    "Hari Raya Aidilfitri Public Holiday – Retail (2026)",
+    "Hari Raya Aidilfitri – Dress Code",
+    "Kuching incentive data submission",
+    "PUBLIC HOLIDAY 2026",
+    "Do not open raw honey tester without permission.",
+    "Purple lavender out of stock",
+    "Free wooden stirrer",
+    "Mask and Badge",
+    "Proper way to stack HDPC",
+    "Price for new packaging for HWJ and SHVP",
+    "Customer signature for card payment",
+    "Eating inside the store is strictly prohibited",
+    "Emergency Guide – Responding to Danger or Harassment",
+    "Fake Jungle House",
+    "Bee Points: Redeem Only When Needed",
+    "Bee Green 15",
+    "OT Submission Reminder",
+    "Do not Block The Chiller",
+    "Place Tissue on Cold drinks",
+    "Can not use KB/QB IDs to check customer history",
+    "What is the best answer for client asking how much Honey we are using for our honey Juice?",
+    "Hygiene Compliance Notice – Juice Making (Effective Immediately)",
+    "Cashless",
+    "Morning Shift Attendance Responsibility & Penalty Notice",
+    "New Bee 3rd day Check List",
+    "New Bee 1st day Check List",
+    "Wanna-Bee onboarding Check list",
+]
 
 
-def infer_family(title: str, category: str, section: str) -> str:
-    t = slug_text(title)
-    c = slug_text(category)
-    s = slug_text(section)
+# =========================
+# TITLE GROUPS
+# =========================
 
-    if any(word in t for word in ["opening", "closing", "checklist", "roadshow", "shopify", "warehouse", "printer", "dustbin", "kiosk", "opening notes"]):
-        return "sop"
-    if any(word in t for word in ["promotion", "gift guide", "promo", "win the heart", "bee green"]):
-        return "promotion"
-    if any(word in t for word in ["honey", "juice", "product", "tester"]):
-        return "product"
-    if any(word in t for word in ["policy", "notice", "guide", "penalty", "cashless", "holiday", "signature", "price", "fake", "danger", "harassment", "prohibited", "points", "attendance", "chiller", "history", "tissue"]):
-        return "notice"
-    if c in {"sop", "promotion", "product", "notice", "policy", "sales"}:
-        return c
-    if any(word in s for word in ["rule", "policy", "notice", "warning", "reminder", "memo"]):
-        return "notice"
-    return "general"
+SOP_TITLES = [
+    "Aeon Roadshow Closing List",
+    "Aeon Roadshow Opening List",
+    "Backend Opening Checklist",
+    "Closing Spring Warehouse",
+    "Ice Bin Daily Closing Checklist",
+    "JHKC Kiosk Opening",
+    "Kiosk Closing Check List",
+    "Kuching Booth Closing dustbin check list",
+    "Opening Notes",
+    "Receipt printer preparation for opening",
+    "Sales Closing Reminders Material",
+    "Shopify POS app Closing",
+    "Shopify POS app Opening",
+    "Spring Roadshow Closing List",
+    "Spring Roadshow Opening List",
+]
+
+PROMOTION_TITLES = [
+    "Promotion",
+    "Win the Heart Gift Guide",
+    "Bee Green 15",
+]
+
+PRODUCT_TITLES = [
+    "Golden Passion Honey (New Product)",
+    "Price for new packaging for HWJ and SHVP",
+    "Purple lavender out of stock",
+    "Free wooden stirrer",
+    "What is the best answer for client asking how much Honey we are using for our honey Juice?",
+]
+
+NOTICE_TITLES = [
+    "Lab Report in Website - temporarily removed",
+    "How shifts arrangements are given",
+    "Bee Point Policy – Crew Member Guideline",
+    "Hari Raya Aidilfitri Public Holiday – Retail (2026)",
+    "Hari Raya Aidilfitri – Dress Code",
+    "Kuching incentive data submission",
+    "PUBLIC HOLIDAY 2026",
+    "Do not open raw honey tester without permission.",
+    "Mask and Badge",
+    "Proper way to stack HDPC",
+    "Customer signature for card payment",
+    "Eating inside the store is strictly prohibited",
+    "Emergency Guide – Responding to Danger or Harassment",
+    "Fake Jungle House",
+    "Bee Points: Redeem Only When Needed",
+    "OT Submission Reminder",
+    "Do not Block The Chiller",
+    "Place Tissue on Cold drinks",
+    "Can not use KB/QB IDs to check customer history",
+    "Hygiene Compliance Notice – Juice Making (Effective Immediately)",
+    "Cashless",
+    "Morning Shift Attendance Responsibility & Penalty Notice",
+]
+
+TRAINING_TITLES = [
+    "New Bee 3rd day Check List",
+    "New Bee 1st day Check List",
+    "Wanna-Bee onboarding Check list",
+]
+
+CATEGORY_TITLE_MAP: Dict[str, List[str]] = {
+    "sop": SOP_TITLES,
+    "promotion": PROMOTION_TITLES,
+    "product": PRODUCT_TITLES,
+    "notice": NOTICE_TITLES,
+    "training": TRAINING_TITLES,
+}
+
+TITLE_TO_CATEGORY: Dict[str, str] = {}
+for category_name, title_list in CATEGORY_TITLE_MAP.items():
+    for title in title_list:
+        TITLE_TO_CATEGORY[title] = category_name
 
 
-def title_specific_aliases(title: str) -> list[str]:
-    title_key = slug_text(title)
-    alias_map = {
-        "jhkc kiosk opening": ["opening sop", "kiosk opening", "jhkc opening", "open kiosk", "how to open kiosk"],
-        "kiosk closing check list": ["kiosk closing", "closing kiosk", "close kiosk", "kiosk closing checklist"],
-        "price for new packaging for hwj and shvp": ["new packaging price", "hwj new packaging price", "shvp new packaging price", "old and new packaging price"],
-        "customer signature for card payment": ["card payment signature", "merchant copy signature", "need signature for card payment"],
-        "eating inside the store is strictly prohibited": ["cannot eat inside store", "eat in store prohibited", "store eating rule"],
-        "emergency guide – responding to danger or harassment": ["danger or harassment guide", "what to do if danger happens", "what to do if someone harasses me", "help emergency"],
-        "fake jungle house": ["jungle house scam", "scam jungle house", "fake account jungle house"],
-        "bee points: redeem only when needed": ["redeem bee points", "customer want redeem point", "can redeem points first or not"],
-        "bee green 15": ["sales tactic bee green 15", "when to use bee green 15", "bee green 15 bottle return"],
-        "ot submission reminder": ["ot rule", "when submit ot", "late ot submission", "overtime reminder"],
-        "do not block the chiller": ["chiller reminder", "can block chiller or not", "keep chiller visible"],
-        "place tissue on cold drinks": ["cold drinks tissue", "put tissue on cold drinks", "protect furniture cold drinks"],
-        "can not use kb/qb ids to check customer history": ["use kb qb to check customer history", "staff id check customer history", "customer history access"],
-        "what is the best answer for client asking how much honey we are using for our honey juice?": ["how much honey for honey juice", "what to answer customer honey juice", "30gm honey 250gm water", "tell recipe for honey juice or not"],
-        "hygiene compliance notice – juice making (effective immediately)": ["juice making hygiene rule", "must wear gloves and mask for juice", "juice making penalty", "rm200 commission penalty hygiene"],
-        "cashless": ["accept cash or not", "who can decide cash transactions", "cash transaction rule"],
-        "morning shift attendance responsibility & penalty notice": ["morning shift attendance memo", "attendance penalty memo", "morning shift penalty notice"],
-        "new bee 3rd day check list": ["new bee 3rd day checklist", "3rd day new bee", "third day checklist for new bee", "wanna bee 3rd day", "what should new bee do on day 3", "new staff 3rd day checklist"],
-        "new bee 1st day check list": ["new bee 1st day checklist", "1st day new bee", "first day checklist for new bee", "wanna bee 1st day", "what should new bee do on day 1", "new staff 1st day checklist"],
-        "wanna-bee onboarding check list": ["wanna-bee onboarding checklist", "wanna bee onboarding checklist", "wanna bee onboarding", "onboarding checklist", "onboarding check list", "what should i do for onboarding"],
+# =========================
+# TITLE ALIASES / SYNONYMS
+# =========================
+
+TITLE_ALIASES: Dict[str, List[str]] = {
+    "Aeon Roadshow Closing List": [
+        "aeon roadshow closing",
+        "aeon closing",
+        "aeon close",
+        "aeon roadshow close",
+        "roadshow closing aeon",
+    ],
+    "Aeon Roadshow Opening List": [
+        "aeon roadshow opening",
+        "aeon opening",
+        "aeon open",
+        "aeon roadshow open",
+        "roadshow opening aeon",
+    ],
+    "Backend Opening Checklist": [
+        "backend opening",
+        "backend open",
+        "backend checklist",
+        "backend opening checklist",
+    ],
+    "Closing Spring Warehouse": [
+        "warehouse closing",
+        "closing warehouse",
+        "spring warehouse closing",
+        "closing spring warehouse",
+    ],
+    "Ice Bin Daily Closing Checklist": [
+        "ice bin",
+        "ice bin closing",
+        "ice bin daily closing",
+        "ice bin checklist",
+    ],
+    "JHKC Kiosk Opening": [
+        "jhkc kiosk opening",
+        "kiosk opening",
+        "jhkc opening",
+        "spring kiosk opening",
+        "kiosk open",
+        "open kiosk",
+    ],
+    "Kiosk Closing Check List": [
+        "kiosk closing",
+        "kiosk closing checklist",
+        "kiosk close",
+        "close kiosk",
+        "spring kiosk closing",
+    ],
+    "Kuching Booth Closing dustbin check list": [
+        "kuching booth closing",
+        "dustbin check list",
+        "dustbin checklist",
+        "booth dustbin",
+        "kuching booth dustbin",
+    ],
+    "Opening Notes": [
+        "opening notes",
+        "notes for opening",
+        "opening reminder",
+        "open notes",
+    ],
+    "Receipt printer preparation for opening": [
+        "receipt printer",
+        "printer opening",
+        "receipt printer opening",
+        "printer preparation",
+        "receipt printer preparation",
+    ],
+    "Sales Closing Reminders Material": [
+        "sales closing reminder",
+        "closing reminders",
+        "sales reminder",
+        "closing material",
+    ],
+    "Shopify POS app Closing": [
+        "shopify closing",
+        "shopify pos closing",
+        "pos app closing",
+        "shopify app closing",
+    ],
+    "Shopify POS app Opening": [
+        "shopify opening",
+        "shopify pos opening",
+        "pos app opening",
+        "shopify app opening",
+    ],
+    "Spring Roadshow Closing List": [
+        "spring roadshow closing",
+        "roadshow closing",
+        "spring roadshow close",
+        "roadshow close",
+    ],
+    "Spring Roadshow Opening List": [
+        "spring roadshow opening",
+        "roadshow opening",
+        "spring roadshow open",
+        "roadshow open",
+    ],
+    "Win the Heart Gift Guide": [
+        "win the heart",
+        "gift guide",
+        "heart gift guide",
+    ],
+    "Promotion": [
+        "promotion",
+        "promo",
+        "latest promotion",
+        "current promotion",
+    ],
+    "Lab Report in Website - temporarily removed": [
+        "lab report",
+        "website lab report",
+        "lab report removed",
+    ],
+    "Golden Passion Honey (New Product)": [
+        "golden passion honey",
+        "new product",
+        "golden passion",
+    ],
+    "How shifts arrangements are given": [
+        "shift arrangement",
+        "shift arrangements",
+        "how shift arrange",
+        "roster arrangement",
+    ],
+    "Bee Point Policy – Crew Member Guideline": [
+        "bee point policy",
+        "bee point",
+        "crew member guideline",
+        "bee points policy",
+    ],
+    "Hari Raya Aidilfitri Public Holiday – Retail (2026)": [
+        "hari raya public holiday",
+        "aidilfitri public holiday",
+        "raya public holiday",
+        "retail public holiday 2026",
+    ],
+    "Hari Raya Aidilfitri – Dress Code": [
+        "hari raya dress code",
+        "aidilfitri dress code",
+        "raya dress code",
+        "dress code raya",
+    ],
+    "Kuching incentive data submission": [
+        "kuching incentive",
+        "incentive submission",
+        "kuching data submission",
+    ],
+    "PUBLIC HOLIDAY 2026": [
+        "public holiday",
+        "public holiday 2026",
+        "holiday 2026",
+    ],
+    "Do not open raw honey tester without permission.": [
+        "raw honey tester",
+        "do not open raw honey tester",
+        "tester permission",
+    ],
+    "Purple lavender out of stock": [
+        "purple lavender",
+        "lavender out of stock",
+        "out of stock lavender",
+    ],
+    "Free wooden stirrer": [
+        "wooden stirrer",
+        "free stirrer",
+        "free wooden stirrer",
+    ],
+    "Mask and Badge": [
+        "mask and badge",
+        "badge",
+        "mask",
+    ],
+    "Proper way to stack HDPC": [
+        "stack hdpc",
+        "hdpc",
+        "proper way to stack hdpc",
+    ],
+    "Price for new packaging for HWJ and SHVP": [
+        "new packaging price",
+        "packaging price",
+        "hwj shvp price",
+        "price for packaging",
+    ],
+    "Customer signature for card payment": [
+        "customer signature",
+        "card payment signature",
+        "signature for card payment",
+    ],
+    "Eating inside the store is strictly prohibited": [
+        "eating inside store",
+        "cannot eat inside",
+        "no eating in store",
+    ],
+    "Emergency Guide – Responding to Danger or Harassment": [
+        "emergency guide",
+        "danger or harassment",
+        "harassment guide",
+        "responding to danger",
+    ],
+    "Fake Jungle House": [
+        "fake jungle house",
+        "fake account",
+        "fake page",
+        "fake shop",
+    ],
+    "Bee Points: Redeem Only When Needed": [
+        "redeem bee points",
+        "bee points redeem",
+        "redeem only when needed",
+    ],
+    "Bee Green 15": [
+        "bee green 15",
+        "green 15",
+    ],
+    "OT Submission Reminder": [
+        "ot submission",
+        "overtime reminder",
+        "ot reminder",
+    ],
+    "Do not Block The Chiller": [
+        "do not block chiller",
+        "block chiller",
+        "chiller",
+    ],
+    "Place Tissue on Cold drinks": [
+        "place tissue on cold drinks",
+        "tissue on cold drinks",
+        "cold drinks tissue",
+    ],
+    "Can not use KB/QB IDs to check customer history": [
+        "kb qb ids",
+        "customer history ids",
+        "check customer history",
+    ],
+    "What is the best answer for client asking how much Honey we are using for our honey Juice?": [
+        "how much honey we use",
+        "client asking honey juice",
+        "best answer for client",
+        "honey juice answer",
+    ],
+    "Hygiene Compliance Notice – Juice Making (Effective Immediately)": [
+        "hygiene compliance",
+        "juice making hygiene",
+        "effective immediately hygiene",
+    ],
+    "Cashless": [
+        "cashless",
+        "cashless payment",
+        "no cash",
+    ],
+    "Morning Shift Attendance Responsibility & Penalty Notice": [
+        "morning shift attendance",
+        "attendance penalty",
+        "attendance responsibility",
+    ],
+    "New Bee 3rd day Check List": [
+        "new bee 3rd day",
+        "new bee third day",
+        "3rd day",
+        "third day",
+        "day 3",
+        "3rd",
+    ],
+    "New Bee 1st day Check List": [
+        "new bee 1st day",
+        "new bee first day",
+        "1st day",
+        "first day",
+        "day 1",
+        "1st",
+    ],
+    "Wanna-Bee onboarding Check list": [
+        "wanna-bee onboarding",
+        "wannabee onboarding",
+        "onboarding checklist",
+        "onboarding",
+    ],
+}
+
+
+# =========================
+# CATEGORY KEYWORDS
+# =========================
+
+CATEGORY_KEYWORDS: Dict[str, List[str]] = {
+    "sop": [
+        "sop",
+        "checklist",
+        "check list",
+        "step",
+        "steps",
+        "section",
+        "picture",
+        "image",
+        "show all",
+        "opening",
+        "closing",
+        "open",
+        "close",
+        "kiosk",
+        "roadshow",
+        "warehouse",
+        "backend",
+        "printer",
+        "shopify",
+        "ice bin",
+        "dustbin",
+        "notes",
+    ],
+    "promotion": [
+        "promotion",
+        "promo",
+        "discount",
+        "gift guide",
+        "campaign",
+        "bundle",
+        "offer",
+        "bee green",
+        "win the heart",
+        "bee points redeem",
+    ],
+    "product": [
+        "product",
+        "new product",
+        "golden passion honey",
+        "honey",
+        "packaging",
+        "lavender",
+        "stirrer",
+        "price",
+    ],
+    "notice": [
+        "notice",
+        "latest update",
+        "announcement",
+        "policy",
+        "guideline",
+        "public holiday",
+        "holiday",
+        "dress code",
+        "attendance",
+        "penalty",
+        "ot",
+        "cashless",
+        "danger",
+        "harassment",
+        "fake",
+        "badge",
+        "mask",
+        "chiller",
+        "customer history",
+        "signature",
+        "hygiene",
+    ],
+    "training": [
+        "training",
+        "onboarding",
+        "new bee",
+        "wanna-bee",
+        "wannabee",
+        "1st day",
+        "first day",
+        "day 1",
+        "3rd day",
+        "third day",
+        "day 3",
+    ],
+}
+
+
+# =========================
+# GREETING / HELP / ESCALATION
+# =========================
+
+GREETING_PHRASES = [
+    "hi",
+    "hello",
+    "hey",
+    "hii",
+    "helo",
+    "morning",
+    "good morning",
+    "good afternoon",
+    "good evening",
+]
+
+HELP_PHRASES = [
+    "help",
+    "what can you do",
+    "how to ask",
+    "how should i ask",
+    "guide me",
+    "i dont know what to ask",
+    "not sure what to ask",
+    "can you help me",
+]
+
+TOPIC_SWITCH_PHRASES = [
+    "not this",
+    "wrong",
+    "wrong one",
+    "other one",
+    "another one",
+    "actually i want",
+    "sorry actually",
+    "change topic",
+    "switch topic",
+    "instead",
+    "different one",
+]
+
+IRRELEVANT_PHRASES = [
+    "babi",
+    "stupid",
+    "joke",
+    "movie",
+    "game",
+    "relationship",
+    "dating",
+    "love",
+    "sing a song",
+]
+
+ESCALATION_PHRASES = [
+    "team lead",
+    "escalate",
+    "not helpful",
+    "still wrong",
+]
+
+
+# =========================
+# STEP / IMAGE / SHOW ALL PHRASES
+# =========================
+
+SHOW_ALL_PHRASES = [
+    "show all",
+    "all step",
+    "all steps",
+    "full sop",
+    "full checklist",
+    "show full",
+    "show everything",
+]
+
+PICTURE_PHRASES = [
+    "picture",
+    "pictures",
+    "photo",
+    "photos",
+    "image",
+    "images",
+    "show picture",
+    "show photo",
+]
+
+NEXT_STEP_PHRASES = [
+    "what should i do next",
+    "what next",
+    "next step",
+    "after this what should i do",
+    "after this what next",
+    "then what",
+]
+
+
+# =========================
+# TRAINING EXAMPLES
+# =========================
+
+TRAINING_EXAMPLES = [
+    {"text": "kiosk opening", "label": "sop"},
+    {"text": "show me spring roadshow opening", "label": "sop"},
+    {"text": "roadshow closing", "label": "sop"},
+    {"text": "backend opening checklist", "label": "sop"},
+    {"text": "show all step for opening notes", "label": "sop"},
+    {"text": "receipt printer opening", "label": "sop"},
+    {"text": "shopify pos app closing", "label": "sop"},
+    {"text": "ice bin closing", "label": "sop"},
+    {"text": "step 3 for kiosk opening", "label": "sop"},
+    {"text": "step 2 to step 5 for new bee 1st day", "label": "training"},
+    {"text": "new bee", "label": "training"},
+    {"text": "1st day checklist", "label": "training"},
+    {"text": "first day checklist", "label": "training"},
+    {"text": "day 1 checklist", "label": "training"},
+    {"text": "3rd day checklist", "label": "training"},
+    {"text": "third day checklist", "label": "training"},
+    {"text": "day 3 checklist", "label": "training"},
+    {"text": "onboarding checklist", "label": "training"},
+    {"text": "promotion", "label": "promotion"},
+    {"text": "latest promotion", "label": "promotion"},
+    {"text": "gift guide", "label": "promotion"},
+    {"text": "bee green 15", "label": "promotion"},
+    {"text": "product knowledge", "label": "product"},
+    {"text": "golden passion honey", "label": "product"},
+    {"text": "new product", "label": "product"},
+    {"text": "lavender out of stock", "label": "product"},
+    {"text": "public holiday", "label": "notice"},
+    {"text": "dress code", "label": "notice"},
+    {"text": "ot reminder", "label": "notice"},
+    {"text": "cashless", "label": "notice"},
+    {"text": "mask and badge", "label": "notice"},
+]
+
+
+# =========================
+# API FUNCTIONS
+# =========================
+
+def get_titles_by_category(category: str) -> List[str]:
+    return CATEGORY_TITLE_MAP.get(normalize_text(category), [])
+
+
+def get_title_aliases() -> Dict[str, List[str]]:
+    return TITLE_ALIASES
+
+
+def get_category_keywords() -> Dict[str, List[str]]:
+    return CATEGORY_KEYWORDS
+
+
+def get_greeting_phrases() -> List[str]:
+    return GREETING_PHRASES
+
+
+def get_help_phrases() -> List[str]:
+    return HELP_PHRASES
+
+
+def get_topic_switch_phrases() -> List[str]:
+    return TOPIC_SWITCH_PHRASES
+
+
+def get_irrelevant_phrases() -> List[str]:
+    return IRRELEVANT_PHRASES
+
+
+def get_escalation_phrases() -> List[str]:
+    return ESCALATION_PHRASES
+
+
+def get_show_all_phrases() -> List[str]:
+    return SHOW_ALL_PHRASES
+
+
+def get_picture_phrases() -> List[str]:
+    return PICTURE_PHRASES
+
+
+def get_next_step_phrases() -> List[str]:
+    return NEXT_STEP_PHRASES
+
+
+def get_training_examples() -> List[Dict[str, str]]:
+    return TRAINING_EXAMPLES
+
+
+def get_all_titles() -> List[str]:
+    return ALL_WIKI_TITLES
+
+
+def get_title_to_category() -> Dict[str, str]:
+    return TITLE_TO_CATEGORY
+
+
+def infer_category_from_title(title: str) -> str:
+    normalized = normalize_text(title)
+
+    for category, titles in CATEGORY_TITLE_MAP.items():
+        for item in titles:
+            if normalize_text(item) == normalized:
+                return category
+
+    return "sop"
+
+
+def build_title_search_phrases(title: str) -> List[str]:
+    phrases = [title]
+    phrases.extend(TITLE_ALIASES.get(title, []))
+    return unique_keep_order(phrases)
+
+
+def get_all_search_phrases() -> Dict[str, List[str]]:
+    return {
+        title: build_title_search_phrases(title)
+        for title in ALL_WIKI_TITLES
     }
-    return alias_map.get(title_key, [])
-
-
-def build_title_questions(title: str, category: str, section: str) -> list[str]:
-    family = infer_family(title, category, section)
-
-    questions = [
-        title,
-        f"show me {title}",
-        f"show {title}",
-        f"what is {title}",
-        f"explain {title}",
-        f"i need {title}",
-        f"give me {title}",
-        f"summarize {title}",
-        f"show all for {title}",
-    ]
-
-    if family == "sop":
-        questions.extend([
-            f"{title} sop",
-            f"{title} steps",
-            f"{title} checklist",
-            f"{title} full steps",
-            f"step by step for {title}",
-            f"full checklist for {title}",
-            f"show full sop for {title}",
-            f"show all steps for {title}",
-        ])
-    elif family == "promotion":
-        questions.extend([
-            f"promotion for {title}",
-            f"show promo details for {title}",
-            f"discount for {title}",
-            f"sales tactic for {title}",
-        ])
-    elif family == "product":
-        questions.extend([
-            f"product details for {title}",
-            f"benefits of {title}",
-            f"how to answer customer about {title}",
-        ])
-    else:
-        questions.extend([
-            f"rule for {title}",
-            f"notice for {title}",
-            f"what should staff know about {title}",
-        ])
-
-    if section:
-        questions.extend([
-            f"{title} {section}",
-            f"explain {section} for {title}",
-        ])
-
-    questions.extend(title_specific_aliases(title))
-    return [normalize_text(q) for q in questions if normalize_text(q)]
-
-
-def build_section_questions(title: str, section: str) -> list[str]:
-    if not section:
-        return []
-
-    questions = [
-        section,
-        f"{title} {section}",
-        f"{section} section",
-        f"show {section}",
-        f"show {section} for {title}",
-        f"{section} steps",
-        f"{title} {section} steps",
-        f"{title} {section} checklist",
-        f"how to do {section}",
-        f"show the {section} part in {title}",
-    ]
-    return [normalize_text(q) for q in questions if normalize_text(q)]
-
-
-def build_step_questions(title: str, step_number: int) -> list[str]:
-    questions = [
-        f"{title} step {step_number}",
-        f"step {step_number} {title}",
-        f"show step {step_number} for {title}",
-        f"what is step {step_number} for {title}",
-        f"picture for step {step_number} in {title}",
-        f"image for step {step_number} in {title}",
-        f"next after step {step_number} in {title}",
-    ]
-    return [normalize_text(q) for q in questions if normalize_text(q)]
-
-
-def build_content_questions(title: str, content: str) -> list[str]:
-    content_key = slug_text(content)
-    questions = []
-
-    if "gloves" in content_key or "mask" in content_key:
-        questions.extend(["juice gloves and mask rule", "must wear gloves and face mask for juice"])
-    if "rm200" in content_key:
-        questions.extend(["rm200 penalty hygiene", "commission penalty for hygiene"])
-    if "king bee" in content_key or "bee leader" in content_key:
-        questions.extend(["who can decide cash transaction", "who can accept cash"])
-    if "30gm honey" in content_key or "250gm water" in content_key:
-        questions.extend(["30gm honey 250gm water", "how much honey for honey juice"])
-    if "merchant copy" in content_key or "signature" in content_key:
-        questions.extend(["merchant copy need signature", "card payment need customer signature"])
-    if "customer history" in content_key:
-        questions.extend(["check customer history using kb qb ids", "customer history by staff id"])
-    if "eat" in content_key and "store" in content_key:
-        questions.append("can eat inside store or not")
-    if "fake" in content_key or "scam" in content_key:
-        questions.append("fake jungle house scam")
-    if "ot" in content_key or "overtime" in content_key:
-        questions.extend(["submit ot same day", "late ot submission"])
-    if "chiller" in content_key:
-        questions.append("do not block chiller")
-
-    return [normalize_text(q) for q in questions if normalize_text(q)]
-
-
-def load_knowledge() -> pd.DataFrame:
-    if not KNOWLEDGE_FILE.exists():
-        raise FileNotFoundError(f"Knowledge file not found: {KNOWLEDGE_FILE}")
-
-    df = pd.read_csv(KNOWLEDGE_FILE)
-
-    required = {"title", "content"}
-    missing = required - set(df.columns)
-    if missing:
-        raise ValueError(f"cleaned_knowledge.csv missing columns: {sorted(missing)}")
-
-    for column in ["category", "section"]:
-        if column not in df.columns:
-            df[column] = ""
-    if "step_order" not in df.columns:
-        df["step_order"] = None
-
-    df["category"] = df["category"].apply(safe_str)
-    df["title"] = df["title"].apply(safe_str)
-    df["content"] = df["content"].apply(safe_str)
-    df["section"] = df["section"].apply(safe_str)
-    df["step_order"] = pd.to_numeric(df["step_order"], errors="coerce")
-
-    df = df[(df["title"] != "") & (df["content"] != "")]
-    df = df.drop_duplicates().reset_index(drop=True)
-    return df
-
-
-def build_rows(df: pd.DataFrame) -> list[dict]:
-    rows = []
-
-    title_meta = df[["title", "category", "section"]].drop_duplicates().values.tolist()
-    for title, category, section in title_meta:
-        for question in build_title_questions(title, category, section):
-            rows.append({"question": question, "label": title})
-
-        for question in [
-            f"picture for {title}",
-            f"show image for {title}",
-            f"what next for {title}",
-            f"next step for {title}",
-            f"change to {title}",
-            f"continue {title}",
-        ]:
-            rows.append({"question": normalize_text(question), "label": title})
-
-    for title, section in df[["title", "section"]].drop_duplicates().values.tolist():
-        for question in build_section_questions(title, section):
-            rows.append({"question": question, "label": title})
-
-    step_pairs = df[["title", "step_order"]].dropna(subset=["step_order"]).drop_duplicates().values.tolist()
-    for title, step_number in step_pairs:
-        for question in build_step_questions(title, int(step_number)):
-            rows.append({"question": question, "label": title})
-
-    content_pairs = df[["title", "content"]].drop_duplicates().values.tolist()
-    for title, content in content_pairs:
-        for question in build_content_questions(title, content):
-            rows.append({"question": question, "label": title})
-
-    rows.extend([
-        {"question": "opening", "label": "JHKC Kiosk Opening"},
-        {"question": "opening sop", "label": "JHKC Kiosk Opening"},
-        {"question": "need opening sop", "label": "JHKC Kiosk Opening"},
-        {"question": "closing", "label": "Kiosk Closing Check List"},
-        {"question": "closing sop", "label": "Kiosk Closing Check List"},
-        {"question": "need closing sop", "label": "Kiosk Closing Check List"},
-        {"question": "roadshow opening", "label": "Spring Roadshow Opening List"},
-        {"question": "roadshow closing", "label": "Spring Roadshow Closing List"},
-        {"question": "aeon opening", "label": "Aeon Roadshow Opening List"},
-        {"question": "aeon closing", "label": "Aeon Roadshow Closing List"},
-        {"question": "cashless rule", "label": "Cashless"},
-        {"question": "juice hygiene", "label": "Hygiene Compliance Notice – Juice Making (Effective Immediately)"},
-        {"question": "morning shift attendance", "label": "Morning Shift Attendance Responsibility & Penalty Notice"},
-        {"question": "new bee 3rd day checklist", "label": "New Bee 3rd day Check List"},
-        {"question": "what should new bee do on day 3", "label": "New Bee 3rd day Check List"},
-        {"question": "new bee 1st day checklist", "label": "New Bee 1st day Check List"},
-        {"question": "what should new bee do on day 1", "label": "New Bee 1st day Check List"},
-        {"question": "wanna bee onboarding checklist", "label": "Wanna-Bee onboarding Check list"},
-        {"question": "what should i do for onboarding", "label": "Wanna-Bee onboarding Check list"},
-    ])
-
-    return rows
-
-
-def main():
-    df = load_knowledge()
-    rows = build_rows(df)
-
-    out_df = pd.DataFrame(rows).drop_duplicates().reset_index(drop=True)
-    out_df.to_csv(OUTPUT_FILE, index=False)
-
-    label_counts = out_df["label"].value_counts().sort_index().to_dict()
-    print("=" * 70)
-    print("Training intent data generated")
-    print(f"Knowledge rows   : {len(df)}")
-    print(f"Intent rows      : {len(out_df)}")
-    print(f"Unique labels    : {out_df['label'].nunique()}")
-    print(f"Output file      : {OUTPUT_FILE}")
-    print("Label coverage   :")
-    for label, count in label_counts.items():
-        print(f"  - {label}: {count}")
-    print("=" * 70)
-
-
-if __name__ == "__main__":
-    main()
