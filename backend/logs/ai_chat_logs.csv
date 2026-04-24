@@ -16,3 +16,75 @@ timestamp,question,title,section,type,score,source,escalation_ready,reply,error
 2026-04-23T21:27:57,sop,,,text,0.0,low_confidence_or_model_unavailable,True,No confident SOP match. Please escalate to team lead.,
 2026-04-23T21:28:28,sop,,,text,0.0,low_confidence_or_model_unavailable,True,No confident SOP match. Please escalate to team lead.,
 2026-04-23T21:28:33,opening,Aeon Roadshow Opening List,Devices,sop,0.5,lexical_fallback_best_step,False,Please refer to Step 13 for Aeon Roadshow Opening List.,
+2026-04-24T19:40:49,aeon sop,,,text,0.0,low_confidence_or_model_unavailable,True,No confident SOP match. Please escalate to team lead.,
+2026-04-24T19:40:57,aeon closing,Aeon Roadshow Closing List,Display Closing,sop,0.8500487804412842,pytorch_model_high_best_step,False,Please refer to Step 13 for Aeon Roadshow Closing List.,
+2026-04-24T19:41:11,aeon closing all list,Aeon Roadshow Closing List,,sop,0.9672214388847351,pytorch_model_high_best_step,False,Please refer to Step 17 for Aeon Roadshow Closing List.,
+2026-04-24T19:41:15,all step,Aeon Roadshow Closing List,,sop,1.0,context_full_sop,False,Here is the full SOP for Aeon Roadshow Closing List.,
+2026-04-24T20:24:15,sop,,,text,0.0,low_confidence_or_model_unavailable,True,No confident SOP match. Please escalate to team lead.,
+2026-04-24T20:24:23,closing list,,,text,1.0,ambiguous_family,False,"Which SOP do you need:
+- Aeon Roadshow Closing List
+- Closing Spring Warehouse
+- Ice Bin Daily Closing Checklist
+- Kiosk Closing Check List
+- Kuching Booth Closing dustbin check list
+- Shopify POS app Closing
+- Spring Roadshow Closing List
+Please choose one.",
+2026-04-24T20:24:54,spring closing,,,text,1.0,ambiguous_family,False,"Which SOP do you need:
+- Aeon Roadshow Closing List
+- Closing Spring Warehouse
+- Ice Bin Daily Closing Checklist
+- Kiosk Closing Check List
+- Kuching Booth Closing dustbin check list
+- Shopify POS app Closing
+- Spring Roadshow Closing List
+Please choose one.",
+2026-04-24T20:25:55,opening list,,,text,1.0,ambiguous_family,False,"Which SOP do you need:
+- Aeon Roadshow Opening List
+- Backend Opening Checklist
+- JHKC Kiosk Opening
+- Opening Notes
+- Receipt printer preparation for opening
+- Shopify POS app Opening
+- Spring Roadshow Opening List
+Please choose one.",
+2026-04-24T20:26:07,shopify pos app opening,Shopify POS app Opening,,sop,1.0,rule_alias_best_step,False,Please refer to Step 2 for Shopify POS app Opening.,
+2026-04-24T20:26:10,all step,Shopify POS app Opening,,sop,1.0,context_full_sop,False,Here is the full SOP for Shopify POS app Opening.,
+2026-04-24T20:26:20,Spring Roadshow Opening List,Spring Roadshow Opening List,Shopify POS,sop,1.0,rule_alias_best_step,False,Please refer to Step 16 for Spring Roadshow Opening List.,
+2026-04-24T20:26:24,all step,Spring Roadshow Opening List,,sop,1.0,context_full_sop,False,Here is the full SOP for Spring Roadshow Opening List.,
+2026-04-24T20:28:00,babi,Spring Roadshow Opening List,,text,1.0,context_section_choice,False,"I found Spring Roadshow Opening List. Available sections:
+- Terminal Machine
+- Chiller
+- Devices
+- Shopify POS
+- Daily Record Sheet",
+2026-04-24T20:28:07,babi,Spring Roadshow Opening List,,text,1.0,context_section_choice,False,"I found Spring Roadshow Opening List. Available sections:
+- Terminal Machine
+- Chiller
+- Devices
+- Shopify POS
+- Daily Record Sheet",
+2026-04-24T20:28:15,kontol,Spring Roadshow Opening List,,text,1.0,context_section_choice,False,"I found Spring Roadshow Opening List. Available sections:
+- Terminal Machine
+- Chiller
+- Devices
+- Shopify POS
+- Daily Record Sheet",
+2026-04-24T20:28:23,bacot,Spring Roadshow Opening List,,text,1.0,context_section_choice,False,"I found Spring Roadshow Opening List. Available sections:
+- Terminal Machine
+- Chiller
+- Devices
+- Shopify POS
+- Daily Record Sheet",
+2026-04-24T20:28:28,next,Spring Roadshow Opening List,,text,1.0,context_section_choice,False,"I found Spring Roadshow Opening List. Available sections:
+- Terminal Machine
+- Chiller
+- Devices
+- Shopify POS
+- Daily Record Sheet",
+2026-04-24T20:29:07,Daily Record Sheet,Spring Roadshow Opening List,Daily Record Sheet,sop,1.0,context_section,False,Here is the Daily Record Sheet section for Spring Roadshow Opening List.,
+2026-04-24T20:29:14,I want all step,Spring Roadshow Opening List,,sop,1.0,context_full_sop,False,Here is the full SOP for Spring Roadshow Opening List.,
+2026-04-24T20:29:51,Mask and Badge,Mask and Badge,Reference Image,sop,1.0,rule_alias_best_step,False,Please refer to Step 2 for Mask and Badge.,
+2026-04-24T20:29:56,all step,Mask and Badge,,sop,1.0,context_full_sop,False,Here is the full SOP for Mask and Badge.,
+2026-04-24T20:31:00,all step,Mask and Badge,,sop,1.0,context_full_sop,False,Here is the full SOP for Mask and Badge.,
+2026-04-24T20:31:30,Mask and Badge,Mask and Badge,Reference Image,sop,1.0,rule_alias_best_step,False,Please refer to Step 2 for Mask and Badge.,
