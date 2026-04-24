@@ -62,10 +62,11 @@ REAL_JH_TEST_QUESTIONS = [
 def get_db_connection():
     try:
         conn = mysql.connector.connect(
-            host="localhost",
-            user="jh_app",
-            password="JHapp123!",
-            database="jungle_house_ai"
+            host="shuttle.proxy.rlwy.net",
+            port=26909,
+            user="root",
+            password="zzUtzEvBsOnHpeUqaHCIJOdilqfoHxHI",
+            database="railway",
         )
         return conn
     except mysql.connector.Error as err:
