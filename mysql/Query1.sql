@@ -1,5 +1,5 @@
-CREATE DATABASE IF NOT EXISTS jungle_house_ai;
-USE jungle_house_ai;
+
+USE railway;
 CREATE TABLE roles (
     role_id INT AUTO_INCREMENT PRIMARY KEY,
     role_name VARCHAR(30) NOT NULL UNIQUE
@@ -60,13 +60,8 @@ VALUES
 ('JH-LEAD-001', 2, 1, '2026-12-31 23:59:59');
 
 
-CREATE USER 'jh_app'@'localhost' IDENTIFIED BY 'JHapp123!';
 
-GRANT ALL PRIVILEGES ON jungle_house_ai.* TO 'jh_app'@'localhost';
 
-FLUSH PRIVILEGES;
-
-USE jungle_house_ai;
 SHOW TABLES;
 
 SELECT * FROM roles;
@@ -74,12 +69,10 @@ SELECT * FROM roles;
 SELECT * FROM registration_keys;
 
 
-USE jungle_house_ai;
 
 SELECT * FROM users;
 
 
-USE jungle_house_ai;
 
 SELECT
     lh.login_id,
