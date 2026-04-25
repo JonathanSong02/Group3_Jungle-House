@@ -182,6 +182,8 @@ def is_escalation_result(result: dict | None) -> bool:
         "prediction_error",
         "engine_unavailable",
         "fallback",
+        "repeated_unclear_question",
+        "repeated_system_problem",
     }:
         return True
 
@@ -306,25 +308,53 @@ def is_valid_answer(result):
 
 def choose_final_result(model_result, retrieval_result):
     if model_result and is_valid_answer(model_result):
-        if model_result["type"] == "sop":
+        if model_result.get("type") == "sop":
             return model_result
-        if model_result["score"] >= 0.60:
+
+        if model_result.get("score", 0.0) >= 0.60:
+            return model_result
+
+        if model_result.get("source") in {
+            "unclear_question_clarification",
+            "repeated_unclear_question",
+            "system_problem_clarification",
+            "repeated_system_problem",
+            "broad_topic_clarification",
+        }:
+            return model_result
+
+        if model_result.get("escalation_ready", False):
             return model_result
 
     if retrieval_result and is_valid_answer(retrieval_result):
-        if retrieval_result["score"] >= 0.20:
+        if retrieval_result.get("score", 0.0) >= 0.20:
             return retrieval_result
 
     if model_result and retrieval_result:
-        if retrieval_result["score"] > model_result["score"]:
+        if retrieval_result.get("score", 0.0) > model_result.get("score", 0.0):
             return retrieval_result
-        return model_result
+
+        if model_result.get("score", 0.0) >= 0.45:
+            return model_result
 
     if retrieval_result:
         return retrieval_result
 
     if model_result:
-        return model_result
+        if model_result.get("escalation_ready", False):
+            return model_result
+
+        if model_result.get("source") in {
+            "unclear_question_clarification",
+            "repeated_unclear_question",
+            "system_problem_clarification",
+            "repeated_system_problem",
+            "broad_topic_clarification",
+        }:
+            return model_result
+
+        if model_result.get("score", 0.0) >= 0.45:
+            return model_result
 
     return {
         "type": "text",
@@ -338,6 +368,8 @@ def choose_final_result(model_result, retrieval_result):
         "notes": [],
         "score": 0.0,
         "source": "fallback",
+        "context": {},
+        "escalation_ready": True,
     }
 
 
@@ -387,21 +419,21 @@ def process_question(question, context=None):
     final_result = choose_final_result(model_result, None)
 
     return {
-    "question": question,
-    "type": final_result.get("type", "text"),
-    "category": final_result["category"],
-    "title": final_result["title"],
-    "section": final_result.get("section"),
-    "reply": final_result.get("reply", final_result["answer"]),
-    "answer": final_result["answer"],
-    "purpose": final_result.get("purpose"),
-    "steps": final_result.get("steps", []),
-    "notes": final_result.get("notes", []),
-    "score": final_result["score"],
-    "source": final_result["source"],
-    "context": final_result.get("context", {}),
-    "escalation_ready": final_result.get("escalation_ready", False),
-}, 200
+        "question": question,
+        "type": final_result.get("type", "text"),
+        "category": final_result.get("category"),
+        "title": final_result.get("title"),
+        "section": final_result.get("section"),
+        "reply": final_result.get("reply", final_result.get("answer", "")),
+        "answer": final_result.get("answer", final_result.get("reply", "")),
+        "purpose": final_result.get("purpose"),
+        "steps": final_result.get("steps", []),
+        "notes": final_result.get("notes", []),
+        "score": final_result.get("score", 0.0),
+        "source": final_result.get("source", "unknown"),
+        "context": final_result.get("context", {}),
+        "escalation_ready": final_result.get("escalation_ready", False),
+    }, 200
 
 
 # =========================

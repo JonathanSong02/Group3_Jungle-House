@@ -154,8 +154,95 @@ def is_unclear_operational_question(question: str) -> bool:
     unclear_patterns = [
         "i don't know what to do",
         "i dont know what to do",
-        "still don't know",
-        "still dont know",
+        "i don't know",
+        "i dont know",
+        "dont know",
+        "don't know",
+        "not sure",
+        "still not sure",
+        "i am confused",
+        "im confused",
+        "confused",
+        "i am stuck",
+        "im stuck",
+        "stuck",
+        "what is this",
+        "can you explain",
+        "i have a problem",
+        "something is wrong",
+        "got problem",
+        "system got problem",
+        "the thing cannot work",
+        "it still cannot work",
+        "cannot work",
+        "cannot use",
+        "not working",
+        "still not working",
+        "nothing happens",
+        "no result",
+        "it failed",
+        "failed",
+        "error",
+        "got error",
+        "i need help with something",
+        "what should i press",
+        "which button",
+        "where is the button",
+        "where to click",
+        "i cannot find it",
+        "cannot find it",
+        "i still don't understand",
+        "i still dont understand",
+        "still don't understand",
+        "still dont understand",
+        "what should i do",
+        "what now",
+        "now how",
+        "then",
+        "after this",
+        "help again",
+    ]
+
+    return any(pattern in q for pattern in unclear_patterns)
+
+def detect_confusion_type(question: str) -> str | None:
+    q = normalize_lower(question)
+
+    system_patterns = [
+        "cannot login",
+        "cant login",
+        "can't login",
+        "login problem",
+        "cannot register",
+        "cannot submit",
+        "cannot upload",
+        "cannot print",
+        "cannot scan",
+        "button not working",
+        "page not loading",
+        "screen stuck",
+        "nothing happens",
+        "no result",
+        "error message",
+        "got error",
+        "system error",
+        "app problem",
+        "website problem",
+    ]
+
+    unclear_patterns = [
+        "help",
+        "help me",
+        "i need help",
+        "i need help with something",
+        "i don't know",
+        "i dont know",
+        "dont know",
+        "don't know",
+        "i don't know what to do",
+        "i dont know what to do",
+        "not sure",
+        "still not sure",
         "what is this",
         "can you explain",
         "i have a problem",
@@ -164,19 +251,254 @@ def is_unclear_operational_question(question: str) -> bool:
         "it still cannot work",
         "cannot work",
         "not working",
-        "i need help with something",
+        "still not working",
+        "i am confused",
+        "im confused",
+        "confused",
+        "i am stuck",
+        "im stuck",
+        "stuck",
         "what should i press",
+        "which button",
+        "where is the button",
+        "where to click",
         "i cannot find it",
         "cannot find it",
-        "i still don't understand",
-        "i still dont understand",
+        "what now",
+        "now how",
+        "then",
+        "after this",
         "still don't understand",
         "still dont understand",
-        "what should i do",
-        "help again",
     ]
 
-    return any(pattern in q for pattern in unclear_patterns)
+    broad_topic_patterns = [
+        "opening",
+        "closing",
+        "sop",
+        "checklist",
+        "check list",
+        "promotion",
+        "promo",
+        "product",
+        "training",
+        "onboarding",
+        "notice",
+        "policy",
+    ]
+
+    # 1. System/app problem should be handled first.
+    if any(pattern in q for pattern in system_patterns):
+        return "system_problem"
+
+    # 2. Single broad topic should show options.
+    if q in broad_topic_patterns:
+        return "broad_topic"
+
+    # 3. If the question contains a clear topic, do not mark it as unclear.
+    # Example: "help kiosk opening" should still answer kiosk opening.
+    clear_topic_words = [
+        "sop",
+        "promotion",
+        "promo",
+        "product",
+        "sales",
+        "training",
+        "onboarding",
+        "public holiday",
+        "policy",
+        "dress code",
+        "bee point",
+        "golden passion",
+        "kiosk",
+        "roadshow",
+        "shopify",
+        "printer",
+        "ice bin",
+        "new bee",
+        "opening",
+        "closing",
+        "packaging",
+        "honey",
+        "honey juice",
+        "chiller",
+        "cashless",
+        "ot",
+        "overtime",
+        "attendance",
+        "mask",
+        "badge",
+        "customer signature",
+        "card payment",
+        "fake jungle house",
+        "harassment",
+        "danger",
+        "tissue",
+        "cold drinks",
+        "kb",
+        "qb",
+    ]
+
+    if any(word in q for word in clear_topic_words):
+        return None
+
+    # 4. Truly unclear/confusing question.
+    if any(pattern == q or pattern in q for pattern in unclear_patterns):
+        return "unclear"
+
+    return None
+
+def unclear_clarification_response(context: dict) -> dict:
+    unclear_count = get_unclear_count(context)
+
+    if unclear_count >= 1:
+        reply = "I’m still not sure which topic you need. Please escalate this question to your team lead."
+
+        return build_response(
+            reply=reply,
+            answer=reply,
+            score=0.0,
+            source="repeated_unclear_question",
+            escalation_ready=True,
+            context={"unclear_count": unclear_count + 1},
+        )
+
+    reply = (
+        "I’m not sure which topic you need yet.\n\n"
+        "Please choose one:\n"
+        "1. SOP / checklist\n"
+        "2. Promotion\n"
+        "3. Product knowledge\n"
+        "4. Notice / policy\n"
+        "5. Training / onboarding\n"
+        "6. System / login / button problem\n\n"
+        "Example: kiosk opening, promotion, new packaging price, or new bee 1st day."
+    )
+
+    return build_response(
+        reply=reply,
+        answer=reply,
+        score=0.0,
+        source="unclear_question_clarification",
+        escalation_ready=False,
+        context={"unclear_count": unclear_count + 1},
+    )
+
+
+def system_problem_response(context: dict) -> dict:
+    unclear_count = get_unclear_count(context)
+
+    if unclear_count >= 1:
+        reply = "This still sounds unresolved. Please escalate this issue to your team lead."
+
+        return build_response(
+            reply=reply,
+            answer=reply,
+            score=0.0,
+            source="repeated_system_problem",
+            escalation_ready=True,
+            context={"unclear_count": unclear_count + 1},
+        )
+
+    reply = (
+        "This sounds like a system/app issue.\n\n"
+        "Please tell me:\n"
+        "1. Which page are you on?\n"
+        "2. What button did you press?\n"
+        "3. What error message do you see?\n\n"
+        "Example: login page, register button, or submit button."
+    )
+
+    return build_response(
+        reply=reply,
+        answer=reply,
+        score=0.0,
+        source="system_problem_clarification",
+        escalation_ready=False,
+        context={"unclear_count": unclear_count + 1},
+    )
+
+def broad_topic_response(question: str, context: dict) -> dict | None:
+    q = normalize_lower(question)
+
+    if q == "opening":
+        reply = (
+            "Which opening SOP do you need?\n\n"
+            "1. JHKC Kiosk Opening\n"
+            "2. Shopify POS app Opening\n"
+            "3. Spring Roadshow Opening List\n"
+            "4. Aeon Roadshow Opening List\n"
+            "5. Backend Opening Checklist\n"
+            "6. Receipt printer preparation for opening"
+        )
+    elif q == "closing":
+        reply = (
+            "Which closing SOP do you need?\n\n"
+            "1. Kiosk Closing Check List\n"
+            "2. Shopify POS app Closing\n"
+            "3. Ice Bin Daily Closing Checklist\n"
+            "4. Closing Spring Warehouse\n"
+            "5. Spring Roadshow Closing List\n"
+            "6. Aeon Roadshow Closing List"
+        )
+    elif q in {"sop", "checklist", "check list"}:
+        reply = (
+            "Which SOP/checklist do you need?\n\n"
+            "You can ask for:\n"
+            "- kiosk opening\n"
+            "- kiosk closing\n"
+            "- shopify opening\n"
+            "- shopify closing\n"
+            "- roadshow opening\n"
+            "- roadshow closing\n"
+            "- receipt printer"
+        )
+    elif q in {"promotion", "promo"}:
+        reply = (
+            "Which promotion information do you need?\n\n"
+            "1. Promotion\n"
+            "2. Win the Heart Gift Guide\n"
+            "3. Bee Green 15"
+        )
+    elif q == "product":
+        reply = (
+            "Which product information do you need?\n\n"
+            "1. Golden Passion Honey\n"
+            "2. New packaging price\n"
+            "3. Purple lavender out of stock\n"
+            "4. Free wooden stirrer\n"
+            "5. Honey juice customer answer"
+        )
+    elif q in {"training", "onboarding"}:
+        reply = (
+            "Which training checklist do you need?\n\n"
+            "1. New Bee 1st day Check List\n"
+            "2. New Bee 3rd day Check List\n"
+            "3. Wanna-Bee onboarding Check list"
+        )
+    elif q in {"notice", "policy"}:
+        reply = (
+            "Which notice or policy do you need?\n\n"
+            "You can ask about:\n"
+            "- bee point policy\n"
+            "- public holiday\n"
+            "- dress code\n"
+            "- OT submission\n"
+            "- cashless\n"
+            "- chiller\n"
+            "- attendance"
+        )
+    else:
+        return None
+
+    return build_response(
+        reply=reply,
+        answer=reply,
+        score=0.85,
+        source="broad_topic_clarification",
+        escalation_ready=False,
+        context={"unclear_count": 0},
+    )
 
 
 def sales_guidance_response() -> dict:
@@ -1573,6 +1895,8 @@ def category_guidance_response(category: str) -> dict:
 def get_model_answer(question: str, context: Optional[dict] = None) -> dict:
     question = normalize_text(question)
     context = normalize_context(context)
+
+            
     unclear_count = get_unclear_count(context)
 
     if not question:
@@ -1585,6 +1909,19 @@ def get_model_answer(question: str, context: Optional[dict] = None) -> dict:
             fallback=True,
             context={"unclear_count": unclear_count},
         )
+    
+    confusion_type = detect_confusion_type(question)
+
+    if confusion_type == "system_problem":
+        return system_problem_response(context)
+
+    if confusion_type == "broad_topic":
+        broad_response = broad_topic_response(question, context)
+        if broad_response:
+            return broad_response
+
+    if confusion_type == "unclear":
+        return unclear_clarification_response(context)
 
     # Greeting should only show guidance and reset unclear count.
     if is_greeting(question):
