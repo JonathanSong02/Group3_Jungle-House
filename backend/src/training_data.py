@@ -194,6 +194,7 @@ TITLE_ALIASES: Dict[str, List[str]] = {
         "ice bin closing",
         "ice bin daily closing",
         "ice bin checklist",
+        "ice ben closing",
     ],
     "JHKC Kiosk Opening": [
         "jhkc kiosk opening",
@@ -229,6 +230,8 @@ TITLE_ALIASES: Dict[str, List[str]] = {
         "receipt printer opening",
         "printer preparation",
         "receipt printer preparation",
+        "recipt printer",
+        "recepit printer",
     ],
     "Sales Closing Reminders Material": [
         "sales closing reminder",
@@ -241,12 +244,14 @@ TITLE_ALIASES: Dict[str, List[str]] = {
         "shopify pos closing",
         "pos app closing",
         "shopify app closing",
+        "shopfy pos closing",
     ],
     "Shopify POS app Opening": [
         "shopify opening",
         "shopify pos opening",
         "pos app opening",
         "shopify app opening",
+        "shopfy pos opening",
     ],
     "Spring Roadshow Closing List": [
         "spring roadshow closing",
@@ -270,6 +275,7 @@ TITLE_ALIASES: Dict[str, List[str]] = {
         "promo",
         "latest promotion",
         "current promotion",
+        "promosion",
     ],
     "Lab Report in Website - temporarily removed": [
         "lab report",
@@ -280,6 +286,7 @@ TITLE_ALIASES: Dict[str, List[str]] = {
         "golden passion honey",
         "new product",
         "golden passion",
+        "goldn passion honey",
     ],
     "How shifts arrangements are given": [
         "shift arrangement",
@@ -292,6 +299,7 @@ TITLE_ALIASES: Dict[str, List[str]] = {
         "bee point",
         "crew member guideline",
         "bee points policy",
+        "bee piont policy",
     ],
     "Hari Raya Aidilfitri Public Holiday – Retail (2026)": [
         "hari raya public holiday",
@@ -304,6 +312,7 @@ TITLE_ALIASES: Dict[str, List[str]] = {
         "aidilfitri dress code",
         "raya dress code",
         "dress code raya",
+        "raya dres code",
     ],
     "Kuching incentive data submission": [
         "kuching incentive",
@@ -429,6 +438,11 @@ TITLE_ALIASES: Dict[str, List[str]] = {
     "New Bee 1st day Check List": [
         "new bee 1st day",
         "new bee first day",
+        "new staff first day",
+        "new staff 1st day",
+        "first day new staff",
+        "train new staff first day",
+        "staff first day checklist",
         "1st day",
         "first day",
         "day 1",
@@ -551,6 +565,10 @@ GREETING_PHRASES = [
 
 HELP_PHRASES = [
     "help",
+    "help me",
+    "help again",
+    "i need help",
+    "i need help again",
     "what can you do",
     "how to ask",
     "how should i ask",
@@ -558,6 +576,16 @@ HELP_PHRASES = [
     "i dont know what to ask",
     "not sure what to ask",
     "can you help me",
+    "not sure",
+    "still not sure",
+    "dont know",
+    "don't know",
+    "i dont know",
+    "i don't know",
+    "still dont know",
+    "still don't know",
+    "i still dont understand",
+    "i still don't understand",
 ]
 
 TOPIC_SWITCH_PHRASES = [

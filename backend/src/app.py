@@ -168,6 +168,10 @@ def ensure_log_files() -> None:
 
 def is_escalation_result(result: dict | None) -> bool:
     result = result or {}
+
+    if bool(result.get("escalation_ready", False)):
+        return True
+
     source = str(result.get("source", "")).strip()
     reply = str(result.get("reply", "")).lower()
     answer = str(result.get("answer", "")).lower()

@@ -88,3 +88,550 @@ Please choose one.",
 2026-04-24T20:29:56,all step,Mask and Badge,,sop,1.0,context_full_sop,False,Here is the full SOP for Mask and Badge.,
 2026-04-24T20:31:00,all step,Mask and Badge,,sop,1.0,context_full_sop,False,Here is the full SOP for Mask and Badge.,
 2026-04-24T20:31:30,Mask and Badge,Mask and Badge,Reference Image,sop,1.0,rule_alias_best_step,False,Please refer to Step 2 for Mask and Badge.,
+2026-04-25T17:43:51,hi,,,text,1.0,greeting_guidance,False,"Hi — I can help with SOP, checklist, promotion, product knowledge, notice, or training questions.
+
+You can ask things like:
+- kiosk opening
+- roadshow closing
+- show all for kiosk opening
+- step 2 to step 5
+- promotion
+- public holiday
+- new bee 1st day
+- golden passion honey",
+2026-04-25T17:44:00,al,,,text,0.35,clarification_round_1,False,"I’m not fully sure which topic you want yet.
+
+Please choose one area:
+- SOP / checklist
+- Promotion
+- Product knowledge
+- Notice / latest update
+- Training / onboarding
+
+Examples:
+- kiosk opening
+- roadshow closing
+- promotion
+- public holiday
+- new bee 1st day",
+2026-04-25T17:44:05,all,,,text,0.15,escalate_after_two_unclear_attempts,True,I’m still not fully sure which topic you need. Please escalate this question to team lead.,
+2026-04-25T17:44:15,what i can ask?,,,text,0.15,escalate_after_two_unclear_attempts,True,I’m still not fully sure which topic you need. Please escalate this question to team lead.,
+2026-04-25T17:44:25,opening,,,text,0.81,ambiguous_title_choice,False,"I found multiple SOPs. Which one do you need?
+
+- Aeon Roadshow Opening List
+- Backend Opening Checklist
+- JHKC Kiosk Opening
+- Opening Notes
+- Receipt printer preparation for opening
+- Shopify POS app Opening
+- Spring Roadshow Opening List
+
+You can also ask:
+- show all
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture",
+2026-04-25T17:45:42,How to do JHKC kiosk opening?,JHKC Kiosk Opening,,text,1.0,matched_title_guidance,False,"I found JHKC Kiosk Opening.
+
+You can ask:
+- step 3
+- step 2 to step 5
+- show picture
+- show all",
+2026-04-25T17:45:49,Show me JHKC Kiosk Opening steps.,JHKC Kiosk Opening,,text,0.78,context_guidance,False,"I’m currently helping you with JHKC Kiosk Opening.
+Tell me what you need next — for example:
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture
+- show all
+
+If you want another topic, just type it directly, like promotion or public holiday.",
+2026-04-25T17:45:55,all step,JHKC Kiosk Opening,,sop,0.95,context_show_all,False,Here is the full SOP / checklist for JHKC Kiosk Opening.,
+2026-04-25T17:45:59,What should I do when opening the kiosk?,JHKC Kiosk Opening,,text,1.0,matched_title_guidance,False,"I found JHKC Kiosk Opening.
+
+You can ask:
+- step 3
+- step 2 to step 5
+- show picture
+- show all",
+2026-04-25T17:46:15,Show me all SOP.,JHKC Kiosk Opening,,text,0.78,context_guidance,False,"I’m currently helping you with JHKC Kiosk Opening.
+Tell me what you need next — for example:
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture
+- show all
+
+If you want another topic, just type it directly, like promotion or public holiday.",
+2026-04-25T17:46:21,Show me all SOP.,JHKC Kiosk Opening,,text,0.78,context_guidance,False,"I’m currently helping you with JHKC Kiosk Opening.
+Tell me what you need next — for example:
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture
+- show all
+
+If you want another topic, just type it directly, like promotion or public holiday.",
+2026-04-25T17:46:25,What SOP do you have?,JHKC Kiosk Opening,,text,0.78,context_guidance,False,"I’m currently helping you with JHKC Kiosk Opening.
+Tell me what you need next — for example:
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture
+- show all
+
+If you want another topic, just type it directly, like promotion or public holiday.",
+2026-04-25T17:46:29,Show me product knowledge.,,,text,0.92,generic_product,False,"Sure — I can help with product knowledge.
+
+Please choose one:
+- Golden Passion Honey (New Product)
+- Price for new packaging for HWJ and SHVP
+- What is the best answer for client asking how much Honey we are using for our honey Juice?",
+2026-04-25T17:46:36,What product information can you answer?,,,text,0.92,generic_product,False,"Sure — I can help with product knowledge.
+
+Please choose one:
+- Golden Passion Honey (New Product)
+- Price for new packaging for HWJ and SHVP
+- What is the best answer for client asking how much Honey we are using for our honey Juice?",
+2026-04-25T17:46:46,Show me sales information.,Sales Closing Reminders Material,,text,0.76,matched_title_guidance,False,"I found Sales Closing Reminders Material. Available sections: Sales Closing Reminders.
+
+You can ask:
+- step 3
+- step 2 to step 5
+- show picture
+- show all",
+2026-04-25T17:46:54,What sales guide do you have?,,,text,0.76,ambiguous_title_choice,False,"I found these notice topics. Which one do you need?
+
+- Emergency Guide – Responding to Danger or Harassment
+- Sales Closing Reminders Material
+- Win the Heart Gift Guide",
+2026-04-25T17:47:02,Show me training checklist.,,,text,0.76,ambiguous_title_choice,False,"I found multiple SOPs. Which one do you need?
+
+- Backend Opening Checklist
+- Kuching Booth Closing dustbin check list
+- Wanna-Bee onboarding Check list
+
+You can also ask:
+- show all
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture",
+2026-04-25T17:47:10,What onboarding checklist do you have?,Wanna-Bee onboarding Check list,,text,1.0,matched_title_guidance,False,"I found Wanna-Bee onboarding Check list. Available sections: Add Team Leader contact, Announcement, Availability, Before first day, Download and install, Ground rules, Join Google Group, Join Whatsapp group, Payment info, Portrait, Reminder, Setup Shopify account, Uniform, Visit Jungle House Kuching Wiki.
+
+You can ask:
+- step 3
+- step 2 to step 5
+- show picture
+- show all",
+2026-04-25T17:47:16,Show me public holiday information.,PUBLIC HOLIDAY 2026,,text,0.96,matched_text_topic,False,Sure — here’s the information for PUBLIC HOLIDAY 2026.,
+2026-04-25T17:47:28,What policy can you explain?,PUBLIC HOLIDAY 2026,,text,0.78,context_guidance,False,"I’m currently helping you with PUBLIC HOLIDAY 2026.
+Tell me what you need next — for example:
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture
+- show all
+
+If you want another topic, just type it directly, like promotion or public holiday.",
+2026-04-25T17:47:45,Still don’t know.,PUBLIC HOLIDAY 2026,,text,0.78,context_guidance,False,"I’m currently helping you with PUBLIC HOLIDAY 2026.
+Tell me what you need next — for example:
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture
+- show all
+
+If you want another topic, just type it directly, like promotion or public holiday.",
+2026-04-25T17:47:51,I don’t know what to do.,PUBLIC HOLIDAY 2026,,text,0.78,context_guidance,False,"I’m currently helping you with PUBLIC HOLIDAY 2026.
+Tell me what you need next — for example:
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture
+- show all
+
+If you want another topic, just type it directly, like promotion or public holiday.",
+2026-04-25T17:47:58,What should new staff do on the first day?,New Bee 1st day Check List,,text,1.0,matched_title_guidance,False,"I found New Bee 1st day Check List.
+
+You can ask:
+- step 3
+- step 2 to step 5
+- show picture
+- show all",
+2026-04-25T17:49:15,Show me JHKC Kiosk Opening with images.,New Bee 1st day Check List,,sop,0.95,context_picture,False,Here are the steps with pictures for New Bee 1st day Check List.,
+2026-04-25T17:49:27,Does JHKC Kiosk Opening have images?,New Bee 1st day Check List,,sop,0.95,context_picture,False,Here are the steps with pictures for New Bee 1st day Check List.,
+2026-04-25T17:49:36,"I need to open the shop, what should I do?",,,text,0.76,ambiguous_title_choice,False,"I found multiple SOPs. Which one do you need?
+
+- Aeon Roadshow Opening List
+- Backend Opening Checklist
+- Fake Jungle House
+- JHKC Kiosk Opening
+- Opening Notes
+- Spring Roadshow Opening List
+
+You can also ask:
+- show all
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture",
+2026-04-25T17:49:43,"I am closing now, what do I need to check?",,,text,0.81,ambiguous_title_choice,False,"I found multiple SOPs. Which one do you need?
+
+- Aeon Roadshow Closing List
+- Closing Spring Warehouse
+- Kiosk Closing Check List
+- Kuching Booth Closing dustbin check list
+- Sales Closing Reminders Material
+- Shopify POS app Closing
+- Spring Roadshow Closing List
+
+You can also ask:
+- show all
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture",
+2026-04-25T17:49:50,How do I prepare before customers arrive?,Receipt printer preparation for opening,,text,0.76,matched_title_guidance,False,"I found Receipt printer preparation for opening. Available sections: Test Print.
+
+You can ask:
+- step 3
+- step 2 to step 5
+- show picture
+- show all",
+2026-04-25T17:50:02,What should I do at the end of the day?,,,text,0.76,ambiguous_title_choice,False,"I found these training topics. Which one do you need?
+
+- New Bee 1st day Check List
+- New Bee 3rd day Check List",
+2026-04-25T17:50:11,I forgot the opening process.,,,text,0.81,ambiguous_title_choice,False,"I found multiple SOPs. Which one do you need?
+
+- Aeon Roadshow Opening List
+- Backend Opening Checklist
+- JHKC Kiosk Opening
+- Opening Notes
+- Receipt printer preparation for opening
+- Shopify POS app Opening
+- Spring Roadshow Opening List
+
+You can also ask:
+- show all
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture",
+2026-04-25T17:50:16,I forgot how to close POS.,,,text,0.76,ambiguous_title_choice,False,"I found multiple SOPs. Which one do you need?
+
+- Aeon Roadshow Closing List
+- Closing Spring Warehouse
+- Kiosk Closing Check List
+- Shopify POS app Closing
+- Spring Roadshow Closing List
+
+You can also ask:
+- show all
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture",
+2026-04-25T17:50:20,What do I need to clean before going home?,Receipt printer preparation for opening,,text,0.78,context_guidance,False,"I’m currently helping you with Receipt printer preparation for opening.
+Tell me what you need next — for example:
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture
+- show all
+
+If you want another topic, just type it directly, like promotion or public holiday.",
+2026-04-25T17:50:29,What should I do if I am assigned to Spring Roadshow?,Spring Roadshow Opening List,,text,1.0,matched_title_guidance,False,"I found Spring Roadshow Opening List. Available sections: Chiller, Daily Record Sheet, Devices, Shopify POS, Terminal Machine.
+
+You can ask:
+- step 3
+- step 2 to step 5
+- show picture
+- show all",
+2026-04-25T17:50:41,I have a problem.,Spring Roadshow Opening List,,text,0.78,context_guidance,False,"I’m currently helping you with Spring Roadshow Opening List.
+Tell me what you need next — for example:
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture
+- show all
+
+If you want another topic, just type it directly, like promotion or public holiday.",
+2026-04-25T17:51:28,How to do opning?,Spring Roadshow Opening List,,text,0.78,context_guidance,False,"I’m currently helping you with Spring Roadshow Opening List.
+Tell me what you need next — for example:
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture
+- show all
+
+If you want another topic, just type it directly, like promotion or public holiday.",
+2026-04-25T18:11:15,How to do JHKC kiosk opening?,JHKC Kiosk Opening,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for JHKC Kiosk Opening.,
+2026-04-25T18:11:19,Show me JHKC Kiosk Opening with images.,JHKC Kiosk Opening,,sop,0.95,context_picture,False,Here are the steps with pictures for JHKC Kiosk Opening.,
+2026-04-25T18:11:24,Show me step 3 image for JHKC Kiosk Opening.,JHKC Kiosk Opening,,sop,0.96,context_step,False,Got it — this is Step 3 for JHKC Kiosk Opening.,
+2026-04-25T18:11:29,How to close Shopify POS?,Shopify POS app Closing,,sop,0.96,matched_title_default_steps,False,Here is the full SOP / checklist for Shopify POS app Closing.,
+2026-04-25T18:11:37,How to prepare recipt printer?,Receipt printer preparation for opening,,sop,0.96,matched_title_default_steps,False,Here is the full SOP / checklist for Receipt printer preparation for opening.,
+2026-04-25T18:11:42,Show me promosion.,Promotion,,text,0.96,matched_text_topic,False,Sure — here’s the information for Promotion.,
+2026-04-25T18:11:51,help me,,,text,0.35,clarification_round_1,False,"I’m not fully sure which topic you want yet.
+
+Please choose one area:
+- SOP / checklist
+- Promotion
+- Product knowledge
+- Notice / latest update
+- Training / onboarding
+
+Examples:
+- kiosk opening
+- roadshow closing
+- promotion
+- public holiday
+- new bee 1st day",
+2026-04-25T18:11:58,still don't know,,,text,0.15,escalate_after_two_unclear_attempts,True,I’m still not fully sure which topic you need. Please escalate this question to team lead.,
+2026-04-25T18:12:13,I don’t know what to do.,,,text,0.15,escalate_after_two_unclear_attempts,True,I’m still not fully sure which topic you need. Please escalate this question to team lead.,
+2026-04-25T18:12:18,What is this?,,,text,0.15,escalate_after_two_unclear_attempts,True,I’m still not fully sure which topic you need. Please escalate this question to team lead.,
+2026-04-25T18:12:22,The thing cannot work.,,,text,0.92,generic_notice,False,"Sure — I can help with notices and updates.
+
+Please choose one:
+- Bee Point Policy – Crew Member Guideline
+- Bee Points: Redeem Only When Needed
+- Can not use KB/QB IDs to check customer history
+- Cashless
+- Customer signature for card payment
+- Do not Block The Chiller
+- Do not open raw honey tester without permission.
+- Eating inside the store is strictly prohibited
+- Emergency Guide – Responding to Danger or Harassment
+- Fake Jungle House
+- Free wooden stirrer
+- Hari Raya Aidilfitri Public Holiday – Retail (2026)
+- Hari Raya Aidilfitri – Dress Code
+- How shifts arrangements are given
+- Hygiene Compliance Notice – Juice Making (Effective Immediately)
+- Kuching incentive data submission
+- Lab Report in Website - temporarily removed
+- Mask and Badge
+- Morning Shift Attendance Responsibility & Penalty Notice
+- OT Submission Reminder
+- PUBLIC HOLIDAY 2026
+- Place Tissue on Cold drinks
+- Proper way to stack HDPC
+- Purple lavender out of stock",
+2026-04-25T18:12:31,I need help with something.,,,text,0.15,escalate_after_two_unclear_attempts,True,I’m still not fully sure which topic you need. Please escalate this question to team lead.,
+2026-04-25T18:12:35,What should I press?,,,text,0.15,escalate_after_two_unclear_attempts,True,I’m still not fully sure which topic you need. Please escalate this question to team lead.,
+2026-04-25T18:12:40,I cannot find it.,,,text,0.92,generic_notice,False,"Sure — I can help with notices and updates.
+
+Please choose one:
+- Bee Point Policy – Crew Member Guideline
+- Bee Points: Redeem Only When Needed
+- Can not use KB/QB IDs to check customer history
+- Cashless
+- Customer signature for card payment
+- Do not Block The Chiller
+- Do not open raw honey tester without permission.
+- Eating inside the store is strictly prohibited
+- Emergency Guide – Responding to Danger or Harassment
+- Fake Jungle House
+- Free wooden stirrer
+- Hari Raya Aidilfitri Public Holiday – Retail (2026)
+- Hari Raya Aidilfitri – Dress Code
+- How shifts arrangements are given
+- Hygiene Compliance Notice – Juice Making (Effective Immediately)
+- Kuching incentive data submission
+- Lab Report in Website - temporarily removed
+- Mask and Badge
+- Morning Shift Attendance Responsibility & Penalty Notice
+- OT Submission Reminder
+- PUBLIC HOLIDAY 2026
+- Place Tissue on Cold drinks
+- Proper way to stack HDPC
+- Purple lavender out of stock",
+2026-04-25T18:13:10,Show me all SOP.,Fake Jungle House,,text,0.72,matched_text_topic,False,Sure — here’s the information for Fake Jungle House.,
+2026-04-25T18:13:14,Show me all SOP.,Fake Jungle House,,text,0.72,matched_text_topic,False,Sure — here’s the information for Fake Jungle House.,
+2026-04-25T18:13:20,Show me all SOP,Fake Jungle House,,text,0.72,matched_text_topic,False,Sure — here’s the information for Fake Jungle House.,
+2026-04-25T18:13:25,What SOP do you have?,Fake Jungle House,,text,0.72,matched_text_topic,False,Sure — here’s the information for Fake Jungle House.,
+2026-04-25T18:13:32,Show me product knowledge.,,,text,0.92,generic_product,False,"Sure — I can help with product knowledge.
+
+Please choose one:
+- Golden Passion Honey (New Product)
+- Price for new packaging for HWJ and SHVP
+- What is the best answer for client asking how much Honey we are using for our honey Juice?",
+2026-04-25T18:13:40,Show me all SOP.,Fake Jungle House,,text,0.72,matched_text_topic,False,Sure — here’s the information for Fake Jungle House.,
+2026-04-25T18:13:58,What SOP do you have?,Fake Jungle House,,text,0.72,matched_text_topic,False,Sure — here’s the information for Fake Jungle House.,
+2026-04-25T18:14:13,Show me sales information.,Sales Closing Reminders Material,,sop,0.76,matched_title_default_steps,False,Here is the full SOP / checklist for Sales Closing Reminders Material.,
+2026-04-25T18:14:37,What sales guide do you have?,,,text,0.76,ambiguous_title_choice,False,"I found these notice topics. Which one do you need?
+
+- Emergency Guide – Responding to Danger or Harassment
+- Sales Closing Reminders Material
+- Win the Heart Gift Guide",
+2026-04-25T18:14:45,Show me training checklist.,,,text,0.76,ambiguous_title_choice,False,"I found multiple SOPs. Which one do you need?
+
+- Backend Opening Checklist
+- Kuching Booth Closing dustbin check list
+- Wanna-Bee onboarding Check list
+
+You can also ask:
+- show all
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture",
+2026-04-25T18:14:50,What onboarding checklist do you have?,Wanna-Bee onboarding Check list,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for Wanna-Bee onboarding Check list.,
+2026-04-25T18:14:56,Show me public holiday information.,PUBLIC HOLIDAY 2026,,text,0.96,matched_text_topic,False,Sure — here’s the information for PUBLIC HOLIDAY 2026.,
+2026-04-25T18:15:00,What policy can you explain?,PUBLIC HOLIDAY 2026,,text,0.78,context_guidance,False,"I’m currently helping you with PUBLIC HOLIDAY 2026.
+Tell me what you need next — for example:
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture
+- show all
+
+If you want another topic, just type it directly, like promotion or public holiday.",
+2026-04-25T18:15:10,I have a problem.,PUBLIC HOLIDAY 2026,,text,0.78,context_guidance,False,"I’m currently helping you with PUBLIC HOLIDAY 2026.
+Tell me what you need next — for example:
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture
+- show all
+
+If you want another topic, just type it directly, like promotion or public holiday.",
+2026-04-25T18:50:24,I don’t know what to do.,,,text,0.35,clarification_round_1,False,"I’m not fully sure which topic you want yet.
+
+Please choose one area:
+- SOP / checklist
+- Promotion
+- Product knowledge
+- Notice / latest update
+- Training / onboarding
+
+Examples:
+- kiosk opening
+- roadshow closing
+- promotion
+- public holiday
+- new bee 1st day",
+2026-04-25T18:50:34,Help me.,,,text,0.15,escalate_after_two_unclear_attempts,True,I’m still not fully sure which topic you need. Please escalate this question to team lead.,
+2026-04-25T18:50:39,What is this?,,,text,0.15,escalate_after_two_unclear_attempts,True,I’m still not fully sure which topic you need. Please escalate this question to team lead.,
+2026-04-25T18:50:43,Can you explain?,,,text,0.15,escalate_after_two_unclear_attempts,True,I’m still not fully sure which topic you need. Please escalate this question to team lead.,
+2026-04-25T18:50:48,I have a problem.,,,text,0.15,escalate_after_two_unclear_attempts,True,I’m still not fully sure which topic you need. Please escalate this question to team lead.,
+2026-04-25T18:50:52,Something is wrong.,,,text,0.15,escalate_after_two_unclear_attempts,True,I’m still not fully sure which topic you need. Please escalate this question to team lead.,
+2026-04-25T18:50:56,The thing cannot work.,,,text,0.15,escalate_after_two_unclear_attempts,True,I’m still not fully sure which topic you need. Please escalate this question to team lead.,
+2026-04-25T18:50:59,I need help with something.,,,text,0.15,escalate_after_two_unclear_attempts,True,I’m still not fully sure which topic you need. Please escalate this question to team lead.,
+2026-04-25T18:51:04,What should I press?,,,text,0.15,escalate_after_two_unclear_attempts,True,I’m still not fully sure which topic you need. Please escalate this question to team lead.,
+2026-04-25T18:51:09,I cannot find it.,,,text,0.15,escalate_after_two_unclear_attempts,True,I’m still not fully sure which topic you need. Please escalate this question to team lead.,
+2026-04-25T18:51:28,I don’t know what to do.,,,text,0.15,escalate_after_two_unclear_attempts,True,I’m still not fully sure which topic you need. Please escalate this question to team lead.,
+2026-04-25T18:51:33,Still don’t know.,,,text,0.15,escalate_after_two_unclear_attempts,True,I’m still not fully sure which topic you need. Please escalate this question to team lead.,
+2026-04-25T18:51:48,How to do opning?,,,text,0.81,ambiguous_title_choice,False,"I found multiple SOPs. Which one do you need?
+
+- Aeon Roadshow Opening List
+- Backend Opening Checklist
+- JHKC Kiosk Opening
+- Opening Notes
+- Receipt printer preparation for opening
+- Shopify POS app Opening
+- Spring Roadshow Opening List
+
+You can also ask:
+- show all
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture",
+2026-04-25T18:51:56,Show me kios opening.,JHKC Kiosk Opening,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for JHKC Kiosk Opening.,
+2026-04-25T18:52:04,How to clsoing kiosk?,Kiosk Closing Check List,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for Kiosk Closing Check List.,
+2026-04-25T18:52:09,Show me shopfy pos closing.,Shopify POS app Closing,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for Shopify POS app Closing.,
+2026-04-25T18:52:14,How to prepare recipt printer?,Receipt printer preparation for opening,,sop,0.96,matched_title_default_steps,False,Here is the full SOP / checklist for Receipt printer preparation for opening.,
+2026-04-25T18:52:18,Show me ice ben closing.,Ice Bin Daily Closing Checklist,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for Ice Bin Daily Closing Checklist.,
+2026-04-25T18:52:28,What is bee piont policy?,Bee Point Policy – Crew Member Guideline,,text,0.96,matched_text_topic,False,Sure — here’s the information for Bee Point Policy – Crew Member Guideline.,
+2026-04-25T18:52:34,Show me all SOP.,,,text,0.92,generic_sop,False,"Sure — I can help with SOP / checklist questions.
+
+Please choose one:
+- Aeon Roadshow Closing List
+- Aeon Roadshow Opening List
+- Backend Opening Checklist
+- Closing Spring Warehouse
+- Ice Bin Daily Closing Checklist
+- JHKC Kiosk Opening
+- Kiosk Closing Check List
+- Kuching Booth Closing dustbin check list
+- Opening Notes
+- Receipt printer preparation for opening
+- Sales Closing Reminders Material
+- Shopify POS app Closing
+- Shopify POS app Opening
+- Spring Roadshow Closing List
+- Spring Roadshow Opening List
+
+You can also ask:
+- show all
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture",
+2026-04-25T18:52:43,What SOP do you have?,,,text,0.92,generic_sop,False,"Sure — I can help with SOP / checklist questions.
+
+Please choose one:
+- Aeon Roadshow Closing List
+- Aeon Roadshow Opening List
+- Backend Opening Checklist
+- Closing Spring Warehouse
+- Ice Bin Daily Closing Checklist
+- JHKC Kiosk Opening
+- Kiosk Closing Check List
+- Kuching Booth Closing dustbin check list
+- Opening Notes
+- Receipt printer preparation for opening
+- Sales Closing Reminders Material
+- Shopify POS app Closing
+- Shopify POS app Opening
+- Spring Roadshow Closing List
+- Spring Roadshow Opening List
+
+You can also ask:
+- show all
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture",
+2026-04-25T18:52:48,Show me product knowledge.,,,text,0.92,generic_product,False,"Sure — I can help with product knowledge.
+
+Please choose one:
+- Golden Passion Honey (New Product)
+- Price for new packaging for HWJ and SHVP
+- What is the best answer for client asking how much Honey we are using for our honey Juice?",
+2026-04-25T18:52:56,What sales guide do you have?,,,text,0.92,generic_sales,False,"Sure — I can help with sales information.
+
+Please choose one:
+- Sales Closing Reminders Material
+- What is the best answer for client asking how much Honey we are using for our honey Juice?
+- Customer signature for card payment
+- Cashless
+- Bee Points: Redeem Only When Needed",
+2026-04-25T18:53:01,What policy can you explain?,Bee Point Policy – Crew Member Guideline,,text,0.78,context_guidance,False,"I’m currently helping you with Bee Point Policy – Crew Member Guideline.
+Tell me what you need next — for example:
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture
+- show all
+
+If you want another topic, just type it directly, like promotion or public holiday.",
+2026-04-25T18:53:21,What onboarding checklist do you have?,,,text,0.92,generic_training,False,"Sure — I can help with training and onboarding.
+
+Please choose one:
+- New Bee 1st day Check List
+- New Bee 3rd day Check List
+- Wanna-Bee onboarding Check list
+
+You can also ask:
+- 1st day
+- 3rd day
+- onboarding
+- step 2
+- step 2 to step 5",
+2026-04-25T18:53:46,Show me shopfy pos closing.,Shopify POS app Closing,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for Shopify POS app Closing.,
+2026-04-25T18:53:50,What is bee piont policy?,Bee Point Policy – Crew Member Guideline,,text,0.96,matched_text_topic,False,Sure — here’s the information for Bee Point Policy – Crew Member Guideline.,

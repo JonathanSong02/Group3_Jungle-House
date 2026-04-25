@@ -2,6 +2,7 @@ from __future__ import annotations
 
 
 import re
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Optional
 
@@ -50,14 +51,155 @@ def normalize_text(text: str) -> str:
     return text.strip()
 
 
+COMMON_TYPO_MAP = {
+    "opning": "opening",
+    "openning": "opening",
+    "kios": "kiosk",
+    "clsoing": "closing",
+    "closng": "closing",
+    "shopfy": "shopify",
+    "shopif": "shopify",
+    "recipt": "receipt",
+    "recepit": "receipt",
+    "ben": "bin",
+    "goldn": "golden",
+    "promosion": "promotion",
+    "promotoin": "promotion",
+    "piont": "point",
+    "dres": "dress",
+    "adress": "dress",
+    "checklst": "checklist",
+    "cheklist": "checklist",
+    "roadshw": "roadshow",
+}
+
+
+def fix_common_typos(text: str) -> str:
+    text = normalize_text(text).lower()
+    tokens = re.findall(r"[a-z0-9']+|[^a-z0-9']+", text)
+    fixed_tokens = []
+    for token in tokens:
+        fixed_tokens.append(COMMON_TYPO_MAP.get(token, token))
+    return "".join(fixed_tokens)
+
+
 def normalize_lower(text: str) -> str:
-    return normalize_text(text).lower()
+    return fix_common_typos(text)
 
 
 def tokenize(text: str) -> list[str]:
     q = normalize_lower(text)
     q = re.sub(r"[^a-z0-9\s]", " ", q)
     return [x for x in q.split() if x]
+
+
+def meaningful_tokens(text: str) -> list[str]:
+    stop_words = {
+        "a", "an", "the", "i", "me", "my", "you", "your", "we", "our",
+        "what", "which", "who", "when", "where", "why", "how", "do", "does",
+        "did", "can", "could", "should", "would", "is", "are", "am", "be",
+        "to", "for", "of", "in", "on", "at", "it", "this", "that", "all",
+        "show", "give", "tell", "have", "has", "with", "about", "information",
+        "info", "guide", "guidance", "answer", "explain", "list", "me",
+    }
+    return [
+        token for token in tokenize(text)
+        if token not in stop_words and len(token) >= 4
+    ]
+
+
+def is_generic_category_question(question: str) -> bool:
+    q = normalize_lower(question)
+
+    generic_patterns = [
+        "show me all sop",
+        "show all sop",
+        "what sop do you have",
+        "what sops do you have",
+        "show me sop",
+        "show sop",
+        "sop list",
+        "show me product knowledge",
+        "what product information can you answer",
+        "what product info can you answer",
+        "show me sales information",
+        "what sales guide do you have",
+        "show me training checklist",
+        "what onboarding checklist do you have",
+        "show me public holiday information",
+        "what policy can you explain",
+    ]
+
+    if any(pattern in q for pattern in generic_patterns):
+        return True
+
+    if q in {"sop", "sops", "product knowledge", "sales information", "sales guide", "training checklist", "onboarding checklist", "public holiday information", "policy"}:
+        return True
+
+    return False
+
+
+def is_unclear_operational_question(question: str) -> bool:
+    q = normalize_lower(question)
+
+    # Do not treat clear category-search questions as unclear.
+    clear_topic_words = [
+        "sop", "promotion", "product", "sales", "training", "onboarding",
+        "public holiday", "policy", "dress code", "bee point", "golden passion",
+        "kiosk", "roadshow", "shopify", "printer", "ice bin",
+    ]
+    if any(word in q for word in clear_topic_words):
+        return False
+
+    unclear_patterns = [
+        "i don't know what to do",
+        "i dont know what to do",
+        "still don't know",
+        "still dont know",
+        "what is this",
+        "can you explain",
+        "i have a problem",
+        "something is wrong",
+        "the thing cannot work",
+        "it still cannot work",
+        "cannot work",
+        "not working",
+        "i need help with something",
+        "what should i press",
+        "i cannot find it",
+        "cannot find it",
+        "i still don't understand",
+        "i still dont understand",
+        "still don't understand",
+        "still dont understand",
+        "what should i do",
+        "help again",
+    ]
+
+    return any(pattern in q for pattern in unclear_patterns)
+
+
+def sales_guidance_response() -> dict:
+    options = [
+        "Sales Closing Reminders Material",
+        "What is the best answer for client asking how much Honey we are using for our honey Juice?",
+        "Customer signature for card payment",
+        "Cashless",
+        "Bee Points: Redeem Only When Needed",
+    ]
+    reply = (
+        "Sure — I can help with sales information.\n\n"
+        "Please choose one:\n"
+        + "\n".join([f"- {x}" for x in options])
+    )
+    return build_response(
+        reply=reply,
+        category="sales",
+        answer=reply,
+        score=0.92,
+        source="generic_sales",
+        context={"category": "sales", "unclear_count": 0},
+    )
 
 
 def contains_any(text: str, phrases: list[str]) -> bool:
@@ -251,7 +393,7 @@ TITLE_ALIASES = {
         "golden passion honey new product",
         "new product golden passion honey",
     ],
-    "How shifts arrangements are given​": [
+    "How shifts arrangements are given": [
         "how shifts arrangements are given",
         "shift arrangement",
         "shift arrangements",
@@ -425,6 +567,11 @@ TITLE_ALIASES = {
         "new bee first day",
         "new bee 1st day",
         "new bee day 1",
+        "new staff first day",
+        "new staff 1st day",
+        "first day new staff",
+        "train new staff first day",
+        "staff first day checklist",
         "1st day checklist",
         "first day checklist",
         "1st day",
@@ -495,8 +642,13 @@ GREETING_PHRASES = [
 ]
 
 GUIDE_PHRASES = [
-    "help", "what can you do", "guide me", "show me options", "what should i ask",
-    "not sure", "dont know", "don't know", "i dont know", "i don't know",
+    "help", "help me", "help again", "i need help", "i need help again",
+    "what can you do", "guide me", "show me options", "what should i ask",
+    "not sure", "still not sure", "dont know", "don't know", "i dont know",
+    "i don't know", "still dont know", "still don't know", "i still dont know",
+    "i still don't know", "i dont understand", "i don't understand",
+    "still dont understand", "still don't understand", "i still dont understand",
+    "i still don't understand", "cannot understand", "not understand",
 ]
 
 SHOW_ALL_PHRASES = [
@@ -872,17 +1024,88 @@ def score_title_match(question: str, title: str) -> float:
         best += 0.10
     if "new bee" in q and "new bee" in title_lower:
         best += 0.10
+    if "new staff" in q and any(x in q for x in ["first day", "1st day", "day 1", "day one"]) and "new bee 1st day" in title_lower:
+        best = max(best, 0.88)
+
+    # Fuzzy fallback helps testing questions with small spelling mistakes,
+    # for example: opning, kios, clsoing, shopfy, recipt, promosion.
+    # It must not run for broad category questions like "Show me all SOP",
+    # otherwise short words such as "sop" can accidentally match "shop".
+    q_meaningful_tokens = meaningful_tokens(q)
+    if q_meaningful_tokens and not is_generic_category_question(q):
+        for variant in title_variants(title):
+            v = normalize_lower(variant)
+            if not v:
+                continue
+
+            ratio = SequenceMatcher(None, q, v).ratio()
+            if ratio >= 0.82:
+                best = max(best, 0.84)
+
+            v_tokens = [token for token in tokenize(v) if len(token) >= 4]
+            if v_tokens:
+                fuzzy_hits = 0
+                for v_token in v_tokens:
+                    if any(
+                        SequenceMatcher(None, q_token, v_token).ratio() >= 0.86
+                        for q_token in q_meaningful_tokens
+                    ):
+                        fuzzy_hits += 1
+                fuzzy_token_score = fuzzy_hits / max(len(v_tokens), 1)
+                if fuzzy_token_score >= 0.75:
+                    best = max(best, 0.82)
+                elif fuzzy_token_score >= 0.50 and len(q_meaningful_tokens) >= 2:
+                    best = max(best, 0.72)
 
     return min(best, 1.0)
 
 
 def match_titles(question: str) -> list[tuple[str, float]]:
     scored = []
+    q = normalize_lower(question)
 
     for title in KNOWN_TITLES:
         score = score_title_match(question, title)
         if score >= 0.60:
             scored.append((title, score))
+
+    # When the question clearly says opening/closing, keep the matched list aligned.
+    # This prevents "kiosk closing" from tying with "JHKC Kiosk Opening".
+    if any(word in q for word in ["closing", "close"]):
+        closing_scored = [
+            item for item in scored
+            if any(word in normalize_lower(item[0]) for word in ["closing", "close"])
+        ]
+        if closing_scored:
+            scored = closing_scored
+
+    if any(word in q for word in ["opening", "open"]):
+        opening_scored = [
+            item for item in scored
+            if any(word in normalize_lower(item[0]) for word in ["opening", "open"])
+        ]
+        if opening_scored:
+            scored = opening_scored
+
+    if "kiosk" in q:
+        kiosk_scored = [item for item in scored if "kiosk" in normalize_lower(item[0])]
+        if kiosk_scored:
+            scored = kiosk_scored
+
+    if "shopify" in q or "pos" in q:
+        shopify_scored = [item for item in scored if "shopify" in normalize_lower(item[0]) or "pos" in normalize_lower(item[0])]
+        if shopify_scored:
+            scored = shopify_scored
+
+    if "printer" in q or "receipt" in q:
+        printer_scored = [item for item in scored if "printer" in normalize_lower(item[0]) or "receipt" in normalize_lower(item[0])]
+        if printer_scored:
+            scored = printer_scored
+
+    if "ice bin" in q:
+        ice_scored = [item for item in scored if "ice bin" in normalize_lower(item[0])]
+        if ice_scored:
+            scored = ice_scored
 
     scored.sort(key=lambda x: x[1], reverse=True)
     return scored
@@ -920,8 +1143,6 @@ def build_steps(df_title: pd.DataFrame) -> list[dict]:
         image_values = unique_keep_order(image_values + auto_image_values)
 
         image_urls = [to_static_url(x) for x in image_values if to_static_url(x)]
-
-        print("STEP DEBUG:", title, step_number, image_urls)
 
         section = safe_str(row.get("section"))
 
@@ -1365,8 +1586,8 @@ def get_model_answer(question: str, context: Optional[dict] = None) -> dict:
             context={"unclear_count": unclear_count},
         )
 
-    # Greeting / help guidance
-    if is_greeting(question) or wants_help(question):
+    # Greeting should only show guidance and reset unclear count.
+    if is_greeting(question):
         message = (
             "Hi — I can help with SOP, checklist, promotion, product knowledge, notice, or training questions.\n\n"
             "You can ask things like:\n"
@@ -1387,6 +1608,54 @@ def get_model_answer(question: str, context: Optional[dict] = None) -> dict:
             context={"unclear_count": 0},
         )
 
+    # Unclear operational questions should also count toward the 2-time escalation flow.
+    if is_unclear_operational_question(question):
+        unclear_count += 1
+
+        if unclear_count == 1:
+            message = (
+                "I’m not fully sure which topic you want yet.\n\n"
+                "Please choose one area:\n"
+                "- SOP / checklist\n"
+                "- Promotion\n"
+                "- Product knowledge\n"
+                "- Notice / latest update\n"
+                "- Training / onboarding\n\n"
+                "Examples:\n"
+                "- kiosk opening\n"
+                "- roadshow closing\n"
+                "- promotion\n"
+                "- public holiday\n"
+                "- new bee 1st day"
+            )
+            return clarification_response(message, unclear_count)
+
+        return escalation_response()
+
+    # Help / unclear questions must count toward the 2-time escalation flow.
+    if wants_help(question):
+        unclear_count += 1
+
+        if unclear_count == 1:
+            message = (
+                "I’m not fully sure which topic you want yet.\n\n"
+                "Please choose one area:\n"
+                "- SOP / checklist\n"
+                "- Promotion\n"
+                "- Product knowledge\n"
+                "- Notice / latest update\n"
+                "- Training / onboarding\n\n"
+                "Examples:\n"
+                "- kiosk opening\n"
+                "- roadshow closing\n"
+                "- promotion\n"
+                "- public holiday\n"
+                "- new bee 1st day"
+            )
+            return clarification_response(message, unclear_count)
+
+        return escalation_response()
+
     # Topic switch handling
     if should_clear_context(question, context):
         context = {}
@@ -1404,6 +1673,42 @@ def get_model_answer(question: str, context: Optional[dict] = None) -> dict:
     # 2. Detect broad category
     # -----------------------------
     high_level_category = detect_high_level_category(question)
+
+    # -----------------------------
+    # 2A. Direct category/search-list questions
+    # -----------------------------
+    q_lower = normalize_lower(question)
+
+    if is_generic_category_question(question):
+        if "sales" in q_lower:
+            return sales_guidance_response()
+
+        if "training checklist" in q_lower or "onboarding checklist" in q_lower:
+            return category_guidance_response("training")
+
+        if "product" in q_lower:
+            return category_guidance_response("product")
+
+        if "public holiday" in q_lower:
+            matched_title = "PUBLIC HOLIDAY 2026"
+            title_df = KNOWLEDGE_DF[KNOWLEDGE_DF["title"] == matched_title].copy()
+            content_lines = [safe_str(x) for x in title_df["content"].tolist() if safe_str(x)]
+            summary = "\n".join(content_lines[:8]).strip() or f"I found {matched_title}."
+            return build_response(
+                reply=f"Sure — here’s the information for {matched_title}.",
+                title=matched_title,
+                category="notice",
+                answer=summary,
+                score=0.96,
+                source="generic_public_holiday",
+                context={"title": matched_title, "category": "notice", "unclear_count": 0},
+            )
+
+        if "policy" in q_lower:
+            return category_guidance_response("notice")
+
+        if "sop" in q_lower:
+            return category_guidance_response("sop")
 
     # -----------------------------
     # 3. Try exact / close title match
@@ -1545,24 +1850,19 @@ def get_model_answer(question: str, context: Optional[dict] = None) -> dict:
                 context={"title": matched_title, "category": category, "unclear_count": 0},
             )
 
-        # SOP / training guidance
+        # SOP / training default: return the full step-by-step checklist.
+        # This makes general testing questions like "How to do kiosk opening?"
+        # return usable steps immediately instead of only showing guidance.
         if category in {"sop", "training"}:
-            section_text = f" Available sections: {', '.join(available_sections)}." if available_sections else ""
-            reply = (
-                f"I found {matched_title}.{section_text}\n\n"
-                f"You can ask:\n"
-                f"- step 3\n"
-                f"- step 2 to step 5\n"
-                f"- show picture\n"
-                f"- show all"
-            )
             return build_response(
-                reply=reply,
+                response_type="sop",
+                reply=f"Here is the full SOP / checklist for {matched_title}.",
                 title=matched_title,
                 category=category,
-                answer=reply,
+                answer=format_full_answer(matched_title, steps),
+                steps=steps,
                 score=confidence,
-                source="matched_title_guidance",
+                source="matched_title_default_steps",
                 context={"title": matched_title, "category": category, "unclear_count": 0},
             )
 
@@ -1644,46 +1944,6 @@ def get_model_answer(question: str, context: Optional[dict] = None) -> dict:
             "- promotion\n"
             "- public holiday\n"
             "- new bee 1st day"
-        )
-        return clarification_response(message, unclear_count)
-
-    return escalation_response()
-
-    # Clarify twice, then escalate
-    unclear_count += 1
-
-    if unclear_count == 1:
-        message = (
-            "I’m not fully sure which topic you want yet.\n\n"
-            "Please choose one area:\n"
-            "- SOP / checklist\n"
-            "- Promotion\n"
-            "- Product knowledge\n"
-            "- Notice / latest update\n"
-            "- Training / onboarding\n\n"
-            "Examples:\n"
-            "- kiosk opening\n"
-            "- roadshow closing\n"
-            "- promotion\n"
-            "- public holiday notice\n"
-            "- new bee 1st day"
-        )
-        return clarification_response(message, unclear_count)
-
-    if unclear_count == 2:
-        message = (
-            "I’m still not fully sure which topic you need.\n\n"
-            "Please type one of these more specifically:\n"
-            "- JHKC Kiosk Opening\n"
-            "- Kiosk Closing Check List\n"
-            "- Spring Roadshow Opening List\n"
-            "- Spring Roadshow Closing List\n"
-            "- Promotion\n"
-            "- Golden Passion Honey\n"
-            "- PUBLIC HOLIDAY 2026\n"
-            "- New Bee 1st day Check List\n"
-            "- New Bee 3rd day Check List\n"
-            "- Wanna-Bee onboarding Check list"
         )
         return clarification_response(message, unclear_count)
 
