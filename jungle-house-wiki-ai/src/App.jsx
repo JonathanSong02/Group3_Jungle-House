@@ -14,6 +14,7 @@ import Notifications from './pages/Notifications';
 import Profile from './pages/Profile';
 import QuizList from './pages/QuizList';
 
+import AddArticle from './pages/admin/AddArticle';
 import ContentManagement from './pages/admin/ContentManagement';
 import ReviewManagement from './pages/admin/ReviewManagement';
 import UserManagement from './pages/admin/UserManagement';
@@ -72,6 +73,14 @@ export default function App() {
           element={
             <RoleRoute allowedRoles={['manager']}>
               <ContentManagement />
+            </RoleRoute>
+          }
+        />
+        <Route
+          path="admin/content/add"
+          element={
+            <RoleRoute allowedRoles={['manager']}>
+              <AddArticle />
             </RoleRoute>
           }
         />

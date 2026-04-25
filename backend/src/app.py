@@ -1303,75 +1303,56 @@ def get_articles():
             conn.close()
 
 
-@app.route("/api/articles/<int:article_id>", methods=["GET"])
-def get_article_detail(article_id):
-    conn = None
-    cursor = None
+# =========================
+# Add Article ROUTES
+# =========================
+@app.route('/api/articles', methods=['POST'])
+def add_article():
+    data = request.get_json()
+
+    title = data.get('title', '').strip()
+    category = data.get('category', '').strip()
+    sub_category = data.get('sub_category', '').strip()
+    link = data.get('link', '').strip()
+    content = data.get('content', '').strip()
+
+    if not title or not content:
+        return jsonify({'message': 'Title and content are required.'}), 400
+
+    conn = get_db_connection()
+
+    if conn is None:
+        return jsonify({'message': 'Database connection failed.'}), 500
+
+    cursor = conn.cursor(dictionary=True)
 
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-
         cursor.execute("""
-            SELECT article_id, title, content, category
-            FROM wiki_article
-            WHERE article_id = %s
-        """, (article_id,))
-        article = cursor.fetchone()
+            INSERT INTO wiki_article 
+            (title, content, category, link, sub_category)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (title, content, category, link, sub_category))
 
-        if not article:
-            return jsonify({"message": "Article not found."}), 404
+        conn.commit()
 
-        return jsonify(article), 200
+        return jsonify({
+            'message': 'Article added successfully.',
+            'article_id': cursor.lastrowid
+        }), 201
 
-    except mysql.connector.Error as err:
-        print("MYSQL ERROR /api/articles/<id>:", err)
-        return jsonify({"message": f"Database error: {str(err)}"}), 500
+    except Exception as error:
+        conn.rollback()
+        print('MYSQL ERROR /api/articles POST:', error)
 
-    except Exception as e:
-        print("GENERAL ERROR /api/articles/<id>:", e)
-        return jsonify({"message": f"Server error: {str(e)}"}), 500
+        return jsonify({
+            'message': 'Failed to save article.',
+            'error': str(error)
+        }), 500
 
     finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-
-@app.route("/api/article-links/<int:article_id>", methods=["GET"])
-def get_article_links(article_id):
-    conn = None
-    cursor = None
-
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-
-        cursor.execute("""
-            SELECT link_id, article_id, label, url
-            FROM article_links
-            WHERE article_id = %s
-            ORDER BY link_id ASC
-        """, (article_id,))
-        links = cursor.fetchall()
-
-        return jsonify(links), 200
-
-    except mysql.connector.Error as err:
-        print("MYSQL ERROR /api/article-links:", err)
-        return jsonify({"message": f"Database error: {str(err)}"}), 500
-
-    except Exception as e:
-        print("GENERAL ERROR /api/article-links:", e)
-        return jsonify({"message": f"Server error: {str(e)}"}), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
+        cursor.close()
+        conn.close()
+        
 
 @app.route("/static/<path:filename>", methods=["GET"])
 def serve_static(filename):

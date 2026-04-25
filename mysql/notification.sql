@@ -20,7 +20,6 @@ CREATE TABLE IF NOT EXISTS notification (
     FOREIGN KEY (user_id) REFERENCES users(user_id)
 );
 
-USE jungle_house_ai;
 
 INSERT INTO notification (user_id, title, message, type, is_read)
 VALUES

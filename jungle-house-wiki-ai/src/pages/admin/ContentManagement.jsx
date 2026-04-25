@@ -1,25 +1,42 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
-import { articles as initialArticles } from '../../data/mockData';
+import api from '../../services/api';
+
+const categories = ['All', 'SOP', 'PRODUCT', 'SALES', 'Training', 'Notice'];
 
 export default function ContentManagement() {
-  const [articleList, setArticleList] = useState(initialArticles);
-  const [newTitle, setNewTitle] = useState('');
+  const [articleList, setArticleList] = useState([]);
+  const [search, setSearch] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('All');
+  const [loading, setLoading] = useState(true);
 
-  const addArticle = () => {
-    if (!newTitle.trim()) return;
-    setArticleList((prev) => [
-      {
-        id: Date.now(),
-        title: newTitle.trim(),
-        category: 'Training',
-        summary: 'New article draft',
-        body: 'Edit content here later.',
-      },
-      ...prev,
-    ]);
-    setNewTitle('');
-  };
+  useEffect(() => {
+    api
+      .get('/articles')
+      .then((response) => {
+        setArticleList(Array.isArray(response.data) ? response.data : []);
+      })
+      .catch((error) => {
+        console.error('Fetch articles error:', error);
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  }, []);
+
+  const filteredArticles = useMemo(() => {
+    return articleList.filter((article) => {
+      const categoryMatch =
+        selectedCategory === 'All' || article.category === selectedCategory;
+
+      const text = `${article.title || ''} ${article.category || ''} ${
+        article.sub_category || ''
+      }`.toLowerCase();
+
+      return categoryMatch && text.includes(search.toLowerCase());
+    });
+  }, [articleList, search, selectedCategory]);
 
   return (
     <div>
@@ -28,34 +45,104 @@ export default function ContentManagement() {
         subtitle="Create, edit, delete, and organize knowledge content."
       />
 
-      <section className="card-like top-gap-sm">
-        <div className="row-between wrap-gap">
+      <section className="card-like top-gap-sm content-toolbar-card">
+        <div className="content-toolbar-main">
+          <div>
+            <h3>Knowledge Articles</h3>
+            <p className="muted">
+              Manage SOP, product, sales, notice, and training content.
+            </p>
+          </div>
+
+          <Link to="/admin/content/add" className="primary-btn narrow-btn link-btn">
+            + Add Article
+          </Link>
+        </div>
+
+        <div className="content-filter-row">
           <input
-            value={newTitle}
-            onChange={(event) => setNewTitle(event.target.value)}
-            placeholder="New article title"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search article title, category, or sub category..."
           />
-          <button className="primary-btn narrow-btn" onClick={addArticle}>
-            Add Article
-          </button>
+
+          <select
+            value={selectedCategory}
+            onChange={(event) => setSelectedCategory(event.target.value)}
+          >
+            {categories.map((category) => (
+              <option key={category} value={category}>
+                {category}
+              </option>
+            ))}
+          </select>
         </div>
       </section>
 
-      <div className="stack-gap top-gap-sm">
-        {articleList.map((article) => (
-          <article key={article.id} className="card-like row-between wrap-gap">
-            <div>
-              <p className="eyebrow">{article.category}</p>
-              <h3>{article.title}</h3>
-              <p className="muted">{article.summary}</p>
-            </div>
-            <div className="button-group">
-              <button className="secondary-btn">Edit</button>
-              <button className="secondary-btn danger-btn">Delete</button>
-            </div>
-          </article>
-        ))}
+      <div className="content-info-bar">
+        <p>
+          Showing <strong>{filteredArticles.length}</strong> of{' '}
+          <strong>{articleList.length}</strong> articles
+        </p>
+
+        <div className="content-category-chips">
+          {categories.map((category) => (
+            <button
+              key={category}
+              type="button"
+              className={selectedCategory === category ? 'chip active' : 'chip'}
+              onClick={() => setSelectedCategory(category)}
+            >
+              {category}
+            </button>
+          ))}
+        </div>
       </div>
+
+      {loading ? (
+        <section className="card-like top-gap-sm">
+          <p className="muted">Loading articles...</p>
+        </section>
+      ) : filteredArticles.length === 0 ? (
+        <section className="card-like top-gap-sm empty-state-card">
+          <h3>No articles found</h3>
+          <p className="muted">
+            Try another keyword or add a new knowledge article.
+          </p>
+          <Link to="/admin/content/add" className="primary-btn narrow-btn link-btn">
+            Add Article
+          </Link>
+        </section>
+      ) : (
+        <div className="content-card-grid top-gap-sm">
+          {filteredArticles.map((article) => (
+            <article
+              key={article.article_id || article.id}
+              className="card-like content-article-card"
+            >
+              <div>
+                <div className="content-card-top">
+                  <p className="eyebrow">{article.category || 'UNCATEGORIZED'}</p>
+                  <span className="role-pill">
+                    ID {article.article_id || article.id}
+                  </span>
+                </div>
+
+                <h3>{article.title}</h3>
+
+                <p className="muted">
+                  {article.sub_category || 'No sub category'}
+                </p>
+              </div>
+
+              <div className="button-group content-card-actions">
+                <button className="secondary-btn">Edit</button>
+                <button className="secondary-btn danger-btn">Delete</button>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
