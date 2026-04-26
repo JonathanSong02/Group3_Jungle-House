@@ -635,3 +635,323 @@ You can also ask:
 - step 2 to step 5",
 2026-04-25T18:53:46,Show me shopfy pos closing.,Shopify POS app Closing,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for Shopify POS app Closing.,
 2026-04-25T18:53:50,What is bee piont policy?,Bee Point Policy – Crew Member Guideline,,text,0.96,matched_text_topic,False,Sure — here’s the information for Bee Point Policy – Crew Member Guideline.,
+2026-04-26T15:20:30,kiosk opening,JHKC Kiosk Opening,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for JHKC Kiosk Opening.,
+2026-04-26T15:32:20,opening sop,,,text,0.81,ambiguous_title_choice,False,"I found multiple SOPs. Which one do you need?
+
+- Aeon Roadshow Opening List
+- Backend Opening Checklist
+- JHKC Kiosk Opening
+- Opening Notes
+- Receipt printer preparation for opening
+- Shopify POS app Opening
+- Spring Roadshow Opening List
+
+You can also ask:
+- show all
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture",
+2026-04-26T15:32:20,kiosk closing checklist,Kiosk Closing Check List,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for Kiosk Closing Check List.,
+2026-04-26T15:32:20,new packaging price,Price for new packaging for HWJ and SHVP,,text,1.0,matched_text_topic,False,Sure — here’s the information for Price for new packaging for HWJ and SHVP.,
+2026-04-26T15:32:20,merchant copy need signature,Customer signature for card payment,,text,0.76,matched_text_topic,False,Sure — here’s the information for Customer signature for card payment.,
+2026-04-26T15:32:20,can eat inside store or not,Eating inside the store is strictly prohibited,,text,0.76,matched_text_topic,False,Sure — here’s the information for Eating inside the store is strictly prohibited.,
+2026-04-26T15:32:21,what to do if someone harasses me,,,text,0.0,fallback,True,No confident answer. Escalate to team lead.,
+2026-04-26T15:32:21,fake jungle house scam,Fake Jungle House,,text,0.96,matched_text_topic,False,Sure — here’s the information for Fake Jungle House.,
+2026-04-26T15:32:21,redeem bee points first or not,,,text,0.96,ambiguous_title_choice,False,"I found these notice topics. Which one do you need?
+
+- Bee Point Policy – Crew Member Guideline
+- Bee Points: Redeem Only When Needed",
+2026-04-26T15:32:21,when submit ot,OT Submission Reminder,,text,0.76,matched_text_topic,False,Sure — here’s the information for OT Submission Reminder.,
+2026-04-26T15:32:21,can block chiller or not,Do not Block The Chiller,,text,0.88,matched_text_topic,False,Sure — here’s the information for Do not Block The Chiller.,
+2026-04-26T15:32:21,put tissue on cold drinks,Place Tissue on Cold drinks,,text,0.96,matched_text_topic,False,Sure — here’s the information for Place Tissue on Cold drinks.,
+2026-04-26T15:32:21,can use kb qb ids to check customer history,Can not use KB/QB IDs to check customer history,,text,0.96,matched_text_topic,False,Sure — here’s the information for Can not use KB/QB IDs to check customer history.,
+2026-04-26T15:32:21,how much honey for honey juice,What is the best answer for client asking how much Honey we are using for our honey Juice?,,text,0.82,matched_text_topic,False,Sure — here’s the information for What is the best answer for client asking how much Honey we are using for our honey Juice?.,
+2026-04-26T15:32:21,must wear gloves and mask for juice,Mask and Badge,,text,0.96,matched_text_topic,False,Sure — here’s the information for Mask and Badge.,
+2026-04-26T15:32:21,who can decide cash transactions,Cashless,,text,0.82,matched_text_topic,False,Sure — here’s the information for Cashless.,
+2026-04-26T15:32:21,morning shift attendance memo,,,text,0.96,ambiguous_title_choice,False,"I found these notice topics. Which one do you need?
+
+- How shifts arrangements are given
+- Morning Shift Attendance Responsibility & Penalty Notice",
+2026-04-26T15:32:21,new bee 3rd day checklist,New Bee 3rd day Check List,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for New Bee 3rd day Check List.,
+2026-04-26T15:32:22,new bee 1st day checklist,New Bee 1st day Check List,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for New Bee 1st day Check List.,
+2026-04-26T15:32:22,wanna bee onboarding checklist,Wanna-Bee onboarding Check list,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for Wanna-Bee onboarding Check list.,
+2026-04-26T17:46:14,How to open kiosk?,JHKC Kiosk Opening,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for JHKC Kiosk Opening.,
+2026-04-26T17:52:30,kiosk opening,JHKC Kiosk Opening,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for JHKC Kiosk Opening.,
+2026-04-26T17:54:17,kiosk opening,JHKC Kiosk Opening,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for JHKC Kiosk Opening.,
+2026-04-26T18:14:31,kiosk opening,JHKC Kiosk Opening,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for JHKC Kiosk Opening.,
+2026-04-26T18:14:42,kiosk opening,JHKC Kiosk Opening,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for JHKC Kiosk Opening.,
+2026-04-26T18:16:01,kiosk opening,JHKC Kiosk Opening,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for JHKC Kiosk Opening.,
+2026-04-26T18:16:59,kiosk opening,JHKC Kiosk Opening,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for JHKC Kiosk Opening.,
+2026-04-26T18:18:26,kiosk opening,JHKC Kiosk Opening,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for JHKC Kiosk Opening.,
+2026-04-26T18:21:20,I don’t know what to do,,,text,0.0,fallback,True,No confident answer. Escalate to team lead.,
+2026-04-26T18:21:26,Still don’t know,,,text,0.0,fallback,True,No confident answer. Escalate to team lead.,
+2026-04-26T18:28:35,I don’t know what to do,,,text,0.0,fallback,True,No confident answer. Escalate to team lead.,
+2026-04-26T18:28:42,Still don’t know,,,text,0.0,fallback,True,No confident answer. Escalate to team lead.,
+2026-04-26T18:33:56,I don't know what to do,,,text,0.25,unclear_question_clarification,False,"I’m not fully sure which topic you want yet.
+
+Please choose one area:
+- SOP / checklist
+- Promotion
+- Product knowledge
+- Notice / latest update
+- Training / onboarding
+
+Examples:
+- kiosk opening
+- roadshow closing
+- promotion
+- public holiday
+- new bee 1st day",
+2026-04-26T18:34:08,Still don't know,,,text,0.0,repeated_unclear_question,True,I’m still not fully sure which topic you need. Please escalate this question to team lead.,
+2026-04-26T18:45:23,kiosk opening,JHKC Kiosk Opening,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for JHKC Kiosk Opening.,
+2026-04-26T18:45:23,how to open kiosk,JHKC Kiosk Opening,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for JHKC Kiosk Opening.,
+2026-04-26T18:45:23,how to opn kios,JHKC Kiosk Opening,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for JHKC Kiosk Opening.,
+2026-04-26T18:45:24,kiosk closing checklist,Kiosk Closing Check List,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for Kiosk Closing Check List.,
+2026-04-26T18:45:24,shopfy pos opening,Shopify POS app Opening,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for Shopify POS app Opening.,
+2026-04-26T18:45:24,receipt printer setup,Receipt printer preparation for opening,,sop,0.96,matched_title_default_steps,False,Here is the full SOP / checklist for Receipt printer preparation for opening.,
+2026-04-26T18:45:24,golden passion honey,Golden Passion Honey (New Product),,text,1.0,matched_text_topic,False,Sure — here’s the information for Golden Passion Honey (New Product).,
+2026-04-26T18:45:24,new packaging price,Price for new packaging for HWJ and SHVP,,text,1.0,matched_text_topic,False,Sure — here’s the information for Price for new packaging for HWJ and SHVP.,
+2026-04-26T18:45:24,goldn passion honey,Golden Passion Honey (New Product),,text,1.0,matched_text_topic,False,Sure — here’s the information for Golden Passion Honey (New Product).,
+2026-04-26T18:45:24,latest promotion,Promotion,,text,1.0,matched_text_topic,False,Sure — here’s the information for Promotion.,
+2026-04-26T18:45:24,gift guide,Win the Heart Gift Guide,,text,1.0,matched_text_topic,False,Sure — here’s the information for Win the Heart Gift Guide.,
+2026-04-26T18:45:24,promotion,,,text,0.85,broad_topic_clarification,False,"Which promotion information do you need?
+
+1. Promotion
+2. Win the Heart Gift Guide
+3. Bee Green 15",
+2026-04-26T18:45:24,public holiday 2026,PUBLIC HOLIDAY 2026,,text,1.0,matched_text_topic,False,Sure — here’s the information for PUBLIC HOLIDAY 2026.,
+2026-04-26T18:45:24,merchant copy need signature,Customer signature for card payment,,text,1.0,matched_text_topic,False,Sure — here’s the information for Customer signature for card payment.,
+2026-04-26T18:45:24,when submit ot,OT Submission Reminder,,text,1.0,matched_text_topic,False,Sure — here’s the information for OT Submission Reminder.,
+2026-04-26T18:45:24,can block chiller or not,Do not Block The Chiller,,text,1.0,matched_text_topic,False,Sure — here’s the information for Do not Block The Chiller.,
+2026-04-26T18:45:25,fake jungle house scam,Fake Jungle House,,text,1.0,matched_text_topic,False,Sure — here’s the information for Fake Jungle House.,
+2026-04-26T18:45:25,bee piont policy,Bee Point Policy – Crew Member Guideline,,text,1.0,matched_text_topic,False,Sure — here’s the information for Bee Point Policy – Crew Member Guideline.,
+2026-04-26T18:45:25,raya dres code,Hari Raya Aidilfitri – Dress Code,,text,1.0,matched_text_topic,False,Sure — here’s the information for Hari Raya Aidilfitri – Dress Code.,
+2026-04-26T18:45:25,must wear gloves and mask for juice,Hygiene Compliance Notice – Juice Making (Effective Immediately),,text,1.0,matched_text_topic,False,Sure — here’s the information for Hygiene Compliance Notice – Juice Making (Effective Immediately).,
+2026-04-26T18:45:25,who can decide cash transactions,Cashless,,text,1.0,matched_text_topic,False,Sure — here’s the information for Cashless.,
+2026-04-26T18:45:25,new bee 1st day checklist,New Bee 1st day Check List,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for New Bee 1st day Check List.,
+2026-04-26T18:45:25,wanna bee onboarding,Wanna-Bee onboarding Check list,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for Wanna-Bee onboarding Check list.,
+2026-04-26T18:45:25,I don’t know what to do,,,text,0.0,fallback,True,No confident answer. Escalate to team lead.,
+2026-04-26T18:45:25,Still don’t know,,,text,0.15,escalate_after_two_unclear_attempts,True,I’m still not fully sure which topic you need. Please escalate this question to team lead.,
+2026-04-26T18:46:41,kiosk opening,JHKC Kiosk Opening,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for JHKC Kiosk Opening.,
+2026-04-26T18:46:42,how to open kiosk,JHKC Kiosk Opening,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for JHKC Kiosk Opening.,
+2026-04-26T18:46:42,how to opn kios,JHKC Kiosk Opening,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for JHKC Kiosk Opening.,
+2026-04-26T18:46:42,kiosk closing checklist,Kiosk Closing Check List,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for Kiosk Closing Check List.,
+2026-04-26T18:46:42,shopfy pos opening,Shopify POS app Opening,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for Shopify POS app Opening.,
+2026-04-26T18:46:42,receipt printer setup,Receipt printer preparation for opening,,sop,0.96,matched_title_default_steps,False,Here is the full SOP / checklist for Receipt printer preparation for opening.,
+2026-04-26T18:46:42,golden passion honey,Golden Passion Honey (New Product),,text,1.0,matched_text_topic,False,Sure — here’s the information for Golden Passion Honey (New Product).,
+2026-04-26T18:46:42,new packaging price,Price for new packaging for HWJ and SHVP,,text,1.0,matched_text_topic,False,Sure — here’s the information for Price for new packaging for HWJ and SHVP.,
+2026-04-26T18:46:42,goldn passion honey,Golden Passion Honey (New Product),,text,1.0,matched_text_topic,False,Sure — here’s the information for Golden Passion Honey (New Product).,
+2026-04-26T18:46:43,latest promotion,Promotion,,text,1.0,matched_text_topic,False,Sure — here’s the information for Promotion.,
+2026-04-26T18:46:43,gift guide,Win the Heart Gift Guide,,text,1.0,matched_text_topic,False,Sure — here’s the information for Win the Heart Gift Guide.,
+2026-04-26T18:46:43,promotion,,,text,0.85,broad_topic_clarification,False,"Which promotion information do you need?
+
+1. Promotion
+2. Win the Heart Gift Guide
+3. Bee Green 15",
+2026-04-26T18:46:43,public holiday 2026,PUBLIC HOLIDAY 2026,,text,1.0,matched_text_topic,False,Sure — here’s the information for PUBLIC HOLIDAY 2026.,
+2026-04-26T18:46:43,merchant copy need signature,Customer signature for card payment,,text,1.0,matched_text_topic,False,Sure — here’s the information for Customer signature for card payment.,
+2026-04-26T18:46:43,when submit ot,OT Submission Reminder,,text,1.0,matched_text_topic,False,Sure — here’s the information for OT Submission Reminder.,
+2026-04-26T18:46:43,can block chiller or not,Do not Block The Chiller,,text,1.0,matched_text_topic,False,Sure — here’s the information for Do not Block The Chiller.,
+2026-04-26T18:46:43,fake jungle house scam,Fake Jungle House,,text,1.0,matched_text_topic,False,Sure — here’s the information for Fake Jungle House.,
+2026-04-26T18:46:43,bee piont policy,Bee Point Policy – Crew Member Guideline,,text,1.0,matched_text_topic,False,Sure — here’s the information for Bee Point Policy – Crew Member Guideline.,
+2026-04-26T18:46:43,raya dres code,Hari Raya Aidilfitri – Dress Code,,text,1.0,matched_text_topic,False,Sure — here’s the information for Hari Raya Aidilfitri – Dress Code.,
+2026-04-26T18:46:43,must wear gloves and mask for juice,Hygiene Compliance Notice – Juice Making (Effective Immediately),,text,1.0,matched_text_topic,False,Sure — here’s the information for Hygiene Compliance Notice – Juice Making (Effective Immediately).,
+2026-04-26T18:46:43,who can decide cash transactions,Cashless,,text,1.0,matched_text_topic,False,Sure — here’s the information for Cashless.,
+2026-04-26T18:46:43,new bee 1st day checklist,New Bee 1st day Check List,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for New Bee 1st day Check List.,
+2026-04-26T18:46:44,wanna bee onboarding,Wanna-Bee onboarding Check list,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for Wanna-Bee onboarding Check list.,
+2026-04-26T18:46:44,I don’t know what to do,,,text,0.0,fallback,True,No confident answer. Escalate to team lead.,
+2026-04-26T18:46:44,Still don’t know,,,text,0.15,escalate_after_two_unclear_attempts,True,I’m still not fully sure which topic you need. Please escalate this question to team lead.,
+2026-04-26T18:48:29,I don't know what to do,,,text,0.0,unclear_question_clarification,False,"I’m not sure which topic you need yet.
+
+Please choose one:
+1. SOP / checklist
+2. Promotion
+3. Product knowledge
+4. Notice / policy
+5. Training / onboarding
+6. System / login / button problem
+
+Example: kiosk opening, promotion, new packaging price, or new bee 1st day.",
+2026-04-26T18:48:34,still dont know,,,text,0.0,repeated_unclear_question,True,I’m still not sure which topic you need. Please escalate this question to your team lead.,
+2026-04-26T18:49:24,I don't know what to do,,,text,0.0,repeated_unclear_question,True,I’m still not sure which topic you need. Please escalate this question to your team lead.,
+2026-04-26T18:49:27,I don't know what to do,,,text,0.0,unclear_question_clarification,False,"I’m not sure which topic you need yet.
+
+Please choose one:
+1. SOP / checklist
+2. Promotion
+3. Product knowledge
+4. Notice / policy
+5. Training / onboarding
+6. System / login / button problem
+
+Example: kiosk opening, promotion, new packaging price, or new bee 1st day.",
+2026-04-26T18:50:24,kiosk opening,JHKC Kiosk Opening,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for JHKC Kiosk Opening.,
+2026-04-26T18:50:24,how to open kiosk,JHKC Kiosk Opening,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for JHKC Kiosk Opening.,
+2026-04-26T18:50:25,how to opn kios,JHKC Kiosk Opening,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for JHKC Kiosk Opening.,
+2026-04-26T18:50:25,kiosk closing checklist,Kiosk Closing Check List,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for Kiosk Closing Check List.,
+2026-04-26T18:50:25,shopfy pos opening,Shopify POS app Opening,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for Shopify POS app Opening.,
+2026-04-26T18:50:25,receipt printer setup,Receipt printer preparation for opening,,sop,0.96,matched_title_default_steps,False,Here is the full SOP / checklist for Receipt printer preparation for opening.,
+2026-04-26T18:50:25,golden passion honey,Golden Passion Honey (New Product),,text,1.0,matched_text_topic,False,Sure — here’s the information for Golden Passion Honey (New Product).,
+2026-04-26T18:50:25,new packaging price,Price for new packaging for HWJ and SHVP,,text,1.0,matched_text_topic,False,Sure — here’s the information for Price for new packaging for HWJ and SHVP.,
+2026-04-26T18:50:25,goldn passion honey,Golden Passion Honey (New Product),,text,1.0,matched_text_topic,False,Sure — here’s the information for Golden Passion Honey (New Product).,
+2026-04-26T18:50:25,latest promotion,Promotion,,text,1.0,matched_text_topic,False,Sure — here’s the information for Promotion.,
+2026-04-26T18:50:25,gift guide,Win the Heart Gift Guide,,text,1.0,matched_text_topic,False,Sure — here’s the information for Win the Heart Gift Guide.,
+2026-04-26T18:50:25,promotion,,,text,0.85,broad_topic_clarification,False,"Which promotion information do you need?
+
+1. Promotion
+2. Win the Heart Gift Guide
+3. Bee Green 15",
+2026-04-26T18:50:25,public holiday 2026,PUBLIC HOLIDAY 2026,,text,1.0,matched_text_topic,False,Sure — here’s the information for PUBLIC HOLIDAY 2026.,
+2026-04-26T18:50:26,merchant copy need signature,Customer signature for card payment,,text,1.0,matched_text_topic,False,Sure — here’s the information for Customer signature for card payment.,
+2026-04-26T18:50:26,when submit ot,OT Submission Reminder,,text,1.0,matched_text_topic,False,Sure — here’s the information for OT Submission Reminder.,
+2026-04-26T18:50:26,can block chiller or not,Do not Block The Chiller,,text,1.0,matched_text_topic,False,Sure — here’s the information for Do not Block The Chiller.,
+2026-04-26T18:50:26,fake jungle house scam,Fake Jungle House,,text,1.0,matched_text_topic,False,Sure — here’s the information for Fake Jungle House.,
+2026-04-26T18:50:26,bee piont policy,Bee Point Policy – Crew Member Guideline,,text,1.0,matched_text_topic,False,Sure — here’s the information for Bee Point Policy – Crew Member Guideline.,
+2026-04-26T18:50:26,raya dres code,Hari Raya Aidilfitri – Dress Code,,text,1.0,matched_text_topic,False,Sure — here’s the information for Hari Raya Aidilfitri – Dress Code.,
+2026-04-26T18:50:26,must wear gloves and mask for juice,Hygiene Compliance Notice – Juice Making (Effective Immediately),,text,1.0,matched_text_topic,False,Sure — here’s the information for Hygiene Compliance Notice – Juice Making (Effective Immediately).,
+2026-04-26T18:50:26,who can decide cash transactions,Cashless,,text,1.0,matched_text_topic,False,Sure — here’s the information for Cashless.,
+2026-04-26T18:50:26,new bee 1st day checklist,New Bee 1st day Check List,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for New Bee 1st day Check List.,
+2026-04-26T18:50:26,wanna bee onboarding,Wanna-Bee onboarding Check list,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for Wanna-Bee onboarding Check list.,
+2026-04-26T18:50:27,I don’t know what to do,,,text,0.0,fallback,True,No confident answer. Escalate to team lead.,
+2026-04-26T18:50:27,Still don’t know,,,text,0.15,escalate_after_two_unclear_attempts,True,I’m still not fully sure which topic you need. Please escalate this question to team lead.,
+2026-04-26T19:59:02,kiosk opening,JHKC Kiosk Opening,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for JHKC Kiosk Opening.,
+2026-04-26T20:00:00,I don't know what to do,,,text,0.0,unclear_question_clarification,False,"I’m not sure which topic you need yet.
+
+Please choose one:
+1. SOP / checklist
+2. Promotion
+3. Product knowledge
+4. Notice / policy
+5. Training / onboarding
+6. System / login / button problem
+
+Example: kiosk opening, promotion, new packaging price, or new bee 1st day.",
+2026-04-26T20:00:27,Still don't know,,,text,0.0,repeated_unclear_question,True,I’m still not sure which topic you need. Please escalate this question to your team lead.,
+2026-04-26T20:00:57,I don't know what to do,,,text,0.0,unclear_question_clarification,False,"I’m not sure which topic you need yet.
+
+Please choose one:
+1. SOP / checklist
+2. Promotion
+3. Product knowledge
+4. Notice / policy
+5. Training / onboarding
+6. System / login / button problem
+
+Example: kiosk opening, promotion, new packaging price, or new bee 1st day.",
+2026-04-26T20:02:06,I don't know what to do,,,text,0.0,unclear_question_clarification,False,"I’m not sure which topic you need yet.
+
+Please choose one:
+1. SOP / checklist
+2. Promotion
+3. Product knowledge
+4. Notice / policy
+5. Training / onboarding
+6. System / login / button problem
+
+Example: kiosk opening, promotion, new packaging price, or new bee 1st day.",
+2026-04-26T20:02:19,I don't know what to do,,,text,0.0,unclear_question_clarification,False,"I’m not sure which topic you need yet.
+
+Please choose one:
+1. SOP / checklist
+2. Promotion
+3. Product knowledge
+4. Notice / policy
+5. Training / onboarding
+Example: kiosk opening, promotion, new packaging price, or new bee 1st day.",
+2026-04-26T20:03:00,Still don't know,,,text,0.0,repeated_unclear_question,True,I’m still not sure which topic you need. Please escalate this question to your team lead.,
+2026-04-26T20:08:46,kiosk opening,JHKC Kiosk Opening,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for JHKC Kiosk Opening.,
+2026-04-26T20:08:46,how to open kiosk,JHKC Kiosk Opening,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for JHKC Kiosk Opening.,
+2026-04-26T20:08:46,how to opn kios,JHKC Kiosk Opening,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for JHKC Kiosk Opening.,
+2026-04-26T20:08:46,kiosk closing checklist,Kiosk Closing Check List,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for Kiosk Closing Check List.,
+2026-04-26T20:08:46,shopfy pos opening,Shopify POS app Opening,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for Shopify POS app Opening.,
+2026-04-26T20:08:47,receipt printer setup,Receipt printer preparation for opening,,sop,0.96,matched_title_default_steps,False,Here is the full SOP / checklist for Receipt printer preparation for opening.,
+2026-04-26T20:08:47,golden passion honey,Golden Passion Honey (New Product),,text,1.0,matched_text_topic,False,Sure — here’s the information for Golden Passion Honey (New Product).,
+2026-04-26T20:08:47,new packaging price,Price for new packaging for HWJ and SHVP,,text,1.0,matched_text_topic,False,Sure — here’s the information for Price for new packaging for HWJ and SHVP.,
+2026-04-26T20:08:47,goldn passion honey,Golden Passion Honey (New Product),,text,1.0,matched_text_topic,False,Sure — here’s the information for Golden Passion Honey (New Product).,
+2026-04-26T20:08:47,latest promotion,Promotion,,text,1.0,matched_text_topic,False,Sure — here’s the information for Promotion.,
+2026-04-26T20:08:47,gift guide,Win the Heart Gift Guide,,text,1.0,matched_text_topic,False,Sure — here’s the information for Win the Heart Gift Guide.,
+2026-04-26T20:08:47,promotion,,,text,0.85,broad_topic_clarification,False,"Which promotion information do you need?
+
+1. Promotion
+2. Win the Heart Gift Guide
+3. Bee Green 15",
+2026-04-26T20:08:47,public holiday 2026,PUBLIC HOLIDAY 2026,,text,1.0,matched_text_topic,False,Sure — here’s the information for PUBLIC HOLIDAY 2026.,
+2026-04-26T20:08:47,merchant copy need signature,Customer signature for card payment,,text,1.0,matched_text_topic,False,Sure — here’s the information for Customer signature for card payment.,
+2026-04-26T20:08:47,when submit ot,OT Submission Reminder,,text,1.0,matched_text_topic,False,Sure — here’s the information for OT Submission Reminder.,
+2026-04-26T20:08:47,can block chiller or not,Do not Block The Chiller,,text,1.0,matched_text_topic,False,Sure — here’s the information for Do not Block The Chiller.,
+2026-04-26T20:08:48,fake jungle house scam,Fake Jungle House,,text,1.0,matched_text_topic,False,Sure — here’s the information for Fake Jungle House.,
+2026-04-26T20:08:48,bee piont policy,Bee Point Policy – Crew Member Guideline,,text,1.0,matched_text_topic,False,Sure — here’s the information for Bee Point Policy – Crew Member Guideline.,
+2026-04-26T20:08:48,raya dres code,Hari Raya Aidilfitri – Dress Code,,text,1.0,matched_text_topic,False,Sure — here’s the information for Hari Raya Aidilfitri – Dress Code.,
+2026-04-26T20:08:48,must wear gloves and mask for juice,Hygiene Compliance Notice – Juice Making (Effective Immediately),,text,1.0,matched_text_topic,False,Sure — here’s the information for Hygiene Compliance Notice – Juice Making (Effective Immediately).,
+2026-04-26T20:08:48,who can decide cash transactions,Cashless,,text,1.0,matched_text_topic,False,Sure — here’s the information for Cashless.,
+2026-04-26T20:08:48,new bee 1st day checklist,New Bee 1st day Check List,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for New Bee 1st day Check List.,
+2026-04-26T20:08:48,wanna bee onboarding,Wanna-Bee onboarding Check list,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for Wanna-Bee onboarding Check list.,
+2026-04-26T20:08:48,I don’t know what to do,,,text,0.0,fallback,True,No confident answer. Escalate to team lead.,
+2026-04-26T20:08:48,Still don’t know,,,text,0.15,escalate_after_two_unclear_attempts,True,I’m still not fully sure which topic you need. Please escalate this question to team lead.,
+2026-04-26T20:29:51,Show me all SOP.,,,text,0.92,generic_sop,False,"Sure — I can help with SOP / checklist questions.
+
+Please choose one:
+- Aeon Roadshow Closing List
+- Aeon Roadshow Opening List
+- Backend Opening Checklist
+- Closing Spring Warehouse
+- Ice Bin Daily Closing Checklist
+- JHKC Kiosk Opening
+- Kiosk Closing Check List
+- Kuching Booth Closing dustbin check list
+- Opening Notes
+- Receipt printer preparation for opening
+- Sales Closing Reminders Material
+- Shopify POS app Closing
+- Shopify POS app Opening
+- Spring Roadshow Closing List
+- Spring Roadshow Opening List
+
+You can also ask:
+- show all
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture",
+2026-04-26T20:29:58,What SOP do you have?,,,text,0.92,generic_sop,False,"Sure — I can help with SOP / checklist questions.
+
+Please choose one:
+- Aeon Roadshow Closing List
+- Aeon Roadshow Opening List
+- Backend Opening Checklist
+- Closing Spring Warehouse
+- Ice Bin Daily Closing Checklist
+- JHKC Kiosk Opening
+- Kiosk Closing Check List
+- Kuching Booth Closing dustbin check list
+- Opening Notes
+- Receipt printer preparation for opening
+- Sales Closing Reminders Material
+- Shopify POS app Closing
+- Shopify POS app Opening
+- Spring Roadshow Closing List
+- Spring Roadshow Opening List
+
+You can also ask:
+- show all
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture",
+2026-04-26T20:30:03,Show me product knowledge.,,,text,0.92,generic_product,False,"Sure — I can help with product knowledge.
+
+Please choose one:
+- Golden Passion Honey (New Product)
+- Price for new packaging for HWJ and SHVP
+- What is the best answer for client asking how much Honey we are using for our honey Juice?",
+2026-04-26T20:32:00,kiosk opening,JHKC Kiosk Opening,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for JHKC Kiosk Opening.,
+2026-04-26T20:35:11,I don't know what to do.,,,text,0.0,unclear_question_clarification,False,"I’m not sure which topic you need yet.
+
+Please choose one:
+1. SOP / checklist
+2. Promotion
+3. Product knowledge
+4. Notice / policy
+5. Training / onboarding
+Example: kiosk opening, promotion, new packaging price, or new bee 1st day.",

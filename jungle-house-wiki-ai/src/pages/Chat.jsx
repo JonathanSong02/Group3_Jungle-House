@@ -17,7 +17,20 @@ const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:500
 const CHAT_ENDPOINT = `${API_BASE_URL}/chat`;
 
 function normalizeText(text) {
-  return String(text || '').trim().toLowerCase();
+  return String(text || '')
+    .replace(/[’‘`´]/g, "'")
+    .replace(/[“”]/g, '"')
+    .replace(/[–—]/g, '-')
+    .trim()
+    .toLowerCase();
+}
+
+function cleanQuestionInput(text) {
+  return String(text || '')
+    .replace(/[’‘`´]/g, "'")
+    .replace(/[“”]/g, '"')
+    .replace(/[–—]/g, '-')
+    .trim();
 }
 
 function containsAny(text, phrases) {
@@ -245,6 +258,72 @@ function renderImages(imageUrls, labelPrefix = 'Image') {
   );
 }
 
+function renderResponseMeta(message) {
+  if (message.sender !== 'ai') return null;
+
+  const hasConfidence = message.confidence !== undefined && message.confidence !== null;
+  const hasSource = Boolean(message.source);
+  const hasFallback = Boolean(message.fallback || message.escalation_ready || message.escalation_required);
+
+  if (!hasConfidence && !hasSource && !hasFallback) return null;
+
+  const confidenceValue = Number(message.confidence || 0);
+  const confidencePercent = Math.round(confidenceValue * 100);
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: '8px',
+        marginTop: '8px',
+        marginBottom: '6px',
+        fontSize: '12px',
+      }}
+    >
+      {hasConfidence ? (
+        <span
+          style={{
+            padding: '4px 8px',
+            borderRadius: '999px',
+            backgroundColor: '#f1f3f5',
+            border: '1px solid #dee2e6',
+          }}
+        >
+          Confidence: {confidencePercent}% {message.confidence_label ? `(${message.confidence_label})` : ''}
+        </span>
+      ) : null}
+
+      {hasSource ? (
+        <span
+          style={{
+            padding: '4px 8px',
+            borderRadius: '999px',
+            backgroundColor: '#f8f9fa',
+            border: '1px solid #dee2e6',
+          }}
+        >
+          Source: {message.source}
+        </span>
+      ) : null}
+
+      {hasFallback ? (
+        <span
+          style={{
+            padding: '4px 8px',
+            borderRadius: '999px',
+            backgroundColor: '#fff5f5',
+            border: '1px solid #ffb3b3',
+            color: '#b00020',
+          }}
+        >
+          {message.escalation_ready || message.escalation_required ? 'Escalation required' : 'Fallback'}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 function buildAiMessage(data) {
   if (!data) {
     return {
@@ -257,12 +336,25 @@ function buildAiMessage(data) {
       },
       unclear_count: 0,
       escalation_ready: false,
+      escalation_required: false,
+      confidence: 0,
+      confidence_label: 'low',
+      source: 'frontend_empty_response',
+      fallback: true,
+      fallback_message: 'No response returned from backend.',
+      message: 'No response returned from backend.',
     };
   }
 
   const backendContext = data.context || {};
   const unclearCount = Number(backendContext.unclear_count || data.unclear_count || 0) || 0;
-  const escalationReady = Boolean(data.escalation_ready);
+  const escalationReady = Boolean(data.escalation_ready || data.escalation_required);
+  const confidence = Number(data.confidence ?? data.score ?? 0) || 0;
+  const confidenceLabel = data.confidence_label || '';
+  const source = data.source || '';
+  const fallback = Boolean(data.fallback);
+  const fallbackMessage = data.fallback_message || '';
+  const backendMessage = data.message || '';
 
   if (data.type === 'sop' && Array.isArray(data.steps) && data.steps.length > 0) {
     const lastStepNumber =
@@ -285,6 +377,13 @@ function buildAiMessage(data) {
       context: backendContext,
       unclear_count: unclearCount,
       escalation_ready: escalationReady,
+      escalation_required: escalationReady,
+      confidence,
+      confidence_label: confidenceLabel,
+      source,
+      fallback,
+      fallback_message: fallbackMessage,
+      message: backendMessage,
       last_step_number: lastStepNumber,
     };
   }
@@ -308,6 +407,13 @@ function buildAiMessage(data) {
     context: backendContext,
     unclear_count: unclearCount,
     escalation_ready: escalationReady,
+    escalation_required: escalationReady,
+    confidence,
+    confidence_label: confidenceLabel,
+    source,
+    fallback,
+    fallback_message: fallbackMessage,
+    message: backendMessage,
     last_step_number: data.last_step_number || backendContext.last_step_number || null,
   };
 }
@@ -404,7 +510,7 @@ export default function Chat() {
   }, [messages, loading]);
 
   const handleSend = async () => {
-    const trimmedQuestion = question.trim();
+    const trimmedQuestion = cleanQuestionInput(question);
     if (!trimmedQuestion || loading) return;
 
     const userMessage = {
@@ -475,6 +581,17 @@ export default function Chat() {
           },
           unclear_count: 0,
           escalation_ready: false,
+          escalation_required: false,
+          confidence: 0,
+          confidence_label: 'low',
+          source: 'frontend_request_error',
+          fallback: true,
+          fallback_message:
+            error.message ||
+            'Failed to connect to backend. Please check whether Flask is running.',
+          message:
+            error.message ||
+            'Failed to connect to backend. Please check whether Flask is running.',
         },
       ]);
     } finally {
@@ -504,6 +621,28 @@ export default function Chat() {
                   className={`message-bubble ${message.sender === 'user' ? 'user' : 'ai'}`}
                 >
                   <strong>{message.sender === 'user' ? 'You' : 'AI'}</strong>
+                  {renderResponseMeta(message)}
+
+                  {message.sender === 'ai' &&
+                  message.fallback_message &&
+                  message.fallback_message !== message.text &&
+                  message.fallback_message !== message.answer ? (
+                    <p
+                      style={{
+                        whiteSpace: 'pre-wrap',
+                        marginTop: '8px',
+                        marginBottom: '8px',
+                        padding: '8px 10px',
+                        borderRadius: '10px',
+                        backgroundColor: message.escalation_ready ? '#fff5f5' : '#fff8e1',
+                        border: message.escalation_ready
+                          ? '1px solid #ffb3b3'
+                          : '1px solid #ffe08a',
+                      }}
+                    >
+                      {message.fallback_message}
+                    </p>
+                  ) : null}
 
                   {message.type === 'text' ? (
                     <div style={{ marginTop: '8px' }}>

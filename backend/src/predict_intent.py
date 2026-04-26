@@ -68,6 +68,11 @@ COMMON_TYPO_MAP = {
     "piont": "point",
     "dres": "dress",
     "adress": "dress",
+    "opn": "open",
+    "oppen": "open",
+    "merchent": "merchant",
+    "merchan": "merchant",
+    "glovs": "gloves",
     "checklst": "checklist",
     "cheklist": "checklist",
     "roadshw": "roadshow",
@@ -371,7 +376,6 @@ def unclear_clarification_response(context: dict) -> dict:
         "3. Product knowledge\n"
         "4. Notice / policy\n"
         "5. Training / onboarding\n"
-        "6. System / login / button problem\n\n"
         "Example: kiosk opening, promotion, new packaging price, or new bee 1st day."
     )
 
@@ -795,6 +799,11 @@ TITLE_ALIASES = {
         "card payment signature",
         "customer signature",
         "signature for card payment",
+        "merchant copy need signature",
+        "merchant copy signature",
+        "merchant need signature",
+        "need signature for card",
+        "card payment merchant copy",
     ],
     "Eating inside the store is strictly prohibited": [
         "eating inside the store is strictly prohibited",
@@ -813,11 +822,17 @@ TITLE_ALIASES = {
         "fake jungle house",
         "fake jh",
         "fake shop",
+        "fake jungle house scam",
+        "fake account",
+        "scam jungle house",
     ],
     "Bee Points: Redeem Only When Needed": [
         "bee points redeem only when needed",
         "redeem only when needed",
         "bee points redeem",
+        "redeem bee points first or not",
+        "bee points first",
+        "redeem points first",
     ],
     "Bee Green 15": [
         "bee green 15",
@@ -828,17 +843,25 @@ TITLE_ALIASES = {
         "ot reminder",
         "overtime reminder",
         "overtime submission reminder",
+        "when submit ot",
+        "submit ot",
+        "ot submit",
     ],
     "Do not Block The Chiller": [
         "do not block the chiller",
         "do not block chiller",
         "block the chiller",
         "chiller blocked",
+        "can block chiller or not",
+        "cannot block chiller",
+        "block chiller or not",
     ],
     "Place Tissue on Cold drinks": [
         "place tissue on cold drinks",
         "tissue on cold drinks",
         "cold drinks tissue",
+        "put tissue on cold drinks",
+        "put tissue cold drink",
     ],
     "Can not use KB/QB IDs to check customer history": [
         "can not use kb qb ids to check customer history",
@@ -846,23 +869,37 @@ TITLE_ALIASES = {
         "check customer history ids",
         "kb ids",
         "qb ids",
+        "use kb qb ids to check customer history",
+        "customer history kb qb",
     ],
     "What is the best answer for client asking how much Honey we are using for our honey Juice?": [
         "how much honey we are using for our honey juice",
         "best answer for client honey juice",
         "honey juice answer",
         "customer ask how much honey",
+        "how much honey for honey juice",
+        "honey for honey juice",
     ],
     "Hygiene Compliance Notice – Juice Making (Effective Immediately)": [
         "hygiene compliance notice juice making",
         "juice making hygiene compliance",
         "hygiene compliance notice",
         "juice hygiene notice",
+        "must wear gloves and mask for juice",
+        "wear gloves and mask for juice",
+        "gloves and mask juice",
+        "juice making gloves mask",
+        "mask gloves hygiene",
     ],
     "Cashless": [
         "cashless",
         "cashless payment",
         "no cash",
+        "cash transaction",
+        "cash transactions",
+        "who can decide cash transactions",
+        "cash decision",
+        "accept cash",
     ],
     "Morning Shift Attendance Responsibility & Penalty Notice": [
         "morning shift attendance responsibility penalty notice",
