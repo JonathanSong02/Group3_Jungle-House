@@ -1921,6 +1921,132 @@ def add_article():
 
 
 # =========================
+# Get Single Article ROUTES
+# =========================
+@app.route('/api/articles/<int:article_id>', methods=['GET'])
+def get_article_detail(article_id):
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT article_id, title, content, category, sub_category, link
+            FROM wiki_article
+            WHERE article_id = %s
+            LIMIT 1
+        """, (article_id,))
+
+        article = cursor.fetchone()
+
+        if not article:
+            return jsonify({'message': 'Article not found.'}), 404
+
+        return jsonify(article), 200
+
+    except Exception as error:
+        print('MYSQL ERROR /api/articles/<id> GET:', error)
+        return jsonify({
+            'message': 'Failed to load article.',
+            'error': str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+
+# =========================
+# Edit Article ROUTES
+# =========================
+@app.route('/api/articles/<int:article_id>', methods=['PUT'])
+def edit_article(article_id):
+    data = request.get_json() or {}
+
+    title = data.get('title', '').strip()
+    category = data.get('category', '').strip()
+    sub_category = data.get('sub_category', '').strip()
+    link = data.get('link', '').strip()
+    content = data.get('content', '').strip()
+
+    if not title or not content:
+        return jsonify({'message': 'Title and content are required.'}), 400
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            UPDATE wiki_article
+            SET title = %s,
+                content = %s,
+                category = %s,
+                link = %s,
+                sub_category = %s
+            WHERE article_id = %s
+        """, (title, content, category, link, sub_category, article_id))
+
+        conn.commit()
+
+        return jsonify({'message': 'Article updated successfully.'}), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+        print('MYSQL ERROR /api/articles PUT:', error)
+        return jsonify({'message': 'Failed to update article.', 'error': str(error)}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+# =========================
+# Delete Article ROUTES
+# =========================
+@app.route('/api/articles/<int:article_id>', methods=['DELETE'])
+def delete_article(article_id):
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            DELETE FROM wiki_article
+            WHERE article_id = %s
+        """, (article_id,))
+
+        conn.commit()
+
+        return jsonify({'message': 'Article deleted successfully.'}), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+        print('MYSQL ERROR /api/articles DELETE:', error)
+        return jsonify({'message': 'Failed to delete article.', 'error': str(error)}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+
+# =========================
 # ESCALATION ROUTES
 # =========================
 

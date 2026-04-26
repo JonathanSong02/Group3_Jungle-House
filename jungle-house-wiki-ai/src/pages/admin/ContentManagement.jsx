@@ -1,28 +1,32 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
 import api from '../../services/api';
 
 const categories = ['All', 'SOP', 'PRODUCT', 'SALES', 'Training', 'Notice'];
 
 export default function ContentManagement() {
+  const navigate = useNavigate();
+
   const [articleList, setArticleList] = useState([]);
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [loading, setLoading] = useState(true);
 
+  const fetchArticles = async () => {
+    try {
+      setLoading(true);
+      const response = await api.get('/articles');
+      setArticleList(Array.isArray(response.data) ? response.data : []);
+    } catch (error) {
+      console.error('Fetch articles error:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    api
-      .get('/articles')
-      .then((response) => {
-        setArticleList(Array.isArray(response.data) ? response.data : []);
-      })
-      .catch((error) => {
-        console.error('Fetch articles error:', error);
-      })
-      .finally(() => {
-        setLoading(false);
-      });
+    fetchArticles();
   }, []);
 
   const filteredArticles = useMemo(() => {
@@ -37,6 +41,25 @@ export default function ContentManagement() {
       return categoryMatch && text.includes(search.toLowerCase());
     });
   }, [articleList, search, selectedCategory]);
+
+  const deleteArticle = async (articleId) => {
+    const confirmDelete = window.confirm(
+      'Are you sure you want to delete this article?'
+    );
+
+    if (!confirmDelete) return;
+
+    try {
+      await api.delete(`/articles/${articleId}`);
+
+      setArticleList((prev) =>
+        prev.filter((article) => article.article_id !== articleId)
+      );
+    } catch (error) {
+      console.error('Delete article error:', error);
+      alert(error.response?.data?.message || 'Failed to delete article.');
+    }
+  };
 
   return (
     <div>
@@ -136,8 +159,21 @@ export default function ContentManagement() {
               </div>
 
               <div className="button-group content-card-actions">
-                <button className="secondary-btn">Edit</button>
-                <button className="secondary-btn danger-btn">Delete</button>
+                <button
+                  className="secondary-btn"
+                  onClick={() =>
+                    navigate(`/admin/content/edit/${article.article_id}`)
+                  }
+                >
+                  Edit
+                </button>
+
+                <button
+                  className="secondary-btn danger-btn"
+                  onClick={() => deleteArticle(article.article_id)}
+                >
+                  Delete
+                </button>
               </div>
             </article>
           ))}

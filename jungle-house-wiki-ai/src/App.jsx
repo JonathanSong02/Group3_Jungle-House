@@ -17,6 +17,7 @@ import QuizList from './pages/QuizList';
 
 import AdminDashboard from './pages/admin/AdminDashboard';
 import AddArticle from './pages/admin/AddArticle';
+import EditArticle from './pages/admin/EditArticle';
 import ContentManagement from './pages/admin/ContentManagement';
 import ReviewManagement from './pages/admin/ReviewManagement';
 import UserManagement from './pages/admin/UserManagement';
@@ -39,11 +40,9 @@ function HomeRedirect() {
 export default function App() {
   return (
     <Routes>
-      {/* PUBLIC ROUTES */}
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
 
-      {/* PROTECTED ROUTES */}
       <Route
         path="/"
         element={
@@ -54,7 +53,6 @@ export default function App() {
       >
         <Route index element={<HomeRedirect />} />
 
-        {/* STAFF + TEAM LEAD ONLY */}
         <Route
           path="dashboard"
           element={
@@ -109,11 +107,9 @@ export default function App() {
           }
         />
 
-        {/* ALL LOGIN USERS */}
         <Route path="chat" element={<Chat />} />
         <Route path="profile" element={<Profile />} />
 
-        {/* TEAM LEAD + MANAGER */}
         <Route
           path="escalation"
           element={
@@ -123,7 +119,6 @@ export default function App() {
           }
         />
 
-        {/* MANAGER ONLY */}
         <Route
           path="admin/dashboard"
           element={
@@ -147,6 +142,15 @@ export default function App() {
           element={
             <RoleRoute allowedRoles={['manager']}>
               <AddArticle />
+            </RoleRoute>
+          }
+        />
+
+        <Route
+          path="admin/content/edit/:id"
+          element={
+            <RoleRoute allowedRoles={['manager']}>
+              <EditArticle />
             </RoleRoute>
           }
         />
@@ -197,7 +201,6 @@ export default function App() {
         />
       </Route>
 
-      {/* FALLBACK */}
       <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>
   );
