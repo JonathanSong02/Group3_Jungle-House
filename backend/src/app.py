@@ -27,6 +27,7 @@ STATIC_DIR = (BASE_DIR.parent / "static").resolve()
 LOG_DIR = (BASE_DIR.parent / "logs").resolve()
 LOG_JSONL = LOG_DIR / "ai_chat_logs.jsonl"
 LOG_CSV = LOG_DIR / "ai_chat_logs.csv"
+TEST_REPORT_CSV = LOG_DIR / "ai_test_results.csv"
 
 app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="/static")
 CORS(app)
@@ -34,25 +35,232 @@ CORS(app)
 ESCALATION_MESSAGE = "No confident answer. Escalate to team lead."
 
 REAL_JH_TEST_QUESTIONS = [
-    "opening sop",
-    "kiosk closing checklist",
-    "new packaging price",
-    "merchant copy need signature",
-    "can eat inside store or not",
-    "what to do if someone harasses me",
-    "fake jungle house scam",
-    "redeem bee points first or not",
-    "when submit ot",
-    "can block chiller or not",
-    "put tissue on cold drinks",
-    "can use kb qb ids to check customer history",
-    "how much honey for honey juice",
-    "must wear gloves and mask for juice",
-    "who can decide cash transactions",
-    "morning shift attendance memo",
-    "new bee 3rd day checklist",
-    "new bee 1st day checklist",
-    "wanna bee onboarding checklist",
+    {
+        "id": 1,
+        "category": "SOP",
+        "test_type": "exact match",
+        "question": "kiosk opening",
+        "expected_title": "JHKC Kiosk Opening",
+        "expected_category": "sop",
+        "expected_behavior": "answer",
+    },
+    {
+        "id": 2,
+        "category": "SOP",
+        "test_type": "partial match",
+        "question": "how to open kiosk",
+        "expected_title": "JHKC Kiosk Opening",
+        "expected_category": "sop",
+        "expected_behavior": "answer",
+    },
+    {
+        "id": 3,
+        "category": "SOP",
+        "test_type": "wrong spelling",
+        "question": "how to opn kios",
+        "expected_title": "JHKC Kiosk Opening",
+        "expected_category": "sop",
+        "expected_behavior": "answer",
+    },
+    {
+        "id": 4,
+        "category": "SOP",
+        "test_type": "exact match",
+        "question": "kiosk closing checklist",
+        "expected_title": "Kiosk Closing Check List",
+        "expected_category": "sop",
+        "expected_behavior": "answer",
+    },
+    {
+        "id": 5,
+        "category": "SOP",
+        "test_type": "wrong spelling",
+        "question": "shopfy pos opening",
+        "expected_title": "Shopify POS app Opening",
+        "expected_category": "sop",
+        "expected_behavior": "answer",
+    },
+    {
+        "id": 6,
+        "category": "SOP",
+        "test_type": "partial match",
+        "question": "receipt printer setup",
+        "expected_title": "Receipt printer preparation for opening",
+        "expected_category": "sop",
+        "expected_behavior": "answer",
+    },
+    {
+        "id": 7,
+        "category": "Product",
+        "test_type": "exact match",
+        "question": "golden passion honey",
+        "expected_title": "Golden Passion Honey (New Product)",
+        "expected_category": "product",
+        "expected_behavior": "answer",
+    },
+    {
+        "id": 8,
+        "category": "Product",
+        "test_type": "partial match",
+        "question": "new packaging price",
+        "expected_title": "Price for new packaging for HWJ and SHVP",
+        "expected_category": "product",
+        "expected_behavior": "answer",
+    },
+    {
+        "id": 9,
+        "category": "Product",
+        "test_type": "wrong spelling",
+        "question": "goldn passion honey",
+        "expected_title": "Golden Passion Honey (New Product)",
+        "expected_category": "product",
+        "expected_behavior": "answer",
+    },
+    {
+        "id": 10,
+        "category": "Promotion",
+        "test_type": "exact match",
+        "question": "latest promotion",
+        "expected_title": "Promotion",
+        "expected_category": "promotion",
+        "expected_behavior": "answer",
+    },
+    {
+        "id": 11,
+        "category": "Promotion",
+        "test_type": "partial match",
+        "question": "gift guide",
+        "expected_title": "Win the Heart Gift Guide",
+        "expected_category": "promotion",
+        "expected_behavior": "answer",
+    },
+    {
+        "id": 12,
+        "category": "Promotion",
+        "test_type": "broad wording",
+        "question": "promotion",
+        "expected_title": None,
+        "expected_category": "promotion",
+        "expected_behavior": "category_choice",
+    },
+    {
+        "id": 13,
+        "category": "Notice",
+        "test_type": "exact match",
+        "question": "public holiday 2026",
+        "expected_title": "PUBLIC HOLIDAY 2026",
+        "expected_category": "notice",
+        "expected_behavior": "answer",
+    },
+    {
+        "id": 14,
+        "category": "Notice",
+        "test_type": "partial match",
+        "question": "merchant copy need signature",
+        "expected_title": "Customer signature for card payment",
+        "expected_category": "notice",
+        "expected_behavior": "answer",
+    },
+    {
+        "id": 15,
+        "category": "Notice",
+        "test_type": "partial match",
+        "question": "when submit ot",
+        "expected_title": "OT Submission Reminder",
+        "expected_category": "notice",
+        "expected_behavior": "answer",
+    },
+    {
+        "id": 16,
+        "category": "Notice",
+        "test_type": "partial match",
+        "question": "can block chiller or not",
+        "expected_title": "Do not Block The Chiller",
+        "expected_category": "notice",
+        "expected_behavior": "answer",
+    },
+    {
+        "id": 17,
+        "category": "Notice",
+        "test_type": "partial match",
+        "question": "fake jungle house scam",
+        "expected_title": "Fake Jungle House",
+        "expected_category": "notice",
+        "expected_behavior": "answer",
+    },
+    {
+        "id": 18,
+        "category": "Notice",
+        "test_type": "wrong spelling",
+        "question": "bee piont policy",
+        "expected_title": "Bee Point Policy – Crew Member Guideline",
+        "expected_category": "notice",
+        "expected_behavior": "answer",
+    },
+    {
+        "id": 19,
+        "category": "Notice",
+        "test_type": "wrong spelling",
+        "question": "raya dres code",
+        "expected_title": "Hari Raya Aidilfitri – Dress Code",
+        "expected_category": "notice",
+        "expected_behavior": "answer",
+    },
+    {
+        "id": 20,
+        "category": "Notice",
+        "test_type": "partial match",
+        "question": "must wear gloves and mask for juice",
+        "expected_title": "Hygiene Compliance Notice – Juice Making (Effective Immediately)",
+        "expected_category": "notice",
+        "expected_behavior": "answer",
+    },
+    {
+        "id": 21,
+        "category": "Notice",
+        "test_type": "partial match",
+        "question": "who can decide cash transactions",
+        "expected_title": "Cashless",
+        "expected_category": "notice",
+        "expected_behavior": "answer",
+    },
+    {
+        "id": 22,
+        "category": "Training",
+        "test_type": "exact match",
+        "question": "new bee 1st day checklist",
+        "expected_title": "New Bee 1st day Check List",
+        "expected_category": "training",
+        "expected_behavior": "answer",
+    },
+    {
+        "id": 23,
+        "category": "Training",
+        "test_type": "partial match",
+        "question": "wanna bee onboarding",
+        "expected_title": "Wanna-Bee onboarding Check list",
+        "expected_category": "training",
+        "expected_behavior": "answer",
+    },
+    {
+        "id": 24,
+        "category": "Unknown",
+        "test_type": "unclear wording",
+        "question": "I don’t know what to do",
+        "expected_title": None,
+        "expected_category": None,
+        "expected_behavior": "clarification",
+    },
+    {
+        "id": 25,
+        "category": "Unknown",
+        "test_type": "unclear wording",
+        "question": "Still don’t know",
+        "expected_title": None,
+        "expected_category": None,
+        "expected_behavior": "escalation",
+        "context": {"unclear_count": 1},
+    },
 ]
 
 
@@ -157,13 +365,34 @@ def normalize_context(context) -> dict:
 
 def ensure_log_files() -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+    expected_headers = [
+        "timestamp", "question", "title", "category", "section", "type",
+        "score", "confidence", "confidence_label", "source", "fallback",
+        "fallback_message", "escalation_ready", "reply", "error"
+    ]
+
     if not LOG_CSV.exists():
         with open(LOG_CSV, "w", newline="", encoding="utf-8") as file:
             writer = csv.writer(file)
-            writer.writerow([
-                "timestamp", "question", "title", "section", "type", "score",
-                "source", "escalation_ready", "reply", "error"
-            ])
+            writer.writerow(expected_headers)
+        return
+
+    try:
+        with open(LOG_CSV, "r", newline="", encoding="utf-8") as file:
+            reader = csv.DictReader(file)
+            rows = list(reader)
+
+        if rows and set(expected_headers).issubset(set(rows[0].keys())):
+            return
+
+        with open(LOG_CSV, "w", newline="", encoding="utf-8") as file:
+            writer = csv.DictWriter(file, fieldnames=expected_headers)
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({header: row.get(header, "") for header in expected_headers})
+    except Exception as error:
+        print("AI log header migration skipped:", error)
 
 
 def is_escalation_result(result: dict | None) -> bool:
@@ -190,6 +419,101 @@ def is_escalation_result(result: dict | None) -> bool:
     return "escalate" in reply or "escalate" in answer
 
 
+def get_confidence_label(score: float) -> str:
+    try:
+        score = float(score or 0.0)
+    except Exception:
+        score = 0.0
+
+    if score >= 0.90:
+        return "high"
+    if score >= 0.72:
+        return "medium"
+    return "low"
+
+
+def is_fallback_result(result: dict | None) -> bool:
+    result = result or {}
+
+    if bool(result.get("fallback", False)):
+        return True
+
+    if is_escalation_result(result):
+        return True
+
+    source = str(result.get("source", "")).strip()
+
+    if source in {
+        "empty_question",
+        "none",
+        "fallback",
+        "clarification_round_1",
+        "clarification_round_2",
+        "unclear_question_clarification",
+        "system_problem_clarification",
+        "low_confidence_or_model_unavailable",
+        "prediction_error",
+        "pytorch_model_error",
+    }:
+        return True
+
+    return "clarification" in source or "fallback" in source
+
+
+def build_fallback_message(result: dict | None, fallback: bool, escalation_required: bool) -> str:
+    result = result or {}
+
+    if result.get("fallback_message"):
+        return str(result.get("fallback_message"))
+
+    if escalation_required:
+        return "Please escalate this question to team lead."
+
+    if fallback:
+        return str(result.get("reply", result.get("answer", "Please provide more details.")))
+
+    return ""
+
+
+def standardize_ai_response(result: dict | None) -> dict:
+    result = result or {}
+
+    score = result.get("score", result.get("confidence", 0.0))
+    try:
+        score = float(score or 0.0)
+    except Exception:
+        score = 0.0
+
+    confidence = result.get("confidence", score)
+    try:
+        confidence = float(confidence or 0.0)
+    except Exception:
+        confidence = score
+
+    escalation_required = bool(
+        result.get("escalation_required", result.get("escalation_ready", False))
+    ) or is_escalation_result(result)
+
+    fallback = is_fallback_result(result)
+    fallback_message = build_fallback_message(result, fallback, escalation_required)
+
+    reply = result.get("reply", result.get("answer", ""))
+    answer = result.get("answer", result.get("reply", ""))
+
+    result["reply"] = reply
+    result["answer"] = answer
+    result["message"] = result.get("message", reply)
+    result["score"] = round(score, 4)
+    result["confidence"] = round(confidence, 4)
+    result["confidence_label"] = result.get("confidence_label") or get_confidence_label(confidence)
+    result["fallback"] = fallback
+    result["fallback_message"] = fallback_message
+    result["escalation_ready"] = escalation_required
+    result["escalation_required"] = escalation_required
+
+    return result
+
+
 def log_request(question: str, result: dict | None = None, error: str | None = None) -> None:
     ensure_log_files()
     timestamp = datetime.now().isoformat(timespec="seconds")
@@ -199,24 +523,34 @@ def log_request(question: str, result: dict | None = None, error: str | None = N
             "timestamp": timestamp,
             "question": question,
             "title": None,
+            "category": None,
             "section": None,
             "type": "text",
             "score": 0.0,
+            "confidence": 0.0,
+            "confidence_label": "low",
             "source": "prediction_error",
+            "fallback": True,
+            "fallback_message": "There was a problem while generating the answer.",
             "escalation_ready": True,
             "reply": "There was a problem while generating the answer.",
             "error": error,
         }
     else:
-        result = result or {}
+        result = standardize_ai_response(result or {})
         payload = {
             "timestamp": timestamp,
             "question": question,
             "title": result.get("title"),
+            "category": result.get("category"),
             "section": result.get("section"),
             "type": result.get("type", "text"),
             "score": float(result.get("score", 0.0)),
+            "confidence": float(result.get("confidence", result.get("score", 0.0)) or 0.0),
+            "confidence_label": result.get("confidence_label"),
             "source": result.get("source", "unknown"),
+            "fallback": bool(result.get("fallback", False)),
+            "fallback_message": str(result.get("fallback_message", "")),
             "escalation_ready": is_escalation_result(result),
             "reply": str(result.get("reply", result.get("answer", ""))),
             "error": None,
@@ -224,8 +558,9 @@ def log_request(question: str, result: dict | None = None, error: str | None = N
 
     print(
         f"[{timestamp}] CHAT | question={question!r} | "
-        f"title={payload['title']!r} | section={payload['section']!r} | "
-        f"score={payload['score']} | source={payload['source']!r} | "
+        f"title={payload['title']!r} | category={payload['category']!r} | "
+        f"section={payload['section']!r} | score={payload['score']} | "
+        f"source={payload['source']!r} | fallback={payload['fallback']} | "
         f"escalation_ready={payload['escalation_ready']}"
     )
 
@@ -238,15 +573,19 @@ def log_request(question: str, result: dict | None = None, error: str | None = N
             payload["timestamp"],
             payload["question"],
             payload["title"],
+            payload["category"],
             payload["section"],
             payload["type"],
             payload["score"],
+            payload["confidence"],
+            payload["confidence_label"],
             payload["source"],
+            payload["fallback"],
+            payload["fallback_message"],
             payload["escalation_ready"],
             payload["reply"],
             payload["error"],
         ])
-
 
 def call_model_answer(question: str, context: dict | None = None):
     context = normalize_context(context or {})
@@ -257,7 +596,7 @@ def call_model_answer(question: str, context: dict | None = None):
 
 def normalize_result(result, default_source="unknown"):
     if isinstance(result, dict):
-        return {
+        return standardize_ai_response({
             "type": result.get("type", "text"),
             "category": result.get("category"),
             "title": result.get("title"),
@@ -267,13 +606,18 @@ def normalize_result(result, default_source="unknown"):
             "purpose": result.get("purpose"),
             "steps": result.get("steps", []),
             "notes": result.get("notes", []),
-            "score": float(result.get("score", 0.0)),
+            "score": float(result.get("score", result.get("confidence", 0.0)) or 0.0),
+            "confidence": float(result.get("confidence", result.get("score", 0.0)) or 0.0),
+            "confidence_label": result.get("confidence_label"),
             "source": result.get("source", default_source),
             "context": result.get("context", {}),
+            "fallback": result.get("fallback", False),
+            "fallback_message": result.get("fallback_message", ""),
             "escalation_ready": result.get("escalation_ready", False),
-        }
+            "escalation_required": result.get("escalation_required", result.get("escalation_ready", False)),
+        })
 
-    return {
+    return standardize_ai_response({
         "type": "text",
         "category": None,
         "title": None,
@@ -284,8 +628,9 @@ def normalize_result(result, default_source="unknown"):
         "steps": [],
         "notes": [],
         "score": 0.0,
+        "confidence": 0.0,
         "source": default_source,
-    }
+    })
 
 
 def is_valid_answer(result):
@@ -356,7 +701,7 @@ def choose_final_result(model_result, retrieval_result):
         if model_result.get("score", 0.0) >= 0.45:
             return model_result
 
-    return {
+    return standardize_ai_response({
         "type": "text",
         "category": None,
         "title": None,
@@ -367,10 +712,14 @@ def choose_final_result(model_result, retrieval_result):
         "steps": [],
         "notes": [],
         "score": 0.0,
+        "confidence": 0.0,
         "source": "fallback",
         "context": {},
+        "fallback": True,
+        "fallback_message": "Please escalate this question to team lead.",
         "escalation_ready": True,
-    }
+        "escalation_required": True,
+    })
 
 
 def process_question(question, context=None):
@@ -378,7 +727,7 @@ def process_question(question, context=None):
     context = normalize_context(context or {})
 
     if not question:
-        return {
+        return standardize_ai_response({
             "question": "",
             "type": "text",
             "category": None,
@@ -390,8 +739,14 @@ def process_question(question, context=None):
             "steps": [],
             "notes": [],
             "score": 0.0,
+            "confidence": 0.0,
             "source": "none",
-        }, 400
+            "fallback": True,
+            "fallback_message": "Please enter a question.",
+            "escalation_ready": False,
+            "escalation_required": False,
+        }), 400
+
 
     model_result = None
 
@@ -402,7 +757,7 @@ def process_question(question, context=None):
                 default_source="pytorch_model"
             )
         except Exception as error:
-            model_result = {
+            model_result = standardize_ai_response({
                 "type": "text",
                 "category": None,
                 "title": None,
@@ -413,12 +768,17 @@ def process_question(question, context=None):
                 "steps": [],
                 "notes": [],
                 "score": 0.0,
+                "confidence": 0.0,
                 "source": "pytorch_model_error",
-            }
+                "fallback": True,
+                "fallback_message": "There was a problem while generating the answer.",
+                "escalation_ready": True,
+                "escalation_required": True,
+            })
 
     final_result = choose_final_result(model_result, None)
 
-    return {
+    response_payload = {
         "question": question,
         "type": final_result.get("type", "text"),
         "category": final_result.get("category"),
@@ -430,10 +790,17 @@ def process_question(question, context=None):
         "steps": final_result.get("steps", []),
         "notes": final_result.get("notes", []),
         "score": final_result.get("score", 0.0),
+        "confidence": final_result.get("confidence", final_result.get("score", 0.0)),
+        "confidence_label": final_result.get("confidence_label"),
         "source": final_result.get("source", "unknown"),
         "context": final_result.get("context", {}),
+        "fallback": final_result.get("fallback", False),
+        "fallback_message": final_result.get("fallback_message", ""),
         "escalation_ready": final_result.get("escalation_ready", False),
-    }, 200
+        "escalation_required": final_result.get("escalation_required", final_result.get("escalation_ready", False)),
+    }
+
+    return standardize_ai_response(response_payload), 200
 
 
 # =========================
@@ -1152,51 +1519,240 @@ def mark_notification_as_read(notification_id):
 @app.route("/api/chat/test", methods=["GET"])
 def chat_test():
     results = []
-    success_count = 0
+    correct_count = 0
+    partial_count = 0
+    wrong_count = 0
+    fallback_count = 0
+    weak_count = 0
     escalation_count = 0
+    error_count = 0
 
-    for question in REAL_JH_TEST_QUESTIONS:
+    category_summary = {}
+    test_type_summary = {}
+
+    def add_summary(summary, key, result_status):
+        key = key or "Unknown"
+        if key not in summary:
+            summary[key] = {
+                "total": 0,
+                "correct": 0,
+                "partial": 0,
+                "wrong": 0,
+                "fallback": 0,
+                "weak": 0,
+                "escalated": 0,
+                "error": 0,
+            }
+
+        summary[key]["total"] += 1
+
+        if result_status == "Correct":
+            summary[key]["correct"] += 1
+        elif result_status == "Partially Correct":
+            summary[key]["partial"] += 1
+        elif result_status == "Wrong":
+            summary[key]["wrong"] += 1
+        elif result_status == "Fallback":
+            summary[key]["fallback"] += 1
+        elif result_status == "Weak Answer":
+            summary[key]["weak"] += 1
+        elif result_status == "Escalated":
+            summary[key]["escalated"] += 1
+        elif result_status == "Error":
+            summary[key]["error"] += 1
+
+    def evaluate_test_case(test_case, result, status_code):
+        expected_title = test_case.get("expected_title")
+        expected_category = test_case.get("expected_category")
+        expected_behavior = test_case.get("expected_behavior", "answer")
+
+        actual_title = result.get("title")
+        actual_category = result.get("category")
+        actual_source = result.get("source")
+        actual_score = float(result.get("confidence", result.get("score", 0.0)) or 0.0)
+        actual_answer = str(result.get("answer", result.get("reply", ""))).strip()
+        actual_fallback = bool(result.get("fallback", False))
+        actual_escalation = bool(result.get("escalation_required", result.get("escalation_ready", False)))
+
+        if status_code != 200:
+            return "Error", "Backend returned error status."
+
+        if expected_behavior == "clarification":
+            if actual_fallback and not actual_escalation:
+                return "Fallback", "Correct fallback: AI asked the staff to be more specific."
+            if actual_escalation:
+                return "Wrong", "AI escalated too early for the first unclear question."
+            return "Partially Correct", "AI answered, but expected a clarification/fallback message."
+
+        if expected_behavior == "escalation":
+            if actual_escalation:
+                return "Escalated", "Correct escalation after repeated unclear question."
+            return "Wrong", "Expected escalation, but AI did not escalate."
+
+        if expected_behavior == "category_choice":
+            if actual_escalation:
+                return "Wrong", "AI escalated a broad category question instead of showing options."
+            if "clarification" in str(actual_source) or "generic" in str(actual_source) or actual_category == expected_category:
+                return "Correct", "AI showed category options or guidance as expected."
+            return "Partially Correct", "AI responded, but category guidance was not clear."
+
+        if actual_escalation or actual_fallback:
+            return "Fallback", "AI could not answer confidently."
+
+        if expected_title and actual_title == expected_title:
+            if actual_score >= 0.60:
+                return "Correct", "Expected title matched and confidence is acceptable."
+            return "Weak Answer", "Expected title matched, but confidence is below 60%."
+
+        if expected_category and actual_category == expected_category and actual_answer:
+            return "Partially Correct", "Category matched, but the title was not the expected one."
+
+        if actual_answer and actual_score < 0.35:
+            return "Weak Answer", "AI returned an answer with weak confidence."
+
+        return "Wrong", "Actual answer did not match the expected title or category."
+
+    for test_case in REAL_JH_TEST_QUESTIONS:
+        question = clean_question(test_case.get("question", ""))
+        test_context = normalize_context(test_case.get("context") or {})
+
         try:
-            result, status = process_question(question, context={})
+            result, status = process_question(question, context=test_context)
             log_request(question, result=result)
-            is_escalation = is_escalation_result(result)
+            result_status, remarks = evaluate_test_case(test_case, result, status)
 
-            if status == 200 and not is_escalation:
-                success_count += 1
-            if is_escalation:
+            if result_status == "Correct":
+                correct_count += 1
+            elif result_status == "Partially Correct":
+                partial_count += 1
+            elif result_status == "Wrong":
+                wrong_count += 1
+            elif result_status == "Fallback":
+                fallback_count += 1
+            elif result_status == "Weak Answer":
+                weak_count += 1
+            elif result_status == "Escalated":
                 escalation_count += 1
+            elif result_status == "Error":
+                error_count += 1
+
+            add_summary(category_summary, test_case.get("category"), result_status)
+            add_summary(test_type_summary, test_case.get("test_type"), result_status)
 
             results.append({
+                "id": test_case.get("id"),
+                "category": test_case.get("category"),
+                "test_type": test_case.get("test_type"),
                 "question": question,
-                "status_code": status,
-                "title": result.get("title"),
-                "section": result.get("section"),
-                "reply": result.get("reply", result.get("answer")),
-                "score": result.get("score"),
+                "expected_title": test_case.get("expected_title"),
+                "expected_category": test_case.get("expected_category"),
+                "expected_behavior": test_case.get("expected_behavior"),
+                "actual_title": result.get("title"),
+                "actual_category": result.get("category"),
+                "actual_section": result.get("section"),
+                "actual_reply": result.get("reply", result.get("answer")),
+                "confidence": result.get("confidence", result.get("score")),
+                "confidence_label": result.get("confidence_label"),
                 "source": result.get("source"),
-                "escalation_ready": is_escalation,
+                "fallback": bool(result.get("fallback", False)),
+                "escalation_required": bool(result.get("escalation_required", result.get("escalation_ready", False))),
+                "status_code": status,
+                "result_status": result_status,
+                "remarks": remarks,
             })
         except Exception as error:
             traceback.print_exc()
             log_request(question, error=str(error))
+            error_count += 1
+            add_summary(category_summary, test_case.get("category"), "Error")
+            add_summary(test_type_summary, test_case.get("test_type"), "Error")
+
             results.append({
+                "id": test_case.get("id"),
+                "category": test_case.get("category"),
+                "test_type": test_case.get("test_type"),
                 "question": question,
-                "status_code": 500,
-                "title": None,
-                "section": None,
-                "reply": "There was a problem while generating the answer.",
-                "score": 0.0,
+                "expected_title": test_case.get("expected_title"),
+                "expected_category": test_case.get("expected_category"),
+                "expected_behavior": test_case.get("expected_behavior"),
+                "actual_title": None,
+                "actual_category": None,
+                "actual_section": None,
+                "actual_reply": "There was a problem while generating the answer.",
+                "confidence": 0.0,
+                "confidence_label": "low",
                 "source": "prediction_error",
-                "escalation_ready": True,
+                "fallback": True,
+                "escalation_required": True,
+                "status_code": 500,
+                "result_status": "Error",
+                "remarks": str(error),
             })
 
+    ensure_log_files()
+    with open(TEST_REPORT_CSV, "w", newline="", encoding="utf-8") as file:
+        writer = csv.writer(file)
+        writer.writerow([
+            "id",
+            "category",
+            "test_type",
+            "question",
+            "expected_title",
+            "expected_category",
+            "expected_behavior",
+            "actual_title",
+            "actual_category",
+            "confidence",
+            "confidence_label",
+            "source",
+            "fallback",
+            "escalation_required",
+            "result_status",
+            "remarks",
+        ])
+
+        for item in results:
+            writer.writerow([
+                item.get("id"),
+                item.get("category"),
+                item.get("test_type"),
+                item.get("question"),
+                item.get("expected_title"),
+                item.get("expected_category"),
+                item.get("expected_behavior"),
+                item.get("actual_title"),
+                item.get("actual_category"),
+                item.get("confidence"),
+                item.get("confidence_label"),
+                item.get("source"),
+                item.get("fallback"),
+                item.get("escalation_required"),
+                item.get("result_status"),
+                item.get("remarks"),
+            ])
+
     total = len(REAL_JH_TEST_QUESTIONS)
+    pass_count = correct_count + partial_count + fallback_count + escalation_count
+    answered_count = correct_count + partial_count + weak_count
+
     return jsonify({
         "status": "ok",
+        "message": "AI validation test completed.",
         "total_questions": total,
-        "answered_without_escalation": success_count,
+        "correct_count": correct_count,
+        "partial_count": partial_count,
+        "wrong_count": wrong_count,
+        "fallback_count": fallback_count,
+        "weak_count": weak_count,
         "escalation_count": escalation_count,
-        "answer_rate": round((success_count / total) * 100, 2) if total else 0.0,
+        "error_count": error_count,
+        "answered_count": answered_count,
+        "pass_count": pass_count,
+        "answer_rate": round((answered_count / total) * 100, 2) if total else 0.0,
+        "pass_rate": round((pass_count / total) * 100, 2) if total else 0.0,
+        "report_file": str(TEST_REPORT_CSV),
+        "category_summary": category_summary,
+        "test_type_summary": test_type_summary,
         "results": results,
     })
 
@@ -1220,7 +1776,7 @@ def chat():
         traceback.print_exc()
         question = clean_question(data.get("question", ""))
         log_request(question, error=str(error))
-        return jsonify({
+        return jsonify(standardize_ai_response({
             "question": question,
             "type": "text",
             "category": None,
@@ -1232,8 +1788,13 @@ def chat():
             "steps": [],
             "notes": [],
             "score": 0.0,
+            "confidence": 0.0,
             "source": "prediction_error",
-        }), 500
+            "fallback": True,
+            "fallback_message": "There was a problem while generating the answer.",
+            "escalation_ready": True,
+            "escalation_required": True,
+        })), 500
 
 
 @app.route("/ask", methods=["POST"])
@@ -1251,7 +1812,7 @@ def ask():
         traceback.print_exc()
         question = clean_question(data.get("question", ""))
         log_request(question, error=str(error))
-        return jsonify({
+        return jsonify(standardize_ai_response({
             "question": question,
             "type": "text",
             "category": None,
@@ -1263,8 +1824,13 @@ def ask():
             "steps": [],
             "notes": [],
             "score": 0.0,
+            "confidence": 0.0,
             "source": "prediction_error",
-        }), 500
+            "fallback": True,
+            "fallback_message": "There was a problem while generating the answer.",
+            "escalation_ready": True,
+            "escalation_required": True,
+        })), 500
 
 
 # =========================
