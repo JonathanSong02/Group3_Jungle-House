@@ -5,7 +5,7 @@ import RoleRoute from './components/RoleRoute';
 import { useAuth } from './context/AuthContext';
 
 import Login from './pages/Login';
-import Register from "./pages/Register";
+import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import Chat from './pages/Chat';
 import KnowledgeBase from './pages/KnowledgeBase';
@@ -15,6 +15,7 @@ import Notifications from './pages/Notifications';
 import Profile from './pages/Profile';
 import QuizList from './pages/QuizList';
 
+import AdminDashboard from './pages/admin/AdminDashboard';
 import AddArticle from './pages/admin/AddArticle';
 import ContentManagement from './pages/admin/ContentManagement';
 import ReviewManagement from './pages/admin/ReviewManagement';
@@ -23,13 +24,13 @@ import AISettings from './pages/admin/AISettings';
 import Analytics from './pages/admin/Analytics';
 import SecurityMonitoring from './pages/admin/SecurityMonitoring';
 
-import SOPSelection from "./pages/SOPSelection";
+import SOPSelection from './pages/SOPSelection';
 
 function HomeRedirect() {
   const { user } = useAuth();
 
   if (user?.role === 'manager') {
-    return <Navigate to="/admin/content" replace />;
+    return <Navigate to="/admin/dashboard" replace />;
   }
 
   return <Navigate to="/dashboard" replace />;
@@ -38,7 +39,6 @@ function HomeRedirect() {
 export default function App() {
   return (
     <Routes>
-
       {/* PUBLIC ROUTES */}
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
@@ -125,6 +125,15 @@ export default function App() {
 
         {/* MANAGER ONLY */}
         <Route
+          path="admin/dashboard"
+          element={
+            <RoleRoute allowedRoles={['manager']}>
+              <AdminDashboard />
+            </RoleRoute>
+          }
+        />
+
+        <Route
           path="admin/content"
           element={
             <RoleRoute allowedRoles={['manager']}>
@@ -190,7 +199,6 @@ export default function App() {
 
       {/* FALLBACK */}
       <Route path="*" element={<Navigate to="/login" replace />} />
-
     </Routes>
   );
 }
