@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import Layout from './components/Layout';
 import ProtectedRoute from './components/ProtectedRoute';
 import RoleRoute from './components/RoleRoute';
+import { useAuth } from './context/AuthContext';
 
 import Login from './pages/Login';
 import Register from "./pages/Register";
@@ -22,8 +23,17 @@ import AISettings from './pages/admin/AISettings';
 import Analytics from './pages/admin/Analytics';
 import SecurityMonitoring from './pages/admin/SecurityMonitoring';
 
-// 🔥 ADD THIS IMPORT
 import SOPSelection from "./pages/SOPSelection";
+
+function HomeRedirect() {
+  const { user } = useAuth();
+
+  if (user?.role === 'manager') {
+    return <Navigate to="/admin/content" replace />;
+  }
+
+  return <Navigate to="/dashboard" replace />;
+}
 
 export default function App() {
   return (
@@ -42,19 +52,68 @@ export default function App() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<Navigate to="/dashboard" replace />} />
+        <Route index element={<HomeRedirect />} />
 
-        <Route path="dashboard" element={<Dashboard />} />
+        {/* STAFF + TEAM LEAD ONLY */}
+        <Route
+          path="dashboard"
+          element={
+            <RoleRoute allowedRoles={['staff', 'teamlead']}>
+              <Dashboard />
+            </RoleRoute>
+          }
+        />
+
+        <Route
+          path="knowledge"
+          element={
+            <RoleRoute allowedRoles={['staff', 'teamlead']}>
+              <KnowledgeBase />
+            </RoleRoute>
+          }
+        />
+
+        <Route
+          path="knowledge/:id"
+          element={
+            <RoleRoute allowedRoles={['staff', 'teamlead']}>
+              <ArticleDetail />
+            </RoleRoute>
+          }
+        />
+
+        <Route
+          path="notifications"
+          element={
+            <RoleRoute allowedRoles={['staff', 'teamlead']}>
+              <Notifications />
+            </RoleRoute>
+          }
+        />
+
+        <Route
+          path="quiz"
+          element={
+            <RoleRoute allowedRoles={['staff', 'teamlead']}>
+              <QuizList />
+            </RoleRoute>
+          }
+        />
+
+        <Route
+          path="sop-selection"
+          element={
+            <RoleRoute allowedRoles={['staff', 'teamlead']}>
+              <SOPSelection />
+            </RoleRoute>
+          }
+        />
+
+        {/* ALL LOGIN USERS */}
         <Route path="chat" element={<Chat />} />
+        <Route path="profile" element={<Profile />} />
 
-        {/* KNOWLEDGE BASE */}
-        <Route path="knowledge" element={<KnowledgeBase />} />
-        <Route path="knowledge/:id" element={<ArticleDetail />} />
-
-        {/* 🔥 NEW SOP SELECTION PAGE */}
-        <Route path="sop-selection" element={<SOPSelection />} />
-
-        {/* OTHER FEATURES */}
+        {/* TEAM LEAD + MANAGER */}
         <Route
           path="escalation"
           element={
@@ -63,11 +122,8 @@ export default function App() {
             </RoleRoute>
           }
         />
-        <Route path="notifications" element={<Notifications />} />
-        <Route path="profile" element={<Profile />} />
-        <Route path="quiz" element={<QuizList />} />
 
-        {/* ADMIN ROUTES */}
+        {/* MANAGER ONLY */}
         <Route
           path="admin/content"
           element={
@@ -76,6 +132,7 @@ export default function App() {
             </RoleRoute>
           }
         />
+
         <Route
           path="admin/content/add"
           element={
@@ -84,6 +141,7 @@ export default function App() {
             </RoleRoute>
           }
         />
+
         <Route
           path="admin/review"
           element={
@@ -92,6 +150,7 @@ export default function App() {
             </RoleRoute>
           }
         />
+
         <Route
           path="admin/users"
           element={
@@ -100,6 +159,7 @@ export default function App() {
             </RoleRoute>
           }
         />
+
         <Route
           path="admin/ai-settings"
           element={
@@ -108,6 +168,7 @@ export default function App() {
             </RoleRoute>
           }
         />
+
         <Route
           path="admin/analytics"
           element={
@@ -116,6 +177,7 @@ export default function App() {
             </RoleRoute>
           }
         />
+
         <Route
           path="admin/security"
           element={

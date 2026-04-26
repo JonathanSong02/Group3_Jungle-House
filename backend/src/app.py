@@ -1352,7 +1352,212 @@ def add_article():
     finally:
         cursor.close()
         conn.close()
-        
+
+
+# =========================
+# ESCALATION ROUTES
+# =========================
+
+@app.route('/api/escalations', methods=['GET'])
+def get_escalations():
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT 
+                e.escalation_id,
+                e.question,
+                e.ai_answer,
+                e.ai_score,
+                e.ai_source,
+                e.manual_answer,
+                e.asked_by,
+                e.handled_by,
+                e.status,
+                e.created_at,
+                e.updated_at,
+                e.resolved_at,
+                u.full_name AS asked_by_name
+            FROM escalation e
+            LEFT JOIN users u ON e.asked_by = u.user_id
+            ORDER BY e.created_at DESC
+        """)
+
+        escalations = cursor.fetchall()
+
+        return jsonify(escalations), 200
+
+    except Exception as error:
+        print('MYSQL ERROR /api/escalations GET:', error)
+        return jsonify({
+            'message': 'Failed to load escalations.',
+            'error': str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route('/api/escalations/<int:escalation_id>/answer', methods=['PUT'])
+def submit_escalation_answer(escalation_id):
+    data = request.get_json() or {}
+
+    manual_answer = data.get('manual_answer', '').strip()
+    handled_by = data.get('handled_by')
+
+    if not manual_answer:
+        return jsonify({'message': 'Manual answer is required.'}), 400
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            UPDATE escalation
+            SET 
+                manual_answer = %s,
+                handled_by = %s,
+                status = 'resolved',
+                resolved_at = CURRENT_TIMESTAMP
+            WHERE escalation_id = %s
+        """, (manual_answer, handled_by, escalation_id))
+
+        conn.commit()
+
+        return jsonify({
+            'message': 'Escalation resolved successfully.'
+        }), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print('MYSQL ERROR /api/escalations PUT:', error)
+
+        return jsonify({
+            'message': 'Failed to submit manual answer.',
+            'error': str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+# =========================
+# USER MANAGEMENT ROUTES
+# =========================
+
+@app.route("/api/admin/users", methods=["GET"])
+def get_admin_users():
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT
+                u.user_id,
+                u.full_name,
+                u.email,
+                u.status,
+                u.created_at,
+                r.role_name
+            FROM users u
+            JOIN roles r ON u.role_id = r.role_id
+            ORDER BY u.user_id ASC
+        """)
+
+        users = cursor.fetchall()
+
+        for user in users:
+            user["created_at"] = format_datetime_value(user.get("created_at"))
+
+        return jsonify(users), 200
+
+    except Exception as error:
+        print("MYSQL ERROR /api/admin/users GET:", error)
+        return jsonify({
+            "message": "Failed to load users.",
+            "error": str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/admin/users/<int:user_id>/role", methods=["PUT"])
+def update_admin_user_role(user_id):
+    data = request.get_json() or {}
+    role = data.get("role", "").strip().lower()
+
+    if role not in ["staff", "teamlead"]:
+        return jsonify({"message": "Invalid role."}), 400
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT role_id
+            FROM roles
+            WHERE LOWER(role_name) = %s
+            LIMIT 1
+        """, (role,))
+        role_row = cursor.fetchone()
+
+        if not role_row:
+            return jsonify({"message": "Role not found."}), 404
+
+        cursor.execute("""
+            UPDATE users
+            SET role_id = %s
+            WHERE user_id = %s
+              AND user_id <> 1
+        """, (role_row["role_id"], user_id))
+
+        conn.commit()
+
+        return jsonify({
+            "message": "User role updated successfully."
+        }), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("MYSQL ERROR /api/admin/users/role PUT:", error)
+        return jsonify({
+            "message": "Failed to update user role.",
+            "error": str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
 
 @app.route("/static/<path:filename>", methods=["GET"])
 def serve_static(filename):

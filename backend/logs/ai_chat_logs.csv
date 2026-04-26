@@ -635,3 +635,25 @@ You can also ask:
 - step 2 to step 5",
 2026-04-25T18:53:46,Show me shopfy pos closing.,Shopify POS app Closing,,sop,1.0,matched_title_default_steps,False,Here is the full SOP / checklist for Shopify POS app Closing.,
 2026-04-25T18:53:50,What is bee piont policy?,Bee Point Policy – Crew Member Guideline,,text,0.96,matched_text_topic,False,Sure — here’s the information for Bee Point Policy – Crew Member Guideline.,
+2026-04-26T16:57:22,sop,,,text,0.85,broad_topic_clarification,False,"Which SOP/checklist do you need?
+
+You can ask for:
+- kiosk opening
+- kiosk closing
+- shopify opening
+- shopify closing
+- roadshow opening
+- roadshow closing
+- receipt printer",
+2026-04-26T16:57:27,hi,,,text,1.0,greeting_guidance,False,"Hi — I can help with SOP, checklist, promotion, product knowledge, notice, or training questions.
+
+You can ask things like:
+- kiosk opening
+- roadshow closing
+- show all for kiosk opening
+- step 2 to step 5
+- promotion
+- public holiday
+- new bee 1st day
+- golden passion honey",
+2026-04-26T16:57:34,i want viva,,,text,0.0,fallback,True,No confident answer. Escalate to team lead.,

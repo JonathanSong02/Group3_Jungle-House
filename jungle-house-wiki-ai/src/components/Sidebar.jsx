@@ -11,26 +11,27 @@ export default function Sidebar() {
 
   return (
     <aside className="sidebar">
-      <div>
+      <div className="sidebar-brand">
         <p className="eyebrow">Jungle House</p>
-        <h2 className="sidebar-title">Training Assistant</h2>
+        <h2 className="sidebar-title">AI Wiki</h2>
+        <p className="sidebar-subtitle">Training & Knowledge Hub</p>
       </div>
 
       <nav className="sidebar-nav">
-        <NavLink className={linkClass} to="/dashboard">Dashboard</NavLink>
-        <NavLink className={linkClass} to="/chat">AI Chat</NavLink>
-        <NavLink className={linkClass} to="/knowledge">Knowledge Base</NavLink>
-        <NavLink className={linkClass} to="/notifications">Notifications</NavLink>
-        <NavLink className={linkClass} to="/quiz">Quiz / Training</NavLink>
-        <NavLink className={linkClass} to="/profile">Profile</NavLink>
-
-        {(role === 'teamlead' || role === 'manager') && (
-          <NavLink className={linkClass} to="/escalation">Escalation</NavLink>
+        {(role === 'staff' || role === 'teamlead') && (
+          <>
+            <div className="sidebar-section-label">Staff Workspace</div>
+            <NavLink className={linkClass} to="/dashboard">Dashboard</NavLink>
+            <NavLink className={linkClass} to="/chat">AI Chat</NavLink>
+            <NavLink className={linkClass} to="/knowledge">Knowledge Base</NavLink>
+            <NavLink className={linkClass} to="/notifications">Notifications</NavLink>
+            <NavLink className={linkClass} to="/quiz">Quiz / Training</NavLink>
+          </>
         )}
 
         {role === 'manager' && (
           <>
-            <div className="sidebar-section-label">Admin Panel</div>
+            <div className="sidebar-section-label">Admin Workspace</div>
             <NavLink className={linkClass} to="/admin/content">Content Management</NavLink>
             <NavLink className={linkClass} to="/admin/review">Review Management</NavLink>
             <NavLink className={linkClass} to="/admin/users">User Management</NavLink>
@@ -39,6 +40,16 @@ export default function Sidebar() {
             <NavLink className={linkClass} to="/admin/security">Security / Monitoring</NavLink>
           </>
         )}
+
+        {(role === 'teamlead' || role === 'manager') && (
+          <>
+            <div className="sidebar-section-label">Review</div>
+            <NavLink className={linkClass} to="/escalation">Escalation</NavLink>
+          </>
+        )}
+
+        <div className="sidebar-section-label">Account</div>
+        <NavLink className={linkClass} to="/profile">Profile</NavLink>
       </nav>
     </aside>
   );
