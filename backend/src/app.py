@@ -29,6 +29,11 @@ LOG_JSONL = LOG_DIR / "ai_chat_logs.jsonl"
 LOG_CSV = LOG_DIR / "ai_chat_logs.csv"
 TEST_REPORT_CSV = LOG_DIR / "ai_test_results.csv"
 
+# Simple in-memory chat context for local prototype use.
+# This helps follow-up messages like "step 25" work even if the frontend
+# does not send the previous AI response context back to the backend.
+AI_CHAT_MEMORY = {}
+
 app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="/static")
 CORS(app)
 
@@ -363,6 +368,38 @@ def normalize_context(context) -> dict:
     }
 
 
+def get_chat_memory_key(data: dict | None = None) -> str:
+    data = data or {}
+    user_id = data.get("user_id") or data.get("userId")
+    if user_id:
+        return f"user:{user_id}"
+    return f"ip:{request.remote_addr or 'local'}"
+
+
+def prepare_chat_context(data: dict | None = None) -> dict:
+    data = data or {}
+    request_context = normalize_context(data.get("context") or {})
+    memory_context = normalize_context(AI_CHAT_MEMORY.get(get_chat_memory_key(data)) or {})
+
+    merged_context = memory_context.copy()
+    for key, value in request_context.items():
+        if value not in [None, "", 0]:
+            merged_context[key] = value
+
+    return normalize_context(merged_context)
+
+
+def remember_chat_context(data: dict | None, result: dict | None) -> None:
+    result = result or {}
+    result_context = normalize_context(result.get("context") or {})
+
+    if result_context.get("title") or result_context.get("category") or result_context.get("unclear_count", 0) > 0:
+        AI_CHAT_MEMORY[get_chat_memory_key(data)] = result_context
+        return
+
+    AI_CHAT_MEMORY.pop(get_chat_memory_key(data), None)
+
+
 def ensure_log_files() -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -652,6 +689,27 @@ def is_valid_answer(result):
 
 
 def choose_final_result(model_result, retrieval_result):
+    if model_result:
+        model_source = str(model_result.get("source", ""))
+        non_escalation_control_sources = {
+            "step_request_missing_topic",
+            "context_step_out_of_bounds",
+            "context_step_range_out_of_bounds",
+            "matched_title_step_out_of_bounds",
+            "matched_title_step_range_out_of_bounds",
+        }
+
+        if (
+            model_source in non_escalation_control_sources
+            or "step_out_of_bounds" in model_source
+            or "step_range_out_of_bounds" in model_source
+            or "step_range_limited" in model_source
+            or "part_prompt" in model_source
+            or "step_prompt" in model_source
+            or model_source == "context_guidance"
+        ):
+            return model_result
+
     if model_result and is_valid_answer(model_result):
         if model_result.get("type") == "sop":
             return model_result
@@ -1768,8 +1826,9 @@ def chat():
     try:
         result, status_code = process_question(
             question=data.get("question", ""),
-            context=data.get("context") or {},
+            context=prepare_chat_context(data),
         )
+        remember_chat_context(data, result)
         log_request(result.get("question", ""), result=result)
         return jsonify(result), status_code
     except Exception as error:
@@ -1804,8 +1863,9 @@ def ask():
     try:
         result, status_code = process_question(
             question=data.get("question", ""),
-            context=data.get("context") or {},
+            context=prepare_chat_context(data),
         )
+        remember_chat_context(data, result)
         log_request(result.get("question", ""), result=result)
         return jsonify(result), status_code
     except Exception as error:

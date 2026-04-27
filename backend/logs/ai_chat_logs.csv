@@ -653,3 +653,272 @@ Please choose one:
 - Shopify POS app Opening
 - Spring Roadshow Closing List
 - Spring Roadshow Opening List",
+2026-04-27T20:43:08,kiosk opening,JHKC Kiosk Opening,sop,,text,1.0,1.0,high,matched_title_step_prompt,False,,False,"I found JHKC Kiosk Opening.
+
+Which part do you need? Please ask for a specific step or range.
+
+Examples:
+- step 2
+- step 3 to step 7
+- show picture
+- show all",
+2026-04-27T20:43:13,step 5,JHKC Kiosk Opening,sop,,sop,0.96,0.96,high,context_step,False,,False,Got it — this is Step 5 for JHKC Kiosk Opening.,
+2026-04-27T20:43:25,step 10-20,JHKC Kiosk Opening,sop,,sop,0.95,0.95,high,context_step_range,False,,False,Got it — here are Steps 10 to 20 for JHKC Kiosk Opening.,
+2026-04-27T20:43:33,spring opening,,sop,,text,0.84,0.84,medium,ambiguous_title_choice,False,,False,"I found multiple SOPs. Which one do you need?
+
+- Spring Roadshow Opening List
+- JHKC Kiosk Opening
+- Receipt printer preparation for opening
+- Aeon Roadshow Opening List
+- Backend Opening Checklist
+- Opening Notes
+- Shopify POS app Opening
+
+You can also ask:
+- show all
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture",
+2026-04-27T20:43:45,step 3,JHKC Kiosk Opening,sop,,sop,0.96,0.96,high,context_step,False,,False,Got it — this is Step 3 for JHKC Kiosk Opening.,
+2026-04-27T20:43:54,Spring Roadshow Opening List,Spring Roadshow Opening List,sop,,text,1.0,1.0,high,matched_title_step_prompt,False,,False,"I found Spring Roadshow Opening List.
+
+Which part do you need? Please ask for a specific step or range.
+
+Examples:
+- step 2
+- step 3 to step 7
+- show picture
+- show all
+
+Available sections:
+- Chiller
+- Daily Record Sheet
+- Devices
+- Shopify POS
+- Terminal Machine",
+2026-04-27T20:44:54,step 7,Spring Roadshow Opening List,sop,,sop,0.96,0.96,high,context_step,False,,False,Got it — this is Step 7 for Spring Roadshow Opening List.,
+2026-04-27T20:44:59,ice bin,Ice Bin Daily Closing Checklist,sop,,text,1.0,1.0,high,matched_title_step_prompt,False,,False,"I found Ice Bin Daily Closing Checklist.
+
+Which part do you need? Please ask for a specific step or range.
+
+Examples:
+- step 2
+- step 3 to step 7
+- show picture
+- show all
+
+Available sections:
+- Cleaning",
+2026-04-27T20:45:07,step 5-9,Ice Bin Daily Closing Checklist,sop,,text,0.78,0.78,medium,context_guidance,False,,False,"I’m currently helping you with Ice Bin Daily Closing Checklist.
+Tell me what you need next — for example:
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture
+- show all
+
+If you want another topic, just type it directly, like promotion or public holiday.",
+2026-04-27T20:45:17,step 1-4,Ice Bin Daily Closing Checklist,sop,,sop,0.95,0.95,high,context_step_range,False,,False,Got it — here are Steps 1 to 4 for Ice Bin Daily Closing Checklist.,
+2026-04-27T20:45:48,opening notes,Opening Notes,sop,,text,1.0,1.0,high,matched_title_step_prompt,False,,False,"I found Opening Notes.
+
+Which part do you need? Please ask for a specific step or range.
+
+Examples:
+- step 2
+- step 3 to step 7
+- show picture
+- show all
+
+Available sections:
+- Chiller
+- Devices
+- Display
+- Honey Area
+- Photo Submission
+- Proper Way to Serve Customer
+- Sales Kits
+- VM Area",
+2026-04-27T20:46:00,step 2-11,Opening Notes,sop,,sop,0.95,0.95,high,context_step_range,False,,False,Got it — here are Steps 2 to 11 for Opening Notes.,
+2026-04-27T20:56:39,kiosk opening,JHKC Kiosk Opening,sop,,text,1.0,1.0,high,matched_title_step_prompt,False,,False,"I found JHKC Kiosk Opening.
+
+Which part do you need? Please ask for a specific step or range.
+
+Examples:
+- step 2
+- step 3 to step 7
+- show picture
+- show all",
+2026-04-27T20:56:50,step 24,,,,text,0.0,0.0,low,fallback,True,Please escalate this question to team lead.,True,No confident answer. Escalate to team lead.,
+2026-04-27T20:57:01,step 10,JHKC Kiosk Opening,sop,,sop,0.96,0.96,high,context_step,False,,False,Got it — this is Step 10 for JHKC Kiosk Opening.,
+2026-04-27T20:57:06,step 10 -24,JHKC Kiosk Opening,sop,,sop,0.95,0.95,high,context_step_range_limited,False,,False,"I found JHKC Kiosk Opening, but this SOP only has steps until Step 23.
+
+You requested Steps 10 to 24, so I can only show the available part below.",
+2026-04-27T20:57:19,step 24,,,,text,0.0,0.0,low,fallback,True,Please escalate this question to team lead.,True,No confident answer. Escalate to team lead.,
+2026-04-27T20:58:47,step 24,,,,text,0.0,0.0,low,fallback,True,Please escalate this question to team lead.,True,No confident answer. Escalate to team lead.,
+2026-04-27T20:58:53,kiosk opening,JHKC Kiosk Opening,sop,,text,1.0,1.0,high,matched_title_step_prompt,False,,False,"I found JHKC Kiosk Opening.
+
+Which part do you need? Please ask for a specific step or range.
+
+Examples:
+- step 2
+- step 3 to step 7
+- show picture
+- show all",
+2026-04-27T20:58:59,step 25,,,,text,0.0,0.0,low,fallback,True,Please escalate this question to team lead.,True,No confident answer. Escalate to team lead.,
+2026-04-27T21:06:38,kiosk opening,JHKC Kiosk Opening,sop,,text,1.0,1.0,high,matched_title_step_prompt,False,,False,"I found JHKC Kiosk Opening.
+This checklist has Step 1 to Step 23.
+
+Which part do you need? Please ask for a specific step or range.
+
+Examples:
+- step 2
+- step 3 to step 7
+- show picture
+- show all",
+2026-04-27T21:06:43,step 24,,,,text,0.0,0.0,low,fallback,True,Please escalate this question to team lead.,True,No confident answer. Escalate to team lead.,
+2026-04-27T21:06:48,step 25,,,,text,0.0,0.0,low,fallback,True,Please escalate this question to team lead.,True,No confident answer. Escalate to team lead.,
+2026-04-27T21:07:01,JHKC Kiosk Opening,JHKC Kiosk Opening,sop,,text,1.0,1.0,high,matched_title_step_prompt,False,,False,"I found JHKC Kiosk Opening.
+This checklist has Step 1 to Step 23.
+
+Which part do you need? Please ask for a specific step or range.
+
+Examples:
+- step 2
+- step 3 to step 7
+- show picture
+- show all",
+2026-04-27T21:07:05,step 24,,,,text,0.0,0.0,low,fallback,True,Please escalate this question to team lead.,True,No confident answer. Escalate to team lead.,
+2026-04-27T21:07:14,Shopify POS app Opening,Shopify POS app Opening,sop,,text,1.0,1.0,high,matched_title_step_prompt,False,,False,"I found Shopify POS app Opening.
+This checklist has Step 1 to Step 7.
+
+Which part do you need? Please ask for a specific step or range.
+
+Examples:
+- step 2
+- step 3 to step 7
+- show picture
+- show all",
+2026-04-27T21:07:19,step 17,,,,text,0.0,0.0,low,fallback,True,Please escalate this question to team lead.,True,No confident answer. Escalate to team lead.,
+2026-04-27T21:07:39,step 8,,,,text,0.0,0.0,low,fallback,True,Please escalate this question to team lead.,True,No confident answer. Escalate to team lead.,
+2026-04-27T21:07:43,step 7,Shopify POS app Opening,sop,,sop,0.96,0.96,high,context_step,False,,False,Got it — this is Step 7 for Shopify POS app Opening.,
+2026-04-27T21:09:21,kiosk opening,JHKC Kiosk Opening,sop,,text,1.0,1.0,high,matched_title_step_prompt,False,,False,"I found JHKC Kiosk Opening.
+This checklist has Step 1 to Step 23.
+
+Which part do you need? Please ask for a specific step or range.
+
+Examples:
+- step 2
+- step 3 to step 7
+- show picture
+- show all",
+2026-04-27T21:09:26,step 24,,,,text,0.0,0.0,low,fallback,True,Please escalate this question to team lead.,True,No confident answer. Escalate to team lead.,
+2026-04-27T21:13:21,kiosk opening,JHKC Kiosk Opening,sop,,text,1.0,1.0,high,matched_title_step_prompt,False,,False,"I found JHKC Kiosk Opening.
+This checklist has Step 1 to Step 23.
+
+Which part do you need? Please ask for a specific step or range.
+
+Examples:
+- step 2
+- step 3 to step 7
+- show picture
+- show all",
+2026-04-27T21:13:28,step 24,JHKC Kiosk Opening,sop,,text,0.35,0.35,low,context_step_out_of_bounds,False,,False,"I found JHKC Kiosk Opening, but Step 24 is outside the available steps.
+
+This SOP only has Step 1 to Step 23.
+
+Please ask again with a valid step or range.
+Examples:
+- step 1
+- step 23
+- step 1 to step 23",
+2026-04-27T21:13:43,Win the Heart Gift Guide,Win the Heart Gift Guide,promotion,,text,1.0,1.0,high,matched_text_topic,False,,False,Sure — here’s the information for Win the Heart Gift Guide.,
+2026-04-27T21:14:00,romotion,Promotion,promotion,,text,0.84,0.84,medium,matched_text_topic,False,,False,Sure — here’s the information for Promotion.,
+2026-04-27T21:14:20,Lab Report in Website - temporarily removed,Lab Report in Website - temporarily removed,notice,,text,1.0,1.0,high,matched_text_topic,False,,False,Sure — here’s the information for Lab Report in Website - temporarily removed.,
+2026-04-27T21:19:27,Golden Passion Honey (New Product),Golden Passion Honey (New Product),product,,text,1.0,1.0,high,matched_title_part_prompt,False,,False,"I found Golden Passion Honey (New Product).
+This topic has Step 1 to Step 19.
+
+Which part do you need? Please ask for a specific step, range, section, picture, or ask to show all.
+
+Examples:
+- step 2
+- step 3 to step 7
+- show picture
+- show all
+
+Available sections:
+- Core Message
+- Functional Positioning
+- Key Benefits
+- Key Selling Points
+- Product Overview
+- Target Customers",
+2026-04-27T21:19:37,How shifts arrangements are given,How shifts arrangements are given,notice,,text,1.0,1.0,high,matched_title_part_prompt,False,,False,"I found How shifts arrangements are given.
+This topic has Step 1 to Step 22.
+
+Which part do you need? Please ask for a specific step, range, section, picture, or ask to show all.
+
+Examples:
+- step 2
+- step 3 to step 7
+- show picture
+- show all
+
+Available sections:
+- How Shifts Are Assigned
+- Key Responsibilities
+- Overview
+- Pro-Tip
+- SP Summary
+- Shift Assignment Overview
+- The 4 Pillars of SP
+- Understanding SP",
+2026-04-27T21:19:48,Hari Raya Aidilfitri Public Holiday - Retail (2026),,notice,,text,0.96,0.96,high,ambiguous_title_choice,False,,False,"I found these notice topics. Which one do you need?
+
+- PUBLIC HOLIDAY 2026
+- Hari Raya Aidilfitri Public Holiday – Retail (2026)",
+2026-04-27T21:20:02,PUBLIC HOLIDAY 2026PUBLIC HOLIDAY 2026,,notice,,text,0.96,0.96,high,ambiguous_title_choice,False,,False,"I found these notice topics. Which one do you need?
+
+- PUBLIC HOLIDAY 2026
+- Hari Raya Aidilfitri Public Holiday – Retail (2026)",
+2026-04-27T21:20:05,PUBLIC HOLIDAY 2026,PUBLIC HOLIDAY 2026,notice,,text,1.0,1.0,high,matched_title_part_prompt,False,,False,"I found PUBLIC HOLIDAY 2026.
+This topic has Step 1 to Step 4.
+
+Which part do you need? Please ask for a specific step, range, section, picture, or ask to show all.
+
+Examples:
+- step 2
+- step 3 to step 7
+- show picture
+- show all
+
+Available sections:
+- Overview
+- Reference Image
+- Related Question",
+2026-04-27T21:20:17,Wanna-Bee onboarding Check list,Wanna-Bee onboarding Check list,training,,text,1.0,1.0,high,matched_title_part_prompt,False,,False,"I found Wanna-Bee onboarding Check list.
+This topic has Step 1 to Step 24.
+
+Which part do you need? Please ask for a specific step, range, section, picture, or ask to show all.
+
+Examples:
+- step 2
+- step 3 to step 7
+- show picture
+- show all
+
+Available sections:
+- Add Team Leader contact
+- Announcement
+- Availability
+- Before first day
+- Download and install
+- Ground rules
+- Join Google Group
+- Join Whatsapp group
+- Payment info
+- Portrait
+- Reminder
+- Setup Shopify account
+- Uniform
+- Visit Jungle House Kuching Wiki",
