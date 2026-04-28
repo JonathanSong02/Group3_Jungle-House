@@ -44,3 +44,9 @@ CREATE TABLE IF NOT EXISTS escalation (
         FOREIGN KEY (handled_by) REFERENCES users(user_id)
         ON DELETE SET NULL
 );
+
+
+-- =========================================================
+-- Test run code below
+-- =========================================================
+SELECT * FROM qa_knowledge ORDER BY created_at DESC;
