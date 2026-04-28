@@ -7,6 +7,33 @@ from pathlib import Path
 import csv
 import json
 import traceback
+from db_helper import (
+    save_qa_to_db,
+    search_similar_question,
+    create_escalation,
+    resolve_escalation
+)
+
+import re
+
+def is_nonsense(text):
+    text = text.strip().lower()
+
+    whitelist = ["hi", "hello", "hey", "ok", "thanks"]
+
+    if text in whitelist:
+        return False
+
+    if len(text) < 3:
+        return True
+
+    if not re.search(r'[aeiou]', text):
+        return True
+
+    if re.fullmatch(r'(.)\1{3,}', text):
+        return True
+
+    return False
 
 try:
     from predict_intent import get_model_answer
@@ -834,7 +861,12 @@ def process_question(question, context=None):
                 "escalation_required": True,
             })
 
-    final_result = choose_final_result(model_result, None)
+    retrieval_result = search_similar_question(question)
+
+    final_result = choose_final_result(
+        model_result,
+        normalize_result(retrieval_result, "database") if retrieval_result else None
+    )
 
     response_payload = {
         "question": question,
@@ -1824,73 +1856,115 @@ def chat():
     data = request.get_json(silent=True) or {}
 
     try:
+        question = data.get("question", "")
+        q_lower = question.lower()
+
+        greetings = ["hi", "hello", "hey", "morning", "afternoon", "evening"]
+
+        # =========================
+        # ✅ STEP 0: GREETING
+        # =========================
+        if any(greet in q_lower for greet in greetings):
+            return jsonify({
+                "reply": "Hi! 👋 I can help you with SOP, kiosk steps, product info, or promotion.\n\nTry asking:\n- kiosk opening\n- show step 4\n- latest promotion",
+                "confidence": 1.0,
+                "source": "greeting",
+                "fallback": False,
+                "escalation_ready": False
+            }), 200
+
+        # =========================
+        # ✅ STEP 1: NONSENSE → ESCALATE
+        # =========================
+        if is_nonsense(question):
+            escalation_id = create_escalation(question, {
+                "answer": "Unclear or invalid question",
+                "confidence": 0.0,
+                "source": "invalid_input"
+            })
+
+            return jsonify({
+                "reply": "I didn’t understand that. I’ll escalate this to a team lead.",
+                "confidence": 0.0,
+                "source": "invalid_input",
+                "fallback": True,
+                "escalation": True,
+                "escalation_id": escalation_id
+            }), 200
+
+        # =========================
+        # ✅ STEP 2: CLEAN QUESTION
+        # =========================
+        question = clean_question(question)
+
+        if not question:
+            return jsonify({
+                "reply": "Please ask a question.",
+                "fallback": True
+            }), 400
+
+        # =========================
+        # ✅ STEP 3: CALL AI
+        # =========================
         result, status_code = process_question(
-            question=data.get("question", ""),
+            question=question,
             context=prepare_chat_context(data),
         )
+
         remember_chat_context(data, result)
-        log_request(result.get("question", ""), result=result)
-        return jsonify(result), status_code
-    except Exception as error:
-        traceback.print_exc()
-        question = clean_question(data.get("question", ""))
-        log_request(question, error=str(error))
-        return jsonify(standardize_ai_response({
-            "question": question,
-            "type": "text",
-            "category": None,
-            "title": None,
-            "section": None,
-            "reply": "There was a problem while generating the answer.",
-            "answer": f"Prediction error: {error}",
-            "purpose": None,
-            "steps": [],
-            "notes": [],
-            "score": 0.0,
-            "confidence": 0.0,
-            "source": "prediction_error",
-            "fallback": True,
-            "fallback_message": "There was a problem while generating the answer.",
-            "escalation_ready": True,
-            "escalation_required": True,
-        })), 500
+        log_request(question, result=result)
 
+        # =========================
+        # ✅ STEP 4: ESCALATION LOGIC (MAIN FIX)
+        # =========================
+        LOW_CONFIDENCE_THRESHOLD = 0.6
 
-@app.route("/ask", methods=["POST"])
-def ask():
-    data = request.get_json(silent=True) or {}
-
-    try:
-        result, status_code = process_question(
-            question=data.get("question", ""),
-            context=prepare_chat_context(data),
+        should_escalate = (
+            result.get("escalation_ready") or
+            result.get("confidence", 0) < LOW_CONFIDENCE_THRESHOLD or
+            result.get("fallback") or
+            result.get("source") in ["fallback", "unknown", "prediction_error"]
         )
-        remember_chat_context(data, result)
-        log_request(result.get("question", ""), result=result)
-        return jsonify(result), status_code
+
+        if should_escalate:
+            escalation_id = create_escalation(question, result)
+
+            result["escalation"] = True
+            result["escalation_id"] = escalation_id
+
+            return jsonify(result), 200
+
+        # =========================
+        # ✅ STEP 5: SAVE GOOD ANSWER
+        # =========================
+        if result.get("confidence", 0) >= 0.7 and not result.get("fallback"):
+            save_qa_to_db(question, result)
+
+        result["final_source"] = result.get("source")
+        result["served_by"] = "ai"
+
+        return jsonify(result), 200
+
     except Exception as error:
         traceback.print_exc()
+
         question = clean_question(data.get("question", ""))
+
         log_request(question, error=str(error))
-        return jsonify(standardize_ai_response({
-            "question": question,
-            "type": "text",
-            "category": None,
-            "title": None,
-            "section": None,
-            "reply": "There was a problem while generating the answer.",
-            "answer": f"Prediction error: {error}",
-            "purpose": None,
-            "steps": [],
-            "notes": [],
-            "score": 0.0,
+
+        escalation_id = create_escalation(question, {
+            "answer": str(error),
             "confidence": 0.0,
-            "source": "prediction_error",
+            "source": "system_error"
+        })
+
+        return jsonify({
+            "reply": "System error. Escalated to team lead.",
+            "confidence": 0,
             "fallback": True,
-            "fallback_message": "There was a problem while generating the answer.",
-            "escalation_ready": True,
-            "escalation_required": True,
-        })), 500
+            "escalation": True,
+            "escalation_id": escalation_id
+        }), 500
 
 
 # =========================
@@ -2314,6 +2388,19 @@ def update_admin_user_role(user_id):
 @app.route("/static/<path:filename>", methods=["GET"])
 def serve_static(filename):
     return send_from_directory(STATIC_DIR, filename)
+
+from db_helper import resolve_escalation
+
+@app.route("/api/escalation/answer", methods=["POST"])
+def answer_escalation():
+    data = request.get_json()
+
+    escalation_id = data.get("escalation_id")
+    answer = data.get("answer")
+
+    resolve_escalation(escalation_id, answer)
+
+    return jsonify({"message": "Escalation resolved and saved"})
 
 
 # =========================
