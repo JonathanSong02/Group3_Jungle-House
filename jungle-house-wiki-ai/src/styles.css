@@ -502,30 +502,34 @@ button:hover {
   justify-content: flex-end;
 }
 
-.message-bubble {
-  max-width: 86%;
-  border-radius: 20px;
-  padding: 16px;
-  box-shadow: 0 6px 18px rgba(133, 98, 40, 0.06);
-  border: 1px solid var(--border);
-}
-
 .message-bubble p {
   margin: 0;
   line-height: 1.65;
 }
 
-.message-bubble.ai {
-  background: linear-gradient(180deg, #fffdf8 0%, #fff8ea 100%);
-  color: var(--text);
-  border-radius: 20px 20px 20px 6px;
+/* Remove the heavy speech bubble look */
+.message-bubble {
+  max-width: 90%;
+  border-radius: 12px; /* Sharper corners, less bubbly */
+  padding: 16px 20px;
+  box-shadow: 0 2px 8px rgba(133, 98, 40, 0.04); /* Flatter, more modern shadow */
+  border: 1px solid var(--border);
 }
 
+/* AI looks like a system card, not a text message */
+.message-bubble.ai {
+  background: #ffffff; /* Crisp white */
+  color: var(--text);
+  border-radius: 12px; 
+  border-left: 4px solid var(--primary); /* Brand accent line instead of a bubble tail */
+}
+
+/* User message looks subtle, like a search query */
 .message-bubble.user {
-  background: linear-gradient(180deg, #eef6ea 0%, #e6f0e1 100%);
-  color: #39543b;
-  border: 1px solid #d7e7d3;
-  border-radius: 20px 20px 6px 20px;
+  background: var(--bg-soft);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 12px;
 }
 
 .message-sender {
@@ -675,19 +679,28 @@ button:hover {
   box-shadow: 0 4px 12px rgba(133, 98, 40, 0.05);
 }
 
+/* Update your chat input to look like a premium command bar */
 .chat-input-row {
-  padding: 16px 20px;
-  border-top: 1px solid var(--border);
-  background: #fffdf8;
+  padding: 16px;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 16px; /* Floating pill look instead of full-width footer */
+  margin: 0 20px 20px 20px;
+  box-shadow: 0 8px 24px rgba(133, 98, 40, 0.08);
   display: flex;
   gap: 12px;
   align-items: center;
 }
 
 .chat-input-row input {
-  flex: 1;
-  border-radius: 16px;
-  background: #fffefb;
+  border: none; /* Remove inner border */
+  background: transparent;
+  box-shadow: none;
+  font-size: 15px;
+}
+
+.chat-input-row input:focus {
+  box-shadow: none; /* Let the outer row handle the focus state */
 }
 
 .side-panel {

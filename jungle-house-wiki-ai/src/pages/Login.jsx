@@ -9,6 +9,7 @@ export default function Login() {
   });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false); // UX: Toggle state
 
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -20,6 +21,10 @@ export default function Login() {
     setForm((prev) => ({ ...prev, [name]: value }));
   };
 
+  const togglePasswordVisibility = () => {
+    setShowPassword((prev) => !prev);
+  };
+
   const handleSubmit = async (event) => {
     event.preventDefault();
     setLoading(true);
@@ -27,13 +32,14 @@ export default function Login() {
 
     try {
       await login({
-        email: form.email.trim().toLowerCase(),
+        email: form.email.trim().toLowerCase(), // Security: Sanitize input
         password: form.password,
       });
       navigate(from, { replace: true });
     } catch (err) {
-      console.error('LOGIN PAGE ERROR:', err);
-      setError(err.message || 'Unable to login.');
+      // Security: Avoid logging full error objects which might contain sensitive request data
+      console.error('LOGIN PAGE ERROR: Request failed.'); 
+      setError(err.message || 'Unable to login. Please check your credentials.');
     } finally {
       setLoading(false);
     }
@@ -57,18 +63,30 @@ export default function Login() {
               value={form.email}
               onChange={handleChange}
               placeholder="Enter your email"
+              autoComplete="username" // Security: Helps password managers
               required
             />
           </label>
 
           <label>
-            Password
+            <div className="row-between">
+              <span>Password</span>
+              <button 
+                type="button" 
+                onClick={togglePasswordVisibility}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.85rem', color: '#555' }}
+                tabIndex="-1" // Keep out of standard tab flow so it doesn't interrupt typing
+              >
+                {showPassword ? 'Hide' : 'Show'}
+              </button>
+            </div>
             <input
               name="password"
-              type="password"
+              type={showPassword ? 'text' : 'password'}
               value={form.password}
               onChange={handleChange}
               placeholder="Enter your password"
+              autoComplete="current-password" // Security: Helps password managers
               required
             />
           </label>

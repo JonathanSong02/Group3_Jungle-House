@@ -17,6 +17,7 @@ export default function Register() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false); // UX: Toggle state
 
   const handleChange = (event) => {
     const { name, value } = event.target;
@@ -26,20 +27,45 @@ export default function Register() {
     }));
   };
 
+  const togglePasswordVisibility = () => {
+    setShowPassword((prev) => !prev);
+  };
+
+  // Security: Basic password strength validation
+  const validatePassword = (password) => {
+    const minLength = 8;
+    const hasNumber = /\d/.test(password);
+    const hasUpper = /[A-Z]/.test(password);
+    return password.length >= minLength && hasNumber && hasUpper;
+  };
+
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError('');
     setSuccess('');
 
+    // Security: Check password match
     if (form.password !== form.confirm_password) {
       setError('Passwords do not match.');
+      return;
+    }
+
+    // Security: Check password strength
+    if (!validatePassword(form.password)) {
+      setError('Password must be at least 8 characters, include a number, and an uppercase letter.');
       return;
     }
 
     try {
       setLoading(true);
 
-      const response = await api.post('/auth/register', form);
+      // Security: Sanitize email before sending to the backend
+      const payload = {
+        ...form,
+        email: form.email.trim().toLowerCase(),
+      };
+
+      const response = await api.post('/auth/register', payload);
 
       setSuccess(response.data.message || 'Registration successful.');
 
@@ -78,6 +104,7 @@ export default function Register() {
             placeholder="Email"
             value={form.email}
             onChange={handleChange}
+            autoComplete="username"
             required
           />
 
@@ -90,23 +117,39 @@ export default function Register() {
             <option value="teamlead">Team Lead</option>
           </select>
 
-          <input
-            type="password"
-            name="password"
-            placeholder="Password"
-            value={form.password}
-            onChange={handleChange}
-            required
-          />
+          {/* Password fields wrapper for relative positioning if needed */}
+          <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div className="row-between" style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '-0.5rem' }}>
+              <button 
+                type="button" 
+                onClick={togglePasswordVisibility}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.85rem', color: '#555' }}
+                tabIndex="-1"
+              >
+                {showPassword ? 'Hide Passwords' : 'Show Passwords'}
+              </button>
+            </div>
+            
+            <input
+              type={showPassword ? 'text' : 'password'}
+              name="password"
+              placeholder="Password"
+              value={form.password}
+              onChange={handleChange}
+              autoComplete="new-password"
+              required
+            />
 
-          <input
-            type="password"
-            name="confirm_password"
-            placeholder="Confirm password"
-            value={form.confirm_password}
-            onChange={handleChange}
-            required
-          />
+            <input
+              type={showPassword ? 'text' : 'password'}
+              name="confirm_password"
+              placeholder="Confirm password"
+              value={form.confirm_password}
+              onChange={handleChange}
+              autoComplete="new-password"
+              required
+            />
+          </div>
 
           <input
             type="text"
@@ -124,9 +167,11 @@ export default function Register() {
             {loading ? 'Registering...' : 'Register'}
           </button>
 
-          <Link to="/login" className="text-link">
-            Back to Login
-          </Link>
+          <div style={{ marginTop: '1rem', textAlign: 'center' }}>
+            <Link to="/login" className="text-link">
+              Back to Login
+            </Link>
+          </div>
         </form>
       </div>
     </div>
