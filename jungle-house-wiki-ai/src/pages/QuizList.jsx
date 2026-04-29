@@ -144,26 +144,84 @@ export default function QuizList() {
     }
   };
 
+  const getStoredUser = () => {
+    const possibleKeys = ['user', 'currentUser', 'authUser', 'loggedInUser'];
+
+    for (const key of possibleKeys) {
+      try {
+        const value = localStorage.getItem(key);
+
+        if (!value) continue;
+
+        const parsed = JSON.parse(value);
+
+        if (parsed?.user) return parsed.user;
+        if (parsed?.id || parsed?.user_id || parsed?.userId) return parsed;
+      } catch (error) {
+        console.warn(`Unable to read localStorage key: ${key}`, error);
+      }
+    }
+
+    for (let index = 0; index < localStorage.length; index += 1) {
+      try {
+        const key = localStorage.key(index);
+        const value = localStorage.getItem(key);
+
+        if (!value) continue;
+
+        const parsed = JSON.parse(value);
+
+        if (parsed?.user?.id || parsed?.user?.user_id || parsed?.user?.userId) {
+          return parsed.user;
+        }
+
+        if (parsed?.id || parsed?.user_id || parsed?.userId) {
+          return parsed;
+        }
+      } catch (error) {
+        // Ignore non-JSON localStorage values.
+      }
+    }
+
+    return null;
+  };
+
   const handleSubmit = async () => {
-    setSubmitted(true);
-
     try {
-      const user = JSON.parse(localStorage.getItem('user')) || null;
+      const user = getStoredUser();
+      const userId = user?.id || user?.user_id || user?.userId || null;
 
-      await fetch(`http://127.0.0.1:5000/api/quizzes/${activeQuizId}/submit`, {
+      const payload = {
+        user_id: userId,
+        userId: userId,
+        score: correctCount,
+        total_questions: totalQuestions,
+        percentage: score,
+      };
+
+      console.log('QUIZ RESULT SUBMIT PAYLOAD:', payload);
+
+      const res = await fetch(`http://127.0.0.1:5000/api/quizzes/${activeQuizId}/submit`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          user_id: user?.user_id || null,
-          score: correctCount,
-          total_questions: totalQuestions,
-          percentage: score,
-        }),
+        body: JSON.stringify(payload),
       });
+
+      const data = await res.json();
+
+      console.log('QUIZ RESULT SUBMIT RESPONSE:', data);
+
+      if (!res.ok) {
+        alert(data.message || 'Failed to save quiz result. Please check Flask terminal.');
+        return;
+      }
+
+      setSubmitted(true);
     } catch (err) {
       console.error('Failed to save quiz result:', err);
+      alert('Failed to save quiz result. Please check Browser Console and Flask terminal.');
     }
   };
 
