@@ -2311,6 +2311,68 @@ def submit_escalation_answer(escalation_id):
         if conn:
             conn.close()
 
+@app.route("/api/escalations/<int:escalation_id>", methods=["DELETE"])
+def delete_escalation(escalation_id):
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+
+        if conn is None:
+            return jsonify({"message": "Database connection failed."}), 500
+
+        cursor = conn.cursor()
+
+        print("DELETE ESCALATION HIT:", escalation_id)
+
+        cursor.execute("""
+            DELETE FROM escalation
+            WHERE escalation_id = %s
+        """, (escalation_id,))
+
+        conn.commit()
+
+        print("DELETE ROWCOUNT:", cursor.rowcount)
+
+        if cursor.rowcount == 0:
+            return jsonify({
+                "message": "Escalation not found.",
+                "escalation_id": escalation_id
+            }), 404
+
+        return jsonify({
+            "message": "Escalation deleted successfully.",
+            "deleted_id": escalation_id
+        }), 200
+
+    except mysql.connector.Error as err:
+        if conn:
+            conn.rollback()
+
+        print("MYSQL ERROR /api/escalations DELETE:", err)
+
+        return jsonify({
+            "message": "Database error while deleting escalation.",
+            "error": str(err)
+        }), 500
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+
+        print("GENERAL ERROR /api/escalations DELETE:", e)
+
+        return jsonify({
+            "message": "Server error while deleting escalation.",
+            "error": str(e)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 # =========================
 # QUIZ ROUTES
