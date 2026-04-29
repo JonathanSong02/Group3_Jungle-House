@@ -1,17 +1,79 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import PageHeader from '../components/PageHeader';
-import { quizItems } from '../data/mockData';
 
 export default function QuizList() {
+  const [quizItems, setQuizItems] = useState([]);
   const [activeQuizId, setActiveQuizId] = useState(null);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [selectedAnswers, setSelectedAnswers] = useState({});
   const [submitted, setSubmitted] = useState(false);
   const [showWelcome, setShowWelcome] = useState(false);
+  const [loadingQuizzes, setLoadingQuizzes] = useState(true);
+  const [loadingQuestions, setLoadingQuestions] = useState(false);
+
+  useEffect(() => {
+    fetchQuizzes();
+  }, []);
+
+  const fetchQuizzes = async () => {
+    try {
+      setLoadingQuizzes(true);
+
+      const res = await fetch('http://127.0.0.1:5000/api/quizzes');
+      const data = await res.json();
+
+      if (Array.isArray(data)) {
+        const formattedQuizzes = data.map((quiz) => ({
+          id: quiz.quiz_id,
+          title: quiz.title,
+          description: quiz.description,
+          category: quiz.category,
+          questionCount: quiz.question_count,
+          lastScore: 0,
+          questions: []
+        }));
+
+        setQuizItems(formattedQuizzes);
+      } else {
+        setQuizItems([]);
+      }
+    } catch (err) {
+      console.error('Failed to load quizzes:', err);
+      setQuizItems([]);
+    } finally {
+      setLoadingQuizzes(false);
+    }
+  };
+
+  const fetchQuizQuestions = async (quizId) => {
+    try {
+      setLoadingQuestions(true);
+
+      const res = await fetch(`http://127.0.0.1:5000/api/quizzes/${quizId}/questions`);
+      const data = await res.json();
+
+      if (Array.isArray(data)) {
+        setQuizItems((prev) =>
+          prev.map((quiz) =>
+            quiz.id === quizId
+              ? {
+                  ...quiz,
+                  questions: data
+                }
+              : quiz
+          )
+        );
+      }
+    } catch (err) {
+      console.error('Failed to load quiz questions:', err);
+    } finally {
+      setLoadingQuestions(false);
+    }
+  };
 
   const activeQuiz = useMemo(
     () => quizItems.find((quiz) => quiz.id === activeQuizId) || null,
-    [activeQuizId]
+    [quizItems, activeQuizId]
   );
 
   const questions = activeQuiz?.questions || [];
@@ -33,12 +95,28 @@ export default function QuizList() {
     return totalQuestions > 0 ? Math.round((correctCount / totalQuestions) * 100) : 0;
   }, [activeQuiz, selectedAnswers, totalQuestions]);
 
-  const handleStartQuiz = (quizId) => {
+  const correctCount = useMemo(() => {
+    if (!activeQuiz) return 0;
+
+    let count = 0;
+
+    activeQuiz.questions.forEach((question) => {
+      if (selectedAnswers[question.id] === question.correctAnswer) {
+        count += 1;
+      }
+    });
+
+    return count;
+  }, [activeQuiz, selectedAnswers]);
+
+  const handleStartQuiz = async (quizId) => {
     setActiveQuizId(quizId);
     setCurrentQuestionIndex(0);
     setSelectedAnswers({});
     setSubmitted(false);
     setShowWelcome(true);
+
+    await fetchQuizQuestions(quizId);
   };
 
   const handleBeginQuestions = () => {
@@ -66,8 +144,27 @@ export default function QuizList() {
     }
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     setSubmitted(true);
+
+    try {
+      const user = JSON.parse(localStorage.getItem('user')) || null;
+
+      await fetch(`http://127.0.0.1:5000/api/quizzes/${activeQuizId}/submit`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          user_id: user?.user_id || null,
+          score: correctCount,
+          total_questions: totalQuestions,
+          percentage: score,
+        }),
+      });
+    } catch (err) {
+      console.error('Failed to save quiz result:', err);
+    }
   };
 
   const handleRetake = () => {
@@ -96,26 +193,32 @@ export default function QuizList() {
 
       {!activeQuiz ? (
         <div className="cards-grid">
-          {quizItems.map((quiz) => (
-            <article key={quiz.id} className="card-like quiz-card">
-              <div className="quiz-card-top">
-                <h3>{quiz.title}</h3>
-                <span className="status-badge pending">Training Quiz</span>
-              </div>
+          {loadingQuizzes ? (
+            <p>Loading quizzes...</p>
+          ) : quizItems.length === 0 ? (
+            <p>No quiz found.</p>
+          ) : (
+            quizItems.map((quiz) => (
+              <article key={quiz.id} className="card-like quiz-card">
+                <div className="quiz-card-top">
+                  <h3>{quiz.title}</h3>
+                  <span className="status-badge pending">Training Quiz</span>
+                </div>
 
-              <p className="muted">
-                Questions: {Array.isArray(quiz.questions) ? quiz.questions.length : 0}
-              </p>
-              <p className="muted">Last score: {quiz.lastScore ?? 0}%</p>
+                <p className="muted">
+                  Questions: {quiz.questionCount ?? 0}
+                </p>
+                <p className="muted">Last score: {quiz.lastScore ?? 0}%</p>
 
-              <button
-                className="primary-btn"
-                onClick={() => handleStartQuiz(quiz.id)}
-              >
-                Attempt Quiz
-              </button>
-            </article>
-          ))}
+                <button
+                  className="primary-btn"
+                  onClick={() => handleStartQuiz(quiz.id)}
+                >
+                  Attempt Quiz
+                </button>
+              </article>
+            ))
+          )}
         </div>
       ) : (
         <div className="stack-gap">
@@ -196,6 +299,10 @@ export default function QuizList() {
                 </button>
               </div>
             </div>
+          ) : loadingQuestions ? (
+            <div className="card-like">
+              <p>Loading quiz questions...</p>
+            </div>
           ) : !submitted ? (
             <>
               <div className="card-like">
@@ -204,7 +311,7 @@ export default function QuizList() {
                     <div
                       className="quiz-progress-fill"
                       style={{
-                        width: `${((currentQuestionIndex + 1) / totalQuestions) * 100}%`,
+                        width: totalQuestions > 0 ? `${((currentQuestionIndex + 1) / totalQuestions) * 100}%` : '0%',
                       }}
                     />
                   </div>
@@ -276,14 +383,18 @@ export default function QuizList() {
                     </div>
                   </div>
                 </div>
-              ) : null}
+              ) : (
+                <div className="card-like">
+                  <p>No questions found for this quiz.</p>
+                </div>
+              )}
             </>
           ) : (
             <div className="card-like quiz-result-card">
               <p className="eyebrow">Quiz Result</p>
               <h2 style={{ marginBottom: '10px' }}>{score}%</h2>
               <p className="muted">
-                You answered {Math.round((score / 100) * totalQuestions)} out of{' '}
+                You answered {correctCount} out of{' '}
                 {totalQuestions} questions correctly.
               </p>
 

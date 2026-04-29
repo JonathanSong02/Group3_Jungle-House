@@ -2283,6 +2283,166 @@ def submit_escalation_answer(escalation_id):
 
 
 # =========================
+# QUIZ ROUTES
+# =========================
+
+@app.route("/api/quizzes", methods=["GET"])
+def get_quizzes():
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT 
+                q.quiz_id,
+                q.title,
+                q.description,
+                q.category,
+                q.status,
+                q.created_at,
+                COUNT(qq.question_id) AS question_count
+            FROM quiz q
+            LEFT JOIN quiz_question qq ON q.quiz_id = qq.quiz_id
+            WHERE q.status = 'active'
+            GROUP BY q.quiz_id, q.title, q.description, q.category, q.status, q.created_at
+            ORDER BY q.created_at DESC
+        """)
+
+        quizzes = cursor.fetchall()
+
+        return jsonify(quizzes), 200
+
+    except Exception as e:
+        print("GET QUIZZES ERROR:", e)
+        return jsonify({"message": str(e)}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/quizzes/<int:quiz_id>/questions", methods=["GET"])
+def get_quiz_questions(quiz_id):
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT 
+                question_id,
+                quiz_id,
+                question_text,
+                option_a,
+                option_b,
+                option_c,
+                option_d,
+                correct_option,
+                explanation,
+                points
+            FROM quiz_question
+            WHERE quiz_id = %s
+            ORDER BY question_id ASC
+        """, (quiz_id,))
+
+        questions = cursor.fetchall()
+
+        formatted_questions = []
+
+        for q in questions:
+            correct_answer = None
+
+            if q["correct_option"] == "A":
+                correct_answer = q["option_a"]
+            elif q["correct_option"] == "B":
+                correct_answer = q["option_b"]
+            elif q["correct_option"] == "C":
+                correct_answer = q["option_c"]
+            elif q["correct_option"] == "D":
+                correct_answer = q["option_d"]
+
+            formatted_questions.append({
+                "id": q["question_id"],
+                "question": q["question_text"],
+                "options": [
+                    q["option_a"],
+                    q["option_b"],
+                    q["option_c"],
+                    q["option_d"]
+                ],
+                "correctAnswer": correct_answer,
+                "correctOption": q["correct_option"],
+                "explanation": q["explanation"],
+                "points": q["points"]
+            })
+
+        return jsonify(formatted_questions), 200
+
+    except Exception as e:
+        print("GET QUIZ QUESTIONS ERROR:", e)
+        return jsonify({"message": str(e)}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/quizzes/<int:quiz_id>/submit", methods=["POST"])
+def submit_quiz_result(quiz_id):
+    data = request.get_json(silent=True) or {}
+
+    user_id = data.get("user_id")
+    score = data.get("score", 0)
+    total_questions = data.get("total_questions", 0)
+    percentage = data.get("percentage", 0)
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            INSERT INTO quiz_result
+            (quiz_id, user_id, score, total_questions, percentage)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (
+            quiz_id,
+            user_id,
+            score,
+            total_questions,
+            percentage
+        ))
+
+        conn.commit()
+
+        return jsonify({
+            "message": "Quiz result saved successfully",
+            "result_id": cursor.lastrowid
+        }), 201
+
+    except Exception as e:
+        print("SUBMIT QUIZ RESULT ERROR:", e)
+        return jsonify({"message": str(e)}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+            
+# =========================
 # USER MANAGEMENT ROUTES
 # =========================
 
