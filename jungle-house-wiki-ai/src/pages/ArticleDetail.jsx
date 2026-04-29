@@ -10,23 +10,44 @@ export default function ArticleDetail() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    setLoading(true);
+  setLoading(true);
 
-    Promise.all([
-      fetch(`http://127.0.0.1:5000/api/articles/${id}`).then((res) => res.json()),
-      fetch(`http://127.0.0.1:5000/api/article-links/${id}`).then((res) => res.json())
-    ])
-      .then(([articleData, linksData]) => {
+  fetch(`http://127.0.0.1:5000/api/articles/${id}`)
+    .then((res) => {
+      if (!res.ok) {
+        throw new Error("Article not found");
+      }
+      return res.json();
+    })
+    .then((articleData) => {
+      console.log("Article detail data:", articleData);
+
+      if (articleData && articleData.article_id) {
         setArticle(articleData);
-        setLinks(Array.isArray(linksData) ? linksData : []);
-      })
-      .catch((err) => {
-        console.error("Failed to load article detail:", err);
-      })
-      .finally(() => {
-        setLoading(false);
-      });
-  }, [id]);
+      } else {
+        setArticle(null);
+      }
+
+      return fetch(`http://127.0.0.1:5000/api/article-links/${id}`);
+    })
+    .then((res) => {
+      if (!res.ok) {
+        return [];
+      }
+      return res.json();
+    })
+    .then((linksData) => {
+      setLinks(Array.isArray(linksData) ? linksData : []);
+    })
+    .catch((err) => {
+      console.error("Failed to load article detail:", err);
+      setArticle(null);
+      setLinks([]);
+    })
+    .finally(() => {
+      setLoading(false);
+    });
+}, [id]);
 
   // Your existing Notion link mapper
   function renderLineWithLinks(line) {
