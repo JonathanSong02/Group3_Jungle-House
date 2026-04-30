@@ -2488,124 +2488,214 @@ def get_quiz_questions(quiz_id):
             conn.close()
 
 
-@app.route("/api/quizzes/<int:quiz_id>/submit", methods=["POST"])
-def submit_quiz_result(quiz_id):
-    data = request.get_json(silent=True) or {}
+# =========================
+# ADMIN QUIZ MANAGEMENT ROUTES
+# =========================
 
-    print("SUBMIT QUIZ RESULT ROUTE HIT:", data)
+@app.route("/api/admin/quizzes", methods=["GET"])
+def get_admin_quizzes():
+    conn = None
+    cursor = None
 
-    user_id = data.get("user_id") or data.get("userId") or data.get("id")
-    score = data.get("score", 0)
-    total_questions = data.get("total_questions", 0)
-    percentage = data.get("percentage", 0)
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT 
+                q.quiz_id,
+                q.title,
+                q.description,
+                q.category,
+                q.status,
+                q.created_by,
+                q.created_at,
+                q.updated_at,
+                COUNT(qq.question_id) AS question_count
+            FROM quiz q
+            LEFT JOIN quiz_question qq ON q.quiz_id = qq.quiz_id
+            GROUP BY 
+                q.quiz_id,
+                q.title,
+                q.description,
+                q.category,
+                q.status,
+                q.created_by,
+                q.created_at,
+                q.updated_at
+            ORDER BY q.created_at DESC
+        """)
+
+        quizzes = cursor.fetchall()
+
+        return jsonify(quizzes), 200
+
+    except Exception as error:
+        print("MYSQL ERROR /api/admin/quizzes GET:", error)
+        return jsonify({
+            "message": "Failed to load admin quizzes.",
+            "error": str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/admin/quizzes", methods=["POST"])
+def create_admin_quiz():
+    data = request.get_json() or {}
+
+    title = data.get("title", "").strip()
+    description = data.get("description", "").strip()
+    category = data.get("category", "").strip()
+    created_by = data.get("created_by")
+    status = data.get("status", "active").strip().lower()
+
+    if not title:
+        return jsonify({"message": "Quiz title is required."}), 400
+
+    if status not in ["active", "inactive"]:
+        status = "active"
+
+    if created_by in ["", "undefined"]:
+        created_by = None
 
     conn = None
     cursor = None
 
     try:
-        score = int(score or 0)
-        total_questions = int(total_questions or 0)
-        percentage = float(percentage or 0)
-    except Exception:
-        return jsonify({"message": "Invalid score, total_questions, or percentage."}), 400
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
 
-    if total_questions <= 0:
-        return jsonify({"message": "Total questions must be more than 0."}), 400
+        cursor.execute("""
+            INSERT INTO quiz 
+            (title, description, category, created_by, status)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (
+            title,
+            description,
+            category,
+            created_by,
+            status
+        ))
+
+        conn.commit()
+
+        return jsonify({
+            "message": "Quiz created successfully.",
+            "quiz_id": cursor.lastrowid
+        }), 201
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("MYSQL ERROR /api/admin/quizzes POST:", error)
+
+        return jsonify({
+            "message": "Failed to create quiz.",
+            "error": str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/admin/quizzes/<int:quiz_id>/questions", methods=["POST"])
+def create_quiz_question(quiz_id):
+    data = request.get_json() or {}
+
+    question_text = data.get("question_text", "").strip()
+    option_a = data.get("option_a", "").strip()
+    option_b = data.get("option_b", "").strip()
+    option_c = data.get("option_c", "").strip()
+    option_d = data.get("option_d", "").strip()
+    correct_option = data.get("correct_option", "").strip().upper()
+    explanation = data.get("explanation", "").strip()
+    points = data.get("points", 1)
+
+    if not question_text:
+        return jsonify({"message": "Question text is required."}), 400
+
+    if not option_a or not option_b or not option_c or not option_d:
+        return jsonify({"message": "All four options are required."}), 400
+
+    if correct_option not in ["A", "B", "C", "D"]:
+        return jsonify({"message": "Correct option must be A, B, C, or D."}), 400
+
+    try:
+        points = int(points)
+    except Exception:
+        points = 1
+
+    conn = None
+    cursor = None
 
     try:
         conn = get_db_connection()
-        conn.start_transaction()
         cursor = conn.cursor(dictionary=True)
 
-        cursor.execute("SELECT quiz_id FROM quiz WHERE quiz_id = %s LIMIT 1", (quiz_id,))
+        cursor.execute("""
+            SELECT quiz_id
+            FROM quiz
+            WHERE quiz_id = %s
+            LIMIT 1
+        """, (quiz_id,))
+
         quiz = cursor.fetchone()
 
         if not quiz:
-            conn.rollback()
             return jsonify({"message": "Quiz not found."}), 404
 
-        # If frontend cannot send user_id, use the first active user as a prototype fallback.
-        # This prevents quiz_result from staying empty during demo/testing.
-        if user_id in [None, "", "null", "undefined"]:
-            cursor.execute("""
-                SELECT user_id
-                FROM users
-                WHERE status = 'active'
-                ORDER BY user_id ASC
-                LIMIT 1
-            """)
-            fallback_user = cursor.fetchone()
-
-            if not fallback_user:
-                conn.rollback()
-                return jsonify({"message": "No active user found to save quiz result."}), 400
-
-            user_id = fallback_user["user_id"]
-
-        try:
-            user_id = int(user_id)
-        except Exception:
-            conn.rollback()
-            return jsonify({"message": "Invalid user_id."}), 400
-
-        cursor.execute("SELECT user_id FROM users WHERE user_id = %s LIMIT 1", (user_id,))
-        user = cursor.fetchone()
-
-        if not user:
-            cursor.execute("""
-                SELECT user_id
-                FROM users
-                WHERE status = 'active'
-                ORDER BY user_id ASC
-                LIMIT 1
-            """)
-            fallback_user = cursor.fetchone()
-
-            if not fallback_user:
-                conn.rollback()
-                return jsonify({"message": "User not found and no active fallback user exists."}), 400
-
-            user_id = fallback_user["user_id"]
-
         cursor.execute("""
-            INSERT INTO quiz_result
-            (quiz_id, user_id, score, total_questions, percentage)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO quiz_question
+            (
+                quiz_id,
+                question_text,
+                option_a,
+                option_b,
+                option_c,
+                option_d,
+                correct_option,
+                explanation,
+                points
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             quiz_id,
-            user_id,
-            score,
-            total_questions,
-            percentage
+            question_text,
+            option_a,
+            option_b,
+            option_c,
+            option_d,
+            correct_option,
+            explanation,
+            points
         ))
 
-        result_id = cursor.lastrowid
         conn.commit()
 
-        print("QUIZ RESULT SAVED:", {
-            "result_id": result_id,
-            "quiz_id": quiz_id,
-            "user_id": user_id,
-            "score": score,
-            "total_questions": total_questions,
-            "percentage": percentage
-        })
-
         return jsonify({
-            "message": "Quiz result saved successfully.",
-            "result_id": result_id,
-            "quiz_id": quiz_id,
-            "user_id": user_id,
-            "score": score,
-            "total_questions": total_questions,
-            "percentage": percentage
+            "message": "Question added successfully.",
+            "question_id": cursor.lastrowid
         }), 201
 
-    except Exception as e:
+    except Exception as error:
         if conn:
             conn.rollback()
-        print("SUBMIT QUIZ RESULT ERROR:", e)
-        return jsonify({"message": str(e)}), 500
+
+        print("MYSQL ERROR /api/admin/quizzes/<quiz_id>/questions POST:", error)
+
+        return jsonify({
+            "message": "Failed to add question.",
+            "error": str(error)
+        }), 500
 
     finally:
         if cursor:

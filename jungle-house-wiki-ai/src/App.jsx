@@ -18,6 +18,7 @@ import QuizList from './pages/QuizList';
 import AdminDashboard from './pages/admin/AdminDashboard';
 import AddArticle from './pages/admin/AddArticle';
 import EditArticle from './pages/admin/EditArticle';
+import QuizManagement from './pages/admin/QuizManagement';
 import ContentManagement from './pages/admin/ContentManagement';
 import ReviewManagement from './pages/admin/ReviewManagement';
 import UserManagement from './pages/admin/UserManagement';
@@ -151,6 +152,15 @@ export default function App() {
           element={
             <RoleRoute allowedRoles={['manager']}>
               <EditArticle />
+            </RoleRoute>
+          }
+        />
+
+        <Route
+          path="admin/quiz-management"
+          element={
+            <RoleRoute allowedRoles={['manager']}>
+              <QuizManagement />
             </RoleRoute>
           }
         />

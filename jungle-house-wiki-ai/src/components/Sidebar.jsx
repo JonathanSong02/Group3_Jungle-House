@@ -34,6 +34,7 @@ export default function Sidebar() {
             <div className="sidebar-section-label">Admin Workspace</div>
             <NavLink className={linkClass} to="/admin/dashboard">Admin Dashboard</NavLink>
             <NavLink className={linkClass} to="/admin/content">Content Management</NavLink>
+            <NavLink className={linkClass} to="/admin/quiz-management">Quiz Management</NavLink>
             <NavLink className={linkClass} to="/admin/review">Review Management</NavLink>
             <NavLink className={linkClass} to="/admin/users">User Management</NavLink>
             <NavLink className={linkClass} to="/admin/ai-settings">AI Settings</NavLink>
