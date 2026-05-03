@@ -62,7 +62,17 @@ TEST_REPORT_CSV = LOG_DIR / "ai_test_results.csv"
 AI_CHAT_MEMORY = {}
 
 app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="/static")
-CORS(app)
+
+CORS(
+    app,
+    resources={r"/*": {"origins": [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173"
+    ]}},
+    supports_credentials=True,
+    methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"]
+)
 
 ESCALATION_MESSAGE = "No confident answer. Escalate to team lead."
 
@@ -2492,8 +2502,33 @@ def get_quiz_questions(quiz_id):
 # ADMIN QUIZ MANAGEMENT ROUTES
 # =========================
 
-@app.route("/api/admin/quizzes", methods=["GET"])
-def get_admin_quizzes():
+@app.route("/api/quizzes/<int:quiz_id>/submit", methods=["POST", "OPTIONS"])
+def submit_quiz_result(quiz_id):
+    if request.method == "OPTIONS":
+        return jsonify({"message": "OK"}), 200
+
+    data = request.get_json(silent=True) or {}
+
+    user_id = data.get("user_id") or data.get("userId") or data.get("id")
+    score = data.get("score", 0)
+    total_questions = data.get("total_questions", 0)
+    percentage = data.get("percentage", 0)
+
+    if not user_id:
+        return jsonify({
+            "message": "User ID is required to save quiz result."
+        }), 400
+
+    try:
+        user_id = int(user_id)
+        score = int(score)
+        total_questions = int(total_questions)
+        percentage = float(percentage)
+    except Exception:
+        return jsonify({
+            "message": "Invalid quiz result data."
+        }), 400
+
     conn = None
     cursor = None
 
@@ -2502,38 +2537,81 @@ def get_admin_quizzes():
         cursor = conn.cursor(dictionary=True)
 
         cursor.execute("""
-            SELECT 
-                q.quiz_id,
-                q.title,
-                q.description,
-                q.category,
-                q.status,
-                q.created_by,
-                q.created_at,
-                q.updated_at,
-                COUNT(qq.question_id) AS question_count
-            FROM quiz q
-            LEFT JOIN quiz_question qq ON q.quiz_id = qq.quiz_id
-            GROUP BY 
-                q.quiz_id,
-                q.title,
-                q.description,
-                q.category,
-                q.status,
-                q.created_by,
-                q.created_at,
-                q.updated_at
-            ORDER BY q.created_at DESC
-        """)
+            SELECT quiz_id
+            FROM quiz
+            WHERE quiz_id = %s
+            LIMIT 1
+        """, (quiz_id,))
+        quiz = cursor.fetchone()
 
-        quizzes = cursor.fetchall()
+        if not quiz:
+            return jsonify({
+                "message": "Quiz not found."
+            }), 404
 
-        return jsonify(quizzes), 200
+        cursor.execute("""
+            SELECT user_id
+            FROM users
+            WHERE user_id = %s
+            LIMIT 1
+        """, (user_id,))
+        user = cursor.fetchone()
+
+        if not user:
+            return jsonify({
+                "message": "User not found."
+            }), 404
+
+        cursor.execute("""
+            INSERT INTO quiz_result
+            (
+                quiz_id,
+                user_id,
+                score,
+                total_questions,
+                percentage,
+                completed_at
+            )
+            VALUES (%s, %s, %s, %s, %s, NOW())
+        """, (
+            quiz_id,
+            user_id,
+            score,
+            total_questions,
+            percentage
+        ))
+
+        conn.commit()
+
+        return jsonify({
+            "message": "Quiz result saved successfully.",
+            "result_id": cursor.lastrowid,
+            "quiz_id": quiz_id,
+            "user_id": user_id,
+            "score": score,
+            "total_questions": total_questions,
+            "percentage": percentage
+        }), 201
+
+    except mysql.connector.Error as err:
+        if conn:
+            conn.rollback()
+
+        print("MYSQL ERROR /api/quizzes/<quiz_id>/submit:", err)
+
+        return jsonify({
+            "message": "Database error while saving quiz result.",
+            "error": str(err)
+        }), 500
 
     except Exception as error:
-        print("MYSQL ERROR /api/admin/quizzes GET:", error)
+        if conn:
+            conn.rollback()
+
+        print("GENERAL ERROR /api/quizzes/<quiz_id>/submit:", error)
+
         return jsonify({
-            "message": "Failed to load admin quizzes.",
+            "message": "Server error while saving quiz result.",
             "error": str(error)
         }), 500
 
