@@ -24,13 +24,24 @@ def is_nonsense(text):
     if text in whitelist:
         return False
 
-    if len(text) < 3:
+    # ❌ too short
+    if len(text) < 5:
         return True
 
+    # ❌ no vowels (asdfgh)
     if not re.search(r'[aeiou]', text):
         return True
 
+    # ❌ repeated characters
     if re.fullmatch(r'(.)\1{3,}', text):
+        return True
+
+    # ❌ keyboard smash patterns
+    if re.search(r'(asdf|qwer|zxcv)', text):
+        return True
+
+    # ❌ no real words (only symbols/numbers)
+    if not re.search(r'[a-z]', text):
         return True
 
     return False
@@ -1901,6 +1912,81 @@ def chat():
                 "escalation": True,
                 "escalation_id": escalation_id
             }), 200
+        
+        # =========================
+        # ✅ QUIZ GENERATION TRIGGER
+        # =========================
+        if "quiz" in q_lower and ("generate" in q_lower or "create" in q_lower):
+            try:
+                import re
+
+                match = re.search(r'\d+', question)
+                count = int(match.group()) if match else 5
+                count = max(3, min(count, 10)) # ✅ LIMIT MAX/MIN QUIZ
+
+                # 🔥 Extract topic cleanly
+                topic = question.lower()
+                topic = re.sub(r'generate|create|quiz|\d+', '', topic)
+                topic = topic.replace("for", "").strip()
+
+                # 🔥 GET RAW KNOWLEDGE
+                # 🔥 ALWAYS USE ARTICLES (REMOVE QA SOURCE)
+                raw_articles = get_articles_for_quiz(topic, count * 3)
+
+                print("RAW ARTICLES:", len(raw_articles))
+
+                knowledge = []
+
+                for art in raw_articles:
+                    title = art.get("title", "").strip()
+                    content = art.get("content", "").strip()
+
+                    if not title or not content:
+                        continue
+
+                    # ✅ Generate simple clean question
+                    if "step" in content.lower():
+                        q = f"What is the first step of {title}?"
+                    elif "how" in content.lower():
+                        q = f"How to perform {title}?"
+                    else:
+                        q = f"What is {title}?"
+
+                    # ✅ Short answer (first sentence only)
+                    a = content.split(".")[0][:120]
+
+                    if is_nonsense(q) or len(a) < 10:
+                        continue
+
+                    knowledge.append({
+                        "question": q,
+                        "answer": a
+                    })
+
+                print("FINAL QUESTIONS:", len(knowledge))
+                
+                if not knowledge:
+                    return jsonify({
+                        "reply": "❌ No valid questions generated",
+                        "fallback": True
+                    }), 200
+
+                quiz_id = create_quiz_and_questions(
+                    topic if topic else "General Quiz",
+                    knowledge,
+                    count
+                )
+
+                return jsonify({
+                    "reply": "✅ Quiz generated! Go to Quiz page.",
+                    "quiz_created": True,
+                    "quiz_id": quiz_id
+                }), 200
+
+            except Exception as e:
+                return jsonify({
+                    "reply": f"❌ Quiz generation failed: {str(e)}"
+                }), 500
 
         # =========================
         # ✅ STEP 2: CLEAN QUESTION
@@ -1977,7 +2063,12 @@ def chat():
         # =========================
         # ✅ STEP 5: SAVE GOOD ANSWER
         # =========================
-        if result.get("confidence", 0) >= 0.7 and not result.get("fallback"):
+        if (
+            result.get("confidence", 0) >= 0.7
+            and not result.get("fallback")
+            and not is_nonsense(question)
+            and not is_nonsense(result.get("answer", ""))
+        ):
             save_qa_to_db(question, result)
 
         result["final_source"] = result.get("source")
@@ -2041,6 +2132,51 @@ def get_articles():
             cursor.close()
         if conn:
             conn.close()
+
+def get_random_knowledge(limit=10):
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    cursor.execute("""
+        SELECT question, answer
+        FROM qa_knowledge
+        ORDER BY RAND()
+        LIMIT %s
+    """, (limit,))
+
+    data = cursor.fetchall()
+
+    cursor.close()
+    conn.close()
+
+    return data
+
+def get_articles_for_quiz(topic=None, limit=20):
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    if topic:
+        cursor.execute("""
+            SELECT title, content, category
+            FROM wiki_article
+            WHERE LOWER(title) LIKE %s
+               OR LOWER(category) LIKE %s
+            LIMIT %s
+        """, (f"%{topic}%", f"%{topic}%", limit))
+    else:
+        cursor.execute("""
+            SELECT title, content, category
+            FROM wiki_article
+            ORDER BY RAND()
+            LIMIT %s
+        """, (limit,))
+
+    data = cursor.fetchall()
+
+    cursor.close()
+    conn.close()
+
+    return data
 
 
 # =========================
@@ -2300,6 +2436,26 @@ def submit_escalation_answer(escalation_id):
 
         conn.commit()
 
+        # ✅ GET QUESTION FROM ESCALATION
+        cursor.execute("""
+            SELECT question
+            FROM escalation
+            WHERE escalation_id = %s
+        """, (escalation_id,))
+
+        row = cursor.fetchone()
+
+        # ✅ SAVE INTO AI KNOWLEDGE (VERY IMPORTANT)
+        if row and manual_answer:
+            save_qa_to_db(
+                row["question"],
+                {
+                    "answer": manual_answer,
+                    "confidence": 1.0,
+                    "source": "team_lead"
+                }
+            )
+
         return jsonify({
             'message': 'Escalation resolved successfully.'
         }), 200
@@ -2387,6 +2543,250 @@ def delete_escalation(escalation_id):
 # =========================
 # QUIZ ROUTES
 # =========================
+
+import random
+
+def get_knowledge_for_quiz(topic):
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    cursor.execute("""
+        SELECT question, answer
+        FROM qa_knowledge
+        WHERE question LIKE %s
+        ORDER BY created_at DESC
+        LIMIT 20
+    """, ("%" + topic + "%",))
+
+    data = cursor.fetchall()
+
+    cursor.close()
+    conn.close()
+
+    return data
+
+def create_quiz_and_questions(topic, knowledge, count=5):
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    # 1. Create quiz
+    cursor.execute("""
+        INSERT INTO quiz (title, created_at)
+        VALUES (%s, NOW())
+    """, (topic,))
+    quiz_id = cursor.lastrowid
+
+    # 2. Generate MCQ
+    questions = []
+
+    for k in knowledge:
+        base_text = k.get("question", "") + " " + k.get("answer", "")
+
+        # 🔥 CALL YOUR PYTORCH MODEL
+        result = call_model_answer(
+            f"""
+    Create a SHORT and CLEAR quiz question for staff training.
+
+    Rules:
+    - Max 10 words
+    - Must be meaningful
+    - No nonsense
+    - Based on real SOP or product
+
+    Content:
+    {base_text}
+
+    Return only the question.
+    """
+        )
+
+        if not result:
+            continue
+
+        a = str(result.get("answer", "")).strip()
+        q = str(result.get("question", "")).strip().lower()
+
+        # ❌ filter bad AI output
+        if (
+            len(q) < 8 or len(q) > 120
+            or len(a) < 5 or len(a) > 100
+            or is_nonsense(q)
+            or any(x in q for x in ["lol", "haha", "test", "asdf"])
+            or len(q.split()) < 3   # avoid "grease", "lol", etc
+        ):
+            continue
+
+        questions.append({
+            "question": q,
+            "options": [
+                a,
+                "None of the above",
+                "Not related",
+                "All of the above"
+            ],
+            "correct_answer": "A"
+        })
+
+        if len(questions) >= count:
+            break
+
+    # 3. Save questions
+    for q in questions:
+
+        options = q.get("options", [])
+
+        # ✅ Ensure max 4 options
+        options = options[:4]
+
+        # ✅ Limit length (IMPORTANT FIX)
+        options = [str(opt)[:250] for opt in options]
+
+        # ✅ Fill missing options
+        while len(options) < 4:
+            options.append("")
+
+        # ✅ Convert correct answer
+        correct = q.get("correct_answer", "")
+
+        if correct in options:
+            correct = ["A", "B", "C", "D"][options.index(correct)]
+        else:
+            correct = "A"
+
+        cursor.execute("""
+            INSERT INTO quiz_question
+            (quiz_id, question_text, option_a, option_b, option_c, option_d, correct_option)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (
+            quiz_id,
+            q.get("question", "")[:500],   # also safe limit question
+            options[0],
+            options[1],
+            options[2],
+            options[3],
+            correct
+        ))
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+    return quiz_id
+
+
+import random
+
+def generate_mcq_from_knowledge(knowledge, count=5):
+    import random
+
+    questions = []
+    used_questions = set()
+
+    for k in knowledge:
+        print("RAW:", k)
+        q_text = k.get("question", "").strip()
+        a_text = k.get("answer", "").strip()
+
+        # ❌ skip bad / long / repeated
+        if len(q_text) < 5 or len(q_text) > 100:
+            continue
+
+        if q_text in used_questions:
+            continue
+
+        if len(a_text) < 3 or len(a_text) > 120:
+            continue
+
+        used_questions.add(q_text)
+
+        # ✅ clean short question
+        question = q_text.capitalize()
+
+        # ✅ correct answer
+        correct = a_text.strip()
+
+        # ❌ generate simple distractors
+        wrong_options = []
+        for other in knowledge:
+            wrong = other.get("answer", "")
+            if wrong != correct and len(wrong) < 120:
+                wrong_options.append(wrong)
+
+        random.shuffle(wrong_options)
+
+        options = [correct] + wrong_options[:3]
+        random.shuffle(options)
+
+        questions.append({
+            "question": question,
+            "options": options,
+            "correct_answer": ["A", "B", "C", "D"][options.index(correct)]
+        })
+
+        if len(questions) >= count:
+            break
+
+    return questions
+
+
+def save_quiz_to_db(title, questions):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # create quiz
+    cursor.execute("""
+        INSERT INTO quiz (title, status)
+        VALUES (%s, 'active')
+    """, (title,))
+
+    quiz_id = cursor.lastrowid
+
+    for q in questions:
+        import json
+
+        cursor.execute("""
+            INSERT INTO quiz_question (quiz_id, question, options, correct_answer)
+            VALUES (%s, %s, %s, %s)
+        """, (
+            quiz_id,
+            q["question"],
+            json.dumps(q["options"]),
+            q["correct"]
+        ))
+
+    conn.commit()
+    conn.close()
+
+    return quiz_id
+
+@app.route("/api/generate-quiz", methods=["POST"])
+def generate_quiz():
+    data = request.get_json() or {}
+
+    topic = data.get("topic", "general")
+    count = int(data.get("count", 10))
+
+    # 1. get knowledge
+    knowledge = get_knowledge_for_quiz(topic)
+
+    if not knowledge:
+        return jsonify({
+            "message": "No knowledge found to generate quiz"
+        }), 400
+
+    # 2. generate MCQ
+    questions = generate_mcq_from_knowledge(knowledge, count)
+
+    if not questions:
+        raise Exception("No valid quiz generated")
+
+    # 3. save
+    quiz_id = save_quiz_to_db(topic, questions)
+
+    return jsonify({
+        "message": "Quiz generated successfully",
+        "quiz_id": quiz_id
+    }), 200
 
 @app.route("/api/quizzes", methods=["GET"])
 def get_quizzes():

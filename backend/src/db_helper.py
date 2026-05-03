@@ -1,5 +1,8 @@
 import mysql.connector
 
+def normalize_text(text):
+    return str(text).lower().strip()
+
 def get_db_connection():
     return mysql.connector.connect(
         host="shuttle.proxy.rlwy.net",
@@ -32,19 +35,25 @@ def search_similar_question(question):
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
 
-    cursor.execute("""
-        SELECT * FROM qa_knowledge
-        WHERE question LIKE %s
-        ORDER BY created_at DESC
-        LIMIT 1
-    """, ("%" + question + "%",))
+    question = normalize_text(question)
 
-    result = cursor.fetchone()
+    cursor.execute("SELECT * FROM qa_knowledge")
+
+    rows = cursor.fetchall()
+
+    best_match = None
+
+    for row in rows:
+        db_q = normalize_text(row["question"])
+
+        if question in db_q or db_q in question:
+            best_match = row
+            break
 
     cursor.close()
     conn.close()
 
-    return result
+    return best_match
 
 
 def create_escalation(question, result, user_id=None):
