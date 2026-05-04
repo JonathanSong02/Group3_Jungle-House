@@ -1996,6 +1996,68 @@ tr:hover td {
 }
 
 
+
+/* =========================================================
+   CONTENT MANAGEMENT RETRIEVE BIN
+   ========================================================= */
+
+.content-management-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.content-management-tabs button {
+  min-width: 170px;
+}
+
+.retrieve-bin-notice {
+  border-color: var(--primary-soft);
+  background: linear-gradient(180deg, #fffdf8, #fff4d7);
+}
+
+.deleted-article-card {
+  border-style: dashed;
+  border-color: #d9a441;
+  background: linear-gradient(180deg, #fffaf0, #fff4d7);
+}
+
+.deleted-article-card .role-pill {
+  background: #fff0cc;
+  border-color: #e6bd64;
+  color: #7c4d00;
+}
+
+.retrieve-bin-actions {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.retrieve-bin-actions .checkbox-row {
+  margin: 0;
+}
+
+.retrieve-bin-actions input[type='checkbox'],
+.retrieve-bin-notice input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  min-height: auto;
+  accent-color: var(--primary);
+}
+
+.deleted-article-card.selected {
+  border-color: var(--danger-border);
+  box-shadow: 0 0 0 4px rgba(190, 57, 43, 0.12);
+}
+
+
+
+
 /* =========================================================
    18. RESPONSIVE DESIGN
    Tablet + mobile layout
@@ -2303,6 +2365,24 @@ tr:hover td {
   .message-bubble-header {
     flex-direction: column;
     gap: 4px;
+  }
+
+  .content-management-tabs {
+    flex-direction: column;
+  }
+
+  .content-management-tabs button {
+    width: 100%;
+  }
+
+  .retrieve-bin-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .retrieve-bin-actions .button-group,
+  .retrieve-bin-actions button {
+    width: 100%;
   }
 
 }

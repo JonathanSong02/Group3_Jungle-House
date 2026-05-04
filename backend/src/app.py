@@ -386,154 +386,6 @@ def get_user_profile_payload(user_row):
     }
 
 
-
-# =========================
-# NOTIFICATION HELPER FUNCTIONS
-# =========================
-def normalize_role_name(role_name):
-    """
-    Standardise role names for notification targeting.
-    Supports: manager, teamlead, staff, all.
-    """
-    if not role_name:
-        return "staff"
-
-    clean_role = str(role_name).strip().lower().replace(" ", "").replace("_", "").replace("-", "")
-
-    if clean_role in ["manager", "admin"]:
-        return "manager"
-
-    if clean_role in ["teamlead", "teamleader", "lead"]:
-        return "teamlead"
-
-    if clean_role in ["staff", "newstaff", "employee"]:
-        return "staff"
-
-    if clean_role == "all":
-        return "all"
-
-    return "staff"
-
-
-def create_notification(
-    title,
-    detail,
-    notification_type="system",
-    user_id=None,
-    target_role=None,
-    related_id=None,
-    created_by=None
-):
-    """
-    Create a notification.
-
-    user_id:
-        Send to one specific user.
-
-    target_role:
-        Send to a role group:
-        manager, teamlead, staff, all.
-
-    notification_type:
-        announcement, message, escalation, quiz, review, system.
-    """
-    conn = None
-    cursor = None
-
-    allowed_types = {"announcement", "message", "escalation", "quiz", "review", "system"}
-    allowed_roles = {"manager", "teamlead", "staff", "all"}
-
-    try:
-        notification_type = str(notification_type or "system").strip().lower()
-        if notification_type not in allowed_types:
-            notification_type = "system"
-
-        if target_role:
-            target_role = normalize_role_name(target_role)
-            if target_role not in allowed_roles:
-                target_role = "all"
-
-        conn = get_db_connection()
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            INSERT INTO notification
-            (
-                user_id,
-                target_role,
-                title,
-                detail,
-                type,
-                related_id,
-                created_by
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, (
-            user_id,
-            target_role,
-            title,
-            detail,
-            notification_type,
-            related_id,
-            created_by
-        ))
-
-        conn.commit()
-        return True
-
-    except Exception as e:
-        print("CREATE NOTIFICATION ERROR:", e)
-        if conn:
-            conn.rollback()
-        return False
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-
-def notify_new_escalation(question, escalation_id=None, created_by=None):
-    """
-    Notify Team Lead and Manager when a staff question is escalated.
-    """
-    detail = f"A staff question needs manual review: {question}"
-
-    create_notification(
-        title="New escalation received",
-        detail=detail,
-        notification_type="escalation",
-        target_role="teamlead",
-        related_id=escalation_id,
-        created_by=created_by
-    )
-
-    create_notification(
-        title="New escalation received",
-        detail=detail,
-        notification_type="escalation",
-        target_role="manager",
-        related_id=escalation_id,
-        created_by=created_by
-    )
-
-
-def notify_quiz_release(quiz_id, quiz_title, created_by=None):
-    """
-    Notify Staff when a new active quiz is released.
-    """
-    return create_notification(
-        title="New quiz released",
-        detail=f"A new training quiz is available: {quiz_title}",
-        notification_type="quiz",
-        target_role="staff",
-        related_id=quiz_id,
-        created_by=created_by
-    )
-
-
-
 # =========================
 # AI CHAT HELPERS
 # =========================
@@ -1661,13 +1513,7 @@ def get_dashboard():
             ai_conf = 0
 
         recent_notifications = safe_list_query(cursor, """
-            SELECT
-                notification_id AS id,
-                title,
-                detail,
-                type,
-                is_read,
-                created_at
+            SELECT notification_id AS id, title, message, is_read, created_at
             FROM notification
             ORDER BY created_at DESC
             LIMIT 3
@@ -1719,42 +1565,16 @@ def get_notifications(user_id):
 
         cursor.execute("""
             SELECT
-                u.user_id,
-                u.role_id,
-                r.role_name
-            FROM users u
-            LEFT JOIN roles r ON u.role_id = r.role_id
-            WHERE u.user_id = %s
-            LIMIT 1
-        """, (user_id,))
-
-        user_row = cursor.fetchone()
-
-        if not user_row:
-            return jsonify({"message": "User not found."}), 404
-
-        role_name = normalize_role_name(user_row.get("role_name"))
-
-        cursor.execute("""
-            SELECT
                 notification_id AS id,
-                user_id,
-                target_role,
                 title,
-                detail,
-                type,
-                related_id,
+                message AS detail,
                 is_read AS isRead,
-                created_by,
+                type,
                 created_at
             FROM notification
-            WHERE
-                user_id = %s
-                OR target_role = %s
-                OR target_role = 'all'
+            WHERE user_id = %s
             ORDER BY created_at DESC
-        """, (user_id, role_name))
-
+        """, (user_id,))
         notifications = cursor.fetchall()
 
         return jsonify(notifications), 200
@@ -1788,11 +1608,7 @@ def mark_notification_as_read(notification_id):
             SET is_read = TRUE
             WHERE notification_id = %s
         """, (notification_id,))
-
         conn.commit()
-
-        if cursor.rowcount == 0:
-            return jsonify({"message": "Notification not found."}), 404
 
         return jsonify({"message": "Notification marked as read."}), 200
 
@@ -1809,98 +1625,6 @@ def mark_notification_as_read(notification_id):
             cursor.close()
         if conn:
             conn.close()
-
-
-@app.route("/api/notifications/send", methods=["POST"])
-def send_notification():
-    """
-    Send announcement/message/notification to a role or one user.
-
-    Example:
-    {
-        "title": "New promotion update",
-        "detail": "Please check the latest promotion.",
-        "type": "announcement",
-        "target_role": "staff",
-        "created_by": 1
-    }
-    """
-    data = request.get_json() or {}
-
-    title = str(data.get("title", "")).strip()
-    detail = str(data.get("detail", "")).strip()
-    notification_type = str(data.get("type", "announcement")).strip().lower()
-    target_role = data.get("target_role")
-    user_id = data.get("user_id")
-    related_id = data.get("related_id")
-    created_by = data.get("created_by")
-
-    allowed_types = [
-        "announcement",
-        "message",
-        "escalation",
-        "quiz",
-        "review",
-        "system"
-    ]
-
-    allowed_roles = [
-        "manager",
-        "teamlead",
-        "staff",
-        "all"
-    ]
-
-    if not title or not detail:
-        return jsonify({"message": "Title and detail are required."}), 400
-
-    if notification_type not in allowed_types:
-        return jsonify({"message": "Invalid notification type."}), 400
-
-    if not user_id and not target_role:
-        target_role = "all"
-
-    if target_role:
-        target_role = normalize_role_name(target_role)
-
-        if target_role not in allowed_roles:
-            return jsonify({"message": "Invalid target role."}), 400
-
-    success = create_notification(
-        title=title,
-        detail=detail,
-        notification_type=notification_type,
-        user_id=user_id,
-        target_role=target_role,
-        related_id=related_id,
-        created_by=created_by
-    )
-
-    if not success:
-        return jsonify({"message": "Failed to create notification."}), 500
-
-    return jsonify({"message": "Notification sent successfully."}), 201
-
-
-@app.route("/api/notifications/test", methods=["POST"])
-def test_notification():
-    data = request.get_json() or {}
-
-    target_role = normalize_role_name(data.get("target_role", "all"))
-    created_by = data.get("created_by")
-
-    success = create_notification(
-        title="Test Notification",
-        detail="This is a test notification from the backend.",
-        notification_type="system",
-        target_role=target_role,
-        created_by=created_by
-    )
-
-    if not success:
-        return jsonify({"message": "Failed to create test notification."}), 500
-
-    return jsonify({"message": "Test notification created successfully."}), 201
 
 
 @app.route("/api/chat/test", methods=["GET"])
@@ -2174,23 +1898,11 @@ def chat():
         # ✅ STEP 1: NONSENSE → ESCALATE
         # =========================
         if is_nonsense(question):
-            current_user_id = data.get("user_id") or data.get("userId")
-
-            escalation_id = create_escalation(
-                question,
-                {
-                    "answer": "Unclear or invalid question",
-                    "confidence": 0.0,
-                    "source": "invalid_input"
-                },
-                user_id=current_user_id
-            )
-
-            notify_new_escalation(
-                question=question,
-                escalation_id=escalation_id,
-                created_by=current_user_id
-            )
+            escalation_id = create_escalation(question, {
+                "answer": "Unclear or invalid question",
+                "confidence": 0.0,
+                "source": "invalid_input"
+            })
 
             return jsonify({
                 "reply": "I didn’t understand that. I’ll escalate this to a team lead.",
@@ -2340,19 +2052,7 @@ def chat():
             should_escalate = True
 
         if should_escalate:
-            current_user_id = data.get("user_id") or data.get("userId")
-
-            escalation_id = create_escalation(
-                question,
-                result,
-                user_id=current_user_id
-            )
-
-            notify_new_escalation(
-                question=question,
-                escalation_id=escalation_id,
-                created_by=current_user_id
-            )
+            escalation_id = create_escalation(question, result)
 
             result["escalation"] = True
             result["escalation_id"] = escalation_id
@@ -2383,23 +2083,11 @@ def chat():
 
         log_request(question, error=str(error))
 
-        current_user_id = data.get("user_id") or data.get("userId")
-
-        escalation_id = create_escalation(
-            question,
-            {
-                "answer": str(error),
-                "confidence": 0.0,
-                "source": "system_error"
-            },
-            user_id=current_user_id
-        )
-
-        notify_new_escalation(
-            question=question,
-            escalation_id=escalation_id,
-            created_by=current_user_id
-        )
+        escalation_id = create_escalation(question, {
+            "answer": str(error),
+            "confidence": 0.0,
+            "source": "system_error"
+        })
 
         return jsonify({
             "reply": "System error. Escalated to team lead.",
@@ -2412,6 +2100,7 @@ def chat():
 
 # =========================
 # KNOWLEDGE BASE ROUTES
+# Active Articles / Retrieve Bin
 # =========================
 @app.route("/api/articles", methods=["GET"])
 def get_articles():
@@ -2419,14 +2108,27 @@ def get_articles():
     cursor = None
 
     try:
+        show_deleted = request.args.get("deleted", "false").lower() == "true"
+
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
 
         cursor.execute("""
-            SELECT article_id, title, content, category
+            SELECT 
+                article_id,
+                title,
+                content,
+                category,
+                sub_category,
+                link,
+                is_deleted,
+                deleted_at,
+                deleted_by
             FROM wiki_article
-            ORDER BY article_id ASC
-        """)
+            WHERE is_deleted = %s
+            ORDER BY article_id DESC
+        """, (show_deleted,))
+
         articles = cursor.fetchall()
 
         return jsonify(articles), 200
@@ -2444,51 +2146,6 @@ def get_articles():
             cursor.close()
         if conn:
             conn.close()
-
-def get_random_knowledge(limit=10):
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-
-    cursor.execute("""
-        SELECT question, answer
-        FROM qa_knowledge
-        ORDER BY RAND()
-        LIMIT %s
-    """, (limit,))
-
-    data = cursor.fetchall()
-
-    cursor.close()
-    conn.close()
-
-    return data
-
-def get_articles_for_quiz(topic=None, limit=20):
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-
-    if topic:
-        cursor.execute("""
-            SELECT title, content, category
-            FROM wiki_article
-            WHERE LOWER(title) LIKE %s
-               OR LOWER(category) LIKE %s
-            LIMIT %s
-        """, (f"%{topic}%", f"%{topic}%", limit))
-    else:
-        cursor.execute("""
-            SELECT title, content, category
-            FROM wiki_article
-            ORDER BY RAND()
-            LIMIT %s
-        """, (limit,))
-
-    data = cursor.fetchall()
-
-    cursor.close()
-    conn.close()
-
-    return data
 
 
 # =========================
@@ -2558,6 +2215,7 @@ def get_article_detail(article_id):
             SELECT article_id, title, content, category, sub_category, link
             FROM wiki_article
             WHERE article_id = %s
+            AND is_deleted = FALSE
             LIMIT 1
         """, (article_id,))
 
@@ -2634,10 +2292,63 @@ def edit_article(article_id):
 
 
 # =========================
-# Delete Article ROUTES
+# SOFT DELETE ARTICLE ROUTE
+# Move article to Retrieve Bin
 # =========================
 @app.route('/api/articles/<int:article_id>', methods=['DELETE'])
 def delete_article(article_id):
+    conn = None
+    cursor = None
+
+    try:
+        data = request.get_json(silent=True) or {}
+        deleted_by = data.get("deleted_by")
+
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            UPDATE wiki_article
+            SET 
+                is_deleted = TRUE,
+                deleted_at = NOW(),
+                deleted_by = %s
+            WHERE article_id = %s
+        """, (deleted_by, article_id))
+
+        conn.commit()
+
+        if cursor.rowcount == 0:
+            return jsonify({'message': 'Article not found.'}), 404
+
+        return jsonify({
+            'message': 'Article moved to Retrieve Bin successfully.'
+        }), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print('MYSQL ERROR /api/articles DELETE:', error)
+
+        return jsonify({
+            'message': 'Failed to move article to Retrieve Bin.',
+            'error': str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+# =========================
+# RESTORE ARTICLE ROUTE
+# Restore article from Retrieve Bin
+# =========================
+@app.route('/api/articles/<int:article_id>/restore', methods=['PUT'])
+def restore_article(article_id):
     conn = None
     cursor = None
 
@@ -2646,19 +2357,110 @@ def delete_article(article_id):
         cursor = conn.cursor(dictionary=True)
 
         cursor.execute("""
-            DELETE FROM wiki_article
+            UPDATE wiki_article
+            SET 
+                is_deleted = FALSE,
+                deleted_at = NULL,
+                deleted_by = NULL
             WHERE article_id = %s
         """, (article_id,))
 
         conn.commit()
 
-        return jsonify({'message': 'Article deleted successfully.'}), 200
+        if cursor.rowcount == 0:
+            return jsonify({'message': 'Article not found.'}), 404
+
+        return jsonify({
+            'message': 'Article restored successfully.'
+        }), 200
 
     except Exception as error:
         if conn:
             conn.rollback()
-        print('MYSQL ERROR /api/articles DELETE:', error)
-        return jsonify({'message': 'Failed to delete article.', 'error': str(error)}), 500
+
+        print('MYSQL ERROR /api/articles RESTORE:', error)
+
+        return jsonify({
+            'message': 'Failed to restore article.',
+            'error': str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+# =========================
+# PERMANENT DELETE ARTICLE ROUTE
+# Delete article permanently from Retrieve Bin only
+# Also removes related article links first
+# =========================
+@app.route('/api/articles/<int:article_id>/permanent-delete', methods=['DELETE'])
+def permanent_delete_article(article_id):
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        # 1. Check article exists in Retrieve Bin
+        cursor.execute("""
+            SELECT article_id
+            FROM wiki_article
+            WHERE article_id = %s
+            AND is_deleted = TRUE
+            LIMIT 1
+        """, (article_id,))
+
+        article = cursor.fetchone()
+
+        if not article:
+            return jsonify({
+                'message': 'Article not found in Retrieve Bin.'
+            }), 404
+
+        # 2. Delete related article links first
+        cursor.execute("""
+            DELETE FROM article_links
+            WHERE article_id = %s
+        """, (article_id,))
+
+        # 3. Delete article permanently
+        cursor.execute("""
+            DELETE FROM wiki_article
+            WHERE article_id = %s
+            AND is_deleted = TRUE
+        """, (article_id,))
+
+        conn.commit()
+
+        return jsonify({
+            'message': 'Article permanently deleted successfully.'
+        }), 200
+
+    except mysql.connector.Error as err:
+        if conn:
+            conn.rollback()
+
+        print('MYSQL ERROR /api/articles PERMANENT DELETE:', err)
+
+        return jsonify({
+            'message': f'Database error: {str(err)}'
+        }), 500
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print('GENERAL ERROR /api/articles PERMANENT DELETE:', error)
+
+        return jsonify({
+            'message': 'Failed to permanently delete article.',
+            'error': str(error)
+        }), 500
 
     finally:
         if cursor:
@@ -2736,25 +2538,9 @@ def submit_escalation_answer(escalation_id):
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
 
-        # Get original question and staff user first
-        cursor.execute("""
-            SELECT
-                escalation_id,
-                question,
-                asked_by
-            FROM escalation
-            WHERE escalation_id = %s
-            LIMIT 1
-        """, (escalation_id,))
-
-        row = cursor.fetchone()
-
-        if not row:
-            return jsonify({'message': 'Escalation not found.'}), 404
-
         cursor.execute("""
             UPDATE escalation
-            SET
+            SET 
                 manual_answer = %s,
                 handled_by = %s,
                 status = 'resolved',
@@ -2764,26 +2550,24 @@ def submit_escalation_answer(escalation_id):
 
         conn.commit()
 
-        # Save the manual answer into AI knowledge
-        save_qa_to_db(
-            row["question"],
-            {
-                "answer": manual_answer,
-                "confidence": 1.0,
-                "source": "team_lead"
-            },
-            source="team_lead"
-        )
+        # ✅ GET QUESTION FROM ESCALATION
+        cursor.execute("""
+            SELECT question
+            FROM escalation
+            WHERE escalation_id = %s
+        """, (escalation_id,))
 
-        # Notify the staff who asked the escalated question
-        if row.get("asked_by"):
-            create_notification(
-                title="Escalation answered",
-                detail=f"Your escalated question has been answered: {row['question']}",
-                notification_type="escalation",
-                user_id=row["asked_by"],
-                related_id=escalation_id,
-                created_by=handled_by
+        row = cursor.fetchone()
+
+        # ✅ SAVE INTO AI KNOWLEDGE (VERY IMPORTANT)
+        if row and manual_answer:
+            save_qa_to_db(
+                row["question"],
+                {
+                    "answer": manual_answer,
+                    "confidence": 1.0,
+                    "source": "team_lead"
+                }
             )
 
         return jsonify({
@@ -3059,55 +2843,35 @@ def generate_mcq_from_knowledge(knowledge, count=5):
     return questions
 
 
-def save_quiz_to_db(title, questions, created_by=None):
-    conn = None
-    cursor = None
+def save_quiz_to_db(title, questions):
+    conn = get_db_connection()
+    cursor = conn.cursor()
 
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
+    # create quiz
+    cursor.execute("""
+        INSERT INTO quiz (title, status)
+        VALUES (%s, 'active')
+    """, (title,))
 
-        # create quiz
+    quiz_id = cursor.lastrowid
+
+    for q in questions:
+        import json
+
         cursor.execute("""
-            INSERT INTO quiz (title, status)
-            VALUES (%s, 'active')
-        """, (title,))
+            INSERT INTO quiz_question (quiz_id, question, options, correct_answer)
+            VALUES (%s, %s, %s, %s)
+        """, (
+            quiz_id,
+            q["question"],
+            json.dumps(q["options"]),
+            q["correct"]
+        ))
 
-        quiz_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
 
-        for q in questions:
-            cursor.execute("""
-                INSERT INTO quiz_question (quiz_id, question, options, correct_answer)
-                VALUES (%s, %s, %s, %s)
-            """, (
-                quiz_id,
-                q.get("question"),
-                json.dumps(q.get("options", [])),
-                q.get("correct_answer", q.get("correct", "A"))
-            ))
-
-        conn.commit()
-
-        notify_quiz_release(
-            quiz_id=quiz_id,
-            quiz_title=title,
-            created_by=created_by
-        )
-
-        return quiz_id
-
-    except Exception as error:
-        if conn:
-            conn.rollback()
-        print("SAVE QUIZ ERROR:", error)
-        raise
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
+    return quiz_id
 
 @app.route("/api/generate-quiz", methods=["POST"])
 def generate_quiz():
@@ -3131,7 +2895,7 @@ def generate_quiz():
         raise Exception("No valid quiz generated")
 
     # 3. save
-    quiz_id = save_quiz_to_db(topic, questions, created_by=data.get("created_by"))
+    quiz_id = save_quiz_to_db(topic, questions)
 
     return jsonify({
         "message": "Quiz generated successfully",
@@ -3342,20 +3106,11 @@ def create_admin_quiz():
             status
         ))
 
-        quiz_id = cursor.lastrowid
-
         conn.commit()
-
-        if status == "active":
-            notify_quiz_release(
-                quiz_id=quiz_id,
-                quiz_title=title,
-                created_by=created_by
-            )
 
         return jsonify({
             "message": "Quiz created successfully.",
-            "quiz_id": quiz_id
+            "quiz_id": cursor.lastrowid
         }), 201
 
     except Exception as error:
@@ -3844,540 +3599,6 @@ def update_admin_user_role(user_id):
             cursor.close()
         if conn:
             conn.close()
-
-
-# =========================
-# USER MESSAGE ROUTES
-# =========================
-
-# =========================
-# USER MESSAGE ROUTES
-# =========================
-
-@app.route("/api/messages/users", methods=["GET"])
-def get_message_users():
-    """
-    Get all registered users for the Messages receiver dropdown.
-    Frontend will hide the current logged-in user.
-    """
-
-    conn = None
-    cursor = None
-
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-
-        cursor.execute("""
-            SELECT 
-                u.user_id,
-                u.user_id AS id,
-                u.full_name,
-                u.full_name AS name,
-                u.email,
-                COALESCE(u.status, 'active') AS status,
-                COALESCE(r.role_name, 'User') AS role_name,
-                COALESCE(r.role_name, 'User') AS role
-            FROM users u
-            LEFT JOIN roles r ON u.role_id = r.role_id
-            ORDER BY 
-                CASE
-                    WHEN LOWER(REPLACE(COALESCE(r.role_name, ''), ' ', '')) = 'manager' THEN 1
-                    WHEN LOWER(REPLACE(COALESCE(r.role_name, ''), ' ', '')) = 'teamlead' THEN 2
-                    WHEN LOWER(REPLACE(COALESCE(r.role_name, ''), ' ', '')) = 'staff' THEN 3
-                    ELSE 4
-                END,
-                u.full_name ASC
-        """)
-
-        users = cursor.fetchall()
-
-        return jsonify(users), 200
-
-    except mysql.connector.Error as err:
-        print("MYSQL ERROR /api/messages/users:", err)
-        return jsonify({
-            "message": f"Database error: {str(err)}"
-        }), 500
-
-    except Exception as e:
-        print("GENERAL ERROR /api/messages/users:", e)
-        return jsonify({
-            "message": f"Server error: {str(e)}"
-        }), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-
-@app.route("/api/messages/threads/<int:user_id>", methods=["GET"])
-def get_message_threads(user_id):
-    conn = None
-    cursor = None
-
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-
-        cursor.execute("""
-            SELECT
-                m.message_id,
-                m.thread_id,
-                m.sender_id,
-                sender.full_name AS sender_name,
-                sender.email AS sender_email,
-                sr.role_name AS sender_role,
-
-                m.receiver_id,
-                receiver.full_name AS receiver_name,
-                receiver.email AS receiver_email,
-                rr.role_name AS receiver_role,
-
-                m.subject,
-                m.message,
-                m.is_read,
-                m.created_at,
-                m.edited_at
-            FROM user_message m
-            LEFT JOIN users sender ON m.sender_id = sender.user_id
-            LEFT JOIN roles sr ON sender.role_id = sr.role_id
-            LEFT JOIN users receiver ON m.receiver_id = receiver.user_id
-            LEFT JOIN roles rr ON receiver.role_id = rr.role_id
-            WHERE
-                (m.sender_id = %s AND m.is_deleted_by_sender = FALSE)
-                OR
-                (m.receiver_id = %s AND m.is_deleted_by_receiver = FALSE)
-            ORDER BY m.created_at DESC
-        """, (user_id, user_id))
-
-        rows = cursor.fetchall()
-
-        thread_map = {}
-
-        for row in rows:
-            thread_id = row["thread_id"] or row["message_id"]
-
-            if thread_id not in thread_map:
-                other_name = row["receiver_name"] if row["sender_id"] == user_id else row["sender_name"]
-                other_role = row["receiver_role"] if row["sender_id"] == user_id else row["sender_role"]
-                other_id = row["receiver_id"] if row["sender_id"] == user_id else row["sender_id"]
-
-                thread_map[thread_id] = {
-                    "thread_id": thread_id,
-                    "subject": row["subject"],
-                    "latest_message": row["message"],
-                    "latest_created_at": row["created_at"],
-                    "latest_sender_id": row["sender_id"],
-                    "latest_sender_name": row["sender_name"],
-                    "other_user_id": other_id,
-                    "other_user_name": other_name,
-                    "other_user_role": other_role,
-                    "message_count": 0,
-                    "unread_count": 0,
-                }
-
-            thread_map[thread_id]["message_count"] += 1
-
-            if row["receiver_id"] == user_id and not row["is_read"]:
-                thread_map[thread_id]["unread_count"] += 1
-
-        threads = list(thread_map.values())
-        threads.sort(key=lambda item: item["latest_created_at"], reverse=True)
-
-        return jsonify(threads), 200
-
-    except mysql.connector.Error as err:
-        print("MYSQL ERROR /api/messages/threads:", err)
-        return jsonify({"message": f"Database error: {str(err)}"}), 500
-
-    except Exception as e:
-        print("GENERAL ERROR /api/messages/threads:", e)
-        return jsonify({"message": f"Server error: {str(e)}"}), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-
-@app.route("/api/messages/thread/<int:thread_id>/<int:user_id>", methods=["GET"])
-def get_message_thread_detail(thread_id, user_id):
-    conn = None
-    cursor = None
-
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-
-        cursor.execute("""
-            SELECT
-                m.message_id,
-                m.thread_id,
-                m.parent_message_id,
-                m.sender_id,
-                sender.full_name AS sender_name,
-                sender.email AS sender_email,
-                sr.role_name AS sender_role,
-
-                m.receiver_id,
-                receiver.full_name AS receiver_name,
-                receiver.email AS receiver_email,
-                rr.role_name AS receiver_role,
-
-                m.subject,
-                m.message,
-                m.is_read,
-                m.created_at,
-                m.edited_at
-            FROM user_message m
-            LEFT JOIN users sender ON m.sender_id = sender.user_id
-            LEFT JOIN roles sr ON sender.role_id = sr.role_id
-            LEFT JOIN users receiver ON m.receiver_id = receiver.user_id
-            LEFT JOIN roles rr ON receiver.role_id = rr.role_id
-            WHERE
-                m.thread_id = %s
-                AND (
-                    (m.sender_id = %s AND m.is_deleted_by_sender = FALSE)
-                    OR
-                    (m.receiver_id = %s AND m.is_deleted_by_receiver = FALSE)
-                )
-            ORDER BY m.created_at ASC
-        """, (thread_id, user_id, user_id))
-
-        messages = cursor.fetchall()
-
-        cursor.execute("""
-            UPDATE user_message
-            SET is_read = TRUE
-            WHERE thread_id = %s
-            AND receiver_id = %s
-        """, (thread_id, user_id))
-
-        conn.commit()
-
-        return jsonify(messages), 200
-
-    except mysql.connector.Error as err:
-        print("MYSQL ERROR /api/messages/thread:", err)
-        return jsonify({"message": f"Database error: {str(err)}"}), 500
-
-    except Exception as e:
-        print("GENERAL ERROR /api/messages/thread:", e)
-        return jsonify({"message": f"Server error: {str(e)}"}), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-
-@app.route("/api/messages/send", methods=["POST"])
-def send_user_message():
-    conn = None
-    cursor = None
-
-    try:
-        data = request.get_json() or {}
-
-        sender_id = data.get("sender_id")
-        receiver_id = data.get("receiver_id")
-        subject = data.get("subject", "").strip()
-        message = data.get("message", "").strip()
-
-        if not sender_id or not receiver_id:
-            return jsonify({"message": "Sender and receiver are required."}), 400
-
-        if int(sender_id) == int(receiver_id):
-            return jsonify({"message": "You cannot send a message to yourself."}), 400
-
-        if not subject:
-            return jsonify({"message": "Subject is required."}), 400
-
-        if not message:
-            return jsonify({"message": "Message content is required."}), 400
-
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-
-        cursor.execute("""
-            SELECT full_name
-            FROM users
-            WHERE user_id = %s
-            LIMIT 1
-        """, (sender_id,))
-        sender = cursor.fetchone()
-        sender_name = sender["full_name"] if sender else "A user"
-
-        cursor.execute("""
-            INSERT INTO user_message
-            (
-                sender_id,
-                receiver_id,
-                subject,
-                message
-            )
-            VALUES (%s, %s, %s, %s)
-        """, (
-            sender_id,
-            receiver_id,
-            subject,
-            message
-        ))
-
-        message_id = cursor.lastrowid
-
-        cursor.execute("""
-            UPDATE user_message
-            SET thread_id = %s
-            WHERE message_id = %s
-        """, (message_id, message_id))
-
-        conn.commit()
-
-        create_notification(
-            title=f"New message from {sender_name}",
-            detail=subject,
-            notification_type="message",
-            user_id=receiver_id,
-            related_id=message_id,
-            created_by=sender_id
-        )
-
-        return jsonify({
-            "message": "Message sent successfully.",
-            "message_id": message_id,
-            "thread_id": message_id
-        }), 201
-
-    except mysql.connector.Error as err:
-        print("MYSQL ERROR /api/messages/send:", err)
-        return jsonify({"message": f"Database error: {str(err)}"}), 500
-
-    except Exception as e:
-        print("GENERAL ERROR /api/messages/send:", e)
-        return jsonify({"message": f"Server error: {str(e)}"}), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-
-@app.route("/api/messages/reply", methods=["POST"])
-def reply_user_message():
-    conn = None
-    cursor = None
-
-    try:
-        data = request.get_json() or {}
-
-        thread_id = data.get("thread_id")
-        parent_message_id = data.get("parent_message_id")
-        sender_id = data.get("sender_id")
-        receiver_id = data.get("receiver_id")
-        subject = data.get("subject", "").strip()
-        message = data.get("message", "").strip()
-
-        if not thread_id or not sender_id or not receiver_id:
-            return jsonify({"message": "Thread, sender, and receiver are required."}), 400
-
-        if not message:
-            return jsonify({"message": "Reply message is required."}), 400
-
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-
-        cursor.execute("""
-            SELECT full_name
-            FROM users
-            WHERE user_id = %s
-            LIMIT 1
-        """, (sender_id,))
-        sender = cursor.fetchone()
-        sender_name = sender["full_name"] if sender else "A user"
-
-        cursor.execute("""
-            INSERT INTO user_message
-            (
-                thread_id,
-                parent_message_id,
-                sender_id,
-                receiver_id,
-                subject,
-                message
-            )
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """, (
-            thread_id,
-            parent_message_id,
-            sender_id,
-            receiver_id,
-            subject,
-            message
-        ))
-
-        conn.commit()
-        message_id = cursor.lastrowid
-
-        create_notification(
-            title=f"New reply from {sender_name}",
-            detail=subject,
-            notification_type="message",
-            user_id=receiver_id,
-            related_id=message_id,
-            created_by=sender_id
-        )
-
-        return jsonify({
-            "message": "Reply sent successfully.",
-            "message_id": message_id
-        }), 201
-
-    except mysql.connector.Error as err:
-        print("MYSQL ERROR /api/messages/reply:", err)
-        return jsonify({"message": f"Database error: {str(err)}"}), 500
-
-    except Exception as e:
-        print("GENERAL ERROR /api/messages/reply:", e)
-        return jsonify({"message": f"Server error: {str(e)}"}), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-
-@app.route("/api/messages/edit/<int:message_id>", methods=["PUT"])
-def edit_user_message(message_id):
-    conn = None
-    cursor = None
-
-    try:
-        data = request.get_json() or {}
-
-        user_id = data.get("user_id")
-        message = data.get("message", "").strip()
-
-        if not user_id:
-            return jsonify({"message": "User ID is required."}), 400
-
-        if not message:
-            return jsonify({"message": "Message content is required."}), 400
-
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-
-        cursor.execute("""
-            SELECT sender_id
-            FROM user_message
-            WHERE message_id = %s
-            LIMIT 1
-        """, (message_id,))
-
-        row = cursor.fetchone()
-
-        if not row:
-            return jsonify({"message": "Message not found."}), 404
-
-        if int(row["sender_id"]) != int(user_id):
-            return jsonify({"message": "You can only edit messages you sent."}), 403
-
-        cursor.execute("""
-            UPDATE user_message
-            SET message = %s,
-                edited_at = NOW()
-            WHERE message_id = %s
-        """, (message, message_id))
-
-        conn.commit()
-
-        return jsonify({"message": "Message updated successfully."}), 200
-
-    except mysql.connector.Error as err:
-        print("MYSQL ERROR /api/messages/edit:", err)
-        return jsonify({"message": f"Database error: {str(err)}"}), 500
-
-    except Exception as e:
-        print("GENERAL ERROR /api/messages/edit:", e)
-        return jsonify({"message": f"Server error: {str(e)}"}), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-
-@app.route("/api/messages/delete/<int:message_id>", methods=["PUT"])
-def delete_user_message(message_id):
-    conn = None
-    cursor = None
-
-    try:
-        data = request.get_json() or {}
-        user_id = data.get("user_id")
-
-        if not user_id:
-            return jsonify({"message": "User ID is required."}), 400
-
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-
-        cursor.execute("""
-            SELECT sender_id, receiver_id
-            FROM user_message
-            WHERE message_id = %s
-            LIMIT 1
-        """, (message_id,))
-
-        row = cursor.fetchone()
-
-        if not row:
-            return jsonify({"message": "Message not found."}), 404
-
-        if int(row["sender_id"]) == int(user_id):
-            cursor.execute("""
-                UPDATE user_message
-                SET is_deleted_by_sender = TRUE
-                WHERE message_id = %s
-            """, (message_id,))
-
-        elif int(row["receiver_id"]) == int(user_id):
-            cursor.execute("""
-                UPDATE user_message
-                SET is_deleted_by_receiver = TRUE
-                WHERE message_id = %s
-            """, (message_id,))
-
-        else:
-            return jsonify({"message": "You do not have permission to delete this message."}), 403
-
-        conn.commit()
-
-        return jsonify({"message": "Message deleted from your inbox successfully."}), 200
-
-    except mysql.connector.Error as err:
-        print("MYSQL ERROR /api/messages/delete:", err)
-        return jsonify({"message": f"Database error: {str(err)}"}), 500
-
-    except Exception as e:
-        print("GENERAL ERROR /api/messages/delete:", e)
-        return jsonify({"message": f"Server error: {str(e)}"}), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-
 
 
 @app.route("/static/<path:filename>", methods=["GET"])
