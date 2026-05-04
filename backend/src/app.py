@@ -2902,33 +2902,8 @@ def get_quiz_questions(quiz_id):
 # ADMIN QUIZ MANAGEMENT ROUTES
 # =========================
 
-@app.route("/api/quizzes/<int:quiz_id>/submit", methods=["POST", "OPTIONS"])
-def submit_quiz_result(quiz_id):
-    if request.method == "OPTIONS":
-        return jsonify({"message": "OK"}), 200
-
-    data = request.get_json(silent=True) or {}
-
-    user_id = data.get("user_id") or data.get("userId") or data.get("id")
-    score = data.get("score", 0)
-    total_questions = data.get("total_questions", 0)
-    percentage = data.get("percentage", 0)
-
-    if not user_id:
-        return jsonify({
-            "message": "User ID is required to save quiz result."
-        }), 400
-
-    try:
-        user_id = int(user_id)
-        score = int(score)
-        total_questions = int(total_questions)
-        percentage = float(percentage)
-    except Exception:
-        return jsonify({
-            "message": "Invalid quiz result data."
-        }), 400
-
+@app.route("/api/admin/quizzes", methods=["GET"])
+def get_admin_quizzes():
     conn = None
     cursor = None
 
@@ -2937,81 +2912,38 @@ def submit_quiz_result(quiz_id):
         cursor = conn.cursor(dictionary=True)
 
         cursor.execute("""
-            SELECT quiz_id
-            FROM quiz
-            WHERE quiz_id = %s
-            LIMIT 1
-        """, (quiz_id,))
-        quiz = cursor.fetchone()
+            SELECT 
+                q.quiz_id,
+                q.title,
+                q.description,
+                q.category,
+                q.status,
+                q.created_by,
+                q.created_at,
+                q.updated_at,
+                COUNT(qq.question_id) AS question_count
+            FROM quiz q
+            LEFT JOIN quiz_question qq ON q.quiz_id = qq.quiz_id
+            GROUP BY 
+                q.quiz_id,
+                q.title,
+                q.description,
+                q.category,
+                q.status,
+                q.created_by,
+                q.created_at,
+                q.updated_at
+            ORDER BY q.created_at DESC
+        """)
 
-        if not quiz:
-            return jsonify({
-                "message": "Quiz not found."
-            }), 404
+        quizzes = cursor.fetchall()
 
-        cursor.execute("""
-            SELECT user_id
-            FROM users
-            WHERE user_id = %s
-            LIMIT 1
-        """, (user_id,))
-        user = cursor.fetchone()
-
-        if not user:
-            return jsonify({
-                "message": "User not found."
-            }), 404
-
-        cursor.execute("""
-            INSERT INTO quiz_result
-            (
-                quiz_id,
-                user_id,
-                score,
-                total_questions,
-                percentage,
-                completed_at
-            )
-            VALUES (%s, %s, %s, %s, %s, NOW())
-        """, (
-            quiz_id,
-            user_id,
-            score,
-            total_questions,
-            percentage
-        ))
-
-        conn.commit()
-
-        return jsonify({
-            "message": "Quiz result saved successfully.",
-            "result_id": cursor.lastrowid,
-            "quiz_id": quiz_id,
-            "user_id": user_id,
-            "score": score,
-            "total_questions": total_questions,
-            "percentage": percentage
-        }), 201
-
-    except mysql.connector.Error as err:
-        if conn:
-            conn.rollback()
-
-        print("MYSQL ERROR /api/quizzes/<quiz_id>/submit:", err)
-
-        return jsonify({
-            "message": "Database error while saving quiz result.",
-            "error": str(err)
-        }), 500
+        return jsonify(quizzes), 200
 
     except Exception as error:
-        if conn:
-            conn.rollback()
-
-        print("GENERAL ERROR /api/quizzes/<quiz_id>/submit:", error)
-
+        print("MYSQL ERROR /api/admin/quizzes GET:", error)
         return jsonify({
-            "message": "Server error while saving quiz result.",
+            "message": "Failed to load admin quizzes.",
             "error": str(error)
         }), 500
 
@@ -3075,6 +3007,154 @@ def create_admin_quiz():
 
         return jsonify({
             "message": "Failed to create quiz.",
+            "error": str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/admin/quizzes/<int:quiz_id>", methods=["PUT"])
+def update_admin_quiz(quiz_id):
+    data = request.get_json() or {}
+
+    title = data.get("title", "").strip()
+    description = data.get("description", "").strip()
+    category = data.get("category", "").strip()
+    status = data.get("status", "active").strip().lower()
+
+    if not title:
+        return jsonify({"message": "Quiz title is required."}), 400
+
+    if status not in ["active", "inactive"]:
+        status = "active"
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            UPDATE quiz
+            SET 
+                title = %s,
+                description = %s,
+                category = %s,
+                status = %s
+            WHERE quiz_id = %s
+        """, (
+            title,
+            description,
+            category,
+            status,
+            quiz_id
+        ))
+
+        conn.commit()
+
+        if cursor.rowcount == 0:
+            return jsonify({"message": "Quiz not found."}), 404
+
+        return jsonify({"message": "Quiz updated successfully."}), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("MYSQL ERROR /api/admin/quizzes PUT:", error)
+
+        return jsonify({
+            "message": "Failed to update quiz.",
+            "error": str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/admin/quizzes/<int:quiz_id>", methods=["DELETE"])
+def delete_admin_quiz(quiz_id):
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            DELETE FROM quiz
+            WHERE quiz_id = %s
+        """, (quiz_id,))
+
+        conn.commit()
+
+        if cursor.rowcount == 0:
+            return jsonify({"message": "Quiz not found."}), 404
+
+        return jsonify({"message": "Quiz deleted successfully."}), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("MYSQL ERROR /api/admin/quizzes DELETE:", error)
+
+        return jsonify({
+            "message": "Failed to delete quiz.",
+            "error": str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/admin/quizzes/<int:quiz_id>/questions", methods=["GET"])
+def get_admin_quiz_questions(quiz_id):
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT 
+                question_id,
+                quiz_id,
+                question_text,
+                option_a,
+                option_b,
+                option_c,
+                option_d,
+                correct_option,
+                explanation,
+                points,
+                created_at
+            FROM quiz_question
+            WHERE quiz_id = %s
+            ORDER BY question_id ASC
+        """, (quiz_id,))
+
+        questions = cursor.fetchall()
+
+        return jsonify(questions), 200
+
+    except Exception as error:
+        print("MYSQL ERROR /api/admin/quizzes/<quiz_id>/questions GET:", error)
+
+        return jsonify({
+            "message": "Failed to load quiz questions.",
             "error": str(error)
         }), 500
 
@@ -3172,6 +3252,128 @@ def create_quiz_question(quiz_id):
 
         return jsonify({
             "message": "Failed to add question.",
+            "error": str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/admin/questions/<int:question_id>", methods=["PUT"])
+def update_admin_quiz_question(question_id):
+    data = request.get_json() or {}
+
+    question_text = data.get("question_text", "").strip()
+    option_a = data.get("option_a", "").strip()
+    option_b = data.get("option_b", "").strip()
+    option_c = data.get("option_c", "").strip()
+    option_d = data.get("option_d", "").strip()
+    correct_option = data.get("correct_option", "").strip().upper()
+    explanation = data.get("explanation", "").strip()
+    points = data.get("points", 1)
+
+    if not question_text:
+        return jsonify({"message": "Question text is required."}), 400
+
+    if not option_a or not option_b or not option_c or not option_d:
+        return jsonify({"message": "All four options are required."}), 400
+
+    if correct_option not in ["A", "B", "C", "D"]:
+        return jsonify({"message": "Correct option must be A, B, C, or D."}), 400
+
+    try:
+        points = int(points)
+    except Exception:
+        points = 1
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            UPDATE quiz_question
+            SET 
+                question_text = %s,
+                option_a = %s,
+                option_b = %s,
+                option_c = %s,
+                option_d = %s,
+                correct_option = %s,
+                explanation = %s,
+                points = %s
+            WHERE question_id = %s
+        """, (
+            question_text,
+            option_a,
+            option_b,
+            option_c,
+            option_d,
+            correct_option,
+            explanation,
+            points,
+            question_id
+        ))
+
+        conn.commit()
+
+        if cursor.rowcount == 0:
+            return jsonify({"message": "Question not found."}), 404
+
+        return jsonify({"message": "Question updated successfully."}), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("MYSQL ERROR /api/admin/questions PUT:", error)
+
+        return jsonify({
+            "message": "Failed to update question.",
+            "error": str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/admin/questions/<int:question_id>", methods=["DELETE"])
+def delete_admin_quiz_question(question_id):
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            DELETE FROM quiz_question
+            WHERE question_id = %s
+        """, (question_id,))
+
+        conn.commit()
+
+        if cursor.rowcount == 0:
+            return jsonify({"message": "Question not found."}), 404
+
+        return jsonify({"message": "Question deleted successfully."}), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("MYSQL ERROR /api/admin/questions DELETE:", error)
+
+        return jsonify({
+            "message": "Failed to delete question.",
             "error": str(error)
         }), 500
 
