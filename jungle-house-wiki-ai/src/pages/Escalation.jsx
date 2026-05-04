@@ -12,8 +12,12 @@ export default function Escalation() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
   const [activeTab, setActiveTab] = useState('pending');
-  const [deletingId, setDeletingId] = useState(null);
-  const [deleteTarget, setDeleteTarget] = useState(null);
+
+  // Delete mode states
+  const [deleteMode, setDeleteMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   const fetchEscalations = async () => {
     try {
@@ -27,6 +31,7 @@ export default function Escalation() {
       data.forEach((item) => {
         answerMap[item.escalation_id] = item.manual_answer || '';
       });
+
       setAnswers(answerMap);
     } catch (error) {
       console.error('Fetch escalations error:', error);
@@ -51,6 +56,17 @@ export default function Escalation() {
   }, [items]);
 
   const filteredItems = activeTab === 'pending' ? pendingItems : resolvedItems;
+
+  const filteredItemIds = useMemo(() => {
+    return filteredItems.map((item) => item.escalation_id);
+  }, [filteredItems]);
+
+  const selectedVisibleIds = useMemo(() => {
+    return selectedIds.filter((id) => filteredItemIds.includes(id));
+  }, [selectedIds, filteredItemIds]);
+
+  const isAllSelected =
+    filteredItems.length > 0 && selectedVisibleIds.length === filteredItems.length;
 
   const updateAnswer = (id, value) => {
     setAnswers((prev) => ({
@@ -77,6 +93,8 @@ export default function Escalation() {
 
       setMessage('Manual answer submitted successfully.');
       setActiveTab('resolved');
+      setDeleteMode(false);
+      setSelectedIds([]);
       fetchEscalations();
     } catch (error) {
       console.error('Submit manual answer error:', error);
@@ -84,54 +102,104 @@ export default function Escalation() {
     }
   };
 
-  const openDeleteModal = (item) => {
-    setDeleteTarget(item);
+  const startDeleteMode = () => {
+    setDeleteMode(true);
+    setSelectedIds([]);
+    setMessage('');
   };
 
-  const closeDeleteModal = () => {
-    if (deletingId) return;
-    setDeleteTarget(null);
+  const cancelDeleteMode = () => {
+    setDeleteMode(false);
+    setSelectedIds([]);
+    setMessage('');
   };
 
-  const confirmDelete = async () => {
-    if (!deleteTarget) return;
+  const toggleSelectOne = (id) => {
+    setSelectedIds((prev) => {
+      if (prev.includes(id)) {
+        return prev.filter((selectedId) => selectedId !== id);
+      }
 
-    const id = deleteTarget.escalation_id;
+      return [...prev, id];
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (isAllSelected) {
+      setSelectedIds((prev) =>
+        prev.filter((id) => !filteredItemIds.includes(id))
+      );
+      return;
+    }
+
+    setSelectedIds((prev) => {
+      const updatedIds = [...prev];
+
+      filteredItemIds.forEach((id) => {
+        if (!updatedIds.includes(id)) {
+          updatedIds.push(id);
+        }
+      });
+
+      return updatedIds;
+    });
+  };
+
+  const openBulkDeleteModal = () => {
+    if (selectedVisibleIds.length === 0) {
+      setMessage('Please select at least one escalation to delete.');
+      return;
+    }
+
+    setBulkDeleteOpen(true);
+  };
+
+  const closeBulkDeleteModal = () => {
+    if (bulkDeleting) return;
+    setBulkDeleteOpen(false);
+  };
+
+  const confirmBulkDelete = async () => {
+    if (selectedVisibleIds.length === 0) return;
 
     try {
       setMessage('');
-      setDeletingId(id);
+      setBulkDeleting(true);
 
-      console.log('Deleting escalation ID:', id);
-
-      const response = await api.delete(`/escalations/${id}`);
-
-      console.log('Delete response:', response.data);
+      await Promise.all(
+        selectedVisibleIds.map((id) => api.delete(`/escalations/${id}`))
+      );
 
       setItems((prev) =>
-        prev.filter((item) => item.escalation_id !== id)
+        prev.filter((item) => !selectedVisibleIds.includes(item.escalation_id))
       );
 
       setAnswers((prev) => {
         const updatedAnswers = { ...prev };
-        delete updatedAnswers[id];
+
+        selectedVisibleIds.forEach((id) => {
+          delete updatedAnswers[id];
+        });
+
         return updatedAnswers;
       });
 
-      setMessage(response.data?.message || 'Escalation deleted successfully.');
-      setDeleteTarget(null);
+      setMessage(`${selectedVisibleIds.length} escalation(s) deleted successfully.`);
+      setSelectedIds([]);
+      setBulkDeleteOpen(false);
+      setDeleteMode(false);
 
       fetchEscalations();
     } catch (error) {
-      console.error('Delete escalation error:', error);
+      console.error('Bulk delete escalation error:', error);
 
       setMessage(
         error.response?.data?.message ||
         error.response?.data?.error ||
-        'Failed to delete escalation.'
+        'Failed to delete selected escalations.'
       );
     } finally {
-      setDeletingId(null);
+      setBulkDeleting(false);
     }
   };
 
@@ -151,11 +219,15 @@ export default function Escalation() {
             </p>
           </div>
 
-          <div className="row-gap">
+          <div className="row-gap escalation-top-actions">
             <button
               type="button"
               className={activeTab === 'pending' ? 'primary-btn' : 'secondary-btn'}
-              onClick={() => setActiveTab('pending')}
+              onClick={() => {
+                setActiveTab('pending');
+                setDeleteMode(false);
+                setSelectedIds([]);
+              }}
             >
               Pending ({pendingItems.length})
             </button>
@@ -163,10 +235,32 @@ export default function Escalation() {
             <button
               type="button"
               className={activeTab === 'resolved' ? 'primary-btn' : 'secondary-btn'}
-              onClick={() => setActiveTab('resolved')}
+              onClick={() => {
+                setActiveTab('resolved');
+                setDeleteMode(false);
+                setSelectedIds([]);
+              }}
             >
               Resolved ({resolvedItems.length})
             </button>
+
+            {!deleteMode ? (
+              <button
+                type="button"
+                className="danger-btn"
+                onClick={startDeleteMode}
+              >
+                Manage Delete
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={cancelDeleteMode}
+              >
+                Cancel Delete Mode
+              </button>
+            )}
           </div>
         </div>
       </section>
@@ -174,6 +268,47 @@ export default function Escalation() {
       {message && (
         <section className="card-like top-gap-sm">
           <p className="muted">{message}</p>
+        </section>
+      )}
+
+      {!loading && filteredItems.length > 0 && deleteMode && (
+        <section className="card-like top-gap-sm escalation-delete-toolbar">
+          <div className="row-between wrap-gap">
+            <div>
+              <p className="eyebrow">Delete Mode</p>
+
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={isAllSelected}
+                  onChange={toggleSelectAll}
+                />
+                <span>
+                  Select all {activeTab} escalations ({filteredItems.length})
+                </span>
+              </label>
+            </div>
+
+            <div className="button-group wrap-gap">
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={() => setSelectedIds([])}
+                disabled={selectedVisibleIds.length === 0}
+              >
+                Clear Selected
+              </button>
+
+              <button
+                type="button"
+                className="danger-btn"
+                onClick={openBulkDeleteModal}
+                disabled={selectedVisibleIds.length === 0}
+              >
+                Delete Selected ({selectedVisibleIds.length})
+              </button>
+            </div>
+          </div>
         </section>
       )}
 
@@ -197,25 +332,36 @@ export default function Escalation() {
       ) : (
         <div className="stack-gap top-gap-sm">
           {filteredItems.map((item) => (
-            <article key={item.escalation_id} className="card-like">
+            <article
+              key={item.escalation_id}
+              className={
+                deleteMode && selectedIds.includes(item.escalation_id)
+                  ? 'card-like escalation-card selected'
+                  : 'card-like escalation-card'
+              }
+            >
               <div className="row-between wrap-gap">
-                <div>
-                  <p className="muted small">
-                    Asked by {item.asked_by_name || 'Unknown Staff'}
-                  </p>
-                  <h3>{item.question}</h3>
+                <div className="escalation-title-row">
+                  {deleteMode && (
+                    <label className="checkbox-row escalation-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(item.escalation_id)}
+                        onChange={() => toggleSelectOne(item.escalation_id)}
+                      />
+                    </label>
+                  )}
+
+                  <div>
+                    <p className="muted small">
+                      Asked by {item.asked_by_name || 'Unknown Staff'}
+                    </p>
+                    <h3>{item.question}</h3>
+                  </div>
                 </div>
 
                 <div className="row-gap">
                   <StatusBadge status={item.status} />
-
-                  <button
-                    type="button"
-                    className="secondary-btn"
-                    onClick={() => openDeleteModal(item)}
-                  >
-                    Delete
-                  </button>
                 </div>
               </div>
 
@@ -244,6 +390,7 @@ export default function Escalation() {
                     </p>
 
                     <button
+                      type="button"
                       className="primary-btn"
                       onClick={() => submitAnswer(item.escalation_id)}
                     >
@@ -268,14 +415,14 @@ export default function Escalation() {
         </div>
       )}
 
-      {deleteTarget && (
+      {bulkDeleteOpen && (
         <div className="delete-modal-overlay">
           <div className="delete-modal-card">
             <button
               type="button"
               className="delete-modal-close"
-              onClick={closeDeleteModal}
-              disabled={!!deletingId}
+              onClick={closeBulkDeleteModal}
+              disabled={bulkDeleting}
             >
               ×
             </button>
@@ -302,22 +449,22 @@ export default function Escalation() {
             </div>
 
             <div className="delete-modal-content">
-              <h2>Delete this escalation?</h2>
+              <h2>Delete selected escalations?</h2>
               <p>
-                This will permanently remove the selected escalation question from the system.
+                This will permanently remove {selectedVisibleIds.length} selected escalation(s)
+                from the system.
               </p>
 
               <div className="delete-modal-question">
-                <strong>Question:</strong>{' '}
-                {deleteTarget.question || 'Untitled question'}
+                <strong>Selected:</strong> {selectedVisibleIds.length} escalation(s)
               </div>
 
               <div className="delete-modal-actions">
                 <button
                   type="button"
                   className="delete-cancel-btn"
-                  onClick={closeDeleteModal}
-                  disabled={!!deletingId}
+                  onClick={closeBulkDeleteModal}
+                  disabled={bulkDeleting}
                 >
                   Cancel
                 </button>
@@ -325,12 +472,10 @@ export default function Escalation() {
                 <button
                   type="button"
                   className="delete-confirm-btn"
-                  onClick={confirmDelete}
-                  disabled={!!deletingId}
+                  onClick={confirmBulkDelete}
+                  disabled={bulkDeleting}
                 >
-                  {deletingId === deleteTarget.escalation_id
-                    ? 'Deleting...'
-                    : 'Delete'}
+                  {bulkDeleting ? 'Deleting...' : 'Delete Selected'}
                 </button>
               </div>
             </div>

@@ -15,6 +15,9 @@ import Notifications from './pages/Notifications';
 import Profile from './pages/Profile';
 import QuizList from './pages/QuizList';
 
+import Messages from './pages/Messages';
+
+
 import AdminDashboard from './pages/admin/AdminDashboard';
 import AddArticle from './pages/admin/AddArticle';
 import EditArticle from './pages/admin/EditArticle';
@@ -53,6 +56,16 @@ export default function App() {
         }
       >
         <Route index element={<HomeRedirect />} />
+
+      <Route
+        path="/messages"
+        element={
+          <ProtectedRoute>
+            <Messages />
+          </ProtectedRoute>
+        }
+      />
+
 
         <Route
           path="dashboard"

@@ -941,3 +941,48 @@ Available sections:
 2026-04-29T19:44:20,ALAN BABI,,,,text,0.25,0.25,low,irrelevant_question,True,Please escalate this question to team lead.,True,This question is not related to the SOP or knowledge system. Please check with your team lead.,
 2026-04-29T19:49:09,HOW TO AVOID GAY FROM ALAN,,,,text,0.0,0.0,low,fallback,True,Please escalate this question to team lead.,True,No confident answer. Escalate to team lead.,
 2026-04-29T20:00:26,HOW TO AVOID GAY FROM ALAN,,,,text,0.0,0.0,low,fallback,True,Please escalate this question to team lead.,True,No confident answer. Escalate to team lead.,
+2026-05-04T16:27:54,hi my name is jonathan,,,,text,1.0,1.0,high,ai,False,,False,"Hi — I can help with SOP, checklist, promotion, product knowledge, notice, or training questions.
+
+You can ask things like:
+- kiosk opening
+- roadshow closing
+- show all for kiosk opening
+- step 2 to step 5
+- promotion
+- public holiday
+- new bee 1st day
+- golden passion honey",
+2026-05-04T16:28:11,can i know more about weekend holiday?,PUBLIC HOLIDAY 2026,notice,,text,0.96,0.96,high,matched_title_part_prompt,False,,False,"I found PUBLIC HOLIDAY 2026.
+This topic has Step 1 to Step 4.
+
+Which part do you need? Please ask for a specific step, range, section, picture, or ask to show all.
+
+Examples:
+- step 2
+- step 3 to step 7
+- show picture
+- show all
+
+Available sections:
+- Overview
+- Reference Image
+- Related Question",
+2026-05-04T16:28:24,how about weekend,PUBLIC HOLIDAY 2026,notice,,text,0.78,0.78,medium,context_guidance,False,,False,"I’m currently helping you with PUBLIC HOLIDAY 2026.
+Tell me what you need next — for example:
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture
+- show all
+
+If you want another topic, just type it directly, like promotion or public holiday.",
+2026-05-04T16:28:56,can i know about the anniversary of jungle house?,Fake Jungle House,notice,,text,0.76,0.76,medium,matched_single_topic,False,,False,Sure — here’s the information for Fake Jungle House.,
+2026-05-04T16:40:17,who is the head of jungle house,Fake Jungle House,notice,,text,0.78,0.78,medium,context_guidance,False,,False,"I’m currently helping you with Fake Jungle House.
+Tell me what you need next — for example:
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture
+- show all
+
+If you want another topic, just type it directly, like promotion or public holiday.",

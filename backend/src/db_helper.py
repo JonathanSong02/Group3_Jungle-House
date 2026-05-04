@@ -1,7 +1,9 @@
 import mysql.connector
 
-def normalize_text(text):
-    return str(text).lower().strip()
+
+# =========================
+# DATABASE CONNECTION
+# =========================
 
 def get_db_connection():
     return mysql.connector.connect(
@@ -12,98 +14,204 @@ def get_db_connection():
         database="railway",
     )
 
+
+# =========================
+# TEXT HELPER
+# =========================
+
+def normalize_text(text):
+    return str(text or "").lower().strip()
+
+
+# =========================
+# QA KNOWLEDGE HELPERS
+# =========================
+
 def save_qa_to_db(question, result, source="ai"):
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    conn = None
+    cursor = None
 
-    cursor.execute("""
-        INSERT INTO qa_knowledge (question, answer, source, confidence)
-        VALUES (%s, %s, %s, %s)
-    """, (
-        question,
-        result.get("answer"),
-        source,
-        float(result.get("confidence", 0.0))
-    ))
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
 
-    conn.commit()
-    cursor.close()
-    conn.close()
+        answer = result.get("answer") or result.get("reply") or ""
+        confidence = float(result.get("confidence", result.get("score", 0.0)) or 0.0)
+
+        cursor.execute("""
+            INSERT INTO qa_knowledge (question, answer, source, confidence)
+            VALUES (%s, %s, %s, %s)
+        """, (
+            question,
+            answer,
+            source,
+            confidence
+        ))
+
+        conn.commit()
+        return True
+
+    except Exception as e:
+        print("SAVE QA ERROR:", e)
+        if conn:
+            conn.rollback()
+        return False
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 
 def search_similar_question(question):
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    conn = None
+    cursor = None
 
-    question = normalize_text(question)
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
 
-    cursor.execute("SELECT * FROM qa_knowledge")
+        question = normalize_text(question)
 
-    rows = cursor.fetchall()
+        cursor.execute("SELECT * FROM qa_knowledge")
+        rows = cursor.fetchall()
 
-    best_match = None
+        best_match = None
 
-    for row in rows:
-        db_q = normalize_text(row["question"])
+        for row in rows:
+            db_q = normalize_text(row.get("question"))
 
-        if question in db_q or db_q in question:
-            best_match = row
-            break
+            if question in db_q or db_q in question:
+                best_match = row
+                break
 
-    cursor.close()
-    conn.close()
+        return best_match
 
-    return best_match
+    except Exception as e:
+        print("SEARCH SIMILAR QUESTION ERROR:", e)
+        return None
 
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+# =========================
+# ESCALATION HELPERS
+# =========================
 
 def create_escalation(question, result, user_id=None):
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    conn = None
+    cursor = None
 
-    cursor.execute("""
-        INSERT INTO escalation (question, ai_answer, ai_score, ai_source, asked_by)
-        VALUES (%s, %s, %s, %s, %s)
-    """, (
-        question,
-        result.get("answer"),
-        float(result.get("confidence", 0.0)),
-        result.get("source"),
-        user_id
-    ))
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
 
-    conn.commit()
-    escalation_id = cursor.lastrowid
+        answer = result.get("answer") or result.get("reply") or ""
+        confidence = float(result.get("confidence", result.get("score", 0.0)) or 0.0)
+        source = result.get("source") or "unknown"
 
-    cursor.close()
-    conn.close()
+        cursor.execute("""
+            INSERT INTO escalation
+            (
+                question,
+                ai_answer,
+                ai_score,
+                ai_source,
+                asked_by
+            )
+            VALUES (%s, %s, %s, %s, %s)
+        """, (
+            question,
+            answer,
+            confidence,
+            source,
+            user_id
+        ))
 
-    return escalation_id
+        conn.commit()
+
+        return cursor.lastrowid
+
+    except Exception as e:
+        print("CREATE ESCALATION ERROR:", e)
+        if conn:
+            conn.rollback()
+        return None
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 
 def resolve_escalation(escalation_id, answer, user_id=None):
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
+    conn = None
+    cursor = None
 
-    # get original question
-    cursor.execute("SELECT * FROM escalation WHERE escalation_id=%s", (escalation_id,))
-    ticket = cursor.fetchone()
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
 
-    # update escalation table
-    cursor.execute("""
-        UPDATE escalation
-        SET manual_answer=%s,
-            status='resolved',
-            handled_by=%s,
-            resolved_at=NOW()
-        WHERE escalation_id=%s
-    """, (answer, user_id, escalation_id))
+        # Get original escalation
+        cursor.execute("""
+            SELECT *
+            FROM escalation
+            WHERE escalation_id = %s
+            LIMIT 1
+        """, (escalation_id,))
 
-    # save into AI knowledge
-    cursor.execute("""
-        INSERT INTO qa_knowledge (question, answer, source, confidence)
-        VALUES (%s, %s, 'team_lead', 1.0)
-    """, (ticket["question"], answer))
+        ticket = cursor.fetchone()
 
-    conn.commit()
-    cursor.close()
-    conn.close()
+        if not ticket:
+            return False
+
+        # Update escalation table
+        cursor.execute("""
+            UPDATE escalation
+            SET 
+                manual_answer = %s,
+                status = 'resolved',
+                handled_by = %s,
+                resolved_at = NOW()
+            WHERE escalation_id = %s
+        """, (
+            answer,
+            user_id,
+            escalation_id
+        ))
+
+        # Save manual answer into AI knowledge
+        cursor.execute("""
+            INSERT INTO qa_knowledge
+            (
+                question,
+                answer,
+                source,
+                confidence
+            )
+            VALUES (%s, %s, 'team_lead', 1.0)
+        """, (
+            ticket["question"],
+            answer
+        ))
+
+        conn.commit()
+        return True
+
+    except Exception as e:
+        print("RESOLVE ESCALATION ERROR:", e)
+        if conn:
+            conn.rollback()
+        return False
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()

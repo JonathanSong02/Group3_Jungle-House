@@ -21,37 +21,73 @@ export default function Sidebar() {
         {(role === 'staff' || role === 'teamlead') && (
           <>
             <div className="sidebar-section-label">Staff Workspace</div>
-            <NavLink className={linkClass} to="/dashboard">Dashboard</NavLink>
-            <NavLink className={linkClass} to="/chat">AI Chat</NavLink>
-            <NavLink className={linkClass} to="/knowledge">Knowledge Base</NavLink>
-            <NavLink className={linkClass} to="/notifications">Notifications</NavLink>
-            <NavLink className={linkClass} to="/quiz">Quiz / Training</NavLink>
+            <NavLink className={linkClass} to="/dashboard">
+              Dashboard
+            </NavLink>
+            <NavLink className={linkClass} to="/chat">
+              AI Chat
+            </NavLink>
+            <NavLink className={linkClass} to="/knowledge">
+              Knowledge Base
+            </NavLink>
+            <NavLink className={linkClass} to="/messages">
+              Messages
+            </NavLink>
+            <NavLink className={linkClass} to="/notifications">
+              Notifications
+            </NavLink>
+            <NavLink className={linkClass} to="/quiz">
+              Quiz / Training
+            </NavLink>
           </>
         )}
 
         {role === 'manager' && (
           <>
             <div className="sidebar-section-label">Admin Workspace</div>
-            <NavLink className={linkClass} to="/admin/dashboard">Admin Dashboard</NavLink>
-            <NavLink className={linkClass} to="/admin/content">Content Management</NavLink>
-            <NavLink className={linkClass} to="/admin/quiz-management">Quiz Management</NavLink>
-            <NavLink className={linkClass} to="/admin/review">Review Management</NavLink>
-            <NavLink className={linkClass} to="/admin/users">User Management</NavLink>
-            <NavLink className={linkClass} to="/admin/ai-settings">AI Settings</NavLink>
-            <NavLink className={linkClass} to="/admin/analytics">Analytics</NavLink>
-            <NavLink className={linkClass} to="/admin/security">Security / Monitoring</NavLink>
+            <NavLink className={linkClass} to="/admin/dashboard">
+              Admin Dashboard
+            </NavLink>
+            <NavLink className={linkClass} to="/admin/content">
+              Content Management
+            </NavLink>
+            <NavLink className={linkClass} to="/admin/quiz-management">
+              Quiz Management
+            </NavLink>
+            <NavLink className={linkClass} to="/messages">
+              Messages
+            </NavLink>
+            <NavLink className={linkClass} to="/admin/review">
+              Review Management
+            </NavLink>
+            <NavLink className={linkClass} to="/admin/users">
+              User Management
+            </NavLink>
+            <NavLink className={linkClass} to="/admin/ai-settings">
+              AI Settings
+            </NavLink>
+            <NavLink className={linkClass} to="/admin/analytics">
+              Analytics
+            </NavLink>
+            <NavLink className={linkClass} to="/admin/security">
+              Security / Monitoring
+            </NavLink>
           </>
         )}
 
         {(role === 'teamlead' || role === 'manager') && (
           <>
             <div className="sidebar-section-label">Review</div>
-            <NavLink className={linkClass} to="/escalation">Escalation</NavLink>
+            <NavLink className={linkClass} to="/escalation">
+              Escalation
+            </NavLink>
           </>
         )}
 
         <div className="sidebar-section-label">Account</div>
-        <NavLink className={linkClass} to="/profile">Profile</NavLink>
+        <NavLink className={linkClass} to="/profile">
+          Profile
+        </NavLink>
       </nav>
     </aside>
   );
