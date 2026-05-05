@@ -8,7 +8,6 @@ export default function Register() {
   const [form, setForm] = useState({
     full_name: '',
     email: '',
-    role: 'staff',
     password: '',
     confirm_password: '',
     access_key: '',
@@ -17,7 +16,7 @@ export default function Register() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
-  const [showPassword, setShowPassword] = useState(false); // UX: Toggle state
+  const [showPassword, setShowPassword] = useState(false);
 
   const handleChange = (event) => {
     const { name, value } = event.target;
@@ -31,11 +30,11 @@ export default function Register() {
     setShowPassword((prev) => !prev);
   };
 
-  // Security: Basic password strength validation
   const validatePassword = (password) => {
     const minLength = 8;
     const hasNumber = /\d/.test(password);
     const hasUpper = /[A-Z]/.test(password);
+
     return password.length >= minLength && hasNumber && hasUpper;
   };
 
@@ -44,13 +43,11 @@ export default function Register() {
     setError('');
     setSuccess('');
 
-    // Security: Check password match
     if (form.password !== form.confirm_password) {
       setError('Passwords do not match.');
       return;
     }
 
-    // Security: Check password strength
     if (!validatePassword(form.password)) {
       setError('Password must be at least 8 characters, include a number, and an uppercase letter.');
       return;
@@ -59,10 +56,17 @@ export default function Register() {
     try {
       setLoading(true);
 
-      // Security: Sanitize email before sending to the backend
       const payload = {
-        ...form,
+        full_name: form.full_name.trim(),
         email: form.email.trim().toLowerCase(),
+        password: form.password,
+        confirm_password: form.confirm_password,
+        access_key: form.access_key.trim(),
+
+        // Client feedback:
+        // New crew members do not choose role during registration.
+        // All registered users go to staff interface by default.
+        role: 'staff',
       };
 
       const response = await api.post('/auth/register', payload);
@@ -84,8 +88,10 @@ export default function Register() {
       <div className="login-card card-like">
         <p className="eyebrow">Jungle House</p>
         <h1>Create Account</h1>
+
         <p className="muted">
-          New staff and team leads need a registration key from the manager.
+          New crew members need a registration key from the manager. All new accounts
+          will be registered as staff.
         </p>
 
         <form onSubmit={handleSubmit} className="form-stack">
@@ -108,28 +114,38 @@ export default function Register() {
             required
           />
 
-          <select
-            name="role"
-            value={form.role}
-            onChange={handleChange}
+          <div
+            style={{
+              position: 'relative',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '1rem',
+            }}
           >
-            <option value="staff">Staff</option>
-            <option value="teamlead">Team Lead</option>
-          </select>
-
-          {/* Password fields wrapper for relative positioning if needed */}
-          <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <div className="row-between" style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '-0.5rem' }}>
-              <button 
-                type="button" 
+            <div
+              className="row-between"
+              style={{
+                display: 'flex',
+                justifyContent: 'flex-end',
+                marginBottom: '-0.5rem',
+              }}
+            >
+              <button
+                type="button"
                 onClick={togglePasswordVisibility}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.85rem', color: '#555' }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: '0.85rem',
+                  color: '#555',
+                }}
                 tabIndex="-1"
               >
                 {showPassword ? 'Hide Passwords' : 'Show Passwords'}
               </button>
             </div>
-            
+
             <input
               type={showPassword ? 'text' : 'password'}
               name="password"

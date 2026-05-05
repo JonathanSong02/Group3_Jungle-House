@@ -386,6 +386,64 @@ def get_user_profile_payload(user_row):
     }
 
 
+def record_login_history(cursor, user_id=None, email=None, full_name=None, status="failed"):
+    """
+    Save login attempt for Security / Monitoring.
+    user_id can be NULL so failed login for unknown email can still be recorded.
+    """
+    try:
+        cursor.execute("""
+            INSERT INTO login_history
+            (user_id, email, full_name, login_status, ip_address, device_info)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (
+            user_id,
+            email,
+            full_name,
+            status,
+            request.remote_addr,
+            request.headers.get("User-Agent")
+        ))
+    except Exception as error:
+        print("LOGIN HISTORY INSERT FAILED:", error)
+
+
+def add_audit_log(actor_id=None, actor_name="System", action="", module="", description=""):
+    """
+    Save important system actions for Security / Monitoring audit log.
+    This helper uses its own DB connection so it can be called safely from routes.
+    """
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            INSERT INTO audit_log
+            (actor_id, actor_name, action, module, description)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (
+            actor_id,
+            actor_name,
+            action,
+            module,
+            description
+        ))
+
+        conn.commit()
+
+    except Exception as error:
+        print("AUDIT LOG ERROR:", error)
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
 # =========================
 # AI CHAT HELPERS
 # =========================
@@ -1020,16 +1078,17 @@ def register():
 
     full_name = data.get("full_name", "").strip()
     email = data.get("email", "").strip().lower()
-    role = data.get("role", "").strip().lower()
+
+    # Client feedback: crew members do not choose role during registration.
+    # Every self-registered account is staff by default.
+    role = "staff"
+
     password = data.get("password", "")
     confirm_password = data.get("confirm_password", "")
     access_key = data.get("access_key", "").strip()
 
-    if not all([full_name, email, role, password, confirm_password, access_key]):
+    if not all([full_name, email, password, confirm_password, access_key]):
         return jsonify({"message": "Please fill in all fields."}), 400
-
-    if role not in ["staff", "teamlead"]:
-        return jsonify({"message": "Only staff and team lead can register."}), 400
 
     if password != confirm_password:
         return jsonify({"message": "Passwords do not match."}), 400
@@ -1061,7 +1120,7 @@ def register():
 
         if not role_row:
             conn.rollback()
-            return jsonify({"message": "Invalid role selected."}), 400
+            return jsonify({"message": "Staff role does not exist in database."}), 400
 
         cursor.execute("""
             SELECT rk.key_id, rk.is_used, rk.is_active, rk.expires_at, r.role_name
@@ -1078,7 +1137,7 @@ def register():
 
         if not key_row:
             conn.rollback()
-            return jsonify({"message": "Invalid, expired, used, or mismatched registration key."}), 400
+            return jsonify({"message": "Invalid, expired, used, or non-staff registration key."}), 400
 
         password_hash = generate_password_hash(password)
 
@@ -1098,6 +1157,15 @@ def register():
         """, (new_user_id, key_row["key_id"]))
 
         conn.commit()
+
+        add_audit_log(
+            actor_id=new_user_id,
+            actor_name=full_name,
+            action="Registered account",
+            module="Authentication",
+            description=f"New staff account registered using manager registration key. Email: {email}"
+        )
+
         return jsonify({"message": "Registration successful. You can now log in."}), 201
 
     except mysql.connector.Error as err:
@@ -1159,10 +1227,26 @@ def login():
         print("LOGIN USER FOUND:", user)
 
         if not user:
+            record_login_history(
+                cursor,
+                user_id=None,
+                email=email,
+                full_name="Unknown",
+                status="failed"
+            )
+            conn.commit()
             return jsonify({"message": "Invalid email or password."}), 401
 
         user_status = str(user.get("status", "")).strip().lower()
         if user_status != "active":
+            record_login_history(
+                cursor,
+                user_id=user["user_id"],
+                email=user["email"],
+                full_name=user["full_name"],
+                status="failed"
+            )
+            conn.commit()
             return jsonify({"message": "This account is inactive. Please contact the manager."}), 403
 
         stored_password = str(user.get("password_hash", "")).strip()
@@ -1191,35 +1275,25 @@ def login():
         print("PASSWORD CHECK RESULT:", password_ok)
 
         if not password_ok:
-            try:
-                cursor.execute("""
-                    INSERT INTO login_history (user_id, login_status, ip_address, device_info)
-                    VALUES (%s, %s, %s, %s)
-                """, (
-                    user["user_id"],
-                    "failed",
-                    request.remote_addr,
-                    request.headers.get("User-Agent")
-                ))
-                conn.commit()
-            except Exception as insert_error:
-                print("LOGIN HISTORY INSERT FAILED:", insert_error)
+            record_login_history(
+                cursor,
+                user_id=user["user_id"],
+                email=user["email"],
+                full_name=user["full_name"],
+                status="failed"
+            )
+            conn.commit()
 
             return jsonify({"message": "Invalid email or password."}), 401
 
-        try:
-            cursor.execute("""
-                INSERT INTO login_history (user_id, login_status, ip_address, device_info)
-                VALUES (%s, %s, %s, %s)
-            """, (
-                user["user_id"],
-                "success",
-                request.remote_addr,
-                request.headers.get("User-Agent")
-            ))
-            conn.commit()
-        except Exception as insert_error:
-            print("LOGIN HISTORY INSERT FAILED:", insert_error)
+        record_login_history(
+            cursor,
+            user_id=user["user_id"],
+            email=user["email"],
+            full_name=user["full_name"],
+            status="success"
+        )
+        conn.commit()
 
         user_payload = get_user_profile_payload({
             "user_id": user["user_id"],
@@ -1468,6 +1542,98 @@ def change_password(user_id):
         print("CHANGE PASSWORD GENERAL ERROR:", e)
         if conn:
             conn.rollback()
+        return jsonify({"message": f"Server error: {str(e)}"}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+# =========================
+# SECURITY / MONITORING ROUTES
+# =========================
+@app.route("/api/security/login-history", methods=["GET"])
+def get_login_history():
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT
+                lh.login_id,
+                lh.user_id,
+                COALESCE(lh.full_name, u.full_name, 'Unknown') AS user,
+                COALESCE(lh.email, u.email, '-') AS email,
+                lh.login_status AS status,
+                lh.ip_address,
+                lh.device_info,
+                DATE_FORMAT(lh.login_time, '%Y-%m-%d %H:%i') AS time
+            FROM login_history lh
+            LEFT JOIN users u ON lh.user_id = u.user_id
+            ORDER BY lh.login_time DESC
+            LIMIT 100
+        """)
+
+        login_history = cursor.fetchall()
+
+        return jsonify({
+            "login_history": login_history
+        }), 200
+
+    except mysql.connector.Error as err:
+        print("MYSQL ERROR /api/security/login-history:", err)
+        return jsonify({"message": f"Database error: {str(err)}"}), 500
+
+    except Exception as e:
+        print("GENERAL ERROR /api/security/login-history:", e)
+        return jsonify({"message": f"Server error: {str(e)}"}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/security/audit-logs", methods=["GET"])
+def get_audit_logs():
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT
+                audit_id,
+                COALESCE(actor_name, 'System') AS actor,
+                action,
+                module,
+                description,
+                DATE_FORMAT(created_at, '%Y-%m-%d %H:%i') AS time
+            FROM audit_log
+            ORDER BY created_at DESC
+            LIMIT 100
+        """)
+
+        audit_logs = cursor.fetchall()
+
+        return jsonify({
+            "audit_logs": audit_logs
+        }), 200
+
+    except mysql.connector.Error as err:
+        print("MYSQL ERROR /api/security/audit-logs:", err)
+        return jsonify({"message": f"Database error: {str(err)}"}), 500
+
+    except Exception as e:
+        print("GENERAL ERROR /api/security/audit-logs:", e)
         return jsonify({"message": f"Server error: {str(e)}"}), 500
 
     finally:
@@ -1868,6 +2034,128 @@ def chat_test():
     })
 
 
+
+
+# =========================
+# ANALYTICS ROUTES
+# =========================
+
+@app.route("/api/analytics", methods=["GET"])
+def get_analytics():
+    try:
+        ensure_log_files()
+
+        rows = []
+
+        with open(LOG_CSV, "r", newline="", encoding="utf-8") as file:
+            reader = csv.DictReader(file)
+
+            for row in reader:
+                question = str(row.get("question", "")).strip()
+
+                if not question:
+                    continue
+
+                try:
+                    confidence = float(row.get("confidence", 0) or 0)
+                except Exception:
+                    confidence = 0.0
+
+                fallback_value = str(row.get("fallback", "")).lower()
+                escalation_value = str(row.get("escalation_ready", "")).lower()
+
+                rows.append({
+                    "timestamp": row.get("timestamp", ""),
+                    "question": question,
+                    "title": row.get("title", ""),
+                    "category": row.get("category", ""),
+                    "confidence": confidence,
+                    "confidence_label": row.get("confidence_label", ""),
+                    "source": row.get("source", ""),
+                    "fallback": fallback_value in ["true", "1", "yes"],
+                    "escalation_ready": escalation_value in ["true", "1", "yes"],
+                    "reply": row.get("reply", "")
+                })
+
+        # =========================
+        # Question Analytics
+        # =========================
+        question_counter = {}
+
+        for row in rows:
+            key = row["question"].lower()
+
+            if key not in question_counter:
+                question_counter[key] = {
+                    "question": row["question"],
+                    "count": 0,
+                    "category": row.get("category") or "-",
+                    "last_asked": row.get("timestamp") or "-"
+                }
+
+            question_counter[key]["count"] += 1
+
+            if row.get("timestamp"):
+                question_counter[key]["last_asked"] = row.get("timestamp")
+
+        top_questions = sorted(
+            question_counter.values(),
+            key=lambda item: item["count"],
+            reverse=True
+        )[:10]
+
+        # =========================
+        # Knowledge Gap
+        # =========================
+        gap_rows = []
+
+        for row in rows:
+            if (
+                row.get("fallback")
+                or row.get("escalation_ready")
+                or row.get("confidence", 0) < 0.6
+            ):
+                gap_rows.append({
+                    "question": row.get("question"),
+                    "category": row.get("category") or "-",
+                    "confidence": row.get("confidence", 0),
+                    "source": row.get("source") or "-",
+                    "reason": "Fallback / low confidence / escalation needed",
+                    "time": row.get("timestamp") or "-"
+                })
+
+        knowledge_gaps = gap_rows[-10:]
+        knowledge_gaps.reverse()
+
+        # =========================
+        # Search Log
+        # =========================
+        search_logs = rows[-20:]
+        search_logs.reverse()
+
+        return jsonify({
+            "summary": {
+                "total_questions": len(rows),
+                "unique_questions": len(question_counter),
+                "knowledge_gap_count": len(gap_rows),
+                "fallback_count": len([row for row in rows if row.get("fallback")]),
+                "escalation_count": len([row for row in rows if row.get("escalation_ready")])
+            },
+            "top_questions": top_questions,
+            "knowledge_gaps": knowledge_gaps,
+            "search_logs": search_logs
+        }), 200
+
+    except Exception as e:
+        print("ANALYTICS ERROR:", e)
+        return jsonify({
+            "message": "Failed to load analytics.",
+            "error": str(e)
+        }), 500
+
+
+
+
 # =========================
 # AI CHAT ROUTES
 # =========================
@@ -2180,9 +2468,16 @@ def add_article():
 
         conn.commit()
 
+        article_id = cursor.lastrowid
+        add_audit_log(
+            action="Added article",
+            module="Content Management",
+            description=f"Article added: {title}"
+        )
+
         return jsonify({
             'message': 'Article added successfully.',
-            'article_id': cursor.lastrowid
+            'article_id': article_id
         }), 201
 
     except Exception as error:
@@ -2276,6 +2571,12 @@ def edit_article(article_id):
 
         conn.commit()
 
+        add_audit_log(
+            action="Edited article",
+            module="Content Management",
+            description=f"Article updated: {title}"
+        )
+
         return jsonify({'message': 'Article updated successfully.'}), 200
 
     except Exception as error:
@@ -2320,6 +2621,13 @@ def delete_article(article_id):
 
         if cursor.rowcount == 0:
             return jsonify({'message': 'Article not found.'}), 404
+
+        add_audit_log(
+            actor_id=deleted_by,
+            action="Moved article to Retrieve Bin",
+            module="Content Management",
+            description=f"Article ID {article_id} was soft deleted."
+        )
 
         return jsonify({
             'message': 'Article moved to Retrieve Bin successfully.'
@@ -2369,6 +2677,12 @@ def restore_article(article_id):
 
         if cursor.rowcount == 0:
             return jsonify({'message': 'Article not found.'}), 404
+
+        add_audit_log(
+            action="Restored article",
+            module="Content Management",
+            description=f"Article ID {article_id} was restored from Retrieve Bin."
+        )
 
         return jsonify({
             'message': 'Article restored successfully.'
@@ -2436,6 +2750,12 @@ def permanent_delete_article(article_id):
         """, (article_id,))
 
         conn.commit()
+
+        add_audit_log(
+            action="Permanently deleted article",
+            module="Content Management",
+            description=f"Article ID {article_id} was permanently deleted from Retrieve Bin."
+        )
 
         return jsonify({
             'message': 'Article permanently deleted successfully.'
@@ -2569,6 +2889,13 @@ def submit_escalation_answer(escalation_id):
                     "source": "team_lead"
                 }
             )
+
+        add_audit_log(
+            actor_id=handled_by,
+            action="Submitted manual answer",
+            module="Escalation",
+            description=f"Escalation ID {escalation_id} was resolved."
+        )
 
         return jsonify({
             'message': 'Escalation resolved successfully.'
@@ -3108,9 +3435,17 @@ def create_admin_quiz():
 
         conn.commit()
 
+        quiz_id = cursor.lastrowid
+        add_audit_log(
+            actor_id=created_by,
+            action="Created quiz",
+            module="Quiz Management",
+            description=f"Quiz created: {title}"
+        )
+
         return jsonify({
             "message": "Quiz created successfully.",
-            "quiz_id": cursor.lastrowid
+            "quiz_id": quiz_id
         }), 201
 
     except Exception as error:
@@ -3173,6 +3508,12 @@ def update_admin_quiz(quiz_id):
 
         if cursor.rowcount == 0:
             return jsonify({"message": "Quiz not found."}), 404
+
+        add_audit_log(
+            action="Updated quiz",
+            module="Quiz Management",
+            description=f"Quiz ID {quiz_id} updated: {title}"
+        )
 
         return jsonify({"message": "Quiz updated successfully."}), 200
 
@@ -3579,6 +3920,12 @@ def update_admin_user_role(user_id):
         """, (role_row["role_id"], user_id))
 
         conn.commit()
+
+        add_audit_log(
+            action="Updated user role",
+            module="User Management",
+            description=f"User ID {user_id} role changed to {role}."
+        )
 
         return jsonify({
             "message": "User role updated successfully."

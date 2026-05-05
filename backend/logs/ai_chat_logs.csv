@@ -987,3 +987,64 @@ Tell me what you need next — for example:
 
 If you want another topic, just type it directly, like promotion or public holiday.",
 2026-05-04T18:01:39,can i find eno,,,,text,0.0,0.0,low,fallback,True,Please escalate this question to team lead.,True,No confident answer. Escalate to team lead.,
+2026-05-04T19:33:01,Opening Kiosk,JHKC Kiosk Opening,sop,,text,1.0,1.0,high,matched_title_part_prompt,False,,False,"I found JHKC Kiosk Opening.
+This topic has Step 1 to Step 23.
+
+Which part do you need? Please ask for a specific step, range, section, picture, or ask to show all.
+
+Examples:
+- step 2
+- step 3 to step 7
+- show picture
+- show all",
+2026-05-04T19:33:46,Show all,JHKC Kiosk Opening,sop,,sop,0.95,0.95,high,context_show_all,False,,False,Here is the full SOP / checklist for JHKC Kiosk Opening.,
+2026-05-04T19:34:07,Step 22 - 23,JHKC Kiosk Opening,sop,,sop,0.96,0.96,high,context_step_range,False,,False,Got it — here are Steps 22 to 23 for JHKC Kiosk Opening.,
+2026-05-04T19:37:09,What is daily jungle heart,Ice Bin Daily Closing Checklist,sop,,text,0.72,0.72,medium,matched_title_part_prompt,False,,False,"I found Ice Bin Daily Closing Checklist.
+This topic has Step 1 to Step 3.
+
+Which part do you need? Please ask for a specific step, range, section, picture, or ask to show all.
+
+Examples:
+- step 2
+- step 3 to step 7
+- show picture
+- show all
+
+Available sections:
+- Cleaning",
+2026-05-04T19:37:50,What is jungle heart,Ice Bin Daily Closing Checklist,sop,,text,0.78,0.78,medium,context_guidance,False,,False,"I’m currently helping you with Ice Bin Daily Closing Checklist.
+Tell me what you need next — for example:
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture
+- show all
+
+If you want another topic, just type it directly, like promotion or public holiday.",
+2026-05-04T19:40:04,Jungle Heart,Ice Bin Daily Closing Checklist,sop,,text,0.78,0.78,medium,context_guidance,False,,False,"I’m currently helping you with Ice Bin Daily Closing Checklist.
+Tell me what you need next — for example:
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture
+- show all
+
+If you want another topic, just type it directly, like promotion or public holiday.",
+2026-05-04T19:58:46,Grease trap,Ice Bin Daily Closing Checklist,sop,,text,0.78,0.78,medium,context_guidance,False,,False,"I’m currently helping you with Ice Bin Daily Closing Checklist.
+Tell me what you need next — for example:
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture
+- show all
+
+If you want another topic, just type it directly, like promotion or public holiday.",
+2026-05-04T19:59:06,Grease,Ice Bin Daily Closing Checklist,sop,,text,0.78,0.78,medium,context_guidance,False,,False,"I’m currently helping you with Ice Bin Daily Closing Checklist.
+Tell me what you need next — for example:
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture
+- show all
+
+If you want another topic, just type it directly, like promotion or public holiday.",
