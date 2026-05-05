@@ -1048,3 +1048,33 @@ Tell me what you need next — for example:
 - show all
 
 If you want another topic, just type it directly, like promotion or public holiday.",
+2026-05-05T12:57:25,opening,,,,text,0.85,0.85,medium,broad_topic_clarification,True,"Which opening SOP do you need?
+
+1. JHKC Kiosk Opening
+2. Shopify POS app Opening
+3. Spring Roadshow Opening List
+4. Aeon Roadshow Opening List
+5. Backend Opening Checklist
+6. Receipt printer preparation for opening",False,"Which opening SOP do you need?
+
+1. JHKC Kiosk Opening
+2. Shopify POS app Opening
+3. Spring Roadshow Opening List
+4. Aeon Roadshow Opening List
+5. Backend Opening Checklist
+6. Receipt printer preparation for opening",
+2026-05-05T17:37:28,asdwasd,,,,text,0.0,0.0,low,fallback,True,Please escalate this question to team lead.,True,No confident answer. Escalate to team lead.,
+2026-05-05T17:50:13,hi i want to know more about honey,,notice,,text,0.72,0.72,medium,ambiguous_title_choice,False,,False,"I found these notice topics. Which one do you need?
+
+- Do not open raw honey tester without permission.
+- What is the best answer for client asking how much Honey we are using for our honey Juice?",
+2026-05-05T17:50:27,first one,New Bee 1st day Check List,training,,text,0.82,0.82,medium,matched_title_part_prompt,False,,False,"I found New Bee 1st day Check List.
+This topic has Step 1 to Step 18.
+
+Which part do you need? Please ask for a specific step, range, section, picture, or ask to show all.
+
+Examples:
+- step 2
+- step 3 to step 7
+- show picture
+- show all",

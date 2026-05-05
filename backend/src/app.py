@@ -2881,13 +2881,25 @@ def submit_escalation_answer(escalation_id):
 
         # ✅ SAVE INTO AI KNOWLEDGE (VERY IMPORTANT)
         if row and manual_answer:
-            save_qa_to_db(
+            cursor.execute("""
+                INSERT INTO review_queue
+                (escalation_id, question, answer, submitted_by, status)
+                VALUES (%s, %s, %s, %s, 'pending')
+            """, (
+                escalation_id,
                 row["question"],
-                {
-                    "answer": manual_answer,
-                    "confidence": 1.0,
-                    "source": "team_lead"
-                }
+                manual_answer,
+                handled_by
+            ))
+
+            conn.commit()
+
+            add_audit_log(
+                actor_id=handled_by,
+                actor_name="Team Lead",
+                action="Submitted manual answer for review",
+                module="Review Management",
+                description=f"Escalation ID {escalation_id} was submitted to manager review."
             )
 
         add_audit_log(
@@ -2980,6 +2992,291 @@ def delete_escalation(escalation_id):
             cursor.close()
         if conn:
             conn.close()
+
+
+
+
+# =========================
+# REVIEW MANAGEMENT ROUTES
+# =========================
+
+@app.route("/api/reviews", methods=["GET"])
+def get_reviews():
+    conn = None
+    cursor = None
+
+    try:
+        status = request.args.get("status", "").strip().lower()
+
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        base_query = """
+            SELECT
+                rq.review_id,
+                rq.escalation_id,
+                rq.question,
+                rq.answer,
+                rq.submitted_by,
+                rq.reviewed_by,
+                rq.status,
+                rq.reviewer_comment,
+                rq.created_at,
+                rq.reviewed_at,
+                rq.published_at,
+                submitter.full_name AS submitted_by_name,
+                reviewer.full_name AS reviewed_by_name
+            FROM review_queue rq
+            LEFT JOIN users submitter ON rq.submitted_by = submitter.user_id
+            LEFT JOIN users reviewer ON rq.reviewed_by = reviewer.user_id
+        """
+
+        params = []
+
+        if status in ["pending", "approved", "rejected", "published"]:
+            base_query += " WHERE rq.status = %s"
+            params.append(status)
+
+        base_query += " ORDER BY rq.created_at DESC"
+
+        cursor.execute(base_query, tuple(params))
+        reviews = cursor.fetchall()
+
+        for review in reviews:
+            review["created_at"] = format_datetime_value(review.get("created_at"))
+            review["reviewed_at"] = format_datetime_value(review.get("reviewed_at"))
+            review["published_at"] = format_datetime_value(review.get("published_at"))
+
+        return jsonify(reviews), 200
+
+    except Exception as error:
+        print("MYSQL ERROR /api/reviews GET:", error)
+        return jsonify({
+            "message": "Failed to load review queue.",
+            "error": str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/reviews/<int:review_id>/approve", methods=["PUT"])
+def approve_review(review_id):
+    data = request.get_json() or {}
+
+    reviewed_by = data.get("reviewed_by")
+    reviewer_comment = data.get("reviewer_comment", "").strip()
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            UPDATE review_queue
+            SET
+                status = 'approved',
+                reviewed_by = %s,
+                reviewer_comment = %s,
+                reviewed_at = NOW()
+            WHERE review_id = %s
+              AND status = 'pending'
+        """, (reviewed_by, reviewer_comment, review_id))
+
+        conn.commit()
+
+        if cursor.rowcount == 0:
+            return jsonify({
+                "message": "Review item not found or already processed."
+            }), 404
+
+        add_audit_log(
+            actor_id=reviewed_by,
+            actor_name="Manager",
+            action="Approved review answer",
+            module="Review Management",
+            description=f"Approved review item ID {review_id}."
+        )
+
+        return jsonify({"message": "Answer approved successfully."}), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("MYSQL ERROR /api/reviews APPROVE:", error)
+
+        return jsonify({
+            "message": "Failed to approve answer.",
+            "error": str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/reviews/<int:review_id>/reject", methods=["PUT"])
+def reject_review(review_id):
+    data = request.get_json() or {}
+
+    reviewed_by = data.get("reviewed_by")
+    reviewer_comment = data.get("reviewer_comment", "").strip()
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            UPDATE review_queue
+            SET
+                status = 'rejected',
+                reviewed_by = %s,
+                reviewer_comment = %s,
+                reviewed_at = NOW()
+            WHERE review_id = %s
+              AND status = 'pending'
+        """, (reviewed_by, reviewer_comment, review_id))
+
+        conn.commit()
+
+        if cursor.rowcount == 0:
+            return jsonify({
+                "message": "Review item not found or already processed."
+            }), 404
+
+        add_audit_log(
+            actor_id=reviewed_by,
+            actor_name="Manager",
+            action="Rejected review answer",
+            module="Review Management",
+            description=f"Rejected review item ID {review_id}."
+        )
+
+        return jsonify({"message": "Answer rejected successfully."}), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("MYSQL ERROR /api/reviews REJECT:", error)
+
+        return jsonify({
+            "message": "Failed to reject answer.",
+            "error": str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/reviews/<int:review_id>/publish", methods=["PUT"])
+def publish_review(review_id):
+    data = request.get_json() or {}
+    reviewed_by = data.get("reviewed_by")
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        conn.start_transaction()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT review_id, question, answer, status
+            FROM review_queue
+            WHERE review_id = %s
+            LIMIT 1
+        """, (review_id,))
+
+        review = cursor.fetchone()
+
+        if not review:
+            conn.rollback()
+            return jsonify({"message": "Review item not found."}), 404
+
+        if review["status"] != "approved":
+            conn.rollback()
+            return jsonify({
+                "message": "Only approved answers can be published."
+            }), 400
+
+        cursor.execute("""
+            INSERT INTO wiki_article
+            (title, content, category, sub_category, link)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (
+            review["question"][:255],
+            review["answer"],
+            "FAQ",
+            "Manager Approved Answer",
+            ""
+        ))
+
+        cursor.execute("""
+            UPDATE review_queue
+            SET
+                status = 'published',
+                published_at = NOW()
+            WHERE review_id = %s
+        """, (review_id,))
+
+        conn.commit()
+
+        save_qa_to_db(
+            review["question"],
+            {
+                "answer": review["answer"],
+                "confidence": 1.0,
+                "source": "manager_approved_review"
+            }
+        )
+
+        add_audit_log(
+            actor_id=reviewed_by,
+            actor_name="Manager",
+            action="Published approved answer",
+            module="Review Management",
+            description=f"Published review item ID {review_id} to knowledge base."
+        )
+
+        return jsonify({"message": "Approved answer published successfully."}), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("MYSQL ERROR /api/reviews PUBLISH:", error)
+
+        return jsonify({
+            "message": "Failed to publish approved answer.",
+            "error": str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+
+
+
 
 # =========================
 # QUIZ ROUTES
