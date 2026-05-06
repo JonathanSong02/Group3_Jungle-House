@@ -74,13 +74,26 @@ def search_similar_question(question):
 
         question = normalize_text(question)
 
-        cursor.execute("SELECT * FROM qa_knowledge")
+        cursor.execute("""
+            SELECT *
+            FROM qa_knowledge
+            ORDER BY 
+                CASE 
+                    WHEN source = 'team_lead' THEN 1
+                    ELSE 2
+                END,
+                confidence DESC
+        """)
+
         rows = cursor.fetchall()
 
         best_match = None
 
         for row in rows:
             db_q = normalize_text(row.get("question"))
+
+            if question == db_q:
+                return row
 
             if question in db_q or db_q in question:
                 best_match = row

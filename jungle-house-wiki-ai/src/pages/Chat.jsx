@@ -360,6 +360,38 @@ function buildAiMessage(data) {
   const fallbackMessage = data.fallback_message || '';
   const backendMessage = data.message || '';
 
+
+  if (data.type === 'multiple_choice' && Array.isArray(data.options)) {
+    return {
+      id: Date.now() + 1,
+      sender: 'ai',
+      type: 'multiple_choice',
+      text:
+        data.reply ||
+        data.answer ||
+        'I found more than one possible answer. Please choose the most suitable one.',
+      reply: data.reply || '',
+      answer: data.answer || data.reply || '',
+      title: data.title || backendContext.title || '',
+      category: data.category || backendContext.category || '',
+      section: data.section || backendContext.section || '',
+      options: data.options || [],
+      notes: data.notes || [],
+      steps: Array.isArray(data.steps) ? data.steps : [],
+      context: backendContext,
+      unclear_count: unclearCount,
+      escalation_ready: escalationReady,
+      escalation_required: escalationReady,
+      confidence,
+      confidence_label: confidenceLabel,
+      source,
+      fallback,
+      fallback_message: fallbackMessage,
+      message: backendMessage,
+      last_step_number: data.last_step_number || backendContext.last_step_number || null,
+    };
+  }
+
   if (data.type === 'sop' && Array.isArray(data.steps) && data.steps.length > 0) {
     const lastStepNumber =
       data.steps.length > 0
@@ -610,6 +642,37 @@ function getReadableAnswer(message) {
       .filter(Boolean)
       .join('\n\n');
   }
+
+  if (message.type === 'multiple_choice') {
+  const optionsText = Array.isArray(message.options)
+    ? message.options
+        .map((option, index) => {
+          const steps = Array.isArray(option.steps)
+            ? option.steps
+                .map((step) =>
+                  `Step ${step.step_number || ''}: ${removeImagePathsFromText(step.content || '')}`
+                )
+                .join('\n')
+            : '';
+
+          return [
+            `Option ${index + 1}: ${option.label || ''}`,
+            `Source: ${option.source || '-'}`,
+            `Confidence: ${Math.round(Number(option.confidence || 0) * 100)}%`,
+            option.title || '',
+            removeImagePathsFromText(option.answer || option.reply || ''),
+            steps,
+          ]
+            .filter(Boolean)
+            .join('\n');
+        })
+        .join('\n\n')
+    : '';
+
+  return [message.text || message.reply || message.answer, optionsText]
+    .filter(Boolean)
+    .join('\n\n');
+}
 
   return removeImagePathsFromText(message.answer || message.text || message.reply || '');
 }
@@ -969,7 +1032,118 @@ export default function Chat() {
           </p>
         ) : null}
 
-        {message.type === 'text' ? (
+        {message.type === 'multiple_choice' ? (
+  <div style={{ marginTop: '8px' }}>
+    <p style={{ whiteSpace: 'pre-wrap', marginBottom: '12px' }}>
+      {removeImagePathsFromText(message.text || message.reply || message.answer)}
+    </p>
+
+    <div style={{ display: 'grid', gap: '12px' }}>
+      {message.options?.map((option, optionIndex) => {
+        const optionImages = [
+          ...extractImagePathsFromText(option.reply),
+          ...extractImagePathsFromText(option.answer),
+        ];
+
+        return (
+          <div
+            key={`${option.source || 'option'}-${optionIndex}`}
+            style={{
+              border: '1px solid #e2c27a',
+              borderRadius: '14px',
+              padding: '14px',
+              backgroundColor: optionIndex === 0 ? '#fffaf0' : '#f8f9fa',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                gap: '10px',
+                flexWrap: 'wrap',
+                marginBottom: '8px',
+              }}
+            >
+              <h4 style={{ margin: 0 }}>
+                {option.label || `Option ${optionIndex + 1}`}
+              </h4>
+
+              <span
+                style={{
+                  fontSize: '12px',
+                  padding: '4px 8px',
+                  borderRadius: '999px',
+                  backgroundColor: '#ffffff',
+                  border: '1px solid #ddd',
+                }}
+              >
+                {option.source || '-'} · {Math.round(Number(option.confidence || 0) * 100)}%
+              </span>
+            </div>
+
+            {option.title ? (
+              <h4 style={{ marginBottom: '8px', color: '#7a5c00' }}>
+                {option.title}
+              </h4>
+            ) : null}
+
+            <p style={{ whiteSpace: 'pre-wrap', marginBottom: '10px' }}>
+              {removeImagePathsFromText(option.reply || option.answer || '')}
+            </p>
+
+            {Array.isArray(option.steps) && option.steps.length > 0 ? (
+              <div style={{ marginTop: '12px' }}>
+                {option.steps.map((step, stepIndex) => {
+                  const stepImages = getStepImages(step);
+
+                  return (
+                    <div
+                      key={`${step.step_number || stepIndex}-${stepIndex}`}
+                      style={{
+                        border: '1px solid #ddd',
+                        borderRadius: '12px',
+                        padding: '12px',
+                        marginBottom: '12px',
+                        backgroundColor: '#fff',
+                      }}
+                    >
+                      <h4 style={{ marginBottom: '8px' }}>
+                        Step {step.step_number || stepIndex + 1}
+                      </h4>
+
+                      {step.section ? (
+                        <p
+                          style={{
+                            marginBottom: '8px',
+                            fontWeight: '600',
+                            color: '#7a5c00',
+                          }}
+                        >
+                          Section: {step.section}
+                        </p>
+                      ) : null}
+
+                      <p style={{ whiteSpace: 'pre-wrap', marginBottom: '10px' }}>
+                        {removeImagePathsFromText(step.content)}
+                      </p>
+
+                      {renderImages(
+                        stepImages,
+                        `Option ${optionIndex + 1} step ${step.step_number || stepIndex + 1} image`
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+
+            {renderImages(optionImages, `Option ${optionIndex + 1} image`)}
+          </div>
+        );
+      })}
+    </div>
+  </div>
+) : message.type === 'text' ? (
           <div style={{ marginTop: '8px' }}>
             <p
               style={{

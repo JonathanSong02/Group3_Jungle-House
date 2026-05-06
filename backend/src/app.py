@@ -71,6 +71,7 @@ TEST_REPORT_CSV = LOG_DIR / "ai_test_results.csv"
 # This helps follow-up messages like "step 25" work even if the frontend
 # does not send the previous AI response context back to the backend.
 AI_CHAT_MEMORY = {}
+AI_FAIL_MEMORY = {}
 
 app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="/static")
 
@@ -537,6 +538,60 @@ def ensure_log_files() -> None:
     except Exception as error:
         print("AI log header migration skipped:", error)
 
+def get_ai_fail_key(data: dict | None, question: str) -> str:
+    data = data or {}
+    user_id = data.get("user_id") or data.get("userId")
+
+    if user_id:
+        owner = f"user:{user_id}"
+    else:
+        owner = f"ip:{request.remote_addr or 'local'}"
+
+    normalized_question = clean_question(question).lower()
+    return f"{owner}:{normalized_question}"
+
+
+def update_ai_fail_count(data: dict | None, question: str, result: dict | None) -> int:
+    result = result or {}
+
+    bad_sources = {
+        "ambiguous_title_choice",
+        "clarification_round_1",
+        "clarification_round_2",
+        "unclear_question_clarification",
+        "system_problem_clarification",
+        "broad_topic_clarification",
+        "step_request_missing_topic",
+        "low_confidence_or_model_unavailable",
+        "fallback",
+        "unknown",
+        "prediction_error",
+        "engine_unavailable",
+    }
+
+    source = str(result.get("source", "")).strip()
+    confidence = float(result.get("confidence", result.get("score", 0.0)) or 0.0)
+
+    is_failed_answer = (
+        source in bad_sources
+        or bool(result.get("fallback", False))
+        or confidence < 0.60
+    )
+
+    fail_key = get_ai_fail_key(data, question)
+
+    if is_failed_answer:
+        AI_FAIL_MEMORY[fail_key] = AI_FAIL_MEMORY.get(fail_key, 0) + 1
+    else:
+        AI_FAIL_MEMORY.pop(fail_key, None)
+
+    return AI_FAIL_MEMORY.get(fail_key, 0)
+
+
+def clear_ai_fail_count(data: dict | None, question: str) -> None:
+    fail_key = get_ai_fail_key(data, question)
+    AI_FAIL_MEMORY.pop(fail_key, None)
+
 
 def is_escalation_result(result: dict | None) -> bool:
     result = result or {}
@@ -597,6 +652,9 @@ def is_fallback_result(result: dict | None) -> bool:
         "low_confidence_or_model_unavailable",
         "prediction_error",
         "pytorch_model_error",
+        "ambiguous_title_choice",
+        "broad_topic_clarification",
+        "step_request_missing_topic",
     }:
         return True
 
@@ -653,6 +711,8 @@ def standardize_ai_response(result: dict | None) -> dict:
     result["fallback_message"] = fallback_message
     result["escalation_ready"] = escalation_required
     result["escalation_required"] = escalation_required
+
+    result["options"] = result.get("options", [])
 
     return result
 
@@ -758,6 +818,7 @@ def normalize_result(result, default_source="unknown"):
             "fallback_message": result.get("fallback_message", ""),
             "escalation_ready": result.get("escalation_ready", False),
             "escalation_required": result.get("escalation_required", result.get("escalation_ready", False)),
+            "options": result.get("options", []),
         })
 
     return standardize_ai_response({
@@ -885,7 +946,6 @@ def choose_final_result(model_result, retrieval_result):
         "escalation_required": True,
     })
 
-
 def process_question(question, context=None):
     question = clean_question(question)
     context = normalize_context(context or {})
@@ -911,6 +971,10 @@ def process_question(question, context=None):
             "escalation_required": False,
         }), 400
 
+    retrieval_result = search_similar_question(question)
+
+    if retrieval_result:
+        retrieval_result = normalize_result(retrieval_result, "database")
 
     model_result = None
 
@@ -939,12 +1003,144 @@ def process_question(question, context=None):
                 "escalation_ready": True,
                 "escalation_required": True,
             })
+    else:
+        model_result = standardize_ai_response({
+            "type": "text",
+            "category": None,
+            "title": None,
+            "section": None,
+            "reply": "AI model is not available.",
+            "answer": "AI model is not available.",
+            "purpose": None,
+            "steps": [],
+            "notes": [],
+            "score": 0.0,
+            "confidence": 0.0,
+            "source": "engine_unavailable",
+            "fallback": True,
+            "fallback_message": "AI model is not available.",
+            "escalation_ready": True,
+            "escalation_required": True,
+        })
 
-    retrieval_result = search_similar_question(question)
+    if model_result and retrieval_result and is_valid_answer(model_result) and is_valid_answer(retrieval_result):
+        model_source = str(model_result.get("source") or "")
+        retrieval_source = str(retrieval_result.get("source") or "")
 
-    final_result = choose_final_result(
+        model_answer = str(model_result.get("answer") or model_result.get("reply") or "").strip()
+        retrieval_answer = str(retrieval_result.get("answer") or retrieval_result.get("reply") or "").strip()
+
+        # Show both only when they are from different sources and not identical
+        if model_source != retrieval_source and model_answer != retrieval_answer:
+            final_result = standardize_ai_response({
+                "question": question,
+                "type": "multiple_choice",
+                "category": model_result.get("category") or retrieval_result.get("category"),
+                "title": model_result.get("title") or retrieval_result.get("title"),
+                "section": None,
+                "reply": "I found more than one possible answer. Please choose the most suitable one.",
+                "answer": "I found more than one possible answer. Please choose the most suitable one.",
+                "purpose": None,
+                "steps": [],
+                "notes": [],
+                "score": max(
+                    float(model_result.get("score", 0.0) or 0.0),
+                    float(retrieval_result.get("score", 0.0) or 0.0)
+                ),
+                "confidence": max(
+                    float(model_result.get("confidence", 0.0) or 0.0),
+                    float(retrieval_result.get("confidence", 0.0) or 0.0)
+                ),
+                "source": "combined_candidates",
+                "context": model_result.get("context") or retrieval_result.get("context") or {},
+                "fallback": False,
+                "fallback_message": "",
+                "escalation_ready": False,
+                "escalation_required": False,
+                "options": [
+                    {
+                        "label": "Training data answer",
+                        "source": model_result.get("source"),
+                        "title": model_result.get("title"),
+                        "category": model_result.get("category"),
+                        "confidence": model_result.get("confidence"),
+                        "reply": model_result.get("reply"),
+                        "answer": model_result.get("answer"),
+                        "steps": model_result.get("steps", []),
+                        "notes": model_result.get("notes", []),
+                    },
+                    {
+                        "label": "Retrieved / team lead answer",
+                        "source": retrieval_result.get("source"),
+                        "title": retrieval_result.get("title"),
+                        "category": retrieval_result.get("category"),
+                        "confidence": retrieval_result.get("confidence"),
+                        "reply": retrieval_result.get("reply"),
+                        "answer": retrieval_result.get("answer"),
+                        "steps": retrieval_result.get("steps", []),
+                        "notes": retrieval_result.get("notes", []),
+                    }
+                ]
+            })
+        else:
+            final_result = choose_final_result(model_result, retrieval_result)
+    else:
+        final_result = choose_final_result(model_result, retrieval_result)
+
+    response_payload = {
+        "question": question,
+        "type": final_result.get("type", "text"),
+        "category": final_result.get("category"),
+        "title": final_result.get("title"),
+        "section": final_result.get("section"),
+        "reply": final_result.get("reply", final_result.get("answer", "")),
+        "answer": final_result.get("answer", final_result.get("reply", "")),
+        "purpose": final_result.get("purpose"),
+        "steps": final_result.get("steps", []),
+        "notes": final_result.get("notes", []),
+        "score": final_result.get("score", 0.0),
+        "confidence": final_result.get("confidence", final_result.get("score", 0.0)),
+        "confidence_label": final_result.get("confidence_label"),
+        "source": final_result.get("source", "unknown"),
+        "context": final_result.get("context", {}),
+        "fallback": final_result.get("fallback", False),
+        "fallback_message": final_result.get("fallback_message", ""),
+        "escalation_ready": final_result.get("escalation_ready", False),
+        "escalation_required": final_result.get("escalation_required", final_result.get("escalation_ready", False)),
+        "options": final_result.get("options", []),
+    }
+
+    return standardize_ai_response(response_payload), 200
+
+    if MODEL_AVAILABLE and get_model_answer is not None:
+        try:
+            model_result = normalize_result(
+                call_model_answer(question, context=context),
+                default_source="pytorch_model"
+            )
+        except Exception as error:
+            model_result = standardize_ai_response({
+                "type": "text",
+                "category": None,
+                "title": None,
+                "section": None,
+                "reply": f"Model prediction failed: {error}",
+                "answer": f"Model prediction failed: {error}",
+                "purpose": None,
+                "steps": [],
+                "notes": [],
+                "score": 0.0,
+                "confidence": 0.0,
+                "source": "pytorch_model_error",
+                "fallback": True,
+                "fallback_message": "There was a problem while generating the answer.",
+                "escalation_ready": True,
+                "escalation_required": True,
+            })
+
+        final_result = choose_final_result(
         model_result,
-        normalize_result(retrieval_result, "database") if retrieval_result else None
+        retrieval_result
     )
 
     response_payload = {
@@ -2325,9 +2521,20 @@ def chat():
 
         source = result.get("source", "")
 
+        fail_count = update_ai_fail_count(data, question, result)
+
         should_escalate = False
 
-        if result.get("escalation_ready"):
+        if fail_count >= 2:
+            should_escalate = True
+            result["reply"] = "I could not find a confident answer after repeated attempts. I’ll escalate this to a team lead."
+            result["answer"] = result["reply"]
+            result["source"] = "repeated_failed_answer"
+            result["fallback"] = True
+            result["escalation_ready"] = True
+            result["escalation_required"] = True
+
+        elif result.get("escalation_ready"):
             should_escalate = True
 
         elif source in force_escalation_sources:
@@ -2341,6 +2548,8 @@ def chat():
 
         if should_escalate:
             escalation_id = create_escalation(question, result)
+
+            clear_ai_fail_count(data, question)
 
             result["escalation"] = True
             result["escalation_id"] = escalation_id
@@ -2845,90 +3054,30 @@ def get_escalations():
 def submit_escalation_answer(escalation_id):
     data = request.get_json() or {}
 
-    manual_answer = data.get('manual_answer', '').strip()
-    handled_by = data.get('handled_by')
+    manual_answer = str(data.get('manual_answer', '')).strip()
+    handled_by = data.get('handled_by') or data.get('user_id') or data.get('userId')
 
     if not manual_answer:
         return jsonify({'message': 'Manual answer is required.'}), 400
 
-    conn = None
-    cursor = None
+    success = resolve_escalation(escalation_id, manual_answer, handled_by)
 
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-
-        cursor.execute("""
-            UPDATE escalation
-            SET 
-                manual_answer = %s,
-                handled_by = %s,
-                status = 'resolved',
-                resolved_at = CURRENT_TIMESTAMP
-            WHERE escalation_id = %s
-        """, (manual_answer, handled_by, escalation_id))
-
-        conn.commit()
-
-        # ✅ GET QUESTION FROM ESCALATION
-        cursor.execute("""
-            SELECT question
-            FROM escalation
-            WHERE escalation_id = %s
-        """, (escalation_id,))
-
-        row = cursor.fetchone()
-
-        # ✅ SAVE INTO AI KNOWLEDGE (VERY IMPORTANT)
-        if row and manual_answer:
-            cursor.execute("""
-                INSERT INTO review_queue
-                (escalation_id, question, answer, submitted_by, status)
-                VALUES (%s, %s, %s, %s, 'pending')
-            """, (
-                escalation_id,
-                row["question"],
-                manual_answer,
-                handled_by
-            ))
-
-            conn.commit()
-
-            add_audit_log(
-                actor_id=handled_by,
-                actor_name="Team Lead",
-                action="Submitted manual answer for review",
-                module="Review Management",
-                description=f"Escalation ID {escalation_id} was submitted to manager review."
-            )
-
-        add_audit_log(
-            actor_id=handled_by,
-            action="Submitted manual answer",
-            module="Escalation",
-            description=f"Escalation ID {escalation_id} was resolved."
-        )
-
+    if not success:
         return jsonify({
-            'message': 'Escalation resolved successfully.'
-        }), 200
-
-    except Exception as error:
-        if conn:
-            conn.rollback()
-
-        print('MYSQL ERROR /api/escalations PUT:', error)
-
-        return jsonify({
-            'message': 'Failed to submit manual answer.',
-            'error': str(error)
+            'message': 'Failed to resolve escalation.'
         }), 500
 
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
+    add_audit_log(
+        actor_id=handled_by,
+        actor_name="Team Lead",
+        action="Resolved escalation",
+        module="Escalation",
+        description=f"Escalation ID {escalation_id} was resolved and saved into AI knowledge."
+    )
+
+    return jsonify({
+        'message': 'Escalation resolved and saved into AI knowledge.'
+    }), 200
 
 @app.route("/api/escalations/<int:escalation_id>", methods=["DELETE"])
 def delete_escalation(escalation_id):
@@ -4248,20 +4397,6 @@ def update_admin_user_role(user_id):
 @app.route("/static/<path:filename>", methods=["GET"])
 def serve_static(filename):
     return send_from_directory(STATIC_DIR, filename)
-
-from db_helper import resolve_escalation
-
-@app.route("/api/escalation/answer", methods=["POST"])
-def answer_escalation():
-    data = request.get_json()
-
-    escalation_id = data.get("escalation_id")
-    answer = data.get("answer")
-
-    resolve_escalation(escalation_id, answer)
-
-    return jsonify({"message": "Escalation resolved and saved"})
-
 
 # =========================
 # RUN APP
