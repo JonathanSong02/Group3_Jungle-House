@@ -72,6 +72,7 @@ TEST_REPORT_CSV = LOG_DIR / "ai_test_results.csv"
 # does not send the previous AI response context back to the backend.
 AI_CHAT_MEMORY = {}
 AI_FAIL_MEMORY = {}
+AI_LAST_ANSWER_MEMORY = {}
 
 app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="/static")
 
@@ -540,6 +541,80 @@ def ensure_log_files() -> None:
                 writer.writerow({header: row.get(header, "") for header in expected_headers})
     except Exception as error:
         print("AI log header migration skipped:", error)
+
+def get_last_answer_key(data: dict | None = None) -> str:
+    data = data or {}
+    user_id = data.get("user_id") or data.get("userId")
+
+    if user_id:
+        return f"user:{user_id}:last_answer"
+
+    return f"ip:{request.remote_addr or 'local'}:last_answer"
+
+
+def is_staff_not_satisfied(text: str) -> bool:
+    text = clean_question(text).lower()
+
+    phrases = [
+        "you sure",
+        "are you sure",
+        "not what i want",
+        "not what i mean",
+        "i don't mean this",
+        "i dont mean this",
+        "not this",
+        "wrong answer",
+        "this is wrong",
+        "not the content",
+        "not related",
+        "not correct",
+        "i mean another",
+        "i mean something else",
+    ]
+
+    return any(phrase in text for phrase in phrases)
+
+def should_escalate_generic_answer(question: str, result: dict | None) -> bool:
+    result = result or {}
+
+    source = str(result.get("source", "")).strip().lower()
+    question_clean = clean_question(question).lower()
+
+    # These are allowed broad category questions.
+    # Example: staff types "product", "promotion", "sop"
+    allowed_generic_questions = {
+        "product",
+        "products",
+        "promotion",
+        "promotions",
+        "sop",
+        "notice",
+        "notices",
+        "training",
+    }
+
+    if question_clean in allowed_generic_questions:
+        return False
+
+    # If AI only gives generic category choices for a specific-looking question,
+    # escalate instead of pretending it knows the answer.
+    if source.startswith("generic_"):
+        return True
+
+    if source in {"category_choice", "broad_topic_clarification"}:
+        return False
+
+    return False
+
+
+def remember_last_ai_answer(data: dict | None, question: str, result: dict | None) -> None:
+    if not result:
+        return
+
+    AI_LAST_ANSWER_MEMORY[get_last_answer_key(data)] = {
+        "question": question,
+        "result": result,
+    }
 
 def get_ai_fail_key(data: dict | None, question: str = "") -> str:
     data = data or {}
@@ -2382,11 +2457,126 @@ def chat():
         # =========================
         question = clean_question(question)
 
+                # =========================
+        # HANDLE "NAME is?" STYLE QUESTION
+        # Example: "Brian is?" -> "who is Brian"
+        # =========================
+        name_is_match = re.fullmatch(r"([a-zA-Z]+)\s+is\??", question.strip())
+
+        if name_is_match:
+            name = name_is_match.group(1)
+            question = f"who is {name}"
+
         if not question:
             return jsonify({
                 "reply": "Please ask a question.",
                 "fallback": True
             }), 400
+
+         # =========================
+        # ✅ STEP 2.5: STAFF SAYS PREVIOUS ANSWER IS NOT WHAT THEY MEAN
+        # =========================
+        if is_staff_not_satisfied(question):
+            last_answer = AI_LAST_ANSWER_MEMORY.get(get_last_answer_key(data))
+
+            fail_key = get_ai_fail_key(data, "staff_not_satisfied")
+            AI_FAIL_MEMORY[fail_key] = AI_FAIL_MEMORY.get(fail_key, 0) + 1
+
+            previous_question = question
+            previous_result = {
+                "answer": "Staff said the AI answer may not be the intended content.",
+                "confidence": 0.0,
+                "source": "staff_not_satisfied"
+            }
+
+            if last_answer:
+                previous_question = last_answer.get("question") or question
+                previous_result = last_answer.get("result") or previous_result
+
+            if AI_FAIL_MEMORY[fail_key] >= 1:
+                escalation_id = create_escalation(
+                    previous_question,
+                    previous_result,
+                    data.get("user_id") or data.get("userId")
+                )
+
+                AI_FAIL_MEMORY.pop(fail_key, None)
+
+                return jsonify({
+                    "reply": (
+                        "I detected that the previous answer may not be the content you wanted.\n\n"
+                        "I have escalated this question to a team lead for confirmation."
+                    ),
+                    "answer": (
+                        "I detected that the previous answer may not be the content you wanted. "
+                        "I have escalated this question to a team lead for confirmation."
+                    ),
+                    "confidence": 0.0,
+                    "score": 0.0,
+                    "source": "staff_not_satisfied_escalated",
+                    "fallback": True,
+                    "escalation": True,
+                    "escalation_ready": True,
+                    "escalation_required": True,
+                    "escalation_id": escalation_id,
+                    "served_by": "escalation_queue",
+                    "options": [
+                        {
+                            "label": "Escalated to team lead",
+                            "value": "escalated",
+                            "type": "status"
+                        }
+                    ]
+                }), 200
+
+            return jsonify({
+                "reply": (
+                    "I detected that the previous answer may not be what you meant.\n\n"
+                    "You can ask again with more details, or choose to escalate this question to a team lead."
+                ),
+                "answer": (
+                    "I detected that the previous answer may not be what you meant. "
+                    "You can ask again with more details, or choose to escalate this question to a team lead."
+                ),
+                "confidence": 0.0,
+                "score": 0.0,
+                "source": "staff_not_satisfied_confirmation",
+                "fallback": True,
+                "escalation": False,
+                "escalation_ready": False,
+                "escalation_required": False,
+                "options": [
+                    {
+                        "label": "Ask again with more details",
+                        "value": "clarify",
+                        "type": "clarification"
+                    },
+                    {
+                        "label": "Escalate to team lead",
+                        "value": "escalate_to_team_lead",
+                        "type": "escalation"
+                    }
+                ]
+            }), 200
+
+                # =========================
+        # CHECK TEAM LEAD ANSWER FIRST
+        # If team lead already answered before, use it instead of escalating again.
+        # =========================
+        team_lead_result = search_similar_question(question, team_lead_only=True)
+
+        if team_lead_result:
+            result = normalize_result(team_lead_result, "team_lead")
+
+            clear_ai_fail_count(data, question)
+            remember_chat_context(data, result)
+            log_request(question, result=result)
+            remember_last_ai_answer(data, question, result)
+
+            result["final_source"] = result.get("source")
+            result["served_by"] = "team_lead_answer"
+
+            return jsonify(result), 200
 
         # =========================
         # ✅ STEP 3: CALL AI
@@ -2396,8 +2586,52 @@ def chat():
             context=prepare_chat_context(data),
         )
 
+        # =========================
+        # GENERIC ANSWER SHOULD ESCALATE
+        # Example:
+        # "honeybee" -> generic_product choices -> escalate to team lead
+        # =========================
+        if should_escalate_generic_answer(question, result):
+            escalation_id = create_escalation(
+                question,
+                result,
+                data.get("user_id") or data.get("userId")
+            )
+
+            result = {
+                "question": question,
+                "reply": (
+                    "I could not find a specific answer for this question.\n\n"
+                    "I have escalated it to a team lead. Once the team lead answers, "
+                    "the answer will be saved for future staff questions."
+                ),
+                "answer": (
+                    "I could not find a specific answer for this question. "
+                    "I have escalated it to a team lead. Once the team lead answers, "
+                    "the answer will be saved for future staff questions."
+                ),
+                "confidence": 0.0,
+                "score": 0.0,
+                "confidence_label": "low",
+                "source": "generic_answer_escalated",
+                "fallback": True,
+                "escalation": True,
+                "escalation_ready": True,
+                "escalation_required": True,
+                "escalation_id": escalation_id,
+                "served_by": "escalation_queue",
+                "options": [
+                    {
+                        "label": "Escalated to team lead",
+                        "value": "escalated",
+                        "type": "status"
+                    }
+                ]
+            }
+
         remember_chat_context(data, result)
         log_request(question, result=result)
+        remember_last_ai_answer(data, question, result)
 
         # =========================
         # ✅ STEP 4: ESCALATION LOGIC
