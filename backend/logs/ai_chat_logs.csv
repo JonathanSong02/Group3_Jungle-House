@@ -1078,3 +1078,122 @@ Examples:
 - step 3 to step 7
 - show picture
 - show all",
+2026-05-07T09:03:07,i want to know more about aeon sop,,sop,,text,0.81,0.81,medium,ambiguous_title_choice,False,,False,"I found multiple SOPs. Which one do you need?
+
+- Aeon Roadshow Closing List
+- Aeon Roadshow Opening List
+
+You can also ask:
+- show all
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture",
+2026-05-07T09:17:33,royal black,,,,text,1.0,1.0,high,ai,False,,False,"Daily/Premium Royal Black is a kind of honey from mahoni flower nectar and its good for anti inflammatory, reducing backpain, and balancing three high (cholesterol, blood pressure, sugar level)",
+2026-05-07T09:17:48,daily royal black,Ice Bin Daily Closing Checklist,sop,,text,0.72,0.72,medium,matched_title_part_prompt,False,,False,"I found Ice Bin Daily Closing Checklist.
+This topic has Step 1 to Step 3.
+
+Which part do you need? Please ask for a specific step, range, section, picture, or ask to show all.
+
+Examples:
+- step 2
+- step 3 to step 7
+- show picture
+- show all
+
+Available sections:
+- Cleaning",
+2026-05-07T09:18:08,honey juice,What is the best answer for client asking how much Honey we are using for our honey Juice?,product,,text,0.82,0.82,medium,matched_title_part_prompt,False,,False,"I found What is the best answer for client asking how much Honey we are using for our honey Juice?.
+This topic has Step 1 to Step 3.
+
+Which part do you need? Please ask for a specific step, range, section, picture, or ask to show all.
+
+Examples:
+- step 2
+- step 3 to step 7
+- show picture
+- show all
+
+Available sections:
+- Confidential Rule
+- Suggested Answer",
+2026-05-07T10:07:12,daily royal black,Ice Bin Daily Closing Checklist,sop,,text,0.72,0.72,medium,matched_title_part_prompt,False,,False,"I found Ice Bin Daily Closing Checklist.
+This topic has Step 1 to Step 3.
+
+Which part do you need? Please ask for a specific step, range, section, picture, or ask to show all.
+
+Examples:
+- step 2
+- step 3 to step 7
+- show picture
+- show all
+
+Available sections:
+- Cleaning",
+2026-05-07T10:09:16,honeydew,,product,,text,0.92,0.92,high,generic_product,False,,False,"Sure — I can help with product knowledge.
+
+Please choose one:
+- Golden Passion Honey (New Product)
+- Price for new packaging for HWJ and SHVP
+- What is the best answer for client asking how much Honey we are using for our honey Juice?",
+2026-05-07T10:09:30,honeydew,,product,,text,0.92,0.92,high,generic_product,False,,False,"Sure — I can help with product knowledge.
+
+Please choose one:
+- Golden Passion Honey (New Product)
+- Price for new packaging for HWJ and SHVP
+- What is the best answer for client asking how much Honey we are using for our honey Juice?",
+2026-05-07T10:09:40,Brian,Ice Bin Daily Closing Checklist,sop,,text,0.78,0.78,medium,context_guidance,False,,False,"I’m currently helping you with Ice Bin Daily Closing Checklist.
+Tell me what you need next — for example:
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture
+- show all
+
+If you want another topic, just type it directly, like promotion or public holiday.",
+2026-05-07T10:10:23,how to wash juice bottle,What is the best answer for client asking how much Honey we are using for our honey Juice?,product,,text,0.64,0.64,low,matched_title_part_prompt,False,,False,"I found What is the best answer for client asking how much Honey we are using for our honey Juice?.
+This topic has Step 1 to Step 3.
+
+Which part do you need? Please ask for a specific step, range, section, picture, or ask to show all.
+
+Examples:
+- step 2
+- step 3 to step 7
+- show picture
+- show all
+
+Available sections:
+- Confidential Rule
+- Suggested Answer",
+2026-05-07T10:10:36,how to wash juice bottle,What is the best answer for client asking how much Honey we are using for our honey Juice?,product,,text,0.64,0.64,low,matched_title_part_prompt,False,,False,"I found What is the best answer for client asking how much Honey we are using for our honey Juice?.
+This topic has Step 1 to Step 3.
+
+Which part do you need? Please ask for a specific step, range, section, picture, or ask to show all.
+
+Examples:
+- step 2
+- step 3 to step 7
+- show picture
+- show all
+
+Available sections:
+- Confidential Rule
+- Suggested Answer",
+2026-05-07T10:10:50,new jungle eye,What is the best answer for client asking how much Honey we are using for our honey Juice?,product,,text,0.78,0.78,medium,context_guidance,False,,False,"I’m currently helping you with What is the best answer for client asking how much Honey we are using for our honey Juice?.
+Tell me what you need next — for example:
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture
+- show all
+
+If you want another topic, just type it directly, like promotion or public holiday.",
+2026-05-07T10:11:00,new jungle eye,What is the best answer for client asking how much Honey we are using for our honey Juice?,product,,text,0.78,0.78,medium,context_guidance,False,,False,"I’m currently helping you with What is the best answer for client asking how much Honey we are using for our honey Juice?.
+Tell me what you need next — for example:
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture
+- show all
+
+If you want another topic, just type it directly, like promotion or public holiday.",

@@ -1875,7 +1875,12 @@ def get_dashboard():
             ai_conf = 0
 
         recent_notifications = safe_list_query(cursor, """
-            SELECT notification_id AS id, title, message, is_read, created_at
+            SELECT 
+                notification_id AS id,
+                title,
+                detail,
+                is_read,
+                created_at
             FROM notification
             ORDER BY created_at DESC
             LIMIT 3
@@ -1913,6 +1918,7 @@ def get_dashboard():
             conn.close()
 
 
+
 # =========================
 # NOTIFICATIONS
 # =========================
@@ -1929,25 +1935,34 @@ def get_notifications(user_id):
             SELECT
                 notification_id AS id,
                 title,
-                message AS detail,
+                detail,
                 is_read AS isRead,
                 type,
+                related_id,
+                target_role,
+                created_by,
                 created_at
             FROM notification
             WHERE user_id = %s
+               OR user_id IS NULL
             ORDER BY created_at DESC
         """, (user_id,))
+
         notifications = cursor.fetchall()
 
         return jsonify(notifications), 200
 
     except mysql.connector.Error as err:
         print("MYSQL ERROR /api/notifications:", err)
-        return jsonify({"message": f"Database error: {str(err)}"}), 500
+        return jsonify({
+            "message": f"Database error: {str(err)}"
+        }), 500
 
     except Exception as e:
         print("GENERAL ERROR /api/notifications:", e)
-        return jsonify({"message": f"Server error: {str(e)}"}), 500
+        return jsonify({
+            "message": f"Server error: {str(e)}"
+        }), 500
 
     finally:
         if cursor:
@@ -1970,23 +1985,43 @@ def mark_notification_as_read(notification_id):
             SET is_read = TRUE
             WHERE notification_id = %s
         """, (notification_id,))
+
         conn.commit()
 
-        return jsonify({"message": "Notification marked as read."}), 200
+        if cursor.rowcount == 0:
+            return jsonify({
+                "message": "Notification not found."
+            }), 404
+
+        return jsonify({
+            "message": "Notification marked as read."
+        }), 200
 
     except mysql.connector.Error as err:
+        if conn:
+            conn.rollback()
+
         print("READ NOTIFICATION MYSQL ERROR:", err)
-        return jsonify({"message": f"Database error: {str(err)}"}), 500
+        return jsonify({
+            "message": f"Database error: {str(err)}"
+        }), 500
 
     except Exception as e:
+        if conn:
+            conn.rollback()
+
         print("READ NOTIFICATION GENERAL ERROR:", e)
-        return jsonify({"message": f"Server error: {str(e)}"}), 500
+        return jsonify({
+            "message": f"Server error: {str(e)}"
+        }), 500
 
     finally:
         if cursor:
             cursor.close()
         if conn:
             conn.close()
+
+
 
 
 @app.route("/api/chat/test", methods=["GET"])
@@ -4392,6 +4427,465 @@ def update_admin_user_role(user_id):
             cursor.close()
         if conn:
             conn.close()
+
+
+
+# =========================
+# MESSAGE CENTRE ROUTES
+# Uses existing user_message table
+# =========================
+
+@app.route("/api/messages/users", methods=["GET"])
+def get_message_users():
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT
+                u.user_id,
+                u.full_name,
+                u.email,
+                u.status,
+                r.role_name
+            FROM users u
+            JOIN roles r ON u.role_id = r.role_id
+            WHERE LOWER(u.status) = 'active'
+            ORDER BY u.full_name ASC
+        """)
+
+        users = cursor.fetchall()
+        return jsonify(users), 200
+
+    except Exception as error:
+        print("MYSQL ERROR /api/messages/users:", error)
+        return jsonify({
+            "message": "Failed to load message users.",
+            "error": str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/messages/send", methods=["POST"])
+def send_message():
+    data = request.get_json() or {}
+
+    sender_id = data.get("sender_id")
+    receiver_id = data.get("receiver_id")
+    subject = data.get("subject", "").strip()
+    message = data.get("message", "").strip()
+
+    if not sender_id or not receiver_id or not subject or not message:
+        return jsonify({
+            "message": "Sender, receiver, subject and message are required."
+        }), 400
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            INSERT INTO user_message
+            (sender_id, receiver_id, subject, message)
+            VALUES (%s, %s, %s, %s)
+        """, (sender_id, receiver_id, subject, message))
+
+        message_id = cursor.lastrowid
+
+        cursor.execute("""
+            UPDATE user_message
+            SET thread_id = %s
+            WHERE message_id = %s
+        """, (message_id, message_id))
+
+        conn.commit()
+
+        return jsonify({
+            "message": "Message sent successfully.",
+            "message_id": message_id,
+            "thread_id": message_id
+        }), 201
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("MYSQL ERROR /api/messages/send:", error)
+        return jsonify({
+            "message": "Failed to send message.",
+            "error": str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/messages/threads/<int:user_id>", methods=["GET"])
+def get_message_threads(user_id):
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT
+                latest.thread_id,
+                latest.subject,
+                latest.message AS latest_message,
+                latest.created_at AS latest_created_at,
+                latest.sender_id AS latest_sender_id,
+                latest.receiver_id AS latest_receiver_id,
+
+                CASE
+                    WHEN latest.sender_id = %s THEN receiver.full_name
+                    ELSE sender.full_name
+                END AS other_user_name,
+
+                COALESCE(unread.unread_count, 0) AS unread_count
+
+            FROM user_message latest
+
+            JOIN (
+                SELECT
+                    thread_id,
+                    MAX(created_at) AS latest_time
+                FROM user_message
+                WHERE
+                    (sender_id = %s AND is_deleted_by_sender = FALSE)
+                    OR
+                    (receiver_id = %s AND is_deleted_by_receiver = FALSE)
+                GROUP BY thread_id
+            ) grouped
+                ON latest.thread_id = grouped.thread_id
+                AND latest.created_at = grouped.latest_time
+
+            LEFT JOIN users sender
+                ON latest.sender_id = sender.user_id
+
+            LEFT JOIN users receiver
+                ON latest.receiver_id = receiver.user_id
+
+            LEFT JOIN (
+                SELECT
+                    thread_id,
+                    COUNT(*) AS unread_count
+                FROM user_message
+                WHERE receiver_id = %s
+                AND is_read = FALSE
+                AND is_deleted_by_receiver = FALSE
+                GROUP BY thread_id
+            ) unread
+                ON latest.thread_id = unread.thread_id
+
+            WHERE
+                (latest.sender_id = %s AND latest.is_deleted_by_sender = FALSE)
+                OR
+                (latest.receiver_id = %s AND latest.is_deleted_by_receiver = FALSE)
+
+            ORDER BY latest.created_at DESC
+        """, (
+            user_id,
+            user_id,
+            user_id,
+            user_id,
+            user_id,
+            user_id
+        ))
+
+        threads = cursor.fetchall()
+        return jsonify(threads), 200
+
+    except Exception as error:
+        print("MYSQL ERROR /api/messages/threads:", error)
+        return jsonify({
+            "message": "Failed to load message threads.",
+            "error": str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/messages/thread/<int:thread_id>/<int:user_id>", methods=["GET"])
+def get_thread_messages(thread_id, user_id):
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            UPDATE user_message
+            SET is_read = TRUE
+            WHERE thread_id = %s
+            AND receiver_id = %s
+        """, (thread_id, user_id))
+
+        conn.commit()
+
+        cursor.execute("""
+            SELECT
+                m.message_id,
+                m.thread_id,
+                m.parent_message_id,
+                m.sender_id,
+                m.receiver_id,
+                m.subject,
+                m.message,
+                m.is_read,
+                m.created_at,
+                m.edited_at,
+                sender.full_name AS sender_name,
+                receiver.full_name AS receiver_name
+            FROM user_message m
+            LEFT JOIN users sender
+                ON m.sender_id = sender.user_id
+            LEFT JOIN users receiver
+                ON m.receiver_id = receiver.user_id
+            WHERE m.thread_id = %s
+            AND (
+                (m.sender_id = %s AND m.is_deleted_by_sender = FALSE)
+                OR
+                (m.receiver_id = %s AND m.is_deleted_by_receiver = FALSE)
+            )
+            ORDER BY m.created_at ASC
+        """, (thread_id, user_id, user_id))
+
+        messages = cursor.fetchall()
+        return jsonify(messages), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("MYSQL ERROR /api/messages/thread:", error)
+        return jsonify({
+            "message": "Failed to load conversation.",
+            "error": str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/messages/reply", methods=["POST"])
+def reply_message():
+    data = request.get_json() or {}
+
+    thread_id = data.get("thread_id")
+    parent_message_id = data.get("parent_message_id")
+    sender_id = data.get("sender_id")
+    receiver_id = data.get("receiver_id")
+    subject = data.get("subject", "").strip()
+    message = data.get("message", "").strip()
+
+    if not thread_id or not sender_id or not receiver_id or not message:
+        return jsonify({
+            "message": "Thread, sender, receiver and message are required."
+        }), 400
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            INSERT INTO user_message
+            (
+                thread_id,
+                parent_message_id,
+                sender_id,
+                receiver_id,
+                subject,
+                message
+            )
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (
+            thread_id,
+            parent_message_id,
+            sender_id,
+            receiver_id,
+            subject,
+            message
+        ))
+
+        conn.commit()
+
+        return jsonify({
+            "message": "Reply sent successfully."
+        }), 201
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("MYSQL ERROR /api/messages/reply:", error)
+        return jsonify({
+            "message": "Failed to send reply.",
+            "error": str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/messages/edit/<int:message_id>", methods=["PUT"])
+def edit_message(message_id):
+    data = request.get_json() or {}
+
+    user_id = data.get("user_id")
+    message = data.get("message", "").strip()
+
+    if not user_id or not message:
+        return jsonify({
+            "message": "User ID and message are required."
+        }), 400
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            UPDATE user_message
+            SET message = %s,
+                edited_at = NOW()
+            WHERE message_id = %s
+            AND sender_id = %s
+        """, (message, message_id, user_id))
+
+        conn.commit()
+
+        if cursor.rowcount == 0:
+            return jsonify({
+                "message": "You can only edit messages you sent."
+            }), 403
+
+        return jsonify({
+            "message": "Message updated successfully."
+        }), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("MYSQL ERROR /api/messages/edit:", error)
+        return jsonify({
+            "message": "Failed to edit message.",
+            "error": str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/messages/delete/<int:message_id>", methods=["PUT"])
+def delete_message_from_view(message_id):
+    data = request.get_json() or {}
+
+    user_id = data.get("user_id")
+
+    if not user_id:
+        return jsonify({
+            "message": "User ID is required."
+        }), 400
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT sender_id, receiver_id
+            FROM user_message
+            WHERE message_id = %s
+            LIMIT 1
+        """, (message_id,))
+
+        msg = cursor.fetchone()
+
+        if not msg:
+            return jsonify({
+                "message": "Message not found."
+            }), 404
+
+        if int(msg["sender_id"]) == int(user_id):
+            cursor.execute("""
+                UPDATE user_message
+                SET is_deleted_by_sender = TRUE
+                WHERE message_id = %s
+            """, (message_id,))
+
+        elif int(msg["receiver_id"]) == int(user_id):
+            cursor.execute("""
+                UPDATE user_message
+                SET is_deleted_by_receiver = TRUE
+                WHERE message_id = %s
+            """, (message_id,))
+
+        else:
+            return jsonify({
+                "message": "You can only delete messages linked to your account."
+            }), 403
+
+        conn.commit()
+
+        return jsonify({
+            "message": "Message deleted from your view."
+        }), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("MYSQL ERROR /api/messages/delete:", error)
+        return jsonify({
+            "message": "Failed to delete message.",
+            "error": str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
 
 
 @app.route("/static/<path:filename>", methods=["GET"])
