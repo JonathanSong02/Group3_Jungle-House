@@ -79,7 +79,10 @@ CORS(
     app,
     resources={r"/*": {"origins": [
         "http://localhost:5173",
-        "http://127.0.0.1:5173"
+        "http://127.0.0.1:5173",
+        "https://ai-powered-wiki-training-assistant.vercel.app",
+        "https://ai-powered-wiki-training-assistant-l68o9pdok.vercel.app",
+        "https://ai-powered-wiki-training-assistant-l68o9pdok.vercel.app"
     ]}},
     supports_credentials=True,
     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
