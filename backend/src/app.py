@@ -541,17 +541,14 @@ def ensure_log_files() -> None:
     except Exception as error:
         print("AI log header migration skipped:", error)
 
-def get_ai_fail_key(data: dict | None, question: str) -> str:
+def get_ai_fail_key(data: dict | None, question: str = "") -> str:
     data = data or {}
     user_id = data.get("user_id") or data.get("userId")
 
     if user_id:
-        owner = f"user:{user_id}"
-    else:
-        owner = f"ip:{request.remote_addr or 'local'}"
+        return f"user:{user_id}:ai_fail_count"
 
-    normalized_question = clean_question(question).lower()
-    return f"{owner}:{normalized_question}"
+    return f"ip:{request.remote_addr or 'local'}:ai_fail_count"
 
 
 def update_ai_fail_count(data: dict | None, question: str, result: dict | None) -> int:
@@ -563,7 +560,6 @@ def update_ai_fail_count(data: dict | None, question: str, result: dict | None) 
         "clarification_round_2",
         "unclear_question_clarification",
         "system_problem_clarification",
-        "broad_topic_clarification",
         "step_request_missing_topic",
         "low_confidence_or_model_unavailable",
         "fallback",
@@ -574,6 +570,15 @@ def update_ai_fail_count(data: dict | None, question: str, result: dict | None) 
 
     source = str(result.get("source", "")).strip()
     confidence = float(result.get("confidence", result.get("score", 0.0)) or 0.0)
+
+    if (
+        source in {"broad_topic_clarification", "category_choice"}
+        or source.startswith("generic_")
+        or "out_of_bounds" in source
+        or source in {"context_step", "context_step_range", "context_show_all", "context_picture", "context_section"}
+    ):
+        AI_FAIL_MEMORY.pop(get_ai_fail_key(data, question), None)
+        return 0
 
     is_failed_answer = (
         source in bad_sources
@@ -644,6 +649,14 @@ def is_fallback_result(result: dict | None) -> bool:
 
     source = str(result.get("source", "")).strip()
 
+    if (
+        source in {"broad_topic_clarification", "category_choice"}
+        or source.startswith("generic_")
+        or "out_of_bounds" in source
+        or source in {"context_step", "context_step_range", "context_show_all", "context_picture", "context_section"}
+    ):
+        return False
+
     if source in {
         "empty_question",
         "none",
@@ -656,7 +669,6 @@ def is_fallback_result(result: dict | None) -> bool:
         "prediction_error",
         "pytorch_model_error",
         "ambiguous_title_choice",
-        "broad_topic_clarification",
         "step_request_missing_topic",
     }:
         return True
@@ -892,8 +904,7 @@ def choose_final_result(model_result, retrieval_result):
             "repeated_unclear_question",
             "system_problem_clarification",
             "repeated_system_problem",
-            "broad_topic_clarification",
-        }:
+            }:
             return model_result
 
         if model_result.get("escalation_ready", False):
@@ -922,8 +933,7 @@ def choose_final_result(model_result, retrieval_result):
             "repeated_unclear_question",
             "system_problem_clarification",
             "repeated_system_problem",
-            "broad_topic_clarification",
-        }:
+            }:
             return model_result
 
         if model_result.get("score", 0.0) >= 0.45:
@@ -1026,69 +1036,9 @@ def process_question(question, context=None):
             "escalation_required": True,
         })
 
-    if model_result and retrieval_result and is_valid_answer(model_result) and is_valid_answer(retrieval_result):
-        model_source = str(model_result.get("source") or "")
-        retrieval_source = str(retrieval_result.get("source") or "")
-
-        model_answer = str(model_result.get("answer") or model_result.get("reply") or "").strip()
-        retrieval_answer = str(retrieval_result.get("answer") or retrieval_result.get("reply") or "").strip()
-
-        # Show both only when they are from different sources and not identical
-        if model_source != retrieval_source and model_answer != retrieval_answer:
-            final_result = standardize_ai_response({
-                "question": question,
-                "type": "multiple_choice",
-                "category": model_result.get("category") or retrieval_result.get("category"),
-                "title": model_result.get("title") or retrieval_result.get("title"),
-                "section": None,
-                "reply": "I found more than one possible answer. Please choose the most suitable one.",
-                "answer": "I found more than one possible answer. Please choose the most suitable one.",
-                "purpose": None,
-                "steps": [],
-                "notes": [],
-                "score": max(
-                    float(model_result.get("score", 0.0) or 0.0),
-                    float(retrieval_result.get("score", 0.0) or 0.0)
-                ),
-                "confidence": max(
-                    float(model_result.get("confidence", 0.0) or 0.0),
-                    float(retrieval_result.get("confidence", 0.0) or 0.0)
-                ),
-                "source": "combined_candidates",
-                "context": model_result.get("context") or retrieval_result.get("context") or {},
-                "fallback": False,
-                "fallback_message": "",
-                "escalation_ready": False,
-                "escalation_required": False,
-                "options": [
-                    {
-                        "label": "Training data answer",
-                        "source": model_result.get("source"),
-                        "title": model_result.get("title"),
-                        "category": model_result.get("category"),
-                        "confidence": model_result.get("confidence"),
-                        "reply": model_result.get("reply"),
-                        "answer": model_result.get("answer"),
-                        "steps": model_result.get("steps", []),
-                        "notes": model_result.get("notes", []),
-                    },
-                    {
-                        "label": "Retrieved / team lead answer",
-                        "source": retrieval_result.get("source"),
-                        "title": retrieval_result.get("title"),
-                        "category": retrieval_result.get("category"),
-                        "confidence": retrieval_result.get("confidence"),
-                        "reply": retrieval_result.get("reply"),
-                        "answer": retrieval_result.get("answer"),
-                        "steps": retrieval_result.get("steps", []),
-                        "notes": retrieval_result.get("notes", []),
-                    }
-                ]
-            })
-        else:
-            final_result = choose_final_result(model_result, retrieval_result)
-    else:
-        final_result = choose_final_result(model_result, retrieval_result)
+    # Prefer training data / PyTorch model result for normal valid questions.
+    # Retrieved Team Lead answers are used mainly when the model cannot answer confidently.
+    final_result = choose_final_result(model_result, retrieval_result)
 
     response_payload = {
         "question": question,
@@ -1111,61 +1061,6 @@ def process_question(question, context=None):
         "escalation_ready": final_result.get("escalation_ready", False),
         "escalation_required": final_result.get("escalation_required", final_result.get("escalation_ready", False)),
         "options": final_result.get("options", []),
-    }
-
-    return standardize_ai_response(response_payload), 200
-
-    if MODEL_AVAILABLE and get_model_answer is not None:
-        try:
-            model_result = normalize_result(
-                call_model_answer(question, context=context),
-                default_source="pytorch_model"
-            )
-        except Exception as error:
-            model_result = standardize_ai_response({
-                "type": "text",
-                "category": None,
-                "title": None,
-                "section": None,
-                "reply": f"Model prediction failed: {error}",
-                "answer": f"Model prediction failed: {error}",
-                "purpose": None,
-                "steps": [],
-                "notes": [],
-                "score": 0.0,
-                "confidence": 0.0,
-                "source": "pytorch_model_error",
-                "fallback": True,
-                "fallback_message": "There was a problem while generating the answer.",
-                "escalation_ready": True,
-                "escalation_required": True,
-            })
-
-        final_result = choose_final_result(
-        model_result,
-        retrieval_result
-    )
-
-    response_payload = {
-        "question": question,
-        "type": final_result.get("type", "text"),
-        "category": final_result.get("category"),
-        "title": final_result.get("title"),
-        "section": final_result.get("section"),
-        "reply": final_result.get("reply", final_result.get("answer", "")),
-        "answer": final_result.get("answer", final_result.get("reply", "")),
-        "purpose": final_result.get("purpose"),
-        "steps": final_result.get("steps", []),
-        "notes": final_result.get("notes", []),
-        "score": final_result.get("score", 0.0),
-        "confidence": final_result.get("confidence", final_result.get("score", 0.0)),
-        "confidence_label": final_result.get("confidence_label"),
-        "source": final_result.get("source", "unknown"),
-        "context": final_result.get("context", {}),
-        "fallback": final_result.get("fallback", False),
-        "fallback_message": final_result.get("fallback_message", ""),
-        "escalation_ready": final_result.get("escalation_ready", False),
-        "escalation_required": final_result.get("escalation_required", final_result.get("escalation_ready", False)),
     }
 
     return standardize_ai_response(response_payload), 200
@@ -2417,98 +2312,70 @@ def chat():
             }), 200
 
         # =========================
-        # ✅ STEP 1: NONSENSE → ESCALATE
+        # ✅ STEP 1: NONSENSE / INVALID INPUT
+        # Check Team Lead resolved answer first.
+        # If none, first time = ask again, second time = escalate.
         # =========================
         if is_nonsense(question):
-            escalation_id = create_escalation(question, {
-                "answer": "Unclear or invalid question",
-                "confidence": 0.0,
-                "source": "invalid_input"
-            })
+            retrieval_result = search_similar_question(question)
+
+            if retrieval_result:
+                result = normalize_result(retrieval_result, "database")
+
+                clear_ai_fail_count(data, question)
+                remember_chat_context(data, result)
+                log_request(question, result=result)
+
+                result["final_source"] = result.get("source")
+                result["served_by"] = "team_lead_answer"
+
+                return jsonify(result), 200
+
+            fail_key = get_ai_fail_key(data, question)
+            AI_FAIL_MEMORY[fail_key] = AI_FAIL_MEMORY.get(fail_key, 0) + 1
+
+            if AI_FAIL_MEMORY[fail_key] >= 2:
+                result = {
+                    "reply": "I still could not understand the question after repeated attempts. I’ll escalate this to a team lead.",
+                    "answer": "I still could not understand the question after repeated attempts. I’ll escalate this to a team lead.",
+                    "confidence": 0.0,
+                    "score": 0.0,
+                    "source": "repeated_invalid_input",
+                    "fallback": True,
+                    "escalation_ready": True,
+                    "escalation_required": True
+                }
+
+                escalation_id = create_escalation(question, result)
+                AI_FAIL_MEMORY.pop(fail_key, None)
+
+                result["escalation"] = True
+                result["escalation_id"] = escalation_id
+                result["served_by"] = "escalation_queue"
+
+                return jsonify(result), 200
 
             return jsonify({
-                "reply": "I didn’t understand that. I’ll escalate this to a team lead.",
+                "reply": (
+                    "I could not understand your question clearly.\n\n"
+                    "Please ask again using a clearer topic, for example:\n"
+                    "- kiosk opening\n"
+                    "- kiosk closing\n"
+                    "- latest promotion\n"
+                    "- public holiday\n"
+                    "- new bee 1st day"
+                ),
+                "answer": (
+                    "I could not understand your question clearly.\n\n"
+                    "Please ask again using a clearer topic."
+                ),
                 "confidence": 0.0,
-                "source": "invalid_input",
+                "score": 0.0,
+                "source": "invalid_input_first_attempt",
                 "fallback": True,
-                "escalation": True,
-                "escalation_id": escalation_id
+                "escalation_ready": False,
+                "escalation_required": False
             }), 200
-        
-        # =========================
-        # ✅ QUIZ GENERATION TRIGGER
-        # =========================
-        if "quiz" in q_lower and ("generate" in q_lower or "create" in q_lower):
-            try:
-                import re
-
-                match = re.search(r'\d+', question)
-                count = int(match.group()) if match else 5
-                count = max(3, min(count, 10)) # ✅ LIMIT MAX/MIN QUIZ
-
-                # 🔥 Extract topic cleanly
-                topic = question.lower()
-                topic = re.sub(r'generate|create|quiz|\d+', '', topic)
-                topic = topic.replace("for", "").strip()
-
-                # 🔥 GET RAW KNOWLEDGE
-                # 🔥 ALWAYS USE ARTICLES (REMOVE QA SOURCE)
-                raw_articles = get_articles_for_quiz(topic, count * 3)
-
-                print("RAW ARTICLES:", len(raw_articles))
-
-                knowledge = []
-
-                for art in raw_articles:
-                    title = art.get("title", "").strip()
-                    content = art.get("content", "").strip()
-
-                    if not title or not content:
-                        continue
-
-                    # ✅ Generate simple clean question
-                    if "step" in content.lower():
-                        q = f"What is the first step of {title}?"
-                    elif "how" in content.lower():
-                        q = f"How to perform {title}?"
-                    else:
-                        q = f"What is {title}?"
-
-                    # ✅ Short answer (first sentence only)
-                    a = content.split(".")[0][:120]
-
-                    if is_nonsense(q) or len(a) < 10:
-                        continue
-
-                    knowledge.append({
-                        "question": q,
-                        "answer": a
-                    })
-
-                print("FINAL QUESTIONS:", len(knowledge))
-                
-                if not knowledge:
-                    return jsonify({
-                        "reply": "❌ No valid questions generated",
-                        "fallback": True
-                    }), 200
-
-                quiz_id = create_quiz_and_questions(
-                    topic if topic else "General Quiz",
-                    knowledge,
-                    count
-                )
-
-                return jsonify({
-                    "reply": "✅ Quiz generated! Go to Quiz page.",
-                    "quiz_created": True,
-                    "quiz_id": quiz_id
-                }), 200
-
-            except Exception as e:
-                return jsonify({
-                    "reply": f"❌ Quiz generation failed: {str(e)}"
-                }), 500
 
         # =========================
         # ✅ STEP 2: CLEAN QUESTION
@@ -2541,8 +2408,7 @@ def chat():
             "clarification_round_1",
             "unclear_question_clarification",
             "system_problem_clarification",
-            "broad_topic_clarification",
-            "step_request_missing_topic",
+                "step_request_missing_topic",
         ]
 
         force_escalation_sources = [
@@ -3686,32 +3552,11 @@ def save_quiz_to_db(title, questions):
 
 @app.route("/api/generate-quiz", methods=["POST"])
 def generate_quiz():
-    data = request.get_json() or {}
-
-    topic = data.get("topic", "general")
-    count = int(data.get("count", 10))
-
-    # 1. get knowledge
-    knowledge = get_knowledge_for_quiz(topic)
-
-    if not knowledge:
-        return jsonify({
-            "message": "No knowledge found to generate quiz"
-        }), 400
-
-    # 2. generate MCQ
-    questions = generate_mcq_from_knowledge(knowledge, count)
-
-    if not questions:
-        raise Exception("No valid quiz generated")
-
-    # 3. save
-    quiz_id = save_quiz_to_db(topic, questions)
-
+    # Automatic quiz generation is intentionally disabled.
+    # Quiz / Training remains available through manual admin quiz management routes.
     return jsonify({
-        "message": "Quiz generated successfully",
-        "quiz_id": quiz_id
-    }), 200
+        "message": "Automatic quiz generation is disabled. Please create quizzes manually from Quiz Management."
+    }), 400
 
 @app.route("/api/quizzes", methods=["GET"])
 def get_quizzes():

@@ -20,7 +20,27 @@ def get_db_connection():
 # =========================
 
 def normalize_text(text):
-    return str(text or "").lower().strip()
+    text = str(text or "").lower().strip()
+    return " ".join(text.split())
+
+def token_set(text):
+    import re
+    stop_words = {
+        "a", "an", "the", "to", "for", "of", "and", "or", "is", "are", "do", "does",
+        "can", "i", "me", "my", "you", "your", "what", "how", "when", "where", "which",
+        "show", "tell", "need", "want", "about", "info", "information"
+    }
+    tokens = re.findall(r"[a-z0-9]+", normalize_text(text))
+    return {token for token in tokens if token not in stop_words and len(token) > 1}
+
+def similarity_ratio(a, b):
+    a_tokens = token_set(a)
+    b_tokens = token_set(b)
+
+    if not a_tokens or not b_tokens:
+        return 0.0
+
+    return len(a_tokens & b_tokens) / max(len(a_tokens), len(b_tokens))
 
 
 # =========================
@@ -64,7 +84,7 @@ def save_qa_to_db(question, result, source="ai"):
             conn.close()
 
 
-def search_similar_question(question):
+def search_similar_question(question, team_lead_only=False):
     conn = None
     cursor = None
 
@@ -74,32 +94,52 @@ def search_similar_question(question):
 
         question = normalize_text(question)
 
-        cursor.execute("""
-            SELECT *
-            FROM qa_knowledge
-            ORDER BY 
-                CASE 
-                    WHEN source = 'team_lead' THEN 1
-                    ELSE 2
-                END,
-                confidence DESC
-        """)
+        if team_lead_only:
+            cursor.execute("""
+                SELECT *
+                FROM qa_knowledge
+                WHERE source = 'team_lead'
+                ORDER BY confidence DESC, created_at DESC
+            """)
+        else:
+            cursor.execute("""
+                SELECT *
+                FROM qa_knowledge
+                ORDER BY 
+                    CASE 
+                        WHEN source = 'team_lead' THEN 1
+                        ELSE 2
+                    END,
+                    confidence DESC
+            """)
 
         rows = cursor.fetchall()
 
         best_match = None
+        best_score = 0.0
 
         for row in rows:
             db_q = normalize_text(row.get("question"))
 
+            # Exact resolved question should always return.
             if question == db_q:
+                row["score"] = float(row.get("confidence", 1.0) or 1.0)
+                row["confidence"] = float(row.get("confidence", 1.0) or 1.0)
                 return row
 
-            if question in db_q or db_q in question:
-                best_match = row
-                break
+            ratio = similarity_ratio(question, db_q)
 
-        return best_match
+            # Avoid broad words like "product" or "holiday" wrongly overriding training data.
+            if ratio >= 0.80 and ratio > best_score:
+                best_match = row
+                best_score = ratio
+
+        if best_match:
+            best_match["score"] = float(best_match.get("confidence", best_score) or best_score)
+            best_match["confidence"] = float(best_match.get("confidence", best_score) or best_score)
+            return best_match
+
+        return None
 
     except Exception as e:
         print("SEARCH SIMILAR QUESTION ERROR:", e)

@@ -1197,3 +1197,272 @@ Tell me what you need next — for example:
 - show all
 
 If you want another topic, just type it directly, like promotion or public holiday.",
+2026-05-07T19:26:36,kiosk opening,JHKC Kiosk Opening,sop,,multiple_choice,1.0,1.0,high,combined_candidates,False,,False,I found more than one possible answer. Please choose the most suitable one.,
+2026-05-07T19:27:02,opening,,,,multiple_choice,1.0,1.0,high,combined_candidates,False,,False,I found more than one possible answer. Please choose the most suitable one.,
+2026-05-07T19:27:26,step 5,,sop,,text,0.82,0.82,medium,unknown,False,,False,"Sure — I can help with SOP / checklist questions.
+
+Please choose one:
+- Aeon Roadshow Closing List
+- Aeon Roadshow Opening List
+- Backend Opening Checklist
+- Closing Spring Warehouse
+- Ice Bin Daily Closing Checklist
+- JHKC Kiosk Opening
+- Kiosk Closing Check List
+- Kuching Booth Closing dustbin check list
+- Opening Notes
+- Receipt printer preparation for opening
+- Sales Closing Reminders Material
+- Shopify POS app Closing
+- Shopify POS app Opening
+- Spring Roadshow Closing List
+- Spring Roadshow Opening List",
+2026-05-07T19:27:41,kiosk opening,JHKC Kiosk Opening,sop,,multiple_choice,1.0,1.0,high,combined_candidates,False,,False,I found more than one possible answer. Please choose the most suitable one.,
+2026-05-07T19:27:51,step 5,JHKC Kiosk Opening,sop,,sop,0.96,0.96,high,context_step,False,,False,Got it — this is Step 5 for JHKC Kiosk Opening.,
+2026-05-07T19:28:05,promotion,,,,text,0.85,0.85,medium,broad_topic_clarification,True,"Which promotion information do you need?
+
+1. Promotion
+2. Win the Heart Gift Guide
+3. Bee Green 15",False,"Which promotion information do you need?
+
+1. Promotion
+2. Win the Heart Gift Guide
+3. Bee Green 15",
+2026-05-07T19:40:53,qwertyui,,,,text,1.0,1.0,high,team_lead,False,,False,Please ask question related to Jungle House. Thank you.,
+2026-05-07T19:41:38,kiosk opening,JHKC Kiosk Opening,sop,,multiple_choice,1.0,1.0,high,combined_candidates,False,,False,I found more than one possible answer. Please choose the most suitable one.,
+2026-05-07T19:42:11,step 5,JHKC Kiosk Opening,sop,,sop,0.96,0.96,high,context_step,False,,False,Got it — this is Step 5 for JHKC Kiosk Opening.,
+2026-05-07T19:42:26,promotion,,,,text,0.85,0.85,medium,broad_topic_clarification,True,"Which promotion information do you need?
+
+1. Promotion
+2. Win the Heart Gift Guide
+3. Bee Green 15",False,"Which promotion information do you need?
+
+1. Promotion
+2. Win the Heart Gift Guide
+3. Bee Green 15",
+2026-05-07T19:42:35,asdfgh,,,,text,0.78,0.78,medium,ai,False,,False,"I’m currently helping you with JHKC Kiosk Opening.
+Tell me what you need next — for example:
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture
+- show all
+
+If you want another topic, just type it directly, like promotion or public holiday.",
+2026-05-07T19:43:35,asdfgh,,,,text,0.78,0.78,medium,ai,False,,False,"I’m currently helping you with JHKC Kiosk Opening.
+Tell me what you need next — for example:
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture
+- show all
+
+If you want another topic, just type it directly, like promotion or public holiday.",
+2026-05-07T19:43:45,asdfgh,,,,text,0.78,0.78,medium,ai,False,,False,"I’m currently helping you with JHKC Kiosk Opening.
+Tell me what you need next — for example:
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture
+- show all
+
+If you want another topic, just type it directly, like promotion or public holiday.",
+2026-05-07T19:45:30,asdfgh,,,,text,0.78,0.78,medium,ai,False,,False,"I’m currently helping you with JHKC Kiosk Opening.
+Tell me what you need next — for example:
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture
+- show all
+
+If you want another topic, just type it directly, like promotion or public holiday.",
+2026-05-07T19:50:11,kiosk opening,JHKC Kiosk Opening,sop,,multiple_choice,1.0,1.0,high,combined_candidates,False,,False,I found more than one possible answer. Please choose the most suitable one.,
+2026-05-07T19:50:26,step 7,JHKC Kiosk Opening,sop,,sop,0.96,0.96,high,context_step,False,,False,Got it — this is Step 7 for JHKC Kiosk Opening.,
+2026-05-07T19:50:38,promotion,,,,text,0.85,0.85,medium,broad_topic_clarification,True,"Which promotion information do you need?
+
+1. Promotion
+2. Win the Heart Gift Guide
+3. Bee Green 15",False,"Which promotion information do you need?
+
+1. Promotion
+2. Win the Heart Gift Guide
+3. Bee Green 15",
+2026-05-07T19:50:58,holiday,PUBLIC HOLIDAY 2026,notice,,multiple_choice,1.0,1.0,high,combined_candidates,False,,False,I found more than one possible answer. Please choose the most suitable one.,
+2026-05-07T19:51:51,public holiday 2026,PUBLIC HOLIDAY 2026,notice,,multiple_choice,1.0,1.0,high,combined_candidates,False,,False,I found more than one possible answer. Please choose the most suitable one.,
+2026-05-07T19:52:09,new bee 1st day,New Bee 1st day Check List,training,,sop,1.0,1.0,high,matched_title_show_all_first,False,,False,"I found this title: New Bee 1st day Check List.
+
+Please check whether this is the correct topic.
+
+Here are all the steps for New Bee 1st day Check List.
+
+After reading, you can ask me for a specific part, for example:
+- step 5
+- step 3 to step 7
+- show picture
+- show all",
+2026-05-07T20:00:30,kiosk opening,JHKC Kiosk Opening,sop,,sop,1.0,1.0,high,matched_title_show_all_first,False,,False,"I found this title: JHKC Kiosk Opening.
+
+Please check whether this is the correct topic.
+
+Here are all the steps for JHKC Kiosk Opening.
+
+After reading, you can ask me for a specific part, for example:
+- step 5
+- step 3 to step 7
+- show picture
+- show all",
+2026-05-07T20:00:36,step 5,JHKC Kiosk Opening,sop,,sop,0.96,0.96,high,context_step,False,,False,Got it — this is Step 5 for JHKC Kiosk Opening.,
+2026-05-07T20:00:42,step 3 to step 7,JHKC Kiosk Opening,sop,,sop,0.95,0.95,high,context_step_range,False,,False,Got it — here are Steps 3 to 7 for JHKC Kiosk Opening.,
+2026-05-07T20:00:50,show picture,JHKC Kiosk Opening,sop,,sop,0.95,0.95,high,context_picture,False,,False,Here are the steps with pictures for JHKC Kiosk Opening.,
+2026-05-07T20:01:02,show all,JHKC Kiosk Opening,sop,,sop,0.95,0.95,high,context_show_all,False,,False,Here is the full SOP / checklist for JHKC Kiosk Opening.,
+2026-05-07T20:01:12,kiosk opening,JHKC Kiosk Opening,sop,,sop,1.0,1.0,high,matched_title_show_all_first,False,,False,"I found this title: JHKC Kiosk Opening.
+
+Please check whether this is the correct topic.
+
+Here are all the steps for JHKC Kiosk Opening.
+
+After reading, you can ask me for a specific part, for example:
+- step 5
+- step 3 to step 7
+- show picture
+- show all",
+2026-05-07T20:01:27,holiday,PUBLIC HOLIDAY 2026,notice,,text,1.0,1.0,high,matched_text_topic,False,,False,Sure — here’s the information for PUBLIC HOLIDAY 2026.,
+2026-05-07T20:01:39,golden passion honey,Golden Passion Honey (New Product),product,,text,1.0,1.0,high,matched_text_topic,False,,False,Sure — here’s the information for Golden Passion Honey (New Product).,
+2026-05-07T20:01:58,bee point policy,Bee Point Policy – Crew Member Guideline,notice,,text,1.0,1.0,high,matched_text_topic,False,,False,Sure — here’s the information for Bee Point Policy – Crew Member Guideline.,
+2026-05-07T20:02:05,new bee 1st day,New Bee 1st day Check List,training,,sop,1.0,1.0,high,matched_title_show_all_first,False,,False,"I found this title: New Bee 1st day Check List.
+
+Please check whether this is the correct topic.
+
+Here are all the steps for New Bee 1st day Check List.
+
+After reading, you can ask me for a specific part, for example:
+- step 5
+- step 3 to step 7
+- show picture
+- show all",
+2026-05-07T20:02:11,step 6,New Bee 1st day Check List,training,,sop,0.96,0.96,high,context_step,False,,False,Got it — this is Step 6 for New Bee 1st day Check List.,
+2026-05-07T20:02:23,asdfgh,,,,text,0.78,0.78,medium,ai,False,,False,"I’m currently helping you with JHKC Kiosk Opening.
+Tell me what you need next — for example:
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture
+- show all
+
+If you want another topic, just type it directly, like promotion or public holiday.",
+2026-05-07T20:02:51,qwertyui,,,,text,1.0,1.0,high,team_lead,False,,False,Please ask question related to Jungle House. Thank you.,
+2026-05-07T20:03:30,asdfgh,,,,text,0.78,0.78,medium,ai,False,,False,"I’m currently helping you with JHKC Kiosk Opening.
+Tell me what you need next — for example:
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture
+- show all
+
+If you want another topic, just type it directly, like promotion or public holiday.",
+2026-05-07T20:04:31,promotion,,,,text,0.85,0.85,medium,broad_topic_clarification,True,"Which promotion information do you need?
+
+1. Promotion
+2. Win the Heart Gift Guide
+3. Bee Green 15",False,"Which promotion information do you need?
+
+1. Promotion
+2. Win the Heart Gift Guide
+3. Bee Green 15",
+2026-05-07T20:04:38,product,,,,text,0.85,0.85,medium,broad_topic_clarification,True,"Which product information do you need?
+
+1. Golden Passion Honey
+2. New packaging price
+3. Purple lavender out of stock
+4. Free wooden stirrer
+5. Honey juice customer answer",False,"Which product information do you need?
+
+1. Golden Passion Honey
+2. New packaging price
+3. Purple lavender out of stock
+4. Free wooden stirrer
+5. Honey juice customer answer",
+2026-05-07T20:04:51,sop,,,,text,0.85,0.85,medium,broad_topic_clarification,True,"Which SOP/checklist do you need?
+
+You can ask for:
+- kiosk opening
+- kiosk closing
+- shopify opening
+- shopify closing
+- roadshow opening
+- roadshow closing
+- receipt printer",False,"Which SOP/checklist do you need?
+
+You can ask for:
+- kiosk opening
+- kiosk closing
+- shopify opening
+- shopify closing
+- roadshow opening
+- roadshow closing
+- receipt printer",
+2026-05-07T20:05:49,kiosk opening,JHKC Kiosk Opening,sop,,sop,1.0,1.0,high,matched_title_show_all_first,False,,False,"I found this title: JHKC Kiosk Opening.
+
+Please check whether this is the correct topic.
+
+Here are all the steps for JHKC Kiosk Opening.
+
+After reading, you can ask me for a specific part, for example:
+- step 5
+- step 3 to step 7
+- show picture
+- show all",
+2026-05-07T20:05:56,step 99,JHKC Kiosk Opening,sop,,text,0.78,0.78,medium,context_guidance,False,,False,"I’m currently helping you with JHKC Kiosk Opening.
+Tell me what you need next — for example:
+- step 3
+- step 2 to step 5
+- stocktake section
+- show picture
+- show all
+
+If you want another topic, just type it directly, like promotion or public holiday.",
+2026-05-07T20:30:04,kiosk opening,JHKC Kiosk Opening,sop,,sop,1.0,1.0,high,matched_title_show_all_first,False,,False,"I found JHKC Kiosk Opening. If this is the correct title, here are all the steps first.
+
+This topic has Step 1 to Step 23.
+
+After reading, you can ask for a specific part, for example:
+- step 1
+- step 2 to step 4
+- show picture",
+2026-05-07T20:30:12,step 5,JHKC Kiosk Opening,sop,,sop,0.96,0.96,high,context_step,False,,False,Got it — this is Step 5 for JHKC Kiosk Opening.,
+2026-05-07T20:30:19,step 99,JHKC Kiosk Opening,sop,,text,0.88,0.88,medium,context_step_out_of_bounds,False,,False,"I found JHKC Kiosk Opening, but that step is outside the available range.
+
+This topic only has Step 1 to Step 23.
+Please ask for a valid step, for example:
+- step 1
+- step 2 to step 4
+- show all",
+2026-05-07T20:30:32,holiday,PUBLIC HOLIDAY 2026,notice,,text,1.0,1.0,high,matched_text_topic,False,,False,Sure — here’s the information for PUBLIC HOLIDAY 2026.,
+2026-05-07T20:30:42,product,,,,text,0.85,0.85,medium,broad_topic_clarification,False,,False,"Which product information do you need?
+
+1. Golden Passion Honey
+2. New packaging price
+3. Purple lavender out of stock
+4. Free wooden stirrer
+5. Honey juice customer answer",
+2026-05-07T20:31:09,qwertyui,,,,text,1.0,1.0,high,team_lead,False,,False,Please ask question related to Jungle House. Thank you.,
+2026-05-07T20:32:22,asdfgh,,,,text,1.0,1.0,high,team_lead,False,,False,Please ask question related to Jungle House. Thank you.,
+2026-05-07T20:32:34,holiday,PUBLIC HOLIDAY 2026,notice,,text,1.0,1.0,high,matched_text_topic,False,,False,Sure — here’s the information for PUBLIC HOLIDAY 2026.,
+2026-05-07T20:32:42,public,PUBLIC HOLIDAY 2026,notice,,text,0.76,0.76,medium,matched_text_topic,False,,False,Sure — here’s the information for PUBLIC HOLIDAY 2026.,
+2026-05-07T20:33:16,kiosk opening,JHKC Kiosk Opening,sop,,sop,1.0,1.0,high,matched_title_show_all_first,False,,False,"I found JHKC Kiosk Opening. If this is the correct title, here are all the steps first.
+
+This topic has Step 1 to Step 23.
+
+After reading, you can ask for a specific part, for example:
+- step 1
+- step 2 to step 4
+- show picture",
+2026-05-07T20:33:25,holiday,PUBLIC HOLIDAY 2026,notice,,text,1.0,1.0,high,matched_text_topic,False,,False,Sure — here’s the information for PUBLIC HOLIDAY 2026.,
+2026-05-07T20:33:35,golden passion honey,Golden Passion Honey (New Product),product,,text,1.0,1.0,high,matched_text_topic,False,,False,Sure — here’s the information for Golden Passion Honey (New Product).,
+2026-05-07T20:33:43,promotion,,,,text,0.85,0.85,medium,broad_topic_clarification,False,,False,"Which promotion information do you need?
+
+1. Promotion
+2. Win the Heart Gift Guide
+3. Bee Green 15",
+2026-05-07T20:33:53,Win the Heart Gift Guide,Win the Heart Gift Guide,promotion,,text,1.0,1.0,high,matched_text_topic,False,,False,Sure — here’s the information for Win the Heart Gift Guide.,
+2026-05-07T20:34:02,Bee Green 15,Bee Green 15,promotion,,text,1.0,1.0,high,matched_text_topic,False,,False,Sure — here’s the information for Bee Green 15.,

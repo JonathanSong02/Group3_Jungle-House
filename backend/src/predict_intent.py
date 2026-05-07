@@ -50,6 +50,48 @@ def normalize_text(text: str) -> str:
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
+def is_keyboard_or_nonsense_input(text: str) -> bool:
+    q = normalize_text(text).lower()
+
+    if not q:
+        return False
+
+    safe_short = {"hi", "hello", "hey", "ok", "okay", "thanks", "thank you"}
+    if q in safe_short:
+        return False
+
+    valid_keywords = {
+        "kiosk", "opening", "closing", "sop", "checklist", "roadshow", "shopify",
+        "printer", "promotion", "promo", "product", "honey", "holiday", "policy",
+        "notice", "training", "onboarding", "bee", "golden", "passion", "cashless",
+        "chiller", "badge", "mask", "step", "picture", "image", "show", "all",
+        "public", "staff", "customer", "receipt", "price", "packaging"
+    }
+
+    if any(keyword in q for keyword in valid_keywords):
+        return False
+
+    if not re.search(r"[a-z]", q):
+        return True
+
+    keyboard_patterns = [
+        "asdf", "sdfg", "dfgh", "fghj", "qwer", "wert", "erty",
+        "rtyu", "tyui", "yuio", "zxcv", "xcvb", "cvbn"
+    ]
+    if any(pattern in q for pattern in keyboard_patterns):
+        return True
+
+    words = re.findall(r"[a-z]+", q)
+    if len(words) == 1 and len(words[0]) >= 5:
+        letters = re.findall(r"[a-z]", words[0])
+        vowels = re.findall(r"[aeiou]", words[0])
+        if not any(keyword in words[0] for keyword in valid_keywords):
+            if len(vowels) / max(len(letters), 1) < 0.35:
+                return True
+            return True
+
+    return False
+
 
 COMMON_TYPO_MAP = {
     "opning": "opening",
@@ -1179,6 +1221,20 @@ def should_clear_context(question: str, context: dict) -> bool:
         if normalize_lower(best_title) != current_title:
             return True
 
+    explicit_new_topic_words = {
+        "product", "products", "promotion", "promo", "holiday", "public holiday",
+        "notice", "policy", "training", "onboarding", "new bee", "opening",
+        "closing", "sop", "checklist", "check list", "sales"
+    }
+    if current_title and q in explicit_new_topic_words:
+        return True
+
+    if current_title and contains_any(q, [
+        "public holiday", "latest promotion", "golden passion", "new packaging",
+        "bee point", "cashless", "dress code", "ot submission", "new bee"
+    ]):
+        return True
+
     # Short follow-up words should stay in current topic
     short_follow_up_words = {
         "show all", "all", "picture", "pictures", "image", "images",
@@ -1189,6 +1245,43 @@ def should_clear_context(question: str, context: dict) -> bool:
 
     return False
 
+
+
+
+def is_context_follow_up(question: str, context: Optional[dict] = None) -> bool:
+    q = normalize_lower(question)
+    context = normalize_context(context or {})
+
+    if not q or not context.get("title"):
+        return False
+
+    if (
+        wants_show_all(q)
+        or wants_picture(q)
+        or wants_next_step(q)
+        or extract_step_number(q) is not None
+        or extract_step_range(q) is not None
+    ):
+        return True
+
+    short_follow_ups = {
+        "show all", "all", "picture", "pictures", "image", "images",
+        "photo", "photos", "next", "next step", "show picture", "show image"
+    }
+    if q in short_follow_ups:
+        return True
+
+    title = safe_str(context.get("title"))
+    title_df = KNOWLEDGE_DF[KNOWLEDGE_DF["title"] == title].copy()
+    if not title_df.empty:
+        steps = build_steps(title_df)
+        available_sections = sorted(
+            set([safe_str(x["section"]) for x in steps if safe_str(x.get("section"))])
+        )
+        if detect_section(q, available_sections):
+            return True
+
+    return False
 
 # =========================================================
 # IMAGE HELPERS
@@ -1533,46 +1626,23 @@ def find_steps_in_range(steps: list[dict], start_step: int, end_step: int) -> li
     ]
 
 
-def get_step_bounds(steps: list[dict]) -> tuple[Optional[int], Optional[int]]:
-    step_numbers = []
-    for step in steps:
-        try:
-            step_numbers.append(int(step.get("step_number", -1)))
-        except Exception:
-            continue
-
-    step_numbers = [number for number in step_numbers if number > 0]
-
-    if not step_numbers:
-        return None, None
-
-    return min(step_numbers), max(step_numbers)
-
-
-def invalid_step_response(
-    title: str,
-    category: str,
-    requested_text: str,
-    steps: list[dict],
-    score: float,
-    source: str,
-) -> dict:
-    first_step, last_step = get_step_bounds(steps)
-
-    if first_step is None or last_step is None:
+def build_step_out_of_range_response(title: str, category: str, steps: list[dict], source: str) -> dict:
+    if steps:
+        step_numbers = [int(step.get("step_number", 0) or 0) for step in steps]
+        min_step = min(step_numbers)
+        max_step = max(step_numbers)
         reply = (
-            f"I found {title}, but no step data is available yet. "
-            f"Please check the knowledge base or escalate to team lead."
+            f"I found {title}, but that step is outside the available range.\n\n"
+            f"This topic only has Step {min_step} to Step {max_step}.\n"
+            f"Please ask for a valid step, for example:\n"
+            f"- step {min_step}\n"
+            f"- step {min(min_step + 1, max_step)} to step {min(min_step + 3, max_step)}\n"
+            f"- show all"
         )
     else:
         reply = (
-            f"I found {title}, but {requested_text} is outside the available steps.\n\n"
-            f"This topic only has Step {first_step} to Step {last_step}.\n\n"
-            f"Please ask again with a valid step or range.\n"
-            f"Examples:\n"
-            f"- step {first_step}\n"
-            f"- step {last_step}\n"
-            f"- step {first_step} to step {last_step}"
+            f"I found {title}, but there are no numbered steps available for this topic.\n"
+            f"Please ask to show all or choose another topic."
         )
 
     return build_response(
@@ -1582,165 +1652,11 @@ def invalid_step_response(
         category=category,
         answer=reply,
         steps=[],
-        score=score,
+        score=0.88,
         source=source,
-        fallback=True,
         escalation_ready=False,
         context={"title": title, "category": category, "unclear_count": 0},
     )
-
-
-def range_limit_message(title: str, requested_start: int, requested_end: int, available_end: int) -> str:
-    return (
-        f"I found {title}, but this topic only has steps until Step {available_end}.\n\n"
-        f"You requested Steps {requested_start} to {requested_end}, so I can only show the available part below."
-    )
-
-
-def missing_step_topic_response(question: str) -> dict:
-    reply = (
-        "Which SOP or checklist is this step for?\n\n"
-        "Please include the topic name together with the step number.\n"
-        "Examples:\n"
-        "- step 2 for kiosk opening\n"
-        "- step 10 to step 23 for kiosk opening\n"
-        "- step 3 for shopify opening"
-    )
-
-    return build_response(
-        response_type="text",
-        reply=reply,
-        answer=reply,
-        steps=[],
-        score=0.55,
-        source="step_request_missing_topic",
-        fallback=True,
-        escalation_ready=False,
-        context={"unclear_count": 0},
-    )
-
-
-def step_prompt_response(
-    title: str,
-    category: str,
-    steps: list[dict],
-    score: float,
-    source: str,
-    available_sections: Optional[list[str]] = None,
-) -> dict:
-    first_step, last_step = get_step_bounds(steps)
-    available_sections = available_sections or []
-
-    step_limit_text = ""
-    if first_step is not None and last_step is not None:
-        step_limit_text = f"\nThis topic has Step {first_step} to Step {last_step}."
-
-    available_sections_text = ""
-    if available_sections:
-        available_sections_text = (
-            "\n\nAvailable sections:\n"
-            + "\n".join([f"- {section_name}" for section_name in available_sections])
-        )
-
-    reply = (
-        f"I found {title}.{step_limit_text}\n\n"
-        f"Which part do you need? Please ask for a specific step, range, section, picture, or ask to show all.\n\n"
-        f"Examples:\n"
-        f"- step 2\n"
-        f"- step 3 to step 7\n"
-        f"- show picture\n"
-        f"- show all"
-        f"{available_sections_text}"
-    )
-
-    return build_response(
-        response_type="text",
-        reply=reply,
-        title=title,
-        category=category,
-        answer=reply,
-        steps=[],
-        score=score,
-        source=source,
-        fallback=False,
-        escalation_ready=False,
-        context={"title": title, "category": category, "unclear_count": 0},
-    )
-
-
-def answer_step_request(
-    question: str,
-    title: str,
-    category: str,
-    steps: list[dict],
-    score: float,
-    source_prefix: str,
-) -> Optional[dict]:
-    requested_range = extract_step_range(question)
-    if requested_range:
-        start_step, end_step = requested_range
-        first_step, last_step = get_step_bounds(steps)
-        matched_steps = find_steps_in_range(steps, start_step, end_step)
-
-        if matched_steps:
-            reply = f"Got it — here are Steps {start_step} to {end_step} for {title}."
-
-            if last_step is not None and end_step > last_step:
-                reply = range_limit_message(title, start_step, end_step, last_step)
-
-            return build_response(
-                response_type="sop",
-                reply=reply,
-                title=title,
-                category=category,
-                answer=format_full_answer(title, matched_steps),
-                steps=matched_steps,
-                score=score,
-                source=f"{source_prefix}_step_range_limited" if last_step is not None and end_step > last_step else f"{source_prefix}_step_range",
-                context={"title": title, "category": category, "unclear_count": 0},
-            )
-
-        return invalid_step_response(
-            title=title,
-            category=category,
-            requested_text=f"Steps {start_step} to {end_step}",
-            steps=steps,
-            score=0.35,
-            source=f"{source_prefix}_step_range_out_of_bounds",
-        )
-
-    requested_step = extract_step_number(question)
-    if requested_step is not None:
-        step = find_step(steps, requested_step)
-        if step:
-            return build_response(
-                response_type="sop",
-                reply=f"Got it — this is Step {requested_step} for {title}.",
-                title=title,
-                category=category,
-                section=step.get("section"),
-                answer=format_full_answer(title, [step]),
-                steps=[step],
-                score=score,
-                source=f"{source_prefix}_step",
-                context={
-                    "title": title,
-                    "category": category,
-                    "section": step.get("section"),
-                    "unclear_count": 0,
-                },
-            )
-
-        return invalid_step_response(
-            title=title,
-            category=category,
-            requested_text=f"Step {requested_step}",
-            steps=steps,
-            score=0.35,
-            source=f"{source_prefix}_step_out_of_bounds",
-        )
-
-    return None
 
 
 def filter_steps_by_section(steps: list[dict], section_name: str) -> list[dict]:
@@ -1954,16 +1870,50 @@ def answer_from_context(question: str, context: dict) -> Optional[dict]:
 
     steps = build_steps(title_df)
 
-    step_request_answer = answer_step_request(
-        question=question,
-        title=title,
-        category=category,
-        steps=steps,
-        score=0.96,
-        source_prefix="context",
-    )
-    if step_request_answer is not None:
-        return step_request_answer
+    requested_range = extract_step_range(question)
+    if requested_range:
+        start_step, end_step = requested_range
+        matched_steps = find_steps_in_range(steps, start_step, end_step)
+        if matched_steps:
+            return build_response(
+                response_type="sop",
+                reply=f"Got it — here are Steps {start_step} to {end_step} for {title}.",
+                title=title,
+                category=category,
+                answer=format_full_answer(title, matched_steps),
+                steps=matched_steps,
+                score=0.95,
+                source="context_step_range",
+                context={"title": title, "category": category, "unclear_count": 0},
+            )
+        return build_step_out_of_range_response(
+            title, category, steps, "context_step_range_out_of_bounds"
+        )
+
+    requested_step = extract_step_number(question)
+    if requested_step is not None:
+        step = find_step(steps, requested_step)
+        if step:
+            return build_response(
+                response_type="sop",
+                reply=f"Got it — this is Step {requested_step} for {title}.",
+                title=title,
+                category=category,
+                section=step.get("section"),
+                answer=format_full_answer(title, [step]),
+                steps=[step],
+                score=0.96,
+                source="context_step",
+                context={
+                    "title": title,
+                    "category": category,
+                    "section": step.get("section"),
+                    "unclear_count": 0,
+                },
+            )
+        return build_step_out_of_range_response(
+            title, category, steps, "context_step_out_of_bounds"
+        )
 
     if wants_show_all(question):
         return build_response(
@@ -2128,6 +2078,26 @@ def get_model_answer(question: str, context: Optional[dict] = None) -> dict:
             fallback=True,
             context={"unclear_count": unclear_count},
         )
+
+    if is_keyboard_or_nonsense_input(question):
+        message = (
+            "I could not understand your question clearly.\n\n"
+            "Please ask again using a clearer Jungle House topic, for example:\n"
+            "- kiosk opening\n"
+            "- kiosk closing\n"
+            "- latest promotion\n"
+            "- public holiday\n"
+            "- new bee 1st day"
+        )
+        return build_response(
+            reply=message,
+            answer=message,
+            score=0.0,
+            source="invalid_input_first_attempt",
+            fallback=True,
+            escalation_ready=False,
+            context={"unclear_count": unclear_count + 1},
+        )
     
     confusion_type = detect_confusion_type(question)
 
@@ -2218,9 +2188,10 @@ def get_model_answer(question: str, context: Optional[dict] = None) -> dict:
         unclear_count = 0
 
     # -----------------------------
-    # 1. PRIORITIZE CONTEXT FIRST
+    # 1. USE CONTEXT ONLY FOR REAL FOLLOW-UP REQUESTS
+    # This prevents the AI from dwelling on the previous topic.
     # -----------------------------
-    if context.get("title"):
+    if context.get("title") and is_context_follow_up(question, context):
         context_answer = answer_from_context(question, context)
         if context_answer is not None:
             return context_answer
@@ -2298,17 +2269,52 @@ def get_model_answer(question: str, context: Optional[dict] = None) -> dict:
             set([safe_str(x["section"]) for x in steps if safe_str(x.get("section"))])
         )
 
-        # step range / single step
-        step_request_answer = answer_step_request(
-            question=question,
-            title=matched_title,
-            category=category,
-            steps=steps,
-            score=confidence,
-            source_prefix="matched_title",
-        )
-        if step_request_answer is not None:
-            return step_request_answer
+        # step range
+        requested_range = extract_step_range(question)
+        if requested_range:
+            start_step, end_step = requested_range
+            matched_steps = find_steps_in_range(steps, start_step, end_step)
+            if matched_steps:
+                return build_response(
+                    response_type="sop",
+                    reply=f"Got it — here are Steps {start_step} to {end_step} for {matched_title}.",
+                    title=matched_title,
+                    category=category,
+                    answer=format_full_answer(matched_title, matched_steps),
+                    steps=matched_steps,
+                    score=confidence,
+                    source="matched_title_step_range",
+                    context={"title": matched_title, "category": category, "unclear_count": 0},
+                )
+            return build_step_out_of_range_response(
+                matched_title, category, steps, "matched_title_step_range_out_of_bounds"
+            )
+
+        # single step
+        requested_step = extract_step_number(question)
+        if requested_step is not None:
+            step = find_step(steps, requested_step)
+            if step:
+                return build_response(
+                    response_type="sop",
+                    reply=f"Got it — this is Step {requested_step} for {matched_title}.",
+                    title=matched_title,
+                    category=category,
+                    section=step.get("section"),
+                    answer=format_full_answer(matched_title, [step]),
+                    steps=[step],
+                    score=confidence,
+                    source="matched_title_step",
+                    context={
+                        "title": matched_title,
+                        "category": category,
+                        "section": step.get("section"),
+                        "unclear_count": 0,
+                    },
+                )
+            return build_step_out_of_range_response(
+                matched_title, category, steps, "matched_title_step_out_of_bounds"
+            )
 
         # section
         selected_section = detect_section(question, available_sections)
@@ -2363,34 +2369,62 @@ def get_model_answer(question: str, context: Optional[dict] = None) -> dict:
                 context={"title": matched_title, "category": category, "unclear_count": 0},
             )
 
-        # Multi-row topic default: do not show all content immediately.
-        # This applies to SOP, training, promotion, product, notice, sales, and any future dataset.
-        # Ask staff to request a specific step, range, section, picture, or show all.
-        if steps and len(steps) > 1:
-            return step_prompt_response(
+        # text-based categories
+        if category in {"promotion", "product", "notice"}:
+            content_lines = [safe_str(x) for x in title_df["content"].tolist() if safe_str(x)]
+            summary = "\n".join(content_lines[:8]).strip() or f"I found {matched_title}."
+            return build_response(
+                reply=f"Sure — here’s the information for {matched_title}.",
                 title=matched_title,
                 category=category,
-                steps=steps,
+                answer=summary,
                 score=confidence,
-                source="matched_title_part_prompt",
-                available_sections=available_sections,
+                source="matched_text_topic",
+                context={"title": matched_title, "category": category, "unclear_count": 0},
             )
 
-        # Single-row text topic can be answered directly because there is no step/range to choose.
-        content_lines = [safe_str(x) for x in title_df["content"].tolist() if safe_str(x)]
-        summary = "\n".join(content_lines[:8]).strip() or f"I found {matched_title}."
-        return build_response(
-            reply=f"Sure — here’s the information for {matched_title}.",
-            title=matched_title,
-            category=category,
-            answer=summary,
-            score=confidence,
-            source="matched_single_topic",
-            context={"title": matched_title, "category": category, "unclear_count": 0},
-        )
+        # SOP / training default: confirm the matched title, show all steps directly,
+        # then ask whether staff need a specific step/range/section/picture.
+        if category in {"sop", "training"}:
+            available_sections_text = ""
+            if available_sections:
+                available_sections_text = (
+                    "\n\nAvailable sections:\n"
+                    + "\n".join([f"- {section_name}" for section_name in available_sections])
+                )
 
-    if extract_step_number(question) is not None or extract_step_range(question) is not None:
-        return missing_step_topic_response(question)
+            if steps:
+                min_step = min([int(step.get("step_number", 0) or 0) for step in steps])
+                max_step = max([int(step.get("step_number", 0) or 0) for step in steps])
+                reply = (
+                    f"I found {matched_title}. If this is the correct title, here are all the steps first.\n\n"
+                    f"This topic has Step {min_step} to Step {max_step}.\n\n"
+                    f"After reading, you can ask for a specific part, for example:\n"
+                    f"- step {min_step}\n"
+                    f"- step {min(min_step + 1, max_step)} to step {min(min_step + 3, max_step)}\n"
+                    f"- show picture"
+                    f"{available_sections_text}"
+                )
+                answer = reply + "\n\n" + format_full_answer(matched_title, steps)
+            else:
+                reply = (
+                    f"I found {matched_title}. If this is the correct title, here is the available information.\n\n"
+                    f"You can ask for a specific step, range, picture, or another topic."
+                    f"{available_sections_text}"
+                )
+                answer = reply
+
+            return build_response(
+                response_type="sop" if steps else "text",
+                reply=reply,
+                title=matched_title,
+                category=category,
+                answer=answer,
+                steps=steps,
+                score=confidence,
+                source="matched_title_show_all_first",
+                context={"title": matched_title, "category": category, "unclear_count": 0},
+            )
 
     # -----------------------------
     # 4. Broad category guidance
