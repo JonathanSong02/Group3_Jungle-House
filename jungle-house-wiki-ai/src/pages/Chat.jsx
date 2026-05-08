@@ -13,7 +13,11 @@ const starterMessages = [
   },
 ];
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:5000').replace(/\/$/, '');
+const API_BASE_URL = (
+  import.meta.env.VITE_API_BASE_URL ||
+  'https://group3jungle-house-production.up.railway.app'
+).replace(/\/$/, '');
+
 const CHAT_ENDPOINT = `${API_BASE_URL}/chat`;
 
 const CHAT_HISTORY_KEY = 'jh_ai_chat_history';
