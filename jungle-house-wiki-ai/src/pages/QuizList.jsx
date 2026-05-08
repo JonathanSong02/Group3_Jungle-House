@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import PageHeader from '../components/PageHeader';
+import api from '../services/api';
 
 export default function QuizList() {
   const [quizItems, setQuizItems] = useState([]);
@@ -19,8 +20,8 @@ export default function QuizList() {
     try {
       setLoadingQuizzes(true);
 
-      const res = await fetch('http://127.0.0.1:5000/api/quizzes');
-      const data = await res.json();
+      const response = await api.get('/quizzes');
+      const data = response.data;
 
       if (Array.isArray(data)) {
         const formattedQuizzes = data.map((quiz) => ({
@@ -30,7 +31,7 @@ export default function QuizList() {
           category: quiz.category,
           questionCount: quiz.question_count,
           lastScore: 0,
-          questions: []
+          questions: [],
         }));
 
         setQuizItems(formattedQuizzes);
@@ -49,8 +50,8 @@ export default function QuizList() {
     try {
       setLoadingQuestions(true);
 
-      const res = await fetch(`http://127.0.0.1:5000/api/quizzes/${quizId}/questions`);
-      const data = await res.json();
+      const response = await api.get(`/quizzes/${quizId}/questions`);
+      const data = response.data;
 
       if (Array.isArray(data)) {
         setQuizItems((prev) =>
@@ -58,7 +59,7 @@ export default function QuizList() {
             quiz.id === quizId
               ? {
                   ...quiz,
-                  questions: data
+                  questions: data,
                 }
               : quiz
           )
@@ -78,7 +79,6 @@ export default function QuizList() {
 
   const questions = activeQuiz?.questions || [];
   const currentQuestion = questions[currentQuestionIndex];
-
   const totalQuestions = questions.length;
 
   const score = useMemo(() => {
@@ -201,27 +201,20 @@ export default function QuizList() {
 
       console.log('QUIZ RESULT SUBMIT PAYLOAD:', payload);
 
-      const res = await fetch(`http://127.0.0.1:5000/api/quizzes/${activeQuizId}/submit`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      });
-
-      const data = await res.json();
-
-      console.log('QUIZ RESULT SUBMIT RESPONSE:', data);
-
-      if (!res.ok) {
-        alert(data.message || 'Failed to save quiz result. Please check Flask terminal.');
-        return;
+      try {
+        const response = await api.post(`/quizzes/${activeQuizId}/submit`, payload);
+        console.log('QUIZ RESULT SUBMIT RESPONSE:', response.data);
+      } catch (submitError) {
+        console.warn(
+          'Quiz result save failed, but quiz will still show result:',
+          submitError
+        );
       }
 
       setSubmitted(true);
     } catch (err) {
-      console.error('Failed to save quiz result:', err);
-      alert('Failed to save quiz result. Please check Browser Console and Flask terminal.');
+      console.error('Failed to submit quiz:', err);
+      alert('Failed to submit quiz. Please check Browser Console.');
     }
   };
 
@@ -369,7 +362,10 @@ export default function QuizList() {
                     <div
                       className="quiz-progress-fill"
                       style={{
-                        width: totalQuestions > 0 ? `${((currentQuestionIndex + 1) / totalQuestions) * 100}%` : '0%',
+                        width:
+                          totalQuestions > 0
+                            ? `${((currentQuestionIndex + 1) / totalQuestions) * 100}%`
+                            : '0%',
                       }}
                     />
                   </div>
@@ -392,7 +388,7 @@ export default function QuizList() {
 
                       return (
                         <label
-                          key={option}
+                          key={`${currentQuestion.id}-${option}-${index}`}
                           className={`quiz-option ${isSelected ? 'selected' : ''}`}
                         >
                           <input
