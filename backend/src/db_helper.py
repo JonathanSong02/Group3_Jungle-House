@@ -1,3 +1,4 @@
+import os
 import mysql.connector
 
 
@@ -7,11 +8,11 @@ import mysql.connector
 
 def get_db_connection():
     return mysql.connector.connect(
-        host="shuttle.proxy.rlwy.net",
-        port=26909,
-        user="root",
-        password="zzUtzEvBsOnHpeUqaHCIJOdilqfoHxHI",
-        database="railway",
+        host=os.getenv("MYSQL_HOST"),
+        port=int(os.getenv("MYSQL_PORT", 3306)),
+        user=os.getenv("MYSQL_USER"),
+        password=os.getenv("MYSQL_PASSWORD"),
+        database=os.getenv("MYSQL_DATABASE"),
     )
 
 
