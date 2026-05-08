@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
+import api from '../api';
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -18,19 +19,21 @@ export default function Dashboard() {
         setLoading(true);
         setError('');
 
-        const response = await fetch('http://127.0.0.1:5000/api/dashboard');
-        const data = await response.json();
-
-        if (!response.ok) {
-          throw new Error(data.error || 'Failed to load dashboard.');
-        }
+        const response = await api.get('/dashboard');
+        const data = response.data;
 
         setStats(data.stats || []);
         setNotifications(data.notifications || []);
         setActivities(data.activities || []);
         setAi(data.ai || { accuracy: '0%' });
       } catch (err) {
-        setError(err.message || 'Unable to load dashboard.');
+        console.error('Dashboard fetch error:', err);
+        setError(
+          err.response?.data?.error ||
+          err.response?.data?.message ||
+          err.message ||
+          'Unable to load dashboard.'
+        );
       } finally {
         setLoading(false);
       }
@@ -101,7 +104,7 @@ export default function Dashboard() {
                     <li key={item.id}>
                       <strong>{item.title}</strong>
                       <br />
-                      <span className="muted">{item.message}</span>
+                      <span className="muted">{item.detail || item.message}</span>
                     </li>
                   ))}
                 </ul>
