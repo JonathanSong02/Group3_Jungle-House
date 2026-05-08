@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
-import api from '../api';
+import api from '../services/api';
 
 export default function Dashboard() {
   const navigate = useNavigate();
