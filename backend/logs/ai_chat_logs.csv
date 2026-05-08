@@ -1466,3 +1466,15 @@ After reading, you can ask for a specific part, for example:
 3. Bee Green 15",
 2026-05-07T20:33:53,Win the Heart Gift Guide,Win the Heart Gift Guide,promotion,,text,1.0,1.0,high,matched_text_topic,False,,False,Sure — here’s the information for Win the Heart Gift Guide.,
 2026-05-07T20:34:02,Bee Green 15,Bee Green 15,promotion,,text,1.0,1.0,high,matched_text_topic,False,,False,Sure — here’s the information for Bee Green 15.,
+2026-05-08T10:05:37,Babab,,,,text,0.0,0.0,low,fallback,True,Please escalate this question to team lead.,True,No confident answer. Escalate to team lead.,
+2026-05-08T10:06:33,Baba],,,,text,0.0,0.0,low,fallback,True,Please escalate this question to team lead.,True,No confident answer. Escalate to team lead.,
+2026-05-08T10:06:41,Babab,,,,text,1.0,1.0,high,team_lead,False,,False,Please assist to ask JH relevant question,
+2026-05-08T10:07:02,Kiosk opening,JHKC Kiosk Opening,sop,,sop,1.0,1.0,high,matched_title_show_all_first,False,,False,"I found JHKC Kiosk Opening. If this is the correct title, here are all the steps first.
+
+This topic has Step 1 to Step 23.
+
+After reading, you can ask for a specific part, for example:
+- step 1
+- step 2 to step 4
+- show picture",
+2026-05-08T10:07:18,step 1 - 2,JHKC Kiosk Opening,sop,,sop,0.95,0.95,high,context_step_range,False,,False,Got it — here are Steps 1 to 2 for JHKC Kiosk Opening.,
