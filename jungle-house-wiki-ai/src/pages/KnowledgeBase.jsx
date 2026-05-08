@@ -1,6 +1,7 @@
 import { useMemo, useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
+import api from '../services/api';
 
 const categories = ['All', 'PRODUCT', 'SOP', 'SALES'];
 
@@ -8,18 +9,38 @@ export default function KnowledgeBase() {
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [articles, setArticles] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    fetch('http://127.0.0.1:5000/api/articles')
-      .then((res) => res.json())
-      .then((data) => setArticles(data))
-      .catch((err) => console.error('Fetch error:', err));
+    const fetchArticles = async () => {
+      try {
+        setLoading(true);
+        setError('');
+
+        const response = await api.get('/articles');
+        setArticles(Array.isArray(response.data) ? response.data : []);
+      } catch (err) {
+        console.error('Fetch articles error:', err);
+        setError(
+          err.response?.data?.message ||
+          err.message ||
+          'Failed to load knowledge base.'
+        );
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchArticles();
   }, []);
 
   const filteredArticles = useMemo(() => {
     return articles.filter((article) => {
+      const articleCategory = String(article.category || '').toUpperCase();
+
       const categoryMatch =
-        selectedCategory === 'All' || article.category === selectedCategory;
+        selectedCategory === 'All' || articleCategory === selectedCategory;
 
       const text = `${article.title || ''} ${article.content || ''}`.toLowerCase();
       const searchMatch = text.includes(search.toLowerCase());
@@ -53,6 +74,13 @@ export default function KnowledgeBase() {
           ))}
         </select>
       </div>
+
+      {loading ? <p className="muted">Loading knowledge base...</p> : null}
+      {error ? <p className="error-text">{error}</p> : null}
+
+      {!loading && !error && filteredArticles.length === 0 ? (
+        <p className="muted">No articles found.</p>
+      ) : null}
 
       <div className="cards-grid">
         {filteredArticles.map((article) => (
