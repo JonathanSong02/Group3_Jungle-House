@@ -17,6 +17,8 @@ export default function EditArticle() {
     content: '',
   });
 
+  const [attachment, setAttachment] = useState(null);
+  const [currentAttachment, setCurrentAttachment] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
@@ -37,6 +39,8 @@ export default function EditArticle() {
           link: article.link || '',
           content: article.content || '',
         });
+
+        setCurrentAttachment(article.attachment_url || '');
       } catch (error) {
         console.error('Fetch article error:', error);
         setMessage(error.response?.data?.message || 'Failed to load article.');
@@ -57,6 +61,17 @@ export default function EditArticle() {
     }));
   };
 
+  const handleFileChange = (event) => {
+    const file = event.target.files[0];
+
+    if (!file) {
+      setAttachment(null);
+      return;
+    }
+
+    setAttachment(file);
+  };
+
   const handleSubmit = async (event) => {
     event.preventDefault();
 
@@ -69,12 +84,21 @@ export default function EditArticle() {
       setSaving(true);
       setMessage('');
 
-      await api.put(`/articles/${id}`, {
-        title: form.title.trim(),
-        category: form.category.trim(),
-        sub_category: form.sub_category.trim(),
-        link: form.link.trim(),
-        content: form.content.trim(),
+      const formData = new FormData();
+      formData.append('title', form.title.trim());
+      formData.append('category', form.category.trim());
+      formData.append('sub_category', form.sub_category.trim());
+      formData.append('link', form.link.trim());
+      formData.append('content', form.content.trim());
+
+      if (attachment) {
+        formData.append('attachment', attachment);
+      }
+
+      await api.put(`/articles/${id}`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
       });
 
       navigate('/admin/content');
@@ -150,6 +174,27 @@ export default function EditArticle() {
                 value={form.link}
                 onChange={handleChange}
               />
+            </label>
+
+            <label className="full-width">
+              Attach / Replace Image or File
+              <input
+                type="file"
+                accept="image/*,.pdf,.doc,.docx"
+                onChange={handleFileChange}
+              />
+
+              {currentAttachment && !attachment && (
+                <p className="muted top-gap-xs">
+                  Current attachment: {currentAttachment.split('/').pop()}
+                </p>
+              )}
+
+              {attachment && (
+                <p className="muted top-gap-xs">
+                  New selected file: {attachment.name}
+                </p>
+              )}
             </label>
 
             <label className="full-width">

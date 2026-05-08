@@ -1,5 +1,8 @@
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
+import os
+import time
+from werkzeug.utils import secure_filename
 import mysql.connector
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
@@ -89,6 +92,36 @@ CORS(
     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"]
 )
+
+# =========================
+# FILE UPLOAD CONFIG
+# =========================
+UPLOAD_FOLDER = STATIC_DIR / "uploads" / "articles"
+UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
+
+ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp", "pdf", "doc", "docx"}
+
+def allowed_file(filename):
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def save_article_attachment(file):
+    if not file or file.filename == "":
+        return None, None
+
+    if not allowed_file(file.filename):
+        return None, None
+
+    filename = secure_filename(file.filename)
+    unique_filename = f"{int(time.time())}_{filename}"
+
+    file_path = UPLOAD_FOLDER / unique_filename
+    file.save(file_path)
+
+    attachment_url = f"/static/uploads/articles/{unique_filename}"
+    attachment_type = file.content_type
+
+    return attachment_url, attachment_type
 
 ESCALATION_MESSAGE = "No confident answer. Escalate to team lead."
 
@@ -2756,6 +2789,8 @@ def get_articles():
                 category,
                 sub_category,
                 link,
+                attachment_url,
+                attachment_type,
                 is_deleted,
                 deleted_at,
                 deleted_by
@@ -2786,60 +2821,75 @@ def get_articles():
 # =========================
 # Add Article ROUTES
 # =========================
-@app.route('/api/articles', methods=['POST'])
+@app.route("/api/articles", methods=["POST"])
 def add_article():
-    data = request.get_json()
-
-    title = data.get('title', '').strip()
-    category = data.get('category', '').strip()
-    sub_category = data.get('sub_category', '').strip()
-    link = data.get('link', '').strip()
-    content = data.get('content', '').strip()
-
-    if not title or not content:
-        return jsonify({'message': 'Title and content are required.'}), 400
-
-    conn = get_db_connection()
-
-    if conn is None:
-        return jsonify({'message': 'Database connection failed.'}), 500
-
-    cursor = conn.cursor(dictionary=True)
+    conn = None
+    cursor = None
 
     try:
+        title = request.form.get("title", "").strip()
+        category = request.form.get("category", "").strip()
+        sub_category = request.form.get("sub_category", "").strip()
+        link = request.form.get("link", "").strip()
+        content = request.form.get("content", "").strip()
+
+        if not title or not content:
+            return jsonify({"message": "Title and content are required."}), 400
+
+        attachment_url = None
+        attachment_type = None
+
+        if "attachment" in request.files:
+            file = request.files["attachment"]
+            attachment_url, attachment_type = save_article_attachment(file)
+
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
         cursor.execute("""
-            INSERT INTO wiki_article 
-            (title, content, category, link, sub_category)
-            VALUES (%s, %s, %s, %s, %s)
-        """, (title, content, category, link, sub_category))
+            INSERT INTO wiki_article
+            (
+                title,
+                content,
+                category,
+                sub_category,
+                link,
+                attachment_url,
+                attachment_type,
+                is_deleted
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, FALSE)
+        """, (
+            title,
+            content,
+            category,
+            sub_category,
+            link,
+            attachment_url,
+            attachment_type
+        ))
 
         conn.commit()
 
-        article_id = cursor.lastrowid
-        add_audit_log(
-            action="Added article",
-            module="Content Management",
-            description=f"Article added: {title}"
-        )
-
         return jsonify({
-            'message': 'Article added successfully.',
-            'article_id': article_id
+            "message": "Article added successfully.",
+            "article_id": cursor.lastrowid,
+            "attachment_url": attachment_url,
+            "attachment_type": attachment_type
         }), 201
 
     except Exception as error:
-        conn.rollback()
-        print('MYSQL ERROR /api/articles POST:', error)
-
+        print("ADD ARTICLE ERROR:", error)
         return jsonify({
-            'message': 'Failed to save article.',
-            'error': str(error)
+            "message": "Failed to save article.",
+            "error": str(error)
         }), 500
 
     finally:
-        cursor.close()
-        conn.close()
-
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 # =========================
 # Get Single Article ROUTES
@@ -2854,7 +2904,15 @@ def get_article_detail(article_id):
         cursor = conn.cursor(dictionary=True)
 
         cursor.execute("""
-            SELECT article_id, title, content, category, sub_category, link
+            SELECT 
+                article_id, 
+                title, 
+                content, 
+                category, 
+                sub_category, 
+                link,
+                attachment_url,
+                attachment_type
             FROM wiki_article
             WHERE article_id = %s
             AND is_deleted = FALSE
@@ -2888,13 +2946,14 @@ def get_article_detail(article_id):
 # =========================
 @app.route('/api/articles/<int:article_id>', methods=['PUT'])
 def edit_article(article_id):
-    data = request.get_json() or {}
+    title = request.form.get('title', '').strip()
+    category = request.form.get('category', '').strip()
+    sub_category = request.form.get('sub_category', '').strip()
+    link = request.form.get('link', '').strip()
+    content = request.form.get('content', '').strip()
 
-    title = data.get('title', '').strip()
-    category = data.get('category', '').strip()
-    sub_category = data.get('sub_category', '').strip()
-    link = data.get('link', '').strip()
-    content = data.get('content', '').strip()
+    attachment_file = request.files.get('attachment')
+    attachment_url, attachment_type = save_article_attachment(attachment_file)
 
     if not title or not content:
         return jsonify({'message': 'Title and content are required.'}), 400
@@ -2906,15 +2965,44 @@ def edit_article(article_id):
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
 
-        cursor.execute("""
-            UPDATE wiki_article
-            SET title = %s,
-                content = %s,
-                category = %s,
-                link = %s,
-                sub_category = %s
-            WHERE article_id = %s
-        """, (title, content, category, link, sub_category, article_id))
+        if attachment_url:
+            cursor.execute("""
+                UPDATE wiki_article
+                SET title = %s,
+                    content = %s,
+                    category = %s,
+                    link = %s,
+                    sub_category = %s,
+                    attachment_url = %s,
+                    attachment_type = %s
+                WHERE article_id = %s
+            """, (
+                title,
+                content,
+                category,
+                link,
+                sub_category,
+                attachment_url,
+                attachment_type,
+                article_id
+            ))
+        else:
+            cursor.execute("""
+                UPDATE wiki_article
+                SET title = %s,
+                    content = %s,
+                    category = %s,
+                    link = %s,
+                    sub_category = %s
+                WHERE article_id = %s
+            """, (
+                title,
+                content,
+                category,
+                link,
+                sub_category,
+                article_id
+            ))
 
         conn.commit()
 
@@ -2929,15 +3017,19 @@ def edit_article(article_id):
     except Exception as error:
         if conn:
             conn.rollback()
+
         print('MYSQL ERROR /api/articles PUT:', error)
-        return jsonify({'message': 'Failed to update article.', 'error': str(error)}), 500
+
+        return jsonify({
+            'message': 'Failed to update article.',
+            'error': str(error)
+        }), 500
 
     finally:
         if cursor:
             cursor.close()
         if conn:
             conn.close()
-
 
 # =========================
 # SOFT DELETE ARTICLE ROUTE

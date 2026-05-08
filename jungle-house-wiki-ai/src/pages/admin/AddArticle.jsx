@@ -16,6 +16,7 @@ export default function AddArticle() {
     content: '',
   });
 
+  const [attachment, setAttachment] = useState(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [preview, setPreview] = useState(false);
@@ -29,6 +30,17 @@ export default function AddArticle() {
     }));
   };
 
+  const handleFileChange = (event) => {
+    const file = event.target.files[0];
+
+    if (!file) {
+      setAttachment(null);
+      return;
+    }
+
+    setAttachment(file);
+  };
+
   const clearForm = () => {
     setForm({
       title: '',
@@ -37,6 +49,8 @@ export default function AddArticle() {
       link: '',
       content: '',
     });
+
+    setAttachment(null);
     setMessage('');
   };
 
@@ -57,12 +71,21 @@ export default function AddArticle() {
       setLoading(true);
       setMessage('');
 
-      await api.post('/articles', {
-        title: form.title.trim(),
-        category: form.category.trim(),
-        sub_category: form.sub_category.trim(),
-        link: form.link.trim(),
-        content: form.content.trim(),
+      const formData = new FormData();
+      formData.append('title', form.title.trim());
+      formData.append('category', form.category.trim());
+      formData.append('sub_category', form.sub_category.trim());
+      formData.append('link', form.link.trim());
+      formData.append('content', form.content.trim());
+
+      if (attachment) {
+        formData.append('attachment', attachment);
+      }
+
+      await api.post('/articles', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
       });
 
       navigate('/admin/content');
@@ -138,7 +161,7 @@ export default function AddArticle() {
                 name="sub_category"
                 value={form.sub_category}
                 onChange={handleChange}
-                placeholder="Example: Opening SOP"
+                placeholder="Example: Kiosk Opening"
               />
             </label>
 
@@ -148,8 +171,22 @@ export default function AddArticle() {
                 name="link"
                 value={form.link}
                 onChange={handleChange}
-                placeholder="Optional URL"
+                placeholder="Paste reference link if needed"
               />
+            </label>
+
+            <label className="full-width">
+              Attach Image / File
+              <input
+                type="file"
+                accept="image/*,.pdf,.doc,.docx"
+                onChange={handleFileChange}
+              />
+              {attachment && (
+                <p className="muted top-gap-xs">
+                  Selected file: {attachment.name}
+                </p>
+              )}
             </label>
 
             <label className="full-width">
@@ -158,56 +195,36 @@ export default function AddArticle() {
                 name="content"
                 value={form.content}
                 onChange={handleChange}
-                placeholder={`Example:
-
-Opening SOP - Spring
-
-Steps
-1. Clock in (TimeTec)
-2. Take photo of the covered fabric of booth and send to group.
-[IMAGE]
-3. Open covered fabric, fold it and put inside the box.`}
                 rows="18"
+                placeholder="Write or paste article content here..."
               />
             </label>
           </div>
 
-          <div className="row-between wrap-gap">
-            <div className="button-group">
-              <button
-                type="button"
-                className="secondary-btn"
-                onClick={() => setPreview((prev) => !prev)}
-              >
-                {preview ? 'Hide Preview' : 'Preview'}
-              </button>
+          <div className="button-group">
+            <button
+              type="button"
+              className="secondary-btn"
+              onClick={() => setPreview((prev) => !prev)}
+            >
+              {preview ? 'Hide Preview' : 'Preview'}
+            </button>
 
-              <button
-                type="button"
-                className="secondary-btn"
-                onClick={clearForm}
-              >
-                Clear
-              </button>
-            </div>
+            <button
+              type="button"
+              className="secondary-btn"
+              onClick={clearForm}
+            >
+              Clear
+            </button>
 
-            <div className="button-group">
-              <button
-                type="button"
-                className="secondary-btn"
-                onClick={() => navigate('/admin/content')}
-              >
-                Cancel
-              </button>
-
-              <button
-                type="submit"
-                className="primary-btn narrow-btn"
-                disabled={loading}
-              >
-                {loading ? 'Saving...' : 'Save Article'}
-              </button>
-            </div>
+            <button
+              type="submit"
+              className="primary-btn narrow-btn"
+              disabled={loading}
+            >
+              {loading ? 'Saving...' : 'Save Article'}
+            </button>
           </div>
         </form>
       </section>
@@ -215,20 +232,19 @@ Steps
       {preview && (
         <section className="card-like top-gap-sm">
           <p className="eyebrow">{form.category}</p>
-          <h2>{form.title || 'Untitled Article'}</h2>
-          <p className="muted">{form.sub_category || 'No sub category'}</p>
+          <h3>{form.title || 'Article Title Preview'}</h3>
 
-          {form.link && (
-            <p>
-              <a href={form.link} target="_blank" rel="noreferrer">
-                Open reference link
-              </a>
-            </p>
+          {form.sub_category && (
+            <p className="muted">Sub Category: {form.sub_category}</p>
           )}
 
-          <pre className="article-preview">
-            {form.content || 'No content yet.'}
-          </pre>
+          {attachment && (
+            <p className="muted">Attachment: {attachment.name}</p>
+          )}
+
+          <div className="article-preview">
+            <pre>{form.content || 'Article content preview will appear here.'}</pre>
+          </div>
         </section>
       )}
     </div>
