@@ -14,7 +14,6 @@ const starterMessages = [
 ];
 
 const API_BASE_URL = 'https://group3jungle-house-production.up.railway.app';
-
 const CHAT_ENDPOINT = `${API_BASE_URL}/api/chat`;
 
 const CHAT_HISTORY_KEY = 'jh_ai_chat_history';
@@ -236,6 +235,9 @@ function renderImages(imageUrls, labelPrefix = 'Image') {
         flexWrap: 'wrap',
         gap: '10px',
         marginTop: '10px',
+        maxWidth: '100%',
+        overflow: 'hidden',
+        alignItems: 'flex-start',
       }}
     >
       {imageUrls.map((imageUrl, imageIndex) => {
@@ -249,9 +251,12 @@ function renderImages(imageUrls, labelPrefix = 'Image') {
             style={{
               width: '100%',
               maxWidth: '260px',
-              borderRadius: '10px',
-              border: '1px solid #ccc',
+              maxHeight: '260px',
+              objectFit: 'contain',
+              borderRadius: '12px',
+              border: '1px solid #ddd',
               display: 'block',
+              backgroundColor: '#fff',
             }}
             onError={() => {
               console.log('Image failed to load:', finalImageUrl);
@@ -362,7 +367,10 @@ function buildAiMessage(data) {
   const backendMessage = data.message || '';
 
 
-  if (data.type === 'multiple_choice' && Array.isArray(data.options)) {
+  if (
+  (data.type === 'multiple_choice' || data.type === 'options') &&
+  Array.isArray(data.options)
+) {
     return {
       id: Date.now() + 1,
       sender: 'ai',
@@ -1047,13 +1055,68 @@ export default function Chat() {
         ];
 
         return (
-          <div
+          <button
+            type="button"
             key={`${option.source || 'option'}-${optionIndex}`}
+            onClick={() => {
+              const selectedMessage = {
+                id: Date.now() + optionIndex + 1,
+                sender: 'ai',
+                type: option.type || 'text',
+                text: option.reply || option.answer || '',
+                reply: option.reply || option.answer || '',
+                answer: option.answer || option.reply || '',
+                title: option.title || option.label || '',
+                category: option.category || '',
+                section: option.section || '',
+                steps: Array.isArray(option.steps) ? option.steps : [],
+                notes: Array.isArray(option.notes) ? option.notes : [],
+                context: {
+                  title: option.title || option.label || '',
+                  category: option.category || '',
+                  section: option.section || '',
+                  unclear_count: 0,
+                },
+                unclear_count: 0,
+                escalation_ready: false,
+                escalation_required: false,
+                confidence: Number(option.confidence || 0),
+                confidence_label: '',
+                source: option.source || 'selected_option',
+                fallback: false,
+                fallback_message: '',
+                message: option.reply || option.answer || '',
+              };
+
+              updateCurrentSessionMessages(
+                [...(activeSession?.messages || messages), selectedMessage],
+                option.title || option.label || 'Selected option'
+              );
+              addChatHistory(option.title || option.label || 'Selected option', selectedMessage);
+            }}
             style={{
-              border: '1px solid #e2c27a',
-              borderRadius: '14px',
-              padding: '14px',
-              backgroundColor: optionIndex === 0 ? '#fffaf0' : '#f8f9fa',
+              width: '100%',
+              textAlign: 'left',
+              border: '1px solid #e8c56b',
+              borderRadius: '18px',
+              padding: '16px 18px',
+              background:
+                optionIndex === 0
+                  ? 'linear-gradient(135deg, #fff8e8 0%, #ffffff 100%)'
+                  : 'linear-gradient(135deg, #ffffff 0%, #fffdf7 100%)',
+              cursor: 'pointer',
+              boxShadow: '0 6px 16px rgba(122, 92, 0, 0.08)',
+              transition: 'transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease',
+            }}
+            onMouseEnter={(event) => {
+              event.currentTarget.style.transform = 'translateY(-2px)';
+              event.currentTarget.style.boxShadow = '0 10px 22px rgba(122, 92, 0, 0.14)';
+              event.currentTarget.style.borderColor = '#d89b00';
+            }}
+            onMouseLeave={(event) => {
+              event.currentTarget.style.transform = 'translateY(0)';
+              event.currentTarget.style.boxShadow = '0 6px 16px rgba(122, 92, 0, 0.08)';
+              event.currentTarget.style.borderColor = '#e8c56b';
             }}
           >
             <div
@@ -1066,7 +1129,7 @@ export default function Chat() {
               }}
             >
               <h4 style={{ margin: 0 }}>
-                {option.label || `Option ${optionIndex + 1}`}
+                {option.label || option.title || `Option ${optionIndex + 1}`}
               </h4>
 
               <span
@@ -1082,64 +1145,19 @@ export default function Chat() {
               </span>
             </div>
 
-            {option.title ? (
-              <h4 style={{ marginBottom: '8px', color: '#7a5c00' }}>
-                {option.title}
-              </h4>
-            ) : null}
+            <p
+            style={{
+              margin: '8px 0 0',
+              color: '#8a6a12',
+              fontSize: '13px',
+              fontWeight: 600,
+            }}
+          >
+            View answer →
+          </p>
 
-            <p style={{ whiteSpace: 'pre-wrap', marginBottom: '10px' }}>
-              {removeImagePathsFromText(option.reply || option.answer || '')}
-            </p>
-
-            {Array.isArray(option.steps) && option.steps.length > 0 ? (
-              <div style={{ marginTop: '12px' }}>
-                {option.steps.map((step, stepIndex) => {
-                  const stepImages = getStepImages(step);
-
-                  return (
-                    <div
-                      key={`${step.step_number || stepIndex}-${stepIndex}`}
-                      style={{
-                        border: '1px solid #ddd',
-                        borderRadius: '12px',
-                        padding: '12px',
-                        marginBottom: '12px',
-                        backgroundColor: '#fff',
-                      }}
-                    >
-                      <h4 style={{ marginBottom: '8px' }}>
-                        Step {step.step_number || stepIndex + 1}
-                      </h4>
-
-                      {step.section ? (
-                        <p
-                          style={{
-                            marginBottom: '8px',
-                            fontWeight: '600',
-                            color: '#7a5c00',
-                          }}
-                        >
-                          Section: {step.section}
-                        </p>
-                      ) : null}
-
-                      <p style={{ whiteSpace: 'pre-wrap', marginBottom: '10px' }}>
-                        {removeImagePathsFromText(step.content)}
-                      </p>
-
-                      {renderImages(
-                        stepImages,
-                        `Option ${optionIndex + 1} step ${step.step_number || stepIndex + 1} image`
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            ) : null}
-
-            {renderImages(optionImages, `Option ${optionIndex + 1} image`)}
-          </div>
+            {false && renderImages(optionImages, `Option ${optionIndex + 1} image`)}
+          </button>
         );
       })}
     </div>

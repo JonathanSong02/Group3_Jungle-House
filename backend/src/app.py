@@ -13,6 +13,7 @@ import traceback
 from db_helper import (
     save_qa_to_db,
     search_similar_question,
+    search_similar_questions,
     create_escalation,
     resolve_escalation
 )
@@ -69,6 +70,8 @@ LOG_DIR = (BASE_DIR.parent / "logs").resolve()
 LOG_JSONL = LOG_DIR / "ai_chat_logs.jsonl"
 LOG_CSV = LOG_DIR / "ai_chat_logs.csv"
 TEST_REPORT_CSV = LOG_DIR / "ai_test_results.csv"
+ESCALATION_MESSAGE = "Please escalate this question to team lead."
+REAL_JH_TEST_QUESTIONS = []
 
 # Simple in-memory chat context for local prototype use.
 # This helps follow-up messages like "step 25" work even if the frontend
@@ -645,7 +648,8 @@ def log_request(question: str, result: dict | None = None, error: str | None = N
         payload = {
             "timestamp": timestamp,
             "question": question,
-            "title": result.get("title"),
+            "title": result.get("title") or result.get("question"),
+            "question": result.get("question"),
             "category": result.get("category"),
             "section": result.get("section"),
             "type": result.get("type", "text"),
@@ -703,7 +707,8 @@ def normalize_result(result, default_source="unknown"):
         return standardize_ai_response({
             "type": result.get("type", "text"),
             "category": result.get("category"),
-            "title": result.get("title"),
+            "title": result.get("title") or result.get("question"),
+            "question": result.get("question"),
             "section": result.get("section"),
             "reply": result.get("reply", result.get("answer", "No answer returned.")),
             "answer": result.get("answer", result.get("reply", "No answer returned.")),
@@ -845,6 +850,133 @@ def choose_final_result(model_result, retrieval_result):
         "escalation_required": True,
     })
 
+def extract_numbered_option_titles(text):
+    titles = []
+
+    for line in str(text or "").splitlines():
+        line = line.strip()
+
+        match = re.match(r"^\d+\.\s*(.+)$", line)
+        if match:
+            title = match.group(1).strip()
+            if title:
+                titles.append(title)
+
+    return titles
+
+
+def build_training_data_options_from_model_reply(model_result, context=None):
+    model_result = model_result or {}
+    context = normalize_context(context or {})
+
+    reply = model_result.get("reply") or model_result.get("answer") or ""
+    titles = extract_numbered_option_titles(reply)
+
+    options = []
+    seen = set()
+
+    for title in titles[:6]:
+        key = title.lower().strip()
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+
+        try:
+            detail_result = normalize_result(
+                call_model_answer(title, context=context),
+                default_source="pytorch_model"
+            )
+        except Exception:
+            detail_result = None
+
+        answer = ""
+        category = None
+        section = None
+        confidence = 0.0
+        option_type = "text"
+        steps = []
+        notes = []
+
+        if detail_result:
+            answer = detail_result.get("answer") or detail_result.get("reply") or ""
+            category = detail_result.get("category")
+            section = detail_result.get("section")
+            confidence = float(detail_result.get("confidence", detail_result.get("score", 0.0)) or 0.0)
+            option_type = detail_result.get("type", "text")
+            steps = detail_result.get("steps", [])
+            notes = detail_result.get("notes", [])
+
+        if not answer:
+            answer = f"Please ask about {title} for more details."
+
+        options.append({
+            "label": title,
+            "title": title,
+            "category": category,
+            "section": section,
+            "source": "training_data",
+            "confidence": confidence,
+            "reply": answer,
+            "answer": answer,
+            "type": option_type,
+            "steps": steps,
+            "notes": notes,
+        })
+
+    return options
+
+def build_answer_options(question, model_result=None, retrieval_result=None):
+    options = []
+    seen = set()
+
+    def add_option(result, source_label):
+        if not result:
+            return
+
+        title = (
+            result.get("title")
+            or result.get("question")
+            or result.get("category")
+            or ""
+        )
+
+        answer = result.get("answer") or result.get("reply") or ""
+
+        if not title or not answer:
+            return
+
+        key = str(title).lower().strip()
+
+        if key in seen:
+            return
+
+        seen.add(key)
+
+        options.append({
+            "label": title,
+            "title": title,
+            "category": result.get("category"),
+            "section": result.get("section"),
+            "source": result.get("source", source_label),
+            "confidence": float(result.get("confidence", result.get("score", 0.0)) or 0.0),
+            "reply": answer,
+            "answer": answer,
+            "type": result.get("type", "text"),
+            "steps": result.get("steps", []),
+            "notes": result.get("notes", [])
+        })
+
+    add_option(model_result, "training_data")
+    add_option(retrieval_result, "team_lead")
+
+    return sorted(
+        options,
+        key=lambda item: item.get("confidence", 0.0),
+        reverse=True
+    )[:6]
+
 def process_question(question, context=None):
     question = clean_question(question)
     context = normalize_context(context or {})
@@ -874,6 +1006,12 @@ def process_question(question, context=None):
 
     if retrieval_result:
         retrieval_result = normalize_result(retrieval_result, "database")
+
+    retrieval_options = search_similar_questions(question, team_lead_only=False, limit=5)
+    retrieval_options = [
+        normalize_result(item, "database")
+        for item in retrieval_options
+    ]
 
     model_result = None
 
@@ -922,9 +1060,94 @@ def process_question(question, context=None):
             "escalation_required": True,
         })
 
+    # Build selectable options from PyTorch training data and Team Lead/database data.
+    answer_options = []
+
+    model_source = str(model_result.get("source", "") if model_result else "")
+
+    # If PyTorch returns a broad numbered list, convert each numbered item into a clickable option.
+    if model_source in {
+        "broad_topic_clarification",
+        "category_choice",
+        "ambiguous_title_choice",
+    }:
+        answer_options.extend(
+            build_training_data_options_from_model_reply(model_result, context=context)
+        )
+    else:
+        answer_options.extend(
+            build_answer_options(question, model_result, None)
+        )
+
+    # Add the best Team Lead/database result.
+    answer_options.extend(
+        build_answer_options(question, None, retrieval_result)
+    )
+
+    for item in retrieval_options:
+        extra_options = build_answer_options(question, None, item)
+        answer_options.extend(extra_options)
+
+    # remove duplicates after adding multiple retrieval options
+    unique_options = []
+    seen_titles = set()
+
+    for option in answer_options:
+        title_key = str(option.get("title", "")).lower().strip()
+        if title_key and title_key not in seen_titles:
+            seen_titles.add(title_key)
+            unique_options.append(option)
+
+    def option_rank(item):
+        source = str(item.get("source", "")).lower()
+        title = str(item.get("title", item.get("label", ""))).lower()
+        question_text = question.lower()
+
+        team_lead_priority = 1 if source == "team_lead" else 0
+        exact_title_priority = 1 if question_text in title or title in question_text else 0
+
+        return (
+            team_lead_priority,
+            exact_title_priority,
+            item.get("confidence", 0.0),
+        )
+
+    answer_options = sorted(
+        unique_options,
+        key=option_rank,
+        reverse=True
+    )[:5]
+
+    # If the question is short / broad / keyword-like, show choices instead of one final answer.
+    keyword_question = len(question.split()) <= 3
+
+    if keyword_question and len(answer_options) >= 1:
+        return standardize_ai_response({
+            "question": question,
+            "type": "multiple_choice",
+            "category": None,
+            "title": None,
+            "section": None,
+            "reply": "I found a few possible answers. Please select one:",
+            "answer": "I found a few possible answers. Please select one:",
+            "purpose": None,
+            "steps": [],
+            "notes": [],
+            "score": answer_options[0].get("confidence", 0.0),
+            "confidence": answer_options[0].get("confidence", 0.0),
+            "confidence_label": get_confidence_label(answer_options[0].get("confidence", 0.0)),
+            "source": "suggestion_options",
+            "context": {},
+            "fallback": False,
+            "fallback_message": "",
+            "escalation_ready": False,
+            "escalation_required": False,
+            "options": answer_options,
+        }), 200
+
     # Prefer training data / PyTorch model result for normal valid questions.
     # Retrieved Team Lead answers are used mainly when the model cannot answer confidently.
-    final_result = choose_final_result(model_result, retrieval_result)
+    final_result = choose_final_result(model_result, retrieval_result)  
 
     response_payload = {
         "question": question,
@@ -2232,7 +2455,11 @@ def chat():
                     "escalation_required": True
                 }
 
-                escalation_id = create_escalation(question, result)
+                escalation_id = create_escalation(
+                    question,
+                    result,
+                    data.get("user_id") or data.get("userId")
+                )
                 AI_FAIL_MEMORY.pop(fail_key, None)
 
                 result["escalation"] = True
@@ -2287,85 +2514,76 @@ def chat():
          # =========================
         # ✅ STEP 2.5: STAFF SAYS PREVIOUS ANSWER IS NOT WHAT THEY MEAN
         # =========================
+        # =========================
+        # ✅ STEP 2.5: STAFF SAYS PREVIOUS ANSWER IS NOT WHAT THEY MEAN
+        # =========================
         if is_staff_not_satisfied(question):
             last_answer = AI_LAST_ANSWER_MEMORY.get(get_last_answer_key(data))
 
-            fail_key = get_ai_fail_key(data, "staff_not_satisfied")
-            AI_FAIL_MEMORY[fail_key] = AI_FAIL_MEMORY.get(fail_key, 0) + 1
-
             previous_question = question
             previous_result = {
-                "answer": "Staff said the AI answer may not be the intended content.",
+                "answer": f"Staff said the previous AI answer was wrong. Staff latest message: {question}",
+                "reply": f"Staff said the previous AI answer was wrong. Staff latest message: {question}",
                 "confidence": 0.0,
+                "score": 0.0,
                 "source": "staff_not_satisfied"
             }
 
             if last_answer:
-                previous_question = last_answer.get("question") or question
-                previous_result = last_answer.get("result") or previous_result
-
-            if AI_FAIL_MEMORY[fail_key] >= 1:
-                escalation_id = create_escalation(
-                    previous_question,
-                    previous_result,
-                    data.get("user_id") or data.get("userId")
+                previous_question = (
+                    last_answer.get("question")
+                    or question
                 )
 
-                AI_FAIL_MEMORY.pop(fail_key, None)
+                old_result = last_answer.get("result") or {}
 
-                return jsonify({
-                    "reply": (
-                        "I detected that the previous answer may not be the content you wanted.\n\n"
-                        "I have escalated this question to a team lead for confirmation."
-                    ),
+                previous_result = {
                     "answer": (
-                        "I detected that the previous answer may not be the content you wanted. "
-                        "I have escalated this question to a team lead for confirmation."
+                        "Staff said this previous AI answer was not correct.\n\n"
+                        f"Original staff question: {previous_question}\n\n"
+                        f"Wrong AI answer/source: {old_result.get('title') or old_result.get('answer') or old_result.get('reply') or 'No previous answer text'}\n\n"
+                        f"Staff latest message: {question}"
+                    ),
+                    "reply": (
+                        "Staff said this previous AI answer was not correct.\n\n"
+                        f"Original staff question: {previous_question}\n\n"
+                        f"Wrong AI answer/source: {old_result.get('title') or old_result.get('answer') or old_result.get('reply') or 'No previous answer text'}\n\n"
+                        f"Staff latest message: {question}"
                     ),
                     "confidence": 0.0,
                     "score": 0.0,
-                    "source": "staff_not_satisfied_escalated",
-                    "fallback": True,
-                    "escalation": True,
-                    "escalation_ready": True,
-                    "escalation_required": True,
-                    "escalation_id": escalation_id,
-                    "served_by": "escalation_queue",
-                    "options": [
-                        {
-                            "label": "Escalated to team lead",
-                            "value": "escalated",
-                            "type": "status"
-                        }
-                    ]
-                }), 200
+                    "source": "staff_not_satisfied_escalated"
+                }
+
+            escalation_id = create_escalation(
+                previous_question,
+                previous_result,
+                data.get("user_id") or data.get("userId")
+            )
 
             return jsonify({
                 "reply": (
-                    "I detected that the previous answer may not be what you meant.\n\n"
-                    "You can ask again with more details, or choose to escalate this question to a team lead."
+                    "I detected that the previous answer may not be the content you wanted.\n\n"
+                    "I have escalated this question to a team lead for confirmation."
                 ),
                 "answer": (
-                    "I detected that the previous answer may not be what you meant. "
-                    "You can ask again with more details, or choose to escalate this question to a team lead."
+                    "I detected that the previous answer may not be the content you wanted. "
+                    "I have escalated this question to a team lead for confirmation."
                 ),
                 "confidence": 0.0,
                 "score": 0.0,
-                "source": "staff_not_satisfied_confirmation",
+                "source": "staff_not_satisfied_escalated",
                 "fallback": True,
-                "escalation": False,
-                "escalation_ready": False,
-                "escalation_required": False,
+                "escalation": True,
+                "escalation_ready": True,
+                "escalation_required": True,
+                "escalation_id": escalation_id,
+                "served_by": "escalation_queue",
                 "options": [
                     {
-                        "label": "Ask again with more details",
-                        "value": "clarify",
-                        "type": "clarification"
-                    },
-                    {
-                        "label": "Escalate to team lead",
-                        "value": "escalate_to_team_lead",
-                        "type": "escalation"
+                        "label": "Escalated to team lead",
+                        "value": "escalated",
+                        "type": "status"
                     }
                 ]
             }), 200
@@ -2466,6 +2684,11 @@ def chat():
             "prediction_error",
             "engine_unavailable",
             "low_confidence_or_model_unavailable",
+            "invalid_input_first_attempt",
+            "staff_not_satisfied_escalated",
+            "generic_answer_escalated",
+            "repeated_invalid_input",
+            "repeated_failed_answer",
         ]
 
         source = result.get("source", "")
@@ -2496,13 +2719,24 @@ def chat():
             should_escalate = True
 
         if should_escalate:
-            escalation_id = create_escalation(question, result)
+            escalation_id = create_escalation(
+                question,
+                result,
+                data.get("user_id") or data.get("userId")
+            )
 
             clear_ai_fail_count(data, question)
 
             result["escalation"] = True
+            result["escalation_ready"] = True
+            result["escalation_required"] = True
             result["escalation_id"] = escalation_id
             result["served_by"] = "escalation_queue"
+
+            if escalation_id is None:
+                result["reply"] = "Escalation failed to save. Please check backend terminal for CREATE ESCALATION ERROR."
+                result["answer"] = result["reply"]
+                result["source"] = "escalation_save_failed"
 
             return jsonify(result), 200
 

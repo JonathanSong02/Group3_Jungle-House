@@ -152,6 +152,73 @@ def search_similar_question(question, team_lead_only=False):
         if conn:
             conn.close()
 
+def search_similar_questions(question, team_lead_only=False, limit=5):
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        question = normalize_text(question)
+
+        if team_lead_only:
+            cursor.execute("""
+                SELECT *
+                FROM qa_knowledge
+                WHERE source = 'team_lead'
+                ORDER BY confidence DESC, created_at DESC
+            """)
+        else:
+            cursor.execute("""
+                SELECT *
+                FROM qa_knowledge
+                ORDER BY 
+                    CASE 
+                        WHEN source = 'team_lead' THEN 1
+                        ELSE 2
+                    END,
+                    confidence DESC,
+                    created_at DESC
+            """)
+
+        rows = cursor.fetchall()
+
+        matches = []
+
+        for row in rows:
+            db_q = normalize_text(row.get("question"))
+            ratio = similarity_ratio(question, db_q)
+
+            if question == db_q:
+                ratio = 1.0
+
+            if ratio >= 0.30:
+                row["score"] = float(row.get("confidence", ratio) or ratio)
+                row["confidence"] = float(row.get("confidence", ratio) or ratio)
+                row["match_score"] = ratio
+                matches.append(row)
+
+        matches.sort(
+            key=lambda item: (
+                item.get("match_score", 0.0),
+                item.get("confidence", 0.0)
+            ),
+            reverse=True
+        )
+
+        return matches[:limit]
+
+    except Exception as e:
+        print("SEARCH SIMILAR QUESTIONS ERROR:", e)
+        return []
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
 
 # =========================
 # ESCALATION HELPERS
