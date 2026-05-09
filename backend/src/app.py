@@ -96,6 +96,10 @@ CORS(
 # =========================
 # FILE UPLOAD CONFIG
 # =========================
+
+# Save uploaded article files inside: backend/src/static/uploads/articles
+BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / "static"
 UPLOAD_FOLDER = STATIC_DIR / "uploads" / "articles"
 UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
 
@@ -116,243 +120,17 @@ def save_article_attachment(file):
     unique_filename = f"{int(time.time())}_{filename}"
 
     file_path = UPLOAD_FOLDER / unique_filename
-    file.save(file_path)
+    file.save(str(file_path))
 
     attachment_url = f"/static/uploads/articles/{unique_filename}"
     attachment_type = file.content_type
 
     return attachment_url, attachment_type
 
-ESCALATION_MESSAGE = "No confident answer. Escalate to team lead."
 
-REAL_JH_TEST_QUESTIONS = [
-    {
-        "id": 1,
-        "category": "SOP",
-        "test_type": "exact match",
-        "question": "kiosk opening",
-        "expected_title": "JHKC Kiosk Opening",
-        "expected_category": "sop",
-        "expected_behavior": "answer",
-    },
-    {
-        "id": 2,
-        "category": "SOP",
-        "test_type": "partial match",
-        "question": "how to open kiosk",
-        "expected_title": "JHKC Kiosk Opening",
-        "expected_category": "sop",
-        "expected_behavior": "answer",
-    },
-    {
-        "id": 3,
-        "category": "SOP",
-        "test_type": "wrong spelling",
-        "question": "how to opn kios",
-        "expected_title": "JHKC Kiosk Opening",
-        "expected_category": "sop",
-        "expected_behavior": "answer",
-    },
-    {
-        "id": 4,
-        "category": "SOP",
-        "test_type": "exact match",
-        "question": "kiosk closing checklist",
-        "expected_title": "Kiosk Closing Check List",
-        "expected_category": "sop",
-        "expected_behavior": "answer",
-    },
-    {
-        "id": 5,
-        "category": "SOP",
-        "test_type": "wrong spelling",
-        "question": "shopfy pos opening",
-        "expected_title": "Shopify POS app Opening",
-        "expected_category": "sop",
-        "expected_behavior": "answer",
-    },
-    {
-        "id": 6,
-        "category": "SOP",
-        "test_type": "partial match",
-        "question": "receipt printer setup",
-        "expected_title": "Receipt printer preparation for opening",
-        "expected_category": "sop",
-        "expected_behavior": "answer",
-    },
-    {
-        "id": 7,
-        "category": "Product",
-        "test_type": "exact match",
-        "question": "golden passion honey",
-        "expected_title": "Golden Passion Honey (New Product)",
-        "expected_category": "product",
-        "expected_behavior": "answer",
-    },
-    {
-        "id": 8,
-        "category": "Product",
-        "test_type": "partial match",
-        "question": "new packaging price",
-        "expected_title": "Price for new packaging for HWJ and SHVP",
-        "expected_category": "product",
-        "expected_behavior": "answer",
-    },
-    {
-        "id": 9,
-        "category": "Product",
-        "test_type": "wrong spelling",
-        "question": "goldn passion honey",
-        "expected_title": "Golden Passion Honey (New Product)",
-        "expected_category": "product",
-        "expected_behavior": "answer",
-    },
-    {
-        "id": 10,
-        "category": "Promotion",
-        "test_type": "exact match",
-        "question": "latest promotion",
-        "expected_title": "Promotion",
-        "expected_category": "promotion",
-        "expected_behavior": "answer",
-    },
-    {
-        "id": 11,
-        "category": "Promotion",
-        "test_type": "partial match",
-        "question": "gift guide",
-        "expected_title": "Win the Heart Gift Guide",
-        "expected_category": "promotion",
-        "expected_behavior": "answer",
-    },
-    {
-        "id": 12,
-        "category": "Promotion",
-        "test_type": "broad wording",
-        "question": "promotion",
-        "expected_title": None,
-        "expected_category": "promotion",
-        "expected_behavior": "category_choice",
-    },
-    {
-        "id": 13,
-        "category": "Notice",
-        "test_type": "exact match",
-        "question": "public holiday 2026",
-        "expected_title": "PUBLIC HOLIDAY 2026",
-        "expected_category": "notice",
-        "expected_behavior": "answer",
-    },
-    {
-        "id": 14,
-        "category": "Notice",
-        "test_type": "partial match",
-        "question": "merchant copy need signature",
-        "expected_title": "Customer signature for card payment",
-        "expected_category": "notice",
-        "expected_behavior": "answer",
-    },
-    {
-        "id": 15,
-        "category": "Notice",
-        "test_type": "partial match",
-        "question": "when submit ot",
-        "expected_title": "OT Submission Reminder",
-        "expected_category": "notice",
-        "expected_behavior": "answer",
-    },
-    {
-        "id": 16,
-        "category": "Notice",
-        "test_type": "partial match",
-        "question": "can block chiller or not",
-        "expected_title": "Do not Block The Chiller",
-        "expected_category": "notice",
-        "expected_behavior": "answer",
-    },
-    {
-        "id": 17,
-        "category": "Notice",
-        "test_type": "partial match",
-        "question": "fake jungle house scam",
-        "expected_title": "Fake Jungle House",
-        "expected_category": "notice",
-        "expected_behavior": "answer",
-    },
-    {
-        "id": 18,
-        "category": "Notice",
-        "test_type": "wrong spelling",
-        "question": "bee piont policy",
-        "expected_title": "Bee Point Policy – Crew Member Guideline",
-        "expected_category": "notice",
-        "expected_behavior": "answer",
-    },
-    {
-        "id": 19,
-        "category": "Notice",
-        "test_type": "wrong spelling",
-        "question": "raya dres code",
-        "expected_title": "Hari Raya Aidilfitri – Dress Code",
-        "expected_category": "notice",
-        "expected_behavior": "answer",
-    },
-    {
-        "id": 20,
-        "category": "Notice",
-        "test_type": "partial match",
-        "question": "must wear gloves and mask for juice",
-        "expected_title": "Hygiene Compliance Notice – Juice Making (Effective Immediately)",
-        "expected_category": "notice",
-        "expected_behavior": "answer",
-    },
-    {
-        "id": 21,
-        "category": "Notice",
-        "test_type": "partial match",
-        "question": "who can decide cash transactions",
-        "expected_title": "Cashless",
-        "expected_category": "notice",
-        "expected_behavior": "answer",
-    },
-    {
-        "id": 22,
-        "category": "Training",
-        "test_type": "exact match",
-        "question": "new bee 1st day checklist",
-        "expected_title": "New Bee 1st day Check List",
-        "expected_category": "training",
-        "expected_behavior": "answer",
-    },
-    {
-        "id": 23,
-        "category": "Training",
-        "test_type": "partial match",
-        "question": "wanna bee onboarding",
-        "expected_title": "Wanna-Bee onboarding Check list",
-        "expected_category": "training",
-        "expected_behavior": "answer",
-    },
-    {
-        "id": 24,
-        "category": "Unknown",
-        "test_type": "unclear wording",
-        "question": "I don’t know what to do",
-        "expected_title": None,
-        "expected_category": None,
-        "expected_behavior": "clarification",
-    },
-    {
-        "id": 25,
-        "category": "Unknown",
-        "test_type": "unclear wording",
-        "question": "Still don’t know",
-        "expected_title": None,
-        "expected_category": None,
-        "expected_behavior": "escalation",
-        "context": {"unclear_count": 1},
-    },
-]
+@app.route("/static/uploads/articles/<path:filename>")
+def serve_article_attachment(filename):
+    return send_from_directory(str(UPLOAD_FOLDER), filename)
 
 
 # =========================
