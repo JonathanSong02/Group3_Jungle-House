@@ -225,7 +225,7 @@ function getStepImages(step) {
   return [...new Set(images.filter(Boolean))];
 }
 
-function renderImages(imageUrls, labelPrefix = 'Image') {
+function renderImages(imageUrls, labelPrefix = 'Image', onImageClick = null) {
   if (!Array.isArray(imageUrls) || imageUrls.length === 0) return null;
 
   return (
@@ -248,6 +248,11 @@ function renderImages(imageUrls, labelPrefix = 'Image') {
             key={`${finalImageUrl}-${imageIndex}`}
             src={finalImageUrl}
             alt={`${labelPrefix} ${imageIndex + 1}`}
+            onClick={() => {
+              if (onImageClick) {
+                onImageClick(finalImageUrl);
+              }
+            }}
             style={{
               width: '100%',
               maxWidth: '260px',
@@ -257,6 +262,7 @@ function renderImages(imageUrls, labelPrefix = 'Image') {
               border: '1px solid #ddd',
               display: 'block',
               backgroundColor: '#fff',
+              cursor: onImageClick ? 'zoom-in' : 'default',
             }}
             onError={() => {
               console.log('Image failed to load:', finalImageUrl);
@@ -367,10 +373,16 @@ function buildAiMessage(data) {
   const backendMessage = data.message || '';
 
 
-  if (
-  (data.type === 'multiple_choice' || data.type === 'options') &&
-  Array.isArray(data.options)
-) {
+  const hasSelectableOptions =
+    Array.isArray(data.options) && data.options.length > 0;
+
+  const isMultipleChoiceResponse =
+    data.type === 'multiple_choice' ||
+    data.type === 'options' ||
+    data.source === 'suggestion_options' ||
+    hasSelectableOptions;
+
+  if (isMultipleChoiceResponse) {
     return {
       id: Date.now() + 1,
       sender: 'ai',
@@ -384,7 +396,7 @@ function buildAiMessage(data) {
       title: data.title || backendContext.title || '',
       category: data.category || backendContext.category || '',
       section: data.section || backendContext.section || '',
-      options: data.options || [],
+      options: Array.isArray(data.options) ? data.options : [],
       notes: data.notes || [],
       steps: Array.isArray(data.steps) ? data.steps : [],
       context: backendContext,
@@ -686,6 +698,66 @@ function getReadableAnswer(message) {
   return removeImagePathsFromText(message.answer || message.text || message.reply || '');
 }
 
+function isSelectPromptText(value) {
+  const text = normalizeText(value);
+
+  return (
+    text.includes('please select one') ||
+    text.includes('i found a few possible answers') ||
+    text.includes('i found more than one possible answer')
+  );
+}
+
+function removeEmptyImageLabels(text) {
+  return String(text || '')
+    .replace(/^image:\s*$/gim, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function buildSelectedOptionMessage(option, optionIndex = 0) {
+  const hasSteps = Array.isArray(option.steps) && option.steps.length > 0;
+  const rawAnswer = option.answer || option.reply || '';
+  const usefulAnswer = isSelectPromptText(rawAnswer) ? '' : rawAnswer;
+
+  return {
+    id: Date.now() + optionIndex + 1,
+    sender: 'ai',
+
+    // If the option has steps, show it as SOP card layout
+    type: hasSteps ? 'sop' : 'text',
+
+    // If it has steps, do not show the long plain text version above
+    text: hasSteps ? '' : removeEmptyImageLabels(usefulAnswer),
+    reply: hasSteps ? '' : removeEmptyImageLabels(usefulAnswer),
+    answer: hasSteps ? '' : removeEmptyImageLabels(usefulAnswer),
+
+    title: option.title || option.label || '',
+    category: option.category || '',
+    section: option.section || '',
+    purpose: option.purpose || '',
+    steps: hasSteps ? option.steps : [],
+    notes: Array.isArray(option.notes) ? option.notes : [],
+
+    context: {
+      title: option.title || option.label || '',
+      category: option.category || '',
+      section: option.section || '',
+      unclear_count: 0,
+    },
+
+    unclear_count: 0,
+    escalation_ready: false,
+    escalation_required: false,
+    confidence: Number(option.confidence || 0),
+    confidence_label: '',
+    source: option.source || 'selected_option',
+    fallback: false,
+    fallback_message: '',
+    message: hasSteps ? '' : removeEmptyImageLabels(usefulAnswer),
+  };
+}
+
 export default function Chat() {
   const initialSessions = getChatSessionsFromStorage();
 
@@ -704,6 +776,7 @@ export default function Chat() {
   const [historySearch, setHistorySearch] = useState('');
   const [question, setQuestion] = useState('');
   const [loading, setLoading] = useState(false);
+  const [previewImage, setPreviewImage] = useState(null);
   const [confirmModal, setConfirmModal] = useState({
     open: false,
     type: '',
@@ -1048,7 +1121,22 @@ export default function Chat() {
     </p>
 
     <div style={{ display: 'grid', gap: '12px' }}>
+      {(!Array.isArray(message.options) || message.options.length === 0) ? (
+        <p style={{ color: '#b00020', marginTop: '8px' }}>
+          No selectable options were returned from backend.
+        </p>
+      ) : null}
       {message.options?.map((option, optionIndex) => {
+        const hasUsefulOptionAnswer =
+          Boolean(option.answer || option.reply) &&
+          !isSelectPromptText(option.answer || option.reply);
+
+        const hasUsefulOptionSteps =
+          Array.isArray(option.steps) && option.steps.length > 0;
+
+        if (!hasUsefulOptionAnswer && !hasUsefulOptionSteps) {
+          return null;
+        }
         const optionImages = [
           ...extractImagePathsFromText(option.reply),
           ...extractImagePathsFromText(option.answer),
@@ -1058,42 +1146,17 @@ export default function Chat() {
           <button
             type="button"
             key={`${option.source || 'option'}-${optionIndex}`}
-            onClick={() => {
-              const selectedMessage = {
-                id: Date.now() + optionIndex + 1,
-                sender: 'ai',
-                type: option.type || 'text',
-                text: option.reply || option.answer || '',
-                reply: option.reply || option.answer || '',
-                answer: option.answer || option.reply || '',
-                title: option.title || option.label || '',
-                category: option.category || '',
-                section: option.section || '',
-                steps: Array.isArray(option.steps) ? option.steps : [],
-                notes: Array.isArray(option.notes) ? option.notes : [],
-                context: {
-                  title: option.title || option.label || '',
-                  category: option.category || '',
-                  section: option.section || '',
-                  unclear_count: 0,
-                },
-                unclear_count: 0,
-                escalation_ready: false,
-                escalation_required: false,
-                confidence: Number(option.confidence || 0),
-                confidence_label: '',
-                source: option.source || 'selected_option',
-                fallback: false,
-                fallback_message: '',
-                message: option.reply || option.answer || '',
-              };
+        onClick={() => {
+          const selectedMessage = buildSelectedOptionMessage(option, optionIndex);
 
-              updateCurrentSessionMessages(
-                [...(activeSession?.messages || messages), selectedMessage],
-                option.title || option.label || 'Selected option'
-              );
-              addChatHistory(option.title || option.label || 'Selected option', selectedMessage);
-            }}
+          updateCurrentSessionMessages(
+            [...(activeSession?.messages || messages), selectedMessage],
+            option.title || option.label || 'Selected option'
+          );
+
+          addChatHistory(option.title || option.label || 'Selected option', selectedMessage);
+        }}
+
             style={{
               width: '100%',
               textAlign: 'left',
@@ -1193,10 +1256,10 @@ export default function Chat() {
                   {removeImagePathsFromText(message.answer)}
                 </p>
 
-                {renderImages(textImages, 'Answer image')}
+                {renderImages(textImages, 'Answer image', setPreviewImage)}
               </div>
             ) : (
-              renderImages(textImages, 'Message image')
+              renderImages(textImages, 'Message image', setPreviewImage)
             )}
 
             {Array.isArray(message.steps) && message.steps.length > 0 ? (
@@ -1237,7 +1300,8 @@ export default function Chat() {
 
                       {renderImages(
                         stepImages,
-                        `Step ${step.step_number || index + 1} image`
+                        `Step ${step.step_number || index + 1} image`,
+                        setPreviewImage
                       )}
                     </div>
                   );
@@ -1297,7 +1361,8 @@ export default function Chat() {
 
                   {renderImages(
                     stepImages,
-                    `Step ${step.step_number || index + 1} image`
+                    `Step ${step.step_number || index + 1} image`,
+                    setPreviewImage
                   )}
                 </div>
               );
@@ -1634,6 +1699,59 @@ export default function Chat() {
 
       {activeTab === 'ask' ? renderAskQuestion() : null}
       {activeTab === 'history' ? renderChatHistory() : null}
+
+      {previewImage ? (
+        <div
+          onClick={() => setPreviewImage(null)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 4000,
+            backgroundColor: 'rgba(0, 0, 0, 0.78)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '24px',
+            cursor: 'zoom-out',
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setPreviewImage(null)}
+            style={{
+              position: 'absolute',
+              top: '18px',
+              right: '22px',
+              border: 'none',
+              borderRadius: '999px',
+              backgroundColor: '#fff',
+              color: '#111',
+              width: '38px',
+              height: '38px',
+              fontSize: '22px',
+              fontWeight: 700,
+              cursor: 'pointer',
+            }}
+          >
+            ×
+          </button>
+
+          <img
+            src={previewImage}
+            alt="Preview"
+            onClick={(event) => event.stopPropagation()}
+            style={{
+              maxWidth: '95vw',
+              maxHeight: '90vh',
+              objectFit: 'contain',
+              borderRadius: '14px',
+              backgroundColor: '#fff',
+              boxShadow: '0 20px 60px rgba(0,0,0,0.35)',
+              cursor: 'default',
+            }}
+          />
+        </div>
+      ) : null}
 
       {renderConfirmModal()}
     </div>

@@ -927,6 +927,59 @@ def build_training_data_options_from_model_reply(model_result, context=None):
 
     return options
 
+def filter_short_keyword_options(question, options):
+    """
+    Keep short related options for staff keyword search.
+    Example:
+    - daily => daily, daily ice bin
+    - daily royal black => daily, daily ice bin, daily royal black
+    - opening kiosk notes => opening notes, kiosk opening, opening notes kiosk
+    """
+    question_clean = clean_question(question).lower()
+    q_tokens = question_clean.split()
+
+    if not q_tokens:
+        return options
+
+    parent_token = q_tokens[0]
+    q_token_set = set(q_tokens)
+
+    filtered = []
+    seen = set()
+
+    for option in options:
+        title = str(option.get("title") or option.get("label") or "").lower().strip()
+        title_tokens = title.split()
+        title_token_set = set(title_tokens)
+
+        if not title or title in seen:
+            continue
+
+        include = False
+
+        if title == question_clean:
+            include = True
+
+        elif title == parent_token:
+            include = True
+
+        elif title.startswith(parent_token + " ") and len(title_tokens) <= 4:
+            include = True
+
+        # NEW: allow reversed word order like "kiosk opening"
+        elif parent_token in title_token_set and len(title_tokens) <= 4:
+            include = True
+
+        # NEW: allow "opening notes" for "opening kiosk notes"
+        elif len(q_token_set & title_token_set) >= 2 and len(title_tokens) <= 4:
+            include = True
+
+        if include:
+            seen.add(title)
+            filtered.append(option)
+
+    return filtered
+
 def build_answer_options(question, model_result=None, retrieval_result=None):
     options = []
     seen = set()
@@ -1007,7 +1060,7 @@ def process_question(question, context=None):
     if retrieval_result:
         retrieval_result = normalize_result(retrieval_result, "database")
 
-    retrieval_options = search_similar_questions(question, team_lead_only=False, limit=5)
+    retrieval_options = search_similar_questions(question, team_lead_only=False, limit=10)
     retrieval_options = [
         normalize_result(item, "database")
         for item in retrieval_options
@@ -1116,10 +1169,17 @@ def process_question(question, context=None):
         unique_options,
         key=option_rank,
         reverse=True
-    )[:5]
+    )
 
-    # If the question is short / broad / keyword-like, show choices instead of one final answer.
     keyword_question = len(question.split()) <= 3
+
+    if keyword_question:
+        filtered_options = filter_short_keyword_options(question, answer_options)
+
+        if filtered_options:
+            answer_options = filtered_options
+
+    answer_options = answer_options[:5]
 
     if keyword_question and len(answer_options) >= 1:
         return standardize_ai_response({
@@ -2392,7 +2452,48 @@ def get_analytics():
         }), 500
 
 
+def is_broad_topic_question(question):
+    """
+    Short keyword questions should show selectable options first.
+    Example:
+    - daily
+    - daily royal black
+    - daily ice bin
+    """
+    if not question:
+        return False
 
+    q = clean_question(question).lower()
+    words = q.replace("?", "").replace(".", "").replace(",", "").split()
+
+    if not words:
+        return False
+
+    broad_words = {
+        "opening",
+        "closing",
+        "daily",
+        "sop",
+        "stocktake",
+        "settlement",
+        "shopify",
+        "roadshow",
+        "kiosk",
+        "booth",
+        "promotion",
+        "product",
+        "honey",
+    }
+
+    # One broad word: "daily", "kiosk", "product"
+    if len(words) == 1 and words[0] in broad_words:
+        return True
+
+    # Short child topic: "daily royal black", "daily ice bin"
+    if len(words) <= 3 and words[0] in broad_words:
+        return True
+
+    return False
 
 # =========================
 # AI CHAT ROUTES
@@ -2588,24 +2689,28 @@ def chat():
                 ]
             }), 200
 
-                # =========================
-        # CHECK TEAM LEAD ANSWER FIRST
-        # If team lead already answered before, use it instead of escalating again.
         # =========================
-        team_lead_result = search_similar_question(question, team_lead_only=True)
+        # CHECK TEAM LEAD ANSWER FIRST
+        # But broad words like "opening" or "daily" should go to AI/KB matching first.
+        # This prevents old Team Lead answers like "ok" from blocking topic selection.
+        # =========================
+        skip_team_lead_first = is_broad_topic_question(question)
 
-        if team_lead_result:
-            result = normalize_result(team_lead_result, "team_lead")
+        if not skip_team_lead_first:
+            team_lead_result = search_similar_question(question, team_lead_only=True)
 
-            clear_ai_fail_count(data, question)
-            remember_chat_context(data, result)
-            log_request(question, result=result)
-            remember_last_ai_answer(data, question, result)
+            if team_lead_result:
+                result = normalize_result(team_lead_result, "team_lead")
 
-            result["final_source"] = result.get("source")
-            result["served_by"] = "team_lead_answer"
+                clear_ai_fail_count(data, question)
+                remember_chat_context(data, result)
+                log_request(question, result=result)
+                remember_last_ai_answer(data, question, result)
 
-            return jsonify(result), 200
+                result["final_source"] = result.get("source")
+                result["served_by"] = "team_lead_answer"
+
+                return jsonify(result), 200
 
         # =========================
         # ✅ STEP 3: CALL AI
