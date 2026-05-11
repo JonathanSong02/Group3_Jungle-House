@@ -2696,3 +2696,382 @@ tr:hover td {
     width: 100%;
   }
 }
+
+/* =========================================================
+   19. MOBILE WIDTH FIX
+   iPhone / mobile overflow control
+   Place this section at the bottom so it overrides earlier rules.
+   ========================================================= */
+
+/* Lock the whole app to the phone width */
+html,
+body,
+#root {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+/* Improve iPhone safe-area handling */
+body {
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Prevent layout wrappers from forcing horizontal overflow */
+.app-shell,
+.main-area,
+.page-content,
+.sidebar,
+.sidebar-brand,
+.sidebar-nav,
+.topbar,
+.page-header,
+.card-like,
+.table-card,
+.stats-grid,
+.cards-grid,
+.three-column-grid,
+.two-column-grid,
+.content-card-grid,
+.messages-inbox-layout,
+.messages-layout,
+.ai-chat-shell,
+.chat-panel,
+.ai-chat-panel {
+  max-width: 100%;
+  min-width: 0;
+}
+
+/* Prevent text, links, buttons, and form values from pushing the screen wider */
+h1,
+h2,
+h3,
+h4,
+p,
+span,
+strong,
+small,
+label,
+button,
+a,
+input,
+textarea,
+select {
+  overflow-wrap: anywhere;
+}
+
+/* Media should never exceed the screen */
+img,
+video,
+canvas,
+svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Tables should scroll inside their card instead of stretching the page */
+.table-card {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* =========================================================
+   20. MOBILE RESPONSIVE OVERRIDES
+   Cleaner phone layout for iPhone 16 Pro Max and smaller
+   ========================================================= */
+
+@media (max-width: 640px) {
+  body {
+    width: 100%;
+    overflow-x: hidden;
+  }
+
+  .app-shell {
+    width: 100%;
+    display: block;
+    overflow-x: hidden;
+  }
+
+  .main-area {
+    width: 100%;
+    padding: 14px;
+    overflow-x: hidden;
+  }
+
+  .page-content {
+    width: 100%;
+    gap: 16px;
+  }
+
+  /* Mobile top navigation */
+  .sidebar {
+    width: 100%;
+    max-width: 100vw;
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    overflow: hidden;
+    padding: 16px 14px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .sidebar-brand {
+    width: 100%;
+    margin-bottom: 10px;
+    padding: 6px 4px 12px;
+  }
+
+  .sidebar-title {
+    font-size: 22px;
+  }
+
+  .sidebar-subtitle {
+    font-size: 13px;
+  }
+
+  .sidebar-nav {
+    width: 100%;
+    max-width: 100%;
+    display: flex;
+    flex-direction: row;
+    gap: 8px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 6px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .sidebar-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .sidebar-link {
+    flex: 0 0 auto;
+    max-width: max-content;
+    min-height: 42px;
+    padding: 10px 13px;
+    white-space: nowrap;
+    font-size: 14px;
+  }
+
+  .sidebar-section-label {
+    display: none;
+  }
+
+  /* Signed-in / topbar card */
+  .topbar {
+    width: 100%;
+    margin-bottom: 16px;
+    padding: 16px;
+    overflow: hidden;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .topbar button,
+  .topbar .primary-btn,
+  .topbar .secondary-btn,
+  .topbar .danger-btn {
+    width: 100%;
+  }
+
+  /* Page heading */
+  .page-header {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .page-header h1,
+  .page-header h2 {
+    font-size: 30px;
+    line-height: 1.15;
+  }
+
+  .page-header p {
+    font-size: 16px;
+    line-height: 1.55;
+  }
+
+  .page-header-actions {
+    width: 100%;
+  }
+
+  .page-header-actions button,
+  .page-header-actions a {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* Cards and grids */
+  .card-like {
+    width: 100%;
+    padding: 16px;
+    border-radius: 18px;
+  }
+
+  .stats-grid,
+  .cards-grid,
+  .three-column-grid,
+  .two-column-grid,
+  .form-grid,
+  .content-card-grid,
+  .profile-v2-meta-grid,
+  .messages-inbox-layout,
+  .messages-layout,
+  .ai-chat-shell {
+    width: 100%;
+    grid-template-columns: 1fr;
+  }
+
+  .stat-card h3 {
+    font-size: 30px;
+  }
+
+  /* Forms */
+  input,
+  textarea,
+  select,
+  button {
+    max-width: 100%;
+  }
+
+  .toolbar,
+  .row-between,
+  .chat-input-row,
+  .button-group,
+  .notification-toolbar,
+  .notification-card-main {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .button-group button,
+  .toolbar button,
+  .row-between button,
+  .notification-actions button {
+    width: 100%;
+  }
+
+  /* Chat mobile */
+  .chat-panel,
+  .ai-chat-panel {
+    width: 100%;
+    min-height: 70vh;
+  }
+
+  .chat-messages,
+  .ai-chat-messages {
+    width: 100%;
+    min-height: 360px;
+    padding: 14px;
+  }
+
+  .message-bubble,
+  .message-chat-bubble {
+    max-width: 100%;
+  }
+
+  .chat-input-row,
+  .ai-chat-input-row {
+    width: 100%;
+    margin: 0;
+    padding: 12px;
+  }
+
+  .chat-input-row .primary-btn,
+  .ai-chat-input-row .primary-btn {
+    width: 100%;
+  }
+
+  /* Content management */
+  .content-toolbar-main,
+  .content-info-bar,
+  .retrieve-bin-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .content-toolbar-main .primary-btn,
+  .empty-state-card .primary-btn,
+  .retrieve-bin-actions button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .content-category-chips {
+    justify-content: flex-start;
+  }
+
+  .chip {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  .content-card-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .content-card-actions button {
+    flex: 1;
+  }
+
+  /* Table handling */
+  table {
+    min-width: 650px;
+  }
+}
+
+/* Extra small phone polishing */
+@media (max-width: 430px) {
+  .main-area {
+    padding: 12px;
+  }
+
+  .sidebar {
+    padding: 14px 12px;
+  }
+
+  .sidebar-title {
+    font-size: 21px;
+  }
+
+  .sidebar-subtitle {
+    font-size: 12px;
+  }
+
+  .sidebar-link {
+    min-height: 40px;
+    padding: 9px 11px;
+    font-size: 13px;
+  }
+
+  .page-header h1,
+  .page-header h2 {
+    font-size: 28px;
+  }
+
+  .page-header p {
+    font-size: 15px;
+  }
+
+  .card-like {
+    padding: 15px;
+  }
+
+  .stat-card h3 {
+    font-size: 28px;
+  }
+
+  .primary-btn,
+  .secondary-btn,
+  .danger-btn {
+    padding: 10px 13px;
+  }
+}
