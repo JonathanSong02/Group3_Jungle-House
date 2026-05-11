@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import PageHeader from '../components/PageHeader';
 
 const starterMessages = [
   {
@@ -1429,9 +1428,6 @@ export default function Chat() {
           <div className="ai-chat-header">
             <div>
               <h3>{activeSession?.title || 'New Chat'}</h3>
-              <p>
-                Ask the AI a work-related question using natural language.
-              </p>
             </div>
 
             <button
@@ -1656,45 +1652,29 @@ export default function Chat() {
   };
 
   return (
-    <div>
-      <PageHeader
-        title="AI Chat"
-        subtitle="Ask questions, review history, and display AI answers returned from the backend."
-      />
+    <div className="ai-chat-page">
+      <div className="ai-chat-top-row">
+        <div className="ai-chat-page-title">
+          <h1>AI Chat</h1>
+        </div>
 
-      <section className="card-like" style={{ marginBottom: '1.5rem' }}>
-        <h3>AI Chat Overview</h3>
-        <p className="muted">
-          The AI Chat module allows users to ask natural language questions and receive fast
-          information from the system. Chat sessions are saved in Recents, so users can return
-          to previous conversations even after leaving the page.
-        </p>
-      </section>
+        <div className="tab-row ai-chat-tabs">
+          <button
+            type="button"
+            className={activeTab === 'ask' ? 'primary-btn' : 'secondary-btn'}
+            onClick={() => setActiveTab('ask')}
+          >
+            Ask Question
+          </button>
 
-      <div
-        className="tab-row"
-        style={{
-          display: 'flex',
-          gap: '0.75rem',
-          marginBottom: '1.5rem',
-          flexWrap: 'wrap',
-        }}
-      >
-        <button
-          type="button"
-          className={activeTab === 'ask' ? 'primary-btn' : 'secondary-btn'}
-          onClick={() => setActiveTab('ask')}
-        >
-          Ask Question
-        </button>
-
-        <button
-          type="button"
-          className={activeTab === 'history' ? 'primary-btn' : 'secondary-btn'}
-          onClick={() => setActiveTab('history')}
-        >
-          Chat History
-        </button>
+          <button
+            type="button"
+            className={activeTab === 'history' ? 'primary-btn' : 'secondary-btn'}
+            onClick={() => setActiveTab('history')}
+          >
+            Chat History
+          </button>
+        </div>
       </div>
 
       {activeTab === 'ask' ? renderAskQuestion() : null}
