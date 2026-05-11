@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
 
+const API_BASE_URL = "https://group3jungle-house-production.up.railway.app";
+
 export default function ArticleDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -9,10 +11,38 @@ export default function ArticleDetail() {
   const [links, setLinks] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  function getFileUrl(url) {
+    if (!url) return "";
+
+    if (url.startsWith("http://") || url.startsWith("https://")) {
+      return url;
+    }
+
+    if (url.startsWith("/")) {
+      return `${API_BASE_URL}${url}`;
+    }
+
+    return `${API_BASE_URL}/${url}`;
+  }
+
+  function isImageFile(url, type) {
+    if (type && type.startsWith("image/")) return true;
+
+    const lowerUrl = String(url || "").toLowerCase();
+
+    return (
+      lowerUrl.endsWith(".jpg") ||
+      lowerUrl.endsWith(".jpeg") ||
+      lowerUrl.endsWith(".png") ||
+      lowerUrl.endsWith(".gif") ||
+      lowerUrl.endsWith(".webp")
+    );
+  }
+
   useEffect(() => {
     setLoading(true);
 
-    fetch(`http://127.0.0.1:5000/api/articles/${id}`)
+    fetch(`${API_BASE_URL}/api/articles/${id}`)
       .then((res) => {
         if (!res.ok) {
           throw new Error("Article not found");
@@ -28,7 +58,7 @@ export default function ArticleDetail() {
           setArticle(null);
         }
 
-        return fetch(`http://127.0.0.1:5000/api/article-links/${id}`);
+        return fetch(`${API_BASE_URL}/api/article-links/${id}`);
       })
       .then((res) => {
         if (!res.ok) {
@@ -193,14 +223,19 @@ export default function ArticleDetail() {
 
       if (trimmedLine.startsWith("[IMAGE]")) {
         const imgUrl = trimmedLine.replace("[IMAGE]", "").trim();
+        const finalImgUrl = getFileUrl(imgUrl);
 
         return (
           <div key={index} className="sop-image-wrapper">
             <img
-              src={imgUrl}
+              src={finalImgUrl}
               alt="SOP Visual Reference"
               className="sop-image"
               loading="lazy"
+              onError={(e) => {
+                console.error("Image failed to load:", finalImgUrl);
+                e.currentTarget.style.display = "none";
+              }}
             />
           </div>
         );
@@ -260,6 +295,12 @@ export default function ArticleDetail() {
     );
   }
 
+  const attachmentUrl = getFileUrl(article.attachment_url);
+  const attachmentIsImage = isImageFile(
+    article.attachment_url,
+    article.attachment_type
+  );
+
   return (
     <div>
       <button
@@ -286,27 +327,28 @@ export default function ArticleDetail() {
       />
 
       <div className="card-like article-container">
-        <div className="article-content">
-          {renderContent(article.content)}
-        </div>
+        <div className="article-content">{renderContent(article.content)}</div>
 
         {article.attachment_url && (
           <div className="article-attachment-section">
             <h3>Attached File</h3>
 
-            {article.attachment_type &&
-            article.attachment_type.startsWith("image/") ? (
+            {attachmentIsImage ? (
               <div className="sop-image-wrapper">
                 <img
-                  src={`http://127.0.0.1:5000${article.attachment_url}`}
+                  src={attachmentUrl}
                   alt="Article attachment"
                   className="sop-image"
                   loading="lazy"
+                  onError={(e) => {
+                    console.error("Attachment image failed to load:", attachmentUrl);
+                    e.currentTarget.style.display = "none";
+                  }}
                 />
               </div>
             ) : (
               <a
-                href={`http://127.0.0.1:5000${article.attachment_url}`}
+                href={attachmentUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-link"

@@ -65,11 +65,21 @@ except Exception as error:
     MODEL_LOAD_ERROR = str(error)
 
 BASE_DIR = Path(__file__).resolve().parent
-STATIC_DIR = (BASE_DIR.parent / "static").resolve()
-LOG_DIR = (BASE_DIR.parent / "logs").resolve()
+
+# =========================
+# STATIC / UPLOAD / LOG PATHS
+# =========================
+# Use only ONE static folder so uploaded files and served files use the same path.
+STATIC_DIR = BASE_DIR / "static"
+UPLOAD_FOLDER = STATIC_DIR / "uploads" / "articles"
+UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
+
+LOG_DIR = BASE_DIR / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 LOG_JSONL = LOG_DIR / "ai_chat_logs.jsonl"
 LOG_CSV = LOG_DIR / "ai_chat_logs.csv"
 TEST_REPORT_CSV = LOG_DIR / "ai_test_results.csv"
+
 ESCALATION_MESSAGE = "Please escalate this question to team lead."
 REAL_JH_TEST_QUESTIONS = []
 
@@ -100,12 +110,7 @@ CORS(
 # FILE UPLOAD CONFIG
 # =========================
 
-# Save uploaded article files inside: backend/src/static/uploads/articles
-BASE_DIR = Path(__file__).resolve().parent
-STATIC_DIR = BASE_DIR / "static"
-UPLOAD_FOLDER = STATIC_DIR / "uploads" / "articles"
-UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
-
+# Save uploaded article files inside the same static folder served by Flask.
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp", "pdf", "doc", "docx"}
 
 def allowed_file(filename):
@@ -131,9 +136,37 @@ def save_article_attachment(file):
     return attachment_url, attachment_type
 
 
-@app.route("/static/uploads/articles/<path:filename>")
+@app.route("/static/uploads/articles/<path:filename>", methods=["GET"])
 def serve_article_attachment(filename):
+    file_path = UPLOAD_FOLDER / filename
+
+    print("REQUESTED ARTICLE ATTACHMENT:", filename)
+    print("UPLOAD_FOLDER:", UPLOAD_FOLDER)
+    print("FILE EXISTS:", file_path.exists())
+
+    if not file_path.exists():
+        return jsonify({
+            "message": "Attachment file not found on server.",
+            "filename": filename,
+            "upload_folder": str(UPLOAD_FOLDER),
+            "expected_path": str(file_path)
+        }), 404
+
     return send_from_directory(str(UPLOAD_FOLDER), filename)
+
+
+@app.route("/api/debug/uploads", methods=["GET"])
+def debug_uploads():
+    files = []
+
+    if UPLOAD_FOLDER.exists():
+        files = [file.name for file in UPLOAD_FOLDER.iterdir() if file.is_file()]
+
+    return jsonify({
+        "upload_folder": str(UPLOAD_FOLDER),
+        "folder_exists": UPLOAD_FOLDER.exists(),
+        "files": files
+    }), 200
 
 
 # =========================
@@ -3009,6 +3042,47 @@ def add_article():
             conn.close()
 
 # =========================
+# Article Links ROUTES
+# =========================
+@app.route("/api/article-links/<int:article_id>", methods=["GET"])
+def get_article_links(article_id):
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT
+                link_id,
+                article_id,
+                label,
+                url
+            FROM article_links
+            WHERE article_id = %s
+            ORDER BY link_id ASC
+        """, (article_id,))
+
+        links = cursor.fetchall()
+        return jsonify(links), 200
+
+    except mysql.connector.Error as err:
+        print("MYSQL ERROR /api/article-links:", err)
+        return jsonify([]), 200
+
+    except Exception as error:
+        print("GENERAL ERROR /api/article-links:", error)
+        return jsonify([]), 200
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+# =========================
 # Get Single Article ROUTES
 # =========================
 @app.route('/api/articles/<int:article_id>', methods=['GET'])
@@ -5181,7 +5255,7 @@ def delete_message_from_view(message_id):
 
 @app.route("/static/<path:filename>", methods=["GET"])
 def serve_static(filename):
-    return send_from_directory(STATIC_DIR, filename)
+    return send_from_directory(str(STATIC_DIR), filename)
 
 # =========================
 # RUN APP
