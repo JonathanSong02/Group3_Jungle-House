@@ -16,7 +16,7 @@ export default function AddArticle() {
     content: '',
   });
 
-  const [attachment, setAttachment] = useState(null);
+  const [attachments, setAttachments] = useState([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [preview, setPreview] = useState(false);
@@ -31,14 +31,14 @@ export default function AddArticle() {
   };
 
   const handleFileChange = (event) => {
-    const file = event.target.files[0];
+    const files = Array.from(event.target.files || []);
 
-    if (!file) {
-      setAttachment(null);
+    if (files.length === 0) {
+      setAttachments([]);
       return;
     }
 
-    setAttachment(file);
+    setAttachments(files);
   };
 
   const clearForm = () => {
@@ -50,7 +50,7 @@ export default function AddArticle() {
       content: '',
     });
 
-    setAttachment(null);
+    setAttachments([]);
     setMessage('');
   };
 
@@ -78,9 +78,9 @@ export default function AddArticle() {
       formData.append('link', form.link.trim());
       formData.append('content', form.content.trim());
 
-      if (attachment) {
-        formData.append('attachment', attachment);
-      }
+      attachments.forEach((file) => {
+        formData.append('attachments', file);
+      });
 
       await api.post('/articles', formData, {
         headers: {
@@ -180,12 +180,20 @@ export default function AddArticle() {
               <input
                 type="file"
                 accept="image/*,.pdf,.doc,.docx"
+                multiple
                 onChange={handleFileChange}
               />
-              {attachment && (
-                <p className="muted top-gap-xs">
-                  Selected file: {attachment.name}
-                </p>
+
+              {attachments.length > 0 && (
+                <div className="muted top-gap-xs">
+                  <p>{attachments.length} file(s) selected:</p>
+
+                  <ul>
+                    {attachments.map((file, index) => (
+                      <li key={`${file.name}-${index}`}>{file.name}</li>
+                    ))}
+                  </ul>
+                </div>
               )}
             </label>
 
@@ -238,8 +246,16 @@ export default function AddArticle() {
             <p className="muted">Sub Category: {form.sub_category}</p>
           )}
 
-          {attachment && (
-            <p className="muted">Attachment: {attachment.name}</p>
+          {attachments.length > 0 && (
+            <div className="muted">
+              <p>Attachments:</p>
+
+              <ul>
+                {attachments.map((file, index) => (
+                  <li key={`${file.name}-preview-${index}`}>{file.name}</li>
+                ))}
+              </ul>
+            </div>
           )}
 
           <div className="article-preview">

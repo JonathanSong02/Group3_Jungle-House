@@ -136,6 +136,31 @@ def save_article_attachment(file):
     return attachment_url, attachment_type
 
 
+
+def save_article_attachments(files):
+    saved_files = []
+
+    for file in files:
+        if not file or file.filename == "":
+            continue
+
+        if not allowed_file(file.filename):
+            continue
+
+        filename = secure_filename(file.filename)
+        unique_filename = f"{int(time.time() * 1000)}_{filename}"
+
+        file_path = UPLOAD_FOLDER / unique_filename
+        file.save(str(file_path))
+
+        saved_files.append({
+            "url": f"/static/uploads/articles/{unique_filename}",
+            "type": file.content_type
+        })
+
+    return saved_files
+
+
 @app.route("/static/uploads/articles/<path:filename>", methods=["GET"])
 def serve_article_attachment(filename):
     file_path = UPLOAD_FOLDER / filename
@@ -2941,6 +2966,7 @@ def get_articles():
                 link,
                 attachment_url,
                 attachment_type,
+                image_files,
                 is_deleted,
                 deleted_at,
                 deleted_by
@@ -2986,12 +3012,17 @@ def add_article():
         if not title or not content:
             return jsonify({"message": "Title and content are required."}), 400
 
-        attachment_url = None
-        attachment_type = None
+        # Multiple image upload support.
+        # Frontend must append files using the key name: attachments
+        uploaded_files = request.files.getlist("attachments")
+        saved_files = save_article_attachments(uploaded_files)
 
-        if "attachment" in request.files:
-            file = request.files["attachment"]
-            attachment_url, attachment_type = save_article_attachment(file)
+        # Keep old single-file columns for backward compatibility.
+        attachment_url = saved_files[0]["url"] if saved_files else None
+        attachment_type = saved_files[0]["type"] if saved_files else None
+
+        # Store all uploaded image/file paths as JSON text.
+        image_files = json.dumps(saved_files) if saved_files else None
 
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
@@ -3006,9 +3037,10 @@ def add_article():
                 link,
                 attachment_url,
                 attachment_type,
+                image_files,
                 is_deleted
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, FALSE)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, FALSE)
         """, (
             title,
             content,
@@ -3016,7 +3048,8 @@ def add_article():
             sub_category,
             link,
             attachment_url,
-            attachment_type
+            attachment_type,
+            image_files
         ))
 
         conn.commit()
@@ -3025,7 +3058,8 @@ def add_article():
             "message": "Article added successfully.",
             "article_id": cursor.lastrowid,
             "attachment_url": attachment_url,
-            "attachment_type": attachment_type
+            "attachment_type": attachment_type,
+            "image_files": saved_files
         }), 201
 
     except Exception as error:
@@ -3103,7 +3137,8 @@ def get_article_detail(article_id):
                 sub_category, 
                 link,
                 attachment_url,
-                attachment_type
+                attachment_type,
+                image_files
             FROM wiki_article
             WHERE article_id = %s
             AND is_deleted = FALSE
@@ -3143,11 +3178,13 @@ def edit_article(article_id):
     link = request.form.get('link', '').strip()
     content = request.form.get('content', '').strip()
 
-    attachment_file = request.files.get('attachment')
-    attachment_url, attachment_type = save_article_attachment(attachment_file)
-
     if not title or not content:
         return jsonify({'message': 'Title and content are required.'}), 400
+
+    # Multiple image upload support.
+    # Frontend must append files using the key name: attachments
+    uploaded_files = request.files.getlist("attachments")
+    saved_files = save_article_attachments(uploaded_files)
 
     conn = None
     cursor = None
@@ -3156,7 +3193,11 @@ def edit_article(article_id):
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
 
-        if attachment_url:
+        if saved_files:
+            attachment_url = saved_files[0]["url"]
+            attachment_type = saved_files[0]["type"]
+            image_files = json.dumps(saved_files)
+
             cursor.execute("""
                 UPDATE wiki_article
                 SET title = %s,
@@ -3165,7 +3206,8 @@ def edit_article(article_id):
                     link = %s,
                     sub_category = %s,
                     attachment_url = %s,
-                    attachment_type = %s
+                    attachment_type = %s,
+                    image_files = %s
                 WHERE article_id = %s
             """, (
                 title,
@@ -3175,6 +3217,7 @@ def edit_article(article_id):
                 sub_category,
                 attachment_url,
                 attachment_type,
+                image_files,
                 article_id
             ))
         else:
@@ -3203,7 +3246,10 @@ def edit_article(article_id):
             description=f"Article updated: {title}"
         )
 
-        return jsonify({'message': 'Article updated successfully.'}), 200
+        return jsonify({
+            'message': 'Article updated successfully.',
+            'image_files': saved_files
+        }), 200
 
     except Exception as error:
         if conn:

@@ -17,8 +17,9 @@ export default function EditArticle() {
     content: '',
   });
 
-  const [attachment, setAttachment] = useState(null);
+  const [attachments, setAttachments] = useState([]);
   const [currentAttachment, setCurrentAttachment] = useState('');
+  const [currentAttachments, setCurrentAttachments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
@@ -41,6 +42,21 @@ export default function EditArticle() {
         });
 
         setCurrentAttachment(article.attachment_url || '');
+
+        let parsedAttachments = [];
+
+        if (Array.isArray(article.image_files)) {
+          parsedAttachments = article.image_files;
+        } else if (article.image_files) {
+          try {
+            parsedAttachments = JSON.parse(article.image_files);
+          } catch (error) {
+            console.error('Parse image_files error:', error);
+            parsedAttachments = [];
+          }
+        }
+
+        setCurrentAttachments(parsedAttachments);
       } catch (error) {
         console.error('Fetch article error:', error);
         setMessage(error.response?.data?.message || 'Failed to load article.');
@@ -62,14 +78,14 @@ export default function EditArticle() {
   };
 
   const handleFileChange = (event) => {
-    const file = event.target.files[0];
+    const files = Array.from(event.target.files || []);
 
-    if (!file) {
-      setAttachment(null);
+    if (files.length === 0) {
+      setAttachments([]);
       return;
     }
 
-    setAttachment(file);
+    setAttachments(files);
   };
 
   const handleSubmit = async (event) => {
@@ -91,9 +107,9 @@ export default function EditArticle() {
       formData.append('link', form.link.trim());
       formData.append('content', form.content.trim());
 
-      if (attachment) {
-        formData.append('attachment', attachment);
-      }
+      attachments.forEach((file) => {
+        formData.append('attachments', file);
+      });
 
       await api.put(`/articles/${id}`, formData, {
         headers: {
@@ -181,19 +197,45 @@ export default function EditArticle() {
               <input
                 type="file"
                 accept="image/*,.pdf,.doc,.docx"
+                multiple
                 onChange={handleFileChange}
               />
 
-              {currentAttachment && !attachment && (
+              {currentAttachments.length > 0 && attachments.length === 0 && (
+                <div className="muted top-gap-xs">
+                  <p>Current attachments:</p>
+
+                  <ul>
+                    {currentAttachments.map((file, index) => {
+                      const fileUrl = file.url || file;
+                      const fileName = String(fileUrl).split('/').pop();
+
+                      return (
+                        <li key={`${fileName}-${index}`}>
+                          {fileName}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+
+              {currentAttachments.length === 0 && currentAttachment && attachments.length === 0 && (
                 <p className="muted top-gap-xs">
                   Current attachment: {currentAttachment.split('/').pop()}
                 </p>
               )}
 
-              {attachment && (
-                <p className="muted top-gap-xs">
-                  New selected file: {attachment.name}
-                </p>
+              {attachments.length > 0 && (
+                <div className="muted top-gap-xs">
+                  <p>New selected files:</p>
+
+                  <ul>
+                    {attachments.map((file, index) => (
+                      <li key={`${file.name}-${index}`}>{file.name}</li>
+                    ))}
+                  </ul>
+                </div>
               )}
             </label>
 
