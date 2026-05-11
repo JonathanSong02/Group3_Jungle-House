@@ -17,7 +17,6 @@ import QuizList from './pages/QuizList';
 
 import Messages from './pages/Messages';
 
-
 import AdminDashboard from './pages/admin/AdminDashboard';
 import AddArticle from './pages/admin/AddArticle';
 import EditArticle from './pages/admin/EditArticle';
@@ -36,6 +35,10 @@ function HomeRedirect() {
 
   if (user?.role === 'manager') {
     return <Navigate to="/admin/dashboard" replace />;
+  }
+
+  if (user?.role === 'teamlead') {
+    return <Navigate to="/dashboard" replace />;
   }
 
   return <Navigate to="/dashboard" replace />;
@@ -57,15 +60,14 @@ export default function App() {
       >
         <Route index element={<HomeRedirect />} />
 
-      <Route
-        path="/messages"
-        element={
-          <ProtectedRoute>
-            <Messages />
-          </ProtectedRoute>
-        }
-      />
-
+        <Route
+          path="messages"
+          element={
+            <ProtectedRoute>
+              <Messages />
+            </ProtectedRoute>
+          }
+        />
 
         <Route
           path="dashboard"
@@ -121,7 +123,15 @@ export default function App() {
           }
         />
 
-        <Route path="chat" element={<Chat />} />
+        <Route
+          path="chat"
+          element={
+            <RoleRoute allowedRoles={['staff', 'teamlead', 'manager']}>
+              <Chat />
+            </RoleRoute>
+          }
+        />
+
         <Route path="profile" element={<Profile />} />
 
         <Route
@@ -145,7 +155,7 @@ export default function App() {
         <Route
           path="admin/content"
           element={
-            <RoleRoute allowedRoles={['manager']}>
+            <RoleRoute allowedRoles={['teamlead', 'manager']}>
               <ContentManagement />
             </RoleRoute>
           }
@@ -154,7 +164,7 @@ export default function App() {
         <Route
           path="admin/content/add"
           element={
-            <RoleRoute allowedRoles={['manager']}>
+            <RoleRoute allowedRoles={['teamlead', 'manager']}>
               <AddArticle />
             </RoleRoute>
           }
@@ -163,7 +173,7 @@ export default function App() {
         <Route
           path="admin/content/edit/:id"
           element={
-            <RoleRoute allowedRoles={['manager']}>
+            <RoleRoute allowedRoles={['teamlead', 'manager']}>
               <EditArticle />
             </RoleRoute>
           }
@@ -172,7 +182,7 @@ export default function App() {
         <Route
           path="admin/quiz-management"
           element={
-            <RoleRoute allowedRoles={['manager']}>
+            <RoleRoute allowedRoles={['teamlead', 'manager']}>
               <QuizManagement />
             </RoleRoute>
           }
@@ -208,7 +218,7 @@ export default function App() {
         <Route
           path="admin/analytics"
           element={
-            <RoleRoute allowedRoles={['manager']}>
+            <RoleRoute allowedRoles={['teamlead', 'manager']}>
               <Analytics />
             </RoleRoute>
           }
@@ -217,7 +227,7 @@ export default function App() {
         <Route
           path="admin/security"
           element={
-            <RoleRoute allowedRoles={['manager']}>
+            <RoleRoute allowedRoles={['teamlead', 'manager']}>
               <SecurityMonitoring />
             </RoleRoute>
           }

@@ -152,14 +152,25 @@ export default function Sidebar() {
                 </>
               )}
 
-              {role === 'manager' && (
+              {(role === 'teamlead' || role === 'manager') && (
                 <>
-                  <div className="sidebar-section-label">Admin Workspace</div>
+                  <div className="sidebar-section-label">
+                    {role === 'manager' ? 'Admin Workspace' : 'Team Lead Workspace'}
+                  </div>
 
-                  <NavLink className={linkClass} to="/admin/dashboard" onClick={closeMobileAfterClick}>
-                    <span className="sidebar-icon">▦</span>
-                    <span className="sidebar-link-text">Admin Dashboard</span>
-                  </NavLink>
+                  {role === 'manager' && (
+                    <NavLink className={linkClass} to="/admin/dashboard" onClick={closeMobileAfterClick}>
+                      <span className="sidebar-icon">▦</span>
+                      <span className="sidebar-link-text">Admin Dashboard</span>
+                    </NavLink>
+                  )}
+
+                  {role === 'manager' && (
+                    <NavLink className={linkClass} to="/chat" onClick={closeMobileAfterClick}>
+                      <span className="sidebar-icon">✦</span>
+                      <span className="sidebar-link-text">AI Chat</span>
+                    </NavLink>
+                  )}
 
                   <NavLink className={linkClass} to="/admin/content" onClick={closeMobileAfterClick}>
                     <span className="sidebar-icon">□</span>
@@ -175,25 +186,33 @@ export default function Sidebar() {
                     <span className="sidebar-link-text">Quiz Management</span>
                   </NavLink>
 
-                  <NavLink className={linkClass} to="/messages" onClick={closeMobileAfterClick}>
-                    <span className="sidebar-icon">✉</span>
-                    <span className="sidebar-link-text">Messages</span>
-                  </NavLink>
+                  {role === 'manager' && (
+                    <NavLink className={linkClass} to="/messages" onClick={closeMobileAfterClick}>
+                      <span className="sidebar-icon">✉</span>
+                      <span className="sidebar-link-text">Messages</span>
+                    </NavLink>
+                  )}
 
-                  <NavLink className={linkClass} to="/admin/review" onClick={closeMobileAfterClick}>
-                    <span className="sidebar-icon">◇</span>
-                    <span className="sidebar-link-text">Review Management</span>
-                  </NavLink>
+                  {role === 'manager' && (
+                    <NavLink className={linkClass} to="/admin/review" onClick={closeMobileAfterClick}>
+                      <span className="sidebar-icon">◇</span>
+                      <span className="sidebar-link-text">Review Management</span>
+                    </NavLink>
+                  )}
 
-                  <NavLink className={linkClass} to="/admin/users" onClick={closeMobileAfterClick}>
-                    <span className="sidebar-icon">♙</span>
-                    <span className="sidebar-link-text">User Management</span>
-                  </NavLink>
+                  {role === 'manager' && (
+                    <NavLink className={linkClass} to="/admin/users" onClick={closeMobileAfterClick}>
+                      <span className="sidebar-icon">♙</span>
+                      <span className="sidebar-link-text">User Management</span>
+                    </NavLink>
+                  )}
 
-                  <NavLink className={linkClass} to="/admin/ai-settings" onClick={closeMobileAfterClick}>
-                    <span className="sidebar-icon">⚙</span>
-                    <span className="sidebar-link-text">AI Settings</span>
-                  </NavLink>
+                  {role === 'manager' && (
+                    <NavLink className={linkClass} to="/admin/ai-settings" onClick={closeMobileAfterClick}>
+                      <span className="sidebar-icon">⚙</span>
+                      <span className="sidebar-link-text">AI Settings</span>
+                    </NavLink>
+                  )}
 
                   <NavLink className={linkClass} to="/admin/analytics" onClick={closeMobileAfterClick}>
                     <span className="sidebar-icon">↗</span>
