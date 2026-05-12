@@ -149,9 +149,12 @@ function normalizeImageItem(image) {
     return (
       image.url ||
       image.image_url ||
+      image.image_path ||
       image.path ||
       image.file_url ||
       image.attachment_url ||
+      image.filename ||
+      image.file_name ||
       ''
     );
   }
@@ -166,7 +169,15 @@ function buildImageUrl(imageUrl) {
 
   if (!cleanUrl) return '';
 
-  cleanUrl = String(cleanUrl).trim();
+  cleanUrl = String(cleanUrl)
+    .trim()
+    .replace(/^(["'])|(["'])$/g, '')
+    .replace(/\\/g, '/');
+
+  // Remove repeated slashes in paths, but keep https:// unchanged.
+  if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
+    cleanUrl = cleanUrl.replace(/\/+/g, '/');
+  }
 
   if (cleanUrl.startsWith('http://') || cleanUrl.startsWith('https://')) {
     return cleanUrl;
@@ -242,16 +253,37 @@ function parseImageFiles(value) {
     return value.map(normalizeImageItem).filter(Boolean);
   }
 
+  if (typeof value === 'object') {
+    const single = normalizeImageItem(value);
+    return single ? [single] : [];
+  }
+
   if (typeof value === 'string') {
+    const cleanValue = value.trim();
+
+    if (!cleanValue) return [];
+
     try {
-      const parsed = JSON.parse(value);
+      const parsed = JSON.parse(cleanValue);
 
       if (Array.isArray(parsed)) {
         return parsed.map(normalizeImageItem).filter(Boolean);
       }
+
+      if (typeof parsed === 'object' && parsed !== null) {
+        const single = normalizeImageItem(parsed);
+        return single ? [single] : [];
+      }
     } catch (error) {
-      return [value];
+      // Continue to separator-based parsing below.
     }
+
+    // Support older CSV/string formats such as:
+    // "step2_1.png|step2_2.png" or "step2_1.png, step2_2.png".
+    return cleanValue
+      .split(/[,|\n]+/)
+      .map((item) => item.trim())
+      .filter(Boolean);
   }
 
   return [];
@@ -330,8 +362,11 @@ function renderImages(imageUrls, labelPrefix = 'Image', onImageClick = null) {
               backgroundColor: '#fff',
               cursor: onImageClick ? 'zoom-in' : 'default',
             }}
-            onError={() => {
+            onError={(event) => {
               console.log('Image failed to load:', finalImageUrl);
+
+              // Prevent the browser broken-image icon from taking space in the chat.
+              event.currentTarget.style.display = 'none';
             }}
           />
         );

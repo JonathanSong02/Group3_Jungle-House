@@ -65,13 +65,18 @@ except Exception as error:
     MODEL_LOAD_ERROR = str(error)
 
 BASE_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = BASE_DIR.parent
 
 # =========================
 # STATIC / UPLOAD / LOG PATHS
 # =========================
-# Use only ONE static folder so uploaded files and served files use the same path.
-STATIC_DIR = BASE_DIR / "static"
+# app.py is inside backend/src.
+# Real static files are inside backend/static.
+# AI Chat can also auto-find images in subfolders when training data returns only the filename.
+STATIC_DIR = PROJECT_DIR / "static"
 UPLOAD_FOLDER = STATIC_DIR / "uploads" / "articles"
+
+STATIC_DIR.mkdir(parents=True, exist_ok=True)
 UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
 
 LOG_DIR = BASE_DIR / "logs"
@@ -90,7 +95,12 @@ AI_CHAT_MEMORY = {}
 AI_FAIL_MEMORY = {}
 AI_LAST_ANSWER_MEMORY = {}
 
-app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="/static")
+# IMPORTANT:
+# Disable Flask default static route.
+# We use the custom /static/<path:filename> route below so AI Chat images
+# can be found recursively even when training data only returns a filename
+# or a partial path such as /static/sop_images/step2_1.png.
+app = Flask(__name__, static_folder=None)
 
 CORS(
     app,
@@ -161,23 +171,118 @@ def save_article_attachments(files):
     return saved_files
 
 
+def find_static_file(filename):
+    """
+    Find a static file even if AI Chat/training data returns only a partial path.
+
+    Example:
+    Requested: /static/sop_images/step17_1.jpg
+    Actual:    backend/static/sop_images/aeon_roadshow_opening/step17_1.jpg
+    """
+    clean_filename = str(filename or "").replace("\\", "/").strip().lstrip("/")
+
+    if not clean_filename:
+        return None
+
+    # Remove duplicated static prefix if received.
+    if clean_filename.startswith("static/"):
+        clean_filename = clean_filename.replace("static/", "", 1)
+
+    # Security: do not allow path traversal.
+    if ".." in Path(clean_filename).parts:
+        return None
+
+    # 1. Exact path first.
+    exact_path = STATIC_DIR / clean_filename
+    if exact_path.exists() and exact_path.is_file():
+        return exact_path
+
+    # 2. If path starts with a known static folder but misses subfolder, search by basename.
+    basename = Path(clean_filename).name
+
+    if not basename:
+        return None
+
+    allowed_image_extensions = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"}
+    allowed_document_extensions = {".pdf", ".doc", ".docx"}
+    suffix = Path(basename).suffix.lower()
+
+    if suffix not in allowed_image_extensions and suffix not in allowed_document_extensions:
+        return None
+
+    matches = [
+        match for match in STATIC_DIR.rglob(basename)
+        if match.exists() and match.is_file()
+    ]
+
+    if not matches:
+        return None
+
+    request_text = clean_filename.replace("\\", "/").lower()
+
+    # 3. Prefer the same main folder as requested.
+    preferred_folder_order = []
+
+    if "sop_images" in request_text:
+        preferred_folder_order.append("/sop_images/")
+    if "product_images" in request_text:
+        preferred_folder_order.append("/product_images/")
+    if "notice_images" in request_text:
+        preferred_folder_order.append("/notice_images/")
+    if "uploads" in request_text:
+        preferred_folder_order.append("/uploads/")
+
+    preferred_folder_order.extend([
+        "/sop_images/",
+        "/product_images/",
+        "/notice_images/",
+        "/uploads/articles/",
+        "/uploads/",
+    ])
+
+    for folder_hint in preferred_folder_order:
+        for match in matches:
+            match_text = str(match).replace("\\", "/").lower()
+            if folder_hint in match_text:
+                return match
+
+    return matches[0]
+
+
+def static_file_response(filename, not_found_message="Static file not found."):
+    found_file = find_static_file(filename)
+
+    print("REQUESTED STATIC FILE:", filename)
+    print("STATIC_DIR:", STATIC_DIR)
+    print("FOUND FILE:", found_file)
+
+    if not found_file:
+        return jsonify({
+            "message": not_found_message,
+            "requested_filename": filename,
+            "static_dir": str(STATIC_DIR)
+        }), 404
+
+    return send_from_directory(str(found_file.parent), found_file.name)
+
+
+
 @app.route("/static/uploads/articles/<path:filename>", methods=["GET"])
 def serve_article_attachment(filename):
+    # Article upload route still tries the upload folder first, then falls back to recursive static search.
     file_path = UPLOAD_FOLDER / filename
 
     print("REQUESTED ARTICLE ATTACHMENT:", filename)
     print("UPLOAD_FOLDER:", UPLOAD_FOLDER)
     print("FILE EXISTS:", file_path.exists())
 
-    if not file_path.exists():
-        return jsonify({
-            "message": "Attachment file not found on server.",
-            "filename": filename,
-            "upload_folder": str(UPLOAD_FOLDER),
-            "expected_path": str(file_path)
-        }), 404
+    if file_path.exists() and file_path.is_file():
+        return send_from_directory(str(UPLOAD_FOLDER), filename)
 
-    return send_from_directory(str(UPLOAD_FOLDER), filename)
+    return static_file_response(
+        filename,
+        not_found_message="Attachment file not found on server."
+    )
 
 
 @app.route("/api/debug/uploads", methods=["GET"])
@@ -192,6 +297,51 @@ def debug_uploads():
         "folder_exists": UPLOAD_FOLDER.exists(),
         "files": files
     }), 200
+
+
+@app.route("/api/debug/static", methods=["GET"])
+def debug_static_files():
+    result = {
+        "base_dir": str(BASE_DIR),
+        "project_dir": str(PROJECT_DIR),
+        "static_dir": str(STATIC_DIR),
+        "static_exists": STATIC_DIR.exists(),
+        "folders": {},
+        "sample_recursive_files": [],
+    }
+
+    folders_to_check = [
+        "sop_images",
+        "sop_images/aeon_roadshow_opening",
+        "sop_images/aeon_roadshow_closing",
+        "sop_images/kiosk_opening",
+        "sop_images/kiosk_closing",
+        "sop_images/kuching_booth_closing_dustbin",
+        "sop_images/new_bee_1st_day_check_list",
+        "product_images",
+        "notice_images",
+        "uploads",
+        "uploads/articles",
+    ]
+
+    for folder in folders_to_check:
+        folder_path = STATIC_DIR / folder
+
+        if folder_path.exists():
+            result["folders"][folder] = [
+                file.name for file in folder_path.iterdir()
+            ]
+        else:
+            result["folders"][folder] = "Folder not found"
+
+    if STATIC_DIR.exists():
+        result["sample_recursive_files"] = [
+            str(file.relative_to(STATIC_DIR)).replace("\\", "/")
+            for file in list(STATIC_DIR.rglob("*"))
+            if file.is_file()
+        ][:100]
+
+    return jsonify(result), 200
 
 
 # =========================
@@ -773,6 +923,12 @@ def normalize_result(result, default_source="unknown"):
             "purpose": result.get("purpose"),
             "steps": result.get("steps", []),
             "notes": result.get("notes", []),
+            "image_files": result.get("image_files"),
+            "attachment_url": result.get("attachment_url"),
+            "attachment_type": result.get("attachment_type"),
+            "image_url": result.get("image_url"),
+            "image_urls": result.get("image_urls", []),
+            "images": result.get("images", []),
             "score": float(result.get("score", result.get("confidence", 0.0)) or 0.0),
             "confidence": float(result.get("confidence", result.get("score", 0.0)) or 0.0),
             "confidence_label": result.get("confidence_label"),
@@ -956,6 +1112,12 @@ def build_training_data_options_from_model_reply(model_result, context=None):
         option_type = "text"
         steps = []
         notes = []
+        image_files = None
+        attachment_url = None
+        attachment_type = None
+        image_url = None
+        image_urls = []
+        images = []
 
         if detail_result:
             answer = detail_result.get("answer") or detail_result.get("reply") or ""
@@ -965,6 +1127,12 @@ def build_training_data_options_from_model_reply(model_result, context=None):
             option_type = detail_result.get("type", "text")
             steps = detail_result.get("steps", [])
             notes = detail_result.get("notes", [])
+            image_files = detail_result.get("image_files")
+            attachment_url = detail_result.get("attachment_url")
+            attachment_type = detail_result.get("attachment_type")
+            image_url = detail_result.get("image_url")
+            image_urls = detail_result.get("image_urls", [])
+            images = detail_result.get("images", [])
 
         if not answer:
             answer = f"Please ask about {title} for more details."
@@ -981,6 +1149,12 @@ def build_training_data_options_from_model_reply(model_result, context=None):
             "type": option_type,
             "steps": steps,
             "notes": notes,
+            "image_files": image_files,
+            "attachment_url": attachment_url,
+            "attachment_type": attachment_type,
+            "image_url": image_url,
+            "image_urls": image_urls,
+            "images": images,
         })
 
     return options
@@ -1076,7 +1250,13 @@ def build_answer_options(question, model_result=None, retrieval_result=None):
             "answer": answer,
             "type": result.get("type", "text"),
             "steps": result.get("steps", []),
-            "notes": result.get("notes", [])
+            "notes": result.get("notes", []),
+            "image_files": result.get("image_files"),
+            "attachment_url": result.get("attachment_url"),
+            "attachment_type": result.get("attachment_type"),
+            "image_url": result.get("image_url"),
+            "image_urls": result.get("image_urls", []),
+            "images": result.get("images", [])
         })
 
     add_option(model_result, "training_data")
@@ -1278,6 +1458,12 @@ def process_question(question, context=None):
         "purpose": final_result.get("purpose"),
         "steps": final_result.get("steps", []),
         "notes": final_result.get("notes", []),
+        "image_files": final_result.get("image_files"),
+        "attachment_url": final_result.get("attachment_url"),
+        "attachment_type": final_result.get("attachment_type"),
+        "image_url": final_result.get("image_url"),
+        "image_urls": final_result.get("image_urls", []),
+        "images": final_result.get("images", []),
         "score": final_result.get("score", 0.0),
         "confidence": final_result.get("confidence", final_result.get("score", 0.0)),
         "confidence_label": final_result.get("confidence_label"),
@@ -5301,7 +5487,7 @@ def delete_message_from_view(message_id):
 
 @app.route("/static/<path:filename>", methods=["GET"])
 def serve_static(filename):
-    return send_from_directory(str(STATIC_DIR), filename)
+    return static_file_response(filename)
 
 # =========================
 # RUN APP
