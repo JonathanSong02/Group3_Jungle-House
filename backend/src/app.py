@@ -79,9 +79,13 @@ BASE_DIR = Path(__file__).resolve().parent
 # STATIC / UPLOAD / LOG PATHS
 # =========================
 # Use only ONE static folder so uploaded files and served files use the same path.
-STATIC_DIR = BASE_DIR / "static"
+STATIC_DIR = BASE_DIR.parent / "static"
+
 UPLOAD_FOLDER = STATIC_DIR / "uploads" / "articles"
 UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
+
+SOP_IMAGE_FOLDER = STATIC_DIR / "sop_images"
+SOP_IMAGE_FOLDER.mkdir(parents=True, exist_ok=True)
 
 LOG_DIR = BASE_DIR / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -1166,7 +1170,9 @@ def build_answer_options(question, model_result=None, retrieval_result=None):
             "notes": result.get("notes", []),
             "image_files": result.get("image_files"),
             "attachment_url": result.get("attachment_url"),
-            "attachment_type": result.get("attachment_type")
+            "attachment_type": result.get("attachment_type"),
+            "link": result.get("link") or result.get("article_link"),
+            "article_link": result.get("article_link") or result.get("link")
         })
 
     add_option(model_result, "training_data")
@@ -1255,22 +1261,47 @@ def parse_article_steps(content):
     if not text:
         return []
 
-    pattern = re.compile(r"(?:^|\n)\s*(?:step\s*)?(\d+)\s*[\).:-]?\s*(.*?)(?=(?:\n\s*(?:step\s*)?\d+\s*[\).:-])|\Z)", re.IGNORECASE | re.DOTALL)
-    matches = list(pattern.finditer(text))
+    pattern = re.compile(
+        r"(?:^|\n)\s*(?:step\s*)?(\d+)\s*[\).:-]?\s*(.*?)(?=(?:\n\s*(?:step\s*)?\d+\s*[\).:-])|\Z)",
+        re.IGNORECASE | re.DOTALL
+    )
 
+    matches = list(pattern.finditer(text))
     steps = []
+
     for match in matches:
         step_no = int(match.group(1))
         step_text = str(match.group(2) or "").strip()
+
         if not step_text:
             continue
+
+        image_files = []
+
+        # Find [IMAGE]https://xxx image links inside the step content
+        image_matches = re.findall(r"\[IMAGE\]\s*(https?://[^\s]+)", step_text, re.IGNORECASE)
+
+        for image_url in image_matches:
+            image_files.append({
+                "url": image_url.strip(),
+                "type": "image"
+            })
+
+        # Remove [IMAGE] links from the text so they do not show as ugly text
+        clean_step_text = re.sub(
+            r"\[IMAGE\]\s*https?://[^\s]+",
+            "",
+            step_text,
+            flags=re.IGNORECASE
+        ).strip()
+
         steps.append({
             "step": step_no,
             "step_order": step_no,
             "title": f"Step {step_no}",
-            "answer": step_text,
-            "content": step_text,
-            "image_files": []
+            "answer": clean_step_text,
+            "content": clean_step_text,
+            "image_files": image_files
         })
 
     return steps
@@ -1281,6 +1312,7 @@ def build_article_ai_result(article, question, score):
     content = article.get("content") or ""
     category = article.get("category")
     sub_category = article.get("sub_category")
+    article_link = str(article.get("link") or "").strip()
 
     article_files = normalize_article_image_files(article.get("image_files"))
 
@@ -1325,6 +1357,8 @@ def build_article_ai_result(article, question, score):
         "image_files": unique_files,
         "attachment_url": article.get("attachment_url"),
         "attachment_type": article.get("attachment_type"),
+        "link": article_link,
+        "article_link": article_link,
         "score": score,
         "confidence": score,
         "confidence_label": get_confidence_label(score),

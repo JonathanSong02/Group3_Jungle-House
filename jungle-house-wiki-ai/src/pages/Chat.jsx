@@ -12,7 +12,7 @@ const starterMessages = [
   },
 ];
 
-const API_BASE_URL = 'http://127.0.0.1:5000';
+const API_BASE_URL = 'https://group3jungle-house-production.up.railway.app';
 const CHAT_ENDPOINT = `${API_BASE_URL}/api/chat`;
 
 const CHAT_HISTORY_KEY = 'jh_ai_chat_history';
@@ -217,14 +217,27 @@ function buildImageUrl(imageUrl) {
 function extractImagePathsFromText(text) {
   const value = String(text || '');
 
-  const matches = value.match(
+  const localMatches = value.match(
     /(?:\/?static\/)?(?:sop_images|uploads\/articles)\/[^\s,|;)"']+\.(?:jpg|jpeg|png|webp|gif|bmp|svg)/gi
-  );
+  ) || [];
 
-  if (!matches) return [];
+  const imageTagMatches = [...value.matchAll(/\[IMAGE\]\s*(https?:\/\/[^\s,|;)"']+)/gi)]
+    .map((match) => match[1]);
 
-  return [...new Set(matches)].map((path) => {
+  const directUrlMatches = value.match(
+    /https?:\/\/[^\s,|;)"']+\.(?:jpg|jpeg|png|webp|gif|bmp|svg)(?:\?[^\s,|;)"']*)?/gi
+  ) || [];
+
+  const allMatches = [...localMatches, ...imageTagMatches, ...directUrlMatches];
+
+  if (allMatches.length === 0) return [];
+
+  return [...new Set(allMatches)].map((path) => {
     let cleanPath = String(path).trim();
+
+    if (cleanPath.startsWith('http://') || cleanPath.startsWith('https://')) {
+      return cleanPath;
+    }
 
     if (!cleanPath.startsWith('/')) {
       cleanPath = `/${cleanPath}`;
@@ -240,8 +253,9 @@ function extractImagePathsFromText(text) {
 
 function removeImagePathsFromText(text) {
   return String(text || '')
+    .replace(/\[IMAGE\]\s*https?:\/\/[^\s,|;)"']+/gi, '')
+    .replace(/https?:\/\/[^\s,|;)"']+\.(?:jpg|jpeg|png|webp|gif|bmp|svg)(?:\?[^\s,|;)"']*)?/gi, '')
     .replace(/(?:\/?static\/)?(?:sop_images|uploads\/articles)\/[^\s,|;)"']+\.(?:jpg|jpeg|png|webp|gif|bmp|svg)/gi, '')
-    .replace(/\|+/g, '')
     .replace(/[ \t]+$/gm, '')
     .trim();
 }
@@ -453,6 +467,240 @@ function renderImages(imageUrls, labelPrefix = 'Image', onImageClick = null) {
   );
 }
 
+function renderKnowledgeLink(link) {
+  const cleanLink = String(link || '').trim();
+
+  if (!cleanLink) return null;
+
+  if (!cleanLink.startsWith('http://') && !cleanLink.startsWith('https://')) {
+    return null;
+  }
+
+  return (
+    <a
+      href={cleanLink}
+      target="_blank"
+      rel="noreferrer"
+      style={{
+        display: 'inline-block',
+        marginTop: '8px',
+        marginBottom: '8px',
+        padding: '7px 12px',
+        borderRadius: '999px',
+        backgroundColor: '#fff8e1',
+        border: '1px solid #e8c56b',
+        color: '#8a6a12',
+        fontWeight: 700,
+        fontSize: '13px',
+        textDecoration: 'none',
+      }}
+    >
+      Open Notion Link ↗
+    </a>
+  );
+}
+
+function renderTextWithClickableLinks(text, fallbackLink = '') {
+  const cleanText = removeImagePathsFromText(text || '');
+  const cleanFallbackLink = String(fallbackLink || '').trim();
+
+  if (!cleanText) return null;
+
+  const lines = cleanText.split('\n');
+
+  return lines.map((line, lineIndex) => {
+    const trimmedLine = line.trim();
+
+    // Make "Click >>> Label" clickable using the article Notion link
+    const clickMatch = trimmedLine.match(/^(.*?click\s*>+\s*)(.+)$/i);
+
+    if (
+      clickMatch &&
+      cleanFallbackLink &&
+      (cleanFallbackLink.startsWith('http://') || cleanFallbackLink.startsWith('https://'))
+    ) {
+      return (
+        <span key={`line-${lineIndex}`}>
+          {clickMatch[1]}
+          <a
+            href={cleanFallbackLink}
+            target="_blank"
+            rel="noreferrer"
+            style={{
+              color: '#8a6a12',
+              fontWeight: 700,
+              textDecoration: 'underline',
+              overflowWrap: 'anywhere',
+            }}
+          >
+            {clickMatch[2]}
+          </a>
+          {lineIndex < lines.length - 1 ? <br /> : null}
+        </span>
+      );
+    }
+
+    // Make markdown link [Label](https://...) clickable
+    const parts = [];
+    const regex = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s]+)/g;
+
+    let lastIndex = 0;
+    let match;
+
+    while ((match = regex.exec(line)) !== null) {
+      const beforeText = line.slice(lastIndex, match.index);
+
+      if (beforeText) {
+        parts.push(beforeText);
+      }
+
+      const label = match[1] || match[3];
+      const url = match[2] || match[3];
+
+      parts.push(
+        <a
+          key={`link-${lineIndex}-${match.index}`}
+          href={url}
+          target="_blank"
+          rel="noreferrer"
+          style={{
+            color: '#8a6a12',
+            fontWeight: 700,
+            textDecoration: 'underline',
+            overflowWrap: 'anywhere',
+          }}
+        >
+          {label}
+        </a>
+      );
+
+      lastIndex = regex.lastIndex;
+    }
+
+    const afterText = line.slice(lastIndex);
+
+    if (afterText) {
+      parts.push(afterText);
+    }
+
+    return (
+      <span key={`line-${lineIndex}`}>
+        {parts.length > 0 ? parts : line}
+        {lineIndex < lines.length - 1 ? <br /> : null}
+      </span>
+    );
+  });
+}
+
+function renderRichKnowledgeContent(text, fallbackLink = '') {
+  const cleanText = removeImagePathsFromText(text || '');
+
+  if (!cleanText) return null;
+
+  // Handle HTML table from editor
+  if (cleanText.toLowerCase().includes('<table')) {
+    return (
+      <div
+        style={{
+          width: '100%',
+          overflowX: 'auto',
+          marginTop: '8px',
+        }}
+        dangerouslySetInnerHTML={{ __html: cleanText }}
+      />
+    );
+  }
+
+  const lines = cleanText.split('\n');
+  const output = [];
+  let tableLines = [];
+
+  const flushTable = () => {
+    if (tableLines.length === 0) return;
+
+    const rows = tableLines
+      .map((line) =>
+        line
+          .split('|')
+          .map((cell) => cell.trim())
+          .filter((cell) => cell !== '')
+      )
+      .filter((row) => row.length > 0);
+
+    const realRows = rows.filter((row) =>
+      !row.every((cell) => /^-+$/.test(cell.replace(/\s/g, '')))
+    );
+
+    if (realRows.length > 0) {
+      output.push(
+        <div
+          key={`table-${output.length}`}
+          style={{
+            overflowX: 'auto',
+            margin: '10px 0',
+          }}
+        >
+          <table
+            style={{
+              width: '100%',
+              borderCollapse: 'collapse',
+              backgroundColor: '#fff',
+              border: '1px solid #e5d2a8',
+              borderRadius: '10px',
+              overflow: 'hidden',
+            }}
+          >
+            <tbody>
+              {realRows.map((row, rowIndex) => (
+                <tr key={`row-${rowIndex}`}>
+                  {row.map((cell, cellIndex) => (
+                    <td
+                      key={`cell-${rowIndex}-${cellIndex}`}
+                      style={{
+                        border: '1px solid #e5d2a8',
+                        padding: '10px 12px',
+                        fontSize: '13px',
+                        verticalAlign: 'top',
+                        backgroundColor: rowIndex === 0 ? '#fff8e1' : '#fff',
+                        fontWeight: rowIndex === 0 ? 700 : 400,
+                      }}
+                    >
+                      {renderTextWithClickableLinks(cell, fallbackLink)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    }
+
+    tableLines = [];
+  };
+
+  lines.forEach((line, index) => {
+    const isTableLine = line.includes('|');
+
+    if (isTableLine) {
+      tableLines.push(line);
+      return;
+    }
+
+    flushTable();
+
+    output.push(
+      <div key={`line-${index}`} style={{ whiteSpace: 'pre-wrap' }}>
+        {renderTextWithClickableLinks(line, fallbackLink)}
+      </div>
+    );
+  });
+
+  flushTable();
+
+  return output;
+}
+
 function renderResponseMeta(message) {
   if (message.sender !== 'ai') return null;
 
@@ -588,7 +836,13 @@ function buildAiMessage(data) {
       fallback,
       fallback_message: fallbackMessage,
       message: backendMessage,
+      link: data.link || data.article_link || backendContext.link || '',
+      article_link: data.article_link || data.link || backendContext.link || '',
+      image_files: data.image_files || backendContext.image_files || [],
+      attachment_url: data.attachment_url || backendContext.attachment_url || '',
+      attachment_type: data.attachment_type || backendContext.attachment_type || '',
       last_step_number: data.last_step_number || backendContext.last_step_number || null,
+
     };
   }
 
@@ -620,6 +874,11 @@ function buildAiMessage(data) {
       fallback,
       fallback_message: fallbackMessage,
       message: backendMessage,
+      link: data.link || data.article_link || backendContext.link || '',
+      article_link: data.article_link || data.link || backendContext.link || '',
+      image_files: data.image_files || backendContext.image_files || [],
+      attachment_url: data.attachment_url || backendContext.attachment_url || '',
+      attachment_type: data.attachment_type || backendContext.attachment_type || '',
       last_step_number: lastStepNumber,
     };
   }
@@ -650,6 +909,11 @@ function buildAiMessage(data) {
     fallback,
     fallback_message: fallbackMessage,
     message: backendMessage,
+    link: data.link || data.article_link || backendContext.link || '',
+    article_link: data.article_link || data.link || backendContext.link || '',
+    image_files: data.image_files || backendContext.image_files || [],
+    attachment_url: data.attachment_url || backendContext.attachment_url || '',
+    attachment_type: data.attachment_type || backendContext.attachment_type || '',
     last_step_number: data.last_step_number || backendContext.last_step_number || null,
   };
 }
@@ -934,6 +1198,11 @@ function buildSelectedOptionMessage(option, optionIndex = 0) {
     fallback: false,
     fallback_message: '',
     message: hasSteps ? '' : removeEmptyImageLabels(usefulAnswer),
+    link: option.link || option.article_link || '',
+    article_link: option.article_link || option.link || '',
+    image_files: option.image_files || [],
+    attachment_url: option.attachment_url || '',
+    attachment_type: option.attachment_type || '',
   };
 }
 
@@ -1274,6 +1543,7 @@ export default function Chat() {
       >
         <strong>{message.sender === 'user' ? 'You' : 'AI'}</strong>
         {renderResponseMeta(message)}
+        {renderKnowledgeLink(message.link || message.article_link)}
 
         {message.sender === 'ai' &&
         message.fallback_message &&
@@ -1299,7 +1569,10 @@ export default function Chat() {
         {message.type === 'multiple_choice' ? (
   <div style={{ marginTop: '8px' }}>
     <p style={{ whiteSpace: 'pre-wrap', marginBottom: '12px' }}>
-      {removeImagePathsFromText(message.text || message.reply || message.answer)}
+      {renderRichKnowledgeContent(
+        message.text || message.reply || message.answer,
+        message.link || message.article_link
+      )}
     </p>
 
     <div style={{ display: 'grid', gap: '12px' }}>
@@ -1415,7 +1688,7 @@ export default function Chat() {
                 marginBottom: message.answer ? '10px' : 0,
               }}
             >
-              {removeImagePathsFromText(message.text)}
+              {renderRichKnowledgeContent(message.text, message.link || message.article_link)}
             </p>
 
             {message.answer && message.answer !== message.text ? (
@@ -1435,7 +1708,7 @@ export default function Chat() {
                 ) : null}
 
                 <p style={{ whiteSpace: 'pre-wrap', margin: 0 }}>
-                  {removeImagePathsFromText(message.answer)}
+                  {renderRichKnowledgeContent(message.answer, message.link || message.article_link)}
                 </p>
 
                 {renderImages(textImages, 'Answer image', setPreviewImage)}
@@ -1477,7 +1750,10 @@ export default function Chat() {
                       ) : null}
 
                       <p style={{ whiteSpace: 'pre-wrap', marginBottom: '10px' }}>
-                        {removeImagePathsFromText(step.content)}
+                        {renderRichKnowledgeContent(
+                          step.content || step.answer || step.reply,
+                          message.link || message.article_link
+                        )}
                       </p>
 
                       {renderImages(
@@ -1495,7 +1771,10 @@ export default function Chat() {
           <div style={{ marginTop: '10px' }}>
             {message.reply ? (
               <p style={{ whiteSpace: 'pre-wrap', marginBottom: '12px' }}>
-                {removeImagePathsFromText(message.reply)}
+                {renderRichKnowledgeContent(
+                  message.text || message.reply || message.answer,
+                  message.link || message.article_link
+                )}
               </p>
             ) : null}
 
@@ -1506,6 +1785,8 @@ export default function Chat() {
                 <strong>Purpose:</strong> {message.purpose}
               </p>
             ) : null}
+
+            {renderImages(textImages, 'Article image', setPreviewImage)}
 
             {message.steps?.map((step, index) => {
               const stepImages = getStepImages(step);
@@ -1538,7 +1819,10 @@ export default function Chat() {
                   ) : null}
 
                   <p style={{ whiteSpace: 'pre-wrap', marginBottom: '10px' }}>
-                    {removeImagePathsFromText(step.content)}
+                    {renderRichKnowledgeContent(
+                      step.content || step.answer || step.reply,
+                      message.link || message.article_link
+                    )}
                   </p>
 
                   {renderImages(
