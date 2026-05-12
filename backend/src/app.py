@@ -81,17 +81,27 @@ def pick_static_dir() -> Path:
     - project root        -> static or backend/static
     """
     candidates = [
-        BASE_DIR / "static",
-        BASE_DIR.parent / "static",
-        Path.cwd() / "static",
-        Path.cwd() / "backend" / "static",
-        BASE_DIR.parent / "backend" / "static",
-        BASE_DIR.parent.parent / "backend" / "static",
+    BASE_DIR.parent / "static",          # backend/static or /app/static
+    Path.cwd() / "static",
+    Path.cwd() / "backend" / "static",
+    BASE_DIR.parent / "backend" / "static",
+    BASE_DIR.parent.parent / "backend" / "static",
+    BASE_DIR / "static",                 # backend/src/static last
     ]
 
     # 1. Best match: folder exists and contains known app static folders.
+    # Prefer the real app static folder that has SOP/product/notice images.
     for candidate in candidates:
-        if (candidate / "sop_images").exists() or (candidate / "uploads").exists():
+        if (
+            (candidate / "sop_images").exists()
+            or (candidate / "product_images").exists()
+            or (candidate / "notice_images").exists()
+        ):
+            return candidate.resolve()
+
+    # Fallback to upload-only static folder.
+    for candidate in candidates:
+        if (candidate / "uploads").exists():
             return candidate.resolve()
 
     # 2. Fallback: any existing static folder.
