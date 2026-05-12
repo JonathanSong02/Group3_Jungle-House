@@ -4,6 +4,8 @@ import PageHeader from '../../components/PageHeader';
 import api from '../../services/api';
 
 const categories = ['SOP', 'PRODUCT', 'SALES', 'Training', 'Notice'];
+const acceptedFileTypes =
+  'image/png,image/jpeg,image/jpg,image/gif,image/webp,image/bmp,image/svg+xml,.pdf,.doc,.docx';
 
 export default function EditArticle() {
   const { id } = useParams();
@@ -79,13 +81,13 @@ export default function EditArticle() {
 
   const handleFileChange = (event) => {
     const files = Array.from(event.target.files || []);
-
-    if (files.length === 0) {
-      setAttachments([]);
-      return;
-    }
-
     setAttachments(files);
+  };
+
+  const removeAttachment = (indexToRemove) => {
+    setAttachments((prev) =>
+      prev.filter((_, index) => index !== indexToRemove)
+    );
   };
 
   const handleSubmit = async (event) => {
@@ -196,7 +198,7 @@ export default function EditArticle() {
               Attach / Replace Image or File
               <input
                 type="file"
-                accept="image/*,.pdf,.doc,.docx"
+                accept={acceptedFileTypes}
                 multiple
                 onChange={handleFileChange}
               />
@@ -204,17 +206,12 @@ export default function EditArticle() {
               {currentAttachments.length > 0 && attachments.length === 0 && (
                 <div className="muted top-gap-xs">
                   <p>Current attachments:</p>
-
                   <ul>
                     {currentAttachments.map((file, index) => {
                       const fileUrl = file.url || file;
                       const fileName = String(fileUrl).split('/').pop();
 
-                      return (
-                        <li key={`${fileName}-${index}`}>
-                          {fileName}
-                        </li>
-                      );
+                      return <li key={`${fileName}-${index}`}>{fileName}</li>;
                     })}
                   </ul>
                 </div>
@@ -229,10 +226,18 @@ export default function EditArticle() {
               {attachments.length > 0 && (
                 <div className="muted top-gap-xs">
                   <p>New selected files:</p>
-
                   <ul>
                     {attachments.map((file, index) => (
-                      <li key={`${file.name}-${index}`}>{file.name}</li>
+                      <li key={`${file.name}-${index}`}>
+                        {file.name}{' '}
+                        <button
+                          type="button"
+                          className="text-btn"
+                          onClick={() => removeAttachment(index)}
+                        >
+                          Remove
+                        </button>
+                      </li>
                     ))}
                   </ul>
                 </div>

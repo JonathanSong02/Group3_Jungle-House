@@ -138,10 +138,35 @@ function getUnclearCountFromMessage(message) {
   return 0;
 }
 
+function normalizeImageItem(image) {
+  if (!image) return '';
+
+  if (typeof image === 'string') {
+    return image;
+  }
+
+  if (typeof image === 'object') {
+    return (
+      image.url ||
+      image.image_url ||
+      image.path ||
+      image.file_url ||
+      image.attachment_url ||
+      ''
+    );
+  }
+
+  return '';
+}
+
 function buildImageUrl(imageUrl) {
   if (!imageUrl) return '';
 
-  const cleanUrl = String(imageUrl).trim();
+  let cleanUrl = normalizeImageItem(imageUrl);
+
+  if (!cleanUrl) return '';
+
+  cleanUrl = String(cleanUrl).trim();
 
   if (cleanUrl.startsWith('http://') || cleanUrl.startsWith('https://')) {
     return cleanUrl;
@@ -153,6 +178,14 @@ function buildImageUrl(imageUrl) {
 
   if (cleanUrl.startsWith('static/')) {
     return `${API_BASE_URL}/${cleanUrl}`;
+  }
+
+  if (cleanUrl.startsWith('/uploads/articles/')) {
+    return `${API_BASE_URL}/static${cleanUrl}`;
+  }
+
+  if (cleanUrl.startsWith('uploads/articles/')) {
+    return `${API_BASE_URL}/static/${cleanUrl}`;
   }
 
   if (cleanUrl.startsWith('/sop_images/')) {
@@ -174,7 +207,7 @@ function extractImagePathsFromText(text) {
   const value = String(text || '');
 
   const matches = value.match(
-    /(?:\/?static\/)?sop_images\/[^\s,|;)"']+\.(?:jpg|jpeg|png|webp|gif)/gi
+    /(?:\/?static\/)?(?:sop_images|uploads\/articles)\/[^\s,|;)"']+\.(?:jpg|jpeg|png|webp|gif|bmp|svg)/gi
   );
 
   if (!matches) return [];
@@ -182,10 +215,12 @@ function extractImagePathsFromText(text) {
   return [...new Set(matches)].map((path) => {
     let cleanPath = String(path).trim();
 
-    cleanPath = cleanPath.replace(/^\/?static\//i, '');
-
     if (!cleanPath.startsWith('/')) {
       cleanPath = `/${cleanPath}`;
+    }
+
+    if (!cleanPath.startsWith('/static/')) {
+      cleanPath = `/static${cleanPath}`;
     }
 
     return cleanPath;
@@ -194,32 +229,64 @@ function extractImagePathsFromText(text) {
 
 function removeImagePathsFromText(text) {
   return String(text || '')
-    .replace(/(?:\/?static\/)?sop_images\/[^\s,|;)"']+\.(?:jpg|jpeg|png|webp|gif)/gi, '')
+    .replace(/(?:\/?static\/)?(?:sop_images|uploads\/articles)\/[^\s,|;)"']+\.(?:jpg|jpeg|png|webp|gif|bmp|svg)/gi, '')
     .replace(/\|+/g, '')
     .replace(/[ \t]+$/gm, '')
     .trim();
+}
+
+function parseImageFiles(value) {
+  if (!value) return [];
+
+  if (Array.isArray(value)) {
+    return value.map(normalizeImageItem).filter(Boolean);
+  }
+
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+
+      if (Array.isArray(parsed)) {
+        return parsed.map(normalizeImageItem).filter(Boolean);
+      }
+    } catch (error) {
+      return [value];
+    }
+  }
+
+  return [];
 }
 
 function getStepImages(step) {
   const images = [];
 
   if (Array.isArray(step?.images)) {
-    images.push(...step.images);
+    images.push(...step.images.map(normalizeImageItem));
   }
 
   if (Array.isArray(step?.image_urls)) {
-    images.push(...step.image_urls);
+    images.push(...step.image_urls.map(normalizeImageItem));
   }
 
   if (step?.image_url) {
-    images.push(step.image_url);
+    images.push(normalizeImageItem(step.image_url));
   }
 
   if (step?.image) {
-    images.push(step.image);
+    images.push(normalizeImageItem(step.image));
+  }
+
+  if (step?.attachment_url) {
+    images.push(step.attachment_url);
+  }
+
+  if (step?.image_files) {
+    images.push(...parseImageFiles(step.image_files));
   }
 
   images.push(...extractImagePathsFromText(step?.content));
+  images.push(...extractImagePathsFromText(step?.answer));
+  images.push(...extractImagePathsFromText(step?.reply));
 
   return [...new Set(images.filter(Boolean))];
 }
@@ -1082,7 +1149,10 @@ export default function Chat() {
     const textImages = [
       ...extractImagePathsFromText(message.text),
       ...extractImagePathsFromText(message.answer),
-    ];
+      ...extractImagePathsFromText(message.reply),
+      ...parseImageFiles(message.image_files),
+      normalizeImageItem(message.attachment_url),
+    ].filter(Boolean);
 
     return (
       <div
