@@ -211,7 +211,54 @@ export default function ArticleDetail() {
     return finalElements;
   }
 
-  const renderContent = (content) => {
+  const decodeHtmlEntities = (value) => {
+    const textarea = document.createElement("textarea");
+    textarea.innerHTML = value;
+    return textarea.value;
+  };
+
+  const sanitizeTableHtml = (html) => {
+    const decodedHtml = decodeHtmlEntities(String(html || ""));
+
+    const parser = new DOMParser();
+    const documentHtml = parser.parseFromString(
+      `<div>${decodedHtml}</div>`,
+      "text/html"
+    );
+
+    const wrapper = documentHtml.body.firstChild;
+
+    if (!wrapper) return "";
+
+    wrapper
+      .querySelectorAll("script, iframe, object, embed, form, input, button")
+      .forEach((element) => {
+        element.remove();
+      });
+
+    wrapper.querySelectorAll("*").forEach((element) => {
+      Array.from(element.attributes).forEach((attribute) => {
+        const attributeName = attribute.name.toLowerCase();
+        const attributeValue = attribute.value.toLowerCase();
+
+        if (
+          attributeName.startsWith("on") ||
+          attributeName === "style" ||
+          attributeValue.includes("javascript:")
+        ) {
+          element.removeAttribute(attribute.name);
+        }
+      });
+    });
+
+    wrapper.querySelectorAll("table").forEach((table) => {
+      table.classList.add("article-data-table");
+    });
+
+    return wrapper.innerHTML;
+  };
+
+  const renderNormalContentLines = (content) => {
     if (!content) return null;
 
     const lines = content.split("\n");
@@ -279,6 +326,39 @@ export default function ArticleDetail() {
     });
   };
 
+  const renderContent = (content) => {
+    if (!content) return null;
+
+    const decodedContent = decodeHtmlEntities(String(content || ""));
+
+    const tableRegex = /(<table[\s\S]*?<\/table>)/gi;
+    const contentParts = decodedContent.split(tableRegex);
+
+    return contentParts.map((part, index) => {
+      if (!part || !part.trim()) return null;
+
+      const trimmedPart = part.trim().toLowerCase();
+
+      if (trimmedPart.startsWith("<table")) {
+        return (
+          <div key={`table-${index}`} className="article-table-wrapper">
+            <div
+              dangerouslySetInnerHTML={{
+                __html: sanitizeTableHtml(part),
+              }}
+            />
+          </div>
+        );
+      }
+
+      return (
+        <div key={`content-${index}`}>
+          {renderNormalContentLines(part)}
+        </div>
+      );
+    });
+  };
+
   if (loading) {
     return (
       <div className="page-container">
@@ -341,7 +421,10 @@ export default function ArticleDetail() {
                   className="sop-image"
                   loading="lazy"
                   onError={(e) => {
-                    console.error("Attachment image failed to load:", attachmentUrl);
+                    console.error(
+                      "Attachment image failed to load:",
+                      attachmentUrl
+                    );
                     e.currentTarget.style.display = "none";
                   }}
                 />

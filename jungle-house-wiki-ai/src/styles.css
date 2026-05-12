@@ -8553,4 +8553,109 @@ body.sidebar-is-collapsed .sidebar-user-menu {
     height: 50px !important;
     padding: 0 15px !important;
   }
+
+
+  /* =========================================================
+   ARTICLE TABLE EDITOR + DISPLAY
+   ========================================================= */
+
+.article-editor-toolbar {
+  margin: 10px 0 14px;
+  padding: 14px;
+  background: #fff8e8;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+}
+
+.article-editor-toolbar-title {
+  display: block;
+  margin-bottom: 10px;
+  color: var(--primary-dark);
+  font-weight: 800;
+}
+
+.table-size-picker {
+  width: fit-content;
+  display: grid;
+  grid-template-columns: repeat(6, 34px);
+  grid-auto-rows: 34px;
+  gap: 5px;
+  padding: 8px;
+  background: #fffdf8;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.table-size-cell {
+  width: 34px !important;
+  height: 34px !important;
+  min-width: 34px !important;
+  min-height: 34px !important;
+  padding: 0 !important;
+  border: 1px solid #d8bd85 !important;
+  border-radius: 6px !important;
+  background: #fffdf8 !important;
+  color: var(--primary-dark) !important;
+  font-size: 12px !important;
+  font-weight: 800 !important;
+  box-shadow: none !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.table-size-cell:hover {
+  background: #ffe8ad !important;
+  border-color: var(--primary) !important;
+  transform: none !important;
+}
+
+.table-help-text {
+  margin: 10px 0 0;
+}
+
+.article-table-wrapper {
+  width: 100%;
+  overflow-x: auto;
+  margin: 18px 0;
+  padding-bottom: 4px;
+}
+
+.article-data-table {
+  width: 100%;
+  min-width: 520px;
+  border-collapse: collapse;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.article-data-table th,
+.article-data-table td {
+  min-width: 130px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  color: var(--text);
+  text-align: left;
+  vertical-align: top;
+}
+
+.article-data-table th {
+  background: #fff1cf;
+  color: var(--primary-dark);
+  font-weight: 800;
+}
+
+.article-data-table td {
+  background: #fffdf8;
+}
+
+.article-data-table tr:nth-child(even) td {
+  background: #fff8ec;
+}
+
+.article-data-table tr:hover td {
+  background: #fff0cf;
+}
 }

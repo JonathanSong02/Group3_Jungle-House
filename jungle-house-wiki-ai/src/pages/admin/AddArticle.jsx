@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
 import api from '../../services/api';
@@ -9,6 +9,7 @@ const acceptedFileTypes =
 
 export default function AddArticle() {
   const navigate = useNavigate();
+  const contentTextareaRef = useRef(null);
 
   const [form, setForm] = useState({
     title: '',
@@ -22,6 +23,59 @@ export default function AddArticle() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [preview, setPreview] = useState(false);
+
+  const createTableHtml = (rows, columns) => {
+    let tableHtml = '\n\n<table class="article-data-table">\n  <tbody>\n';
+
+    for (let row = 1; row <= rows; row += 1) {
+      tableHtml += '    <tr>\n';
+
+      for (let column = 1; column <= columns; column += 1) {
+        tableHtml += `      <td>Cell ${row}-${column}</td>\n`;
+      }
+
+      tableHtml += '    </tr>\n';
+    }
+
+    tableHtml += '  </tbody>\n</table>\n\n';
+
+    return tableHtml;
+  };
+
+  const insertTable = (rows, columns) => {
+    const tableHtml = createTableHtml(rows, columns);
+    const textarea = contentTextareaRef.current;
+
+    setForm((prev) => {
+      const currentContent = prev.content || '';
+
+      if (!textarea) {
+        return {
+          ...prev,
+          content: `${currentContent}${tableHtml}`,
+        };
+      }
+
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+
+      const beforeCursor = currentContent.substring(0, start);
+      const afterCursor = currentContent.substring(end);
+
+      const updatedContent = `${beforeCursor}${tableHtml}${afterCursor}`;
+
+      setTimeout(() => {
+        textarea.focus();
+        const cursorPosition = start + tableHtml.length;
+        textarea.setSelectionRange(cursorPosition, cursorPosition);
+      }, 0);
+
+      return {
+        ...prev,
+        content: updatedContent,
+      };
+    });
+  };
 
   const handleChange = (event) => {
     const { name, value } = event.target;
@@ -209,7 +263,36 @@ export default function AddArticle() {
 
             <label className="full-width">
               Article Content *
+
+              <div className="article-editor-toolbar">
+                <span className="article-editor-toolbar-title">
+                  Insert Table
+                </span>
+
+                <div className="table-size-picker">
+                  {[1, 2, 3, 4, 5, 6].map((row) =>
+                    [1, 2, 3, 4, 5, 6].map((column) => (
+                      <button
+                        key={`table-${row}-${column}`}
+                        type="button"
+                        className="table-size-cell"
+                        title={`${row} x ${column} table`}
+                        onClick={() => insertTable(row, column)}
+                      >
+                        {row === 1 ? column : ''}
+                      </button>
+                    ))
+                  )}
+                </div>
+
+                <p className="muted small table-help-text">
+                  Click a box to insert a table. After inserting, change the
+                  cell text inside the article content.
+                </p>
+              </div>
+
               <textarea
+                ref={contentTextareaRef}
                 name="content"
                 value={form.content}
                 onChange={handleChange}
