@@ -70,14 +70,48 @@ PROJECT_DIR = BASE_DIR.parent
 # =========================
 # STATIC / UPLOAD / LOG PATHS
 # =========================
-# app.py is inside backend/src.
-# Real static files are inside backend/static.
+def pick_static_dir() -> Path:
+    """
+    Find the real static folder in both local and Railway deployment.
+
+    This is needed because different teammates may run app.py from different
+    locations, for example:
+    - backend/src/app.py  -> backend/static
+    - backend/app.py      -> backend/static
+    - project root        -> static or backend/static
+    """
+    candidates = [
+        BASE_DIR / "static",
+        BASE_DIR.parent / "static",
+        Path.cwd() / "static",
+        Path.cwd() / "backend" / "static",
+        BASE_DIR.parent / "backend" / "static",
+        BASE_DIR.parent.parent / "backend" / "static",
+    ]
+
+    # 1. Best match: folder exists and contains known app static folders.
+    for candidate in candidates:
+        if (candidate / "sop_images").exists() or (candidate / "uploads").exists():
+            return candidate.resolve()
+
+    # 2. Fallback: any existing static folder.
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+
+    # 3. Default for your current backend/src/app.py structure.
+    return (BASE_DIR.parent / "static").resolve()
+
+
 # AI Chat can also auto-find images in subfolders when training data returns only the filename.
-STATIC_DIR = PROJECT_DIR / "static"
+STATIC_DIR = pick_static_dir()
 UPLOAD_FOLDER = STATIC_DIR / "uploads" / "articles"
 
 STATIC_DIR.mkdir(parents=True, exist_ok=True)
 UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
+
+print("STATIC_DIR SELECTED:", STATIC_DIR)
+print("UPLOAD_FOLDER SELECTED:", UPLOAD_FOLDER)
 
 LOG_DIR = BASE_DIR / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -265,6 +299,179 @@ def static_file_response(filename, not_found_message="Static file not found."):
 
     return send_from_directory(str(found_file.parent), found_file.name)
 
+
+
+def get_static_url_for_file(file_path: Path) -> str:
+    try:
+        relative_path = file_path.relative_to(STATIC_DIR).as_posix()
+        return f"/static/{relative_path}"
+    except Exception:
+        return f"/static/{file_path.name}"
+
+
+def tokenize_for_match(value: str) -> set:
+    value = str(value or "").lower()
+    return set(re.findall(r"[a-z0-9]+", value))
+
+
+def get_step_number(step: dict) -> int | None:
+    for key in ["step", "step_number", "step_order", "order", "number"]:
+        value = step.get(key) if isinstance(step, dict) else None
+
+        if value is None:
+            continue
+
+        try:
+            return int(value)
+        except Exception:
+            pass
+
+    text = f"{step.get('title', '')} {step.get('content', '')} {step.get('answer', '')}" if isinstance(step, dict) else ""
+    match = re.search(r"\bstep\s*(\d+)\b", text, flags=re.IGNORECASE)
+
+    if match:
+        try:
+            return int(match.group(1))
+        except Exception:
+            return None
+
+    return None
+
+
+def step_already_has_image(step: dict) -> bool:
+    if not isinstance(step, dict):
+        return False
+
+    image_keys = [
+        "images",
+        "image_urls",
+        "image_url",
+        "image",
+        "image_files",
+        "attachment_url",
+        "file_url",
+        "path",
+    ]
+
+    for key in image_keys:
+        value = step.get(key)
+        if value:
+            return True
+
+    text = f"{step.get('content', '')} {step.get('answer', '')}"
+    return bool(re.search(r"(?:sop_images|uploads/articles).+\.(?:png|jpg|jpeg|webp|gif|bmp|svg)", text, flags=re.IGNORECASE))
+
+
+def find_step_images_from_static(result: dict, step: dict) -> list[str]:
+    """
+    Add SOP images even when the AI/training result only returns step text.
+    It searches backend/static/sop_images by SOP title/category/section and step number.
+    """
+    step_number = get_step_number(step)
+
+    if not step_number:
+        return []
+
+    sop_root = STATIC_DIR / "sop_images"
+
+    if not sop_root.exists():
+        return []
+
+    title_text = " ".join([
+        str(result.get("title") or ""),
+        str(result.get("question") or ""),
+        str(result.get("category") or ""),
+        str(result.get("section") or ""),
+        str(step.get("section") or ""),
+    ])
+
+    wanted_tokens = tokenize_for_match(title_text)
+
+    folders = [folder for folder in sop_root.rglob("*") if folder.is_dir()]
+
+    def folder_score(folder: Path) -> tuple[int, int]:
+        folder_tokens = tokenize_for_match(folder.relative_to(sop_root).as_posix().replace("_", " ").replace("-", " "))
+        overlap = len(wanted_tokens & folder_tokens)
+
+        # Prefer shorter/more specific folder paths when overlap ties.
+        depth_penalty = len(folder.relative_to(sop_root).parts)
+        return (overlap, -depth_penalty)
+
+    ranked_folders = sorted(folders, key=folder_score, reverse=True)
+
+    # If no folder matches the title, still search all folders, but matching folders are searched first.
+    image_extensions = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"}
+    step_patterns = [
+        f"step{step_number}_",
+        f"step_{step_number}_",
+        f"step {step_number}",
+        f"step{step_number}.",
+        f"{step_number}_",
+    ]
+
+    matches = []
+
+    for folder in ranked_folders:
+        for file_path in folder.iterdir():
+            if not file_path.is_file():
+                continue
+
+            if file_path.suffix.lower() not in image_extensions:
+                continue
+
+            filename = file_path.name.lower().replace("-", "_")
+
+            if any(pattern in filename for pattern in step_patterns):
+                matches.append(file_path)
+
+        if matches and folder_score(folder)[0] > 0:
+            break
+
+    # Fallback recursive exact step filename search.
+    if not matches:
+        for file_path in sop_root.rglob("*"):
+            if not file_path.is_file() or file_path.suffix.lower() not in image_extensions:
+                continue
+
+            filename = file_path.name.lower().replace("-", "_")
+
+            if any(pattern in filename for pattern in step_patterns):
+                matches.append(file_path)
+
+    return [get_static_url_for_file(path) for path in sorted(set(matches))]
+
+
+def enrich_result_with_static_images(result: dict | None) -> dict:
+    if not isinstance(result, dict):
+        return result or {}
+
+    steps = result.get("steps")
+
+    if not isinstance(steps, list):
+        return result
+
+    enriched_steps = []
+
+    for step in steps:
+        if not isinstance(step, dict):
+            enriched_steps.append(step)
+            continue
+
+        if step_already_has_image(step):
+            enriched_steps.append(step)
+            continue
+
+        found_images = find_step_images_from_static(result, step)
+
+        if found_images:
+            step = step.copy()
+            step["image_files"] = found_images
+
+        enriched_steps.append(step)
+
+    result = result.copy()
+    result["steps"] = enriched_steps
+    return result
 
 
 @app.route("/static/uploads/articles/<path:filename>", methods=["GET"])
@@ -825,6 +1032,11 @@ def standardize_ai_response(result: dict | None) -> dict:
     result["escalation_required"] = escalation_required
 
     result["options"] = result.get("options", [])
+
+    try:
+        result = enrich_result_with_static_images(result)
+    except Exception as error:
+        print("IMAGE ENRICHMENT ERROR:", error)
 
     return result
 

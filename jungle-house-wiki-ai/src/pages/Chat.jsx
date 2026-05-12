@@ -246,11 +246,43 @@ function removeImagePathsFromText(text) {
     .trim();
 }
 
+function splitImageString(value) {
+  const raw = String(value || '').trim();
+
+  if (!raw) return [];
+
+  const cleaned = raw
+    .replace(/^image_files\s*[:=]\s*/i, '')
+    .replace(/^images\s*[:=]\s*/i, '')
+    .trim();
+
+  // Handle Python-like list strings: ['a.png', 'b.png']
+  if (cleaned.startsWith('[') && cleaned.endsWith(']')) {
+    try {
+      const jsonReady = cleaned.replace(/'/g, '"');
+      const parsed = JSON.parse(jsonReady);
+
+      if (Array.isArray(parsed)) {
+        return parsed.flatMap((item) => parseImageFiles(item)).filter(Boolean);
+      }
+    } catch (error) {
+      // Continue to delimiter splitting below.
+    }
+  }
+
+  // Handle comma / pipe / semicolon / newline separated image paths.
+  return cleaned
+    .split(/[|,;\n]+/)
+    .map((item) => item.trim())
+    .map((item) => item.replace(/^(["'])|(["'])$/g, ''))
+    .filter(Boolean);
+}
+
 function parseImageFiles(value) {
   if (!value) return [];
 
   if (Array.isArray(value)) {
-    return value.map(normalizeImageItem).filter(Boolean);
+    return value.flatMap((item) => parseImageFiles(item)).filter(Boolean);
   }
 
   if (typeof value === 'object') {
@@ -267,7 +299,7 @@ function parseImageFiles(value) {
       const parsed = JSON.parse(cleanValue);
 
       if (Array.isArray(parsed)) {
-        return parsed.map(normalizeImageItem).filter(Boolean);
+        return parsed.flatMap((item) => parseImageFiles(item)).filter(Boolean);
       }
 
       if (typeof parsed === 'object' && parsed !== null) {
@@ -275,15 +307,8 @@ function parseImageFiles(value) {
         return single ? [single] : [];
       }
     } catch (error) {
-      // Continue to separator-based parsing below.
+      return splitImageString(cleanValue);
     }
-
-    // Support older CSV/string formats such as:
-    // "step2_1.png|step2_2.png" or "step2_1.png, step2_2.png".
-    return cleanValue
-      .split(/[,|\n]+/)
-      .map((item) => item.trim())
-      .filter(Boolean);
   }
 
   return [];
@@ -323,8 +348,86 @@ function getStepImages(step) {
   return [...new Set(images.filter(Boolean))];
 }
 
+function ChatImage({ imageUrl, alt, onImageClick }) {
+  const finalImageUrl = buildImageUrl(imageUrl);
+  const safeImageUrl = finalImageUrl ? encodeURI(finalImageUrl).replace(/#/g, '%23') : '';
+  const [failed, setFailed] = useState(false);
+
+  if (!safeImageUrl) return null;
+
+  if (failed) {
+    return (
+      <div
+        style={{
+          width: '100%',
+          maxWidth: '360px',
+          minHeight: '70px',
+          padding: '10px 12px',
+          borderRadius: '12px',
+          border: '1px solid #ffb3b3',
+          backgroundColor: '#fff5f5',
+          color: '#9b1c1c',
+          fontSize: '13px',
+          lineHeight: 1.45,
+          overflowWrap: 'anywhere',
+        }}
+      >
+        <strong>Image could not load</strong>
+        <div style={{ marginTop: '4px' }}>{safeImageUrl}</div>
+        <a
+          href={safeImageUrl}
+          target="_blank"
+          rel="noreferrer"
+          style={{
+            display: 'inline-block',
+            marginTop: '6px',
+            color: '#9b1c1c',
+            fontWeight: 700,
+          }}
+        >
+          Open image URL
+        </a>
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={safeImageUrl}
+      alt={alt}
+      loading="lazy"
+      onClick={() => {
+        if (onImageClick) {
+          onImageClick(safeImageUrl);
+        }
+      }}
+      style={{
+        width: '100%',
+        maxWidth: '260px',
+        maxHeight: '260px',
+        objectFit: 'contain',
+        borderRadius: '12px',
+        border: '1px solid #ddd',
+        display: 'block',
+        backgroundColor: '#fff',
+        cursor: onImageClick ? 'zoom-in' : 'default',
+      }}
+      onError={() => {
+        console.log('Image failed to load:', safeImageUrl);
+        setFailed(true);
+      }}
+    />
+  );
+}
+
 function renderImages(imageUrls, labelPrefix = 'Image', onImageClick = null) {
   if (!Array.isArray(imageUrls) || imageUrls.length === 0) return null;
+
+  const uniqueImageUrls = [
+    ...new Set(imageUrls.flatMap((item) => parseImageFiles(item)).filter(Boolean)),
+  ];
+
+  if (uniqueImageUrls.length === 0) return null;
 
   return (
     <div
@@ -338,39 +441,14 @@ function renderImages(imageUrls, labelPrefix = 'Image', onImageClick = null) {
         alignItems: 'flex-start',
       }}
     >
-      {imageUrls.map((imageUrl, imageIndex) => {
-        const finalImageUrl = buildImageUrl(imageUrl);
-
-        return (
-          <img
-            key={`${finalImageUrl}-${imageIndex}`}
-            src={finalImageUrl}
-            alt={`${labelPrefix} ${imageIndex + 1}`}
-            onClick={() => {
-              if (onImageClick) {
-                onImageClick(finalImageUrl);
-              }
-            }}
-            style={{
-              width: '100%',
-              maxWidth: '260px',
-              maxHeight: '260px',
-              objectFit: 'contain',
-              borderRadius: '12px',
-              border: '1px solid #ddd',
-              display: 'block',
-              backgroundColor: '#fff',
-              cursor: onImageClick ? 'zoom-in' : 'default',
-            }}
-            onError={(event) => {
-              console.log('Image failed to load:', finalImageUrl);
-
-              // Prevent the browser broken-image icon from taking space in the chat.
-              event.currentTarget.style.display = 'none';
-            }}
-          />
-        );
-      })}
+      {uniqueImageUrls.map((imageUrl, imageIndex) => (
+        <ChatImage
+          key={`${buildImageUrl(imageUrl)}-${imageIndex}`}
+          imageUrl={imageUrl}
+          alt={`${labelPrefix} ${imageIndex + 1}`}
+          onImageClick={onImageClick}
+        />
+      ))}
     </div>
   );
 }
