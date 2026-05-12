@@ -17,6 +17,15 @@ from db_helper import (
     create_escalation,
     resolve_escalation
 )
+# OCR is optional. The system must still run even when pytesseract is not installed.
+try:
+    import pytesseract
+    pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+    OCR_AVAILABLE = True
+except Exception as error:
+    pytesseract = None
+    OCR_AVAILABLE = False
+    OCR_LOAD_ERROR = str(error)
 
 import re
 
@@ -65,63 +74,14 @@ except Exception as error:
     MODEL_LOAD_ERROR = str(error)
 
 BASE_DIR = Path(__file__).resolve().parent
-PROJECT_DIR = BASE_DIR.parent
 
 # =========================
 # STATIC / UPLOAD / LOG PATHS
 # =========================
-def pick_static_dir() -> Path:
-    """
-    Find the real static folder in both local and Railway deployment.
-
-    This is needed because different teammates may run app.py from different
-    locations, for example:
-    - backend/src/app.py  -> backend/static
-    - backend/app.py      -> backend/static
-    - project root        -> static or backend/static
-    """
-    candidates = [
-    BASE_DIR.parent / "static",          # backend/static or /app/static
-    Path.cwd() / "static",
-    Path.cwd() / "backend" / "static",
-    BASE_DIR.parent / "backend" / "static",
-    BASE_DIR.parent.parent / "backend" / "static",
-    BASE_DIR / "static",                 # backend/src/static last
-    ]
-
-    # 1. Best match: folder exists and contains known app static folders.
-    # Prefer the real app static folder that has SOP/product/notice images.
-    for candidate in candidates:
-        if (
-            (candidate / "sop_images").exists()
-            or (candidate / "product_images").exists()
-            or (candidate / "notice_images").exists()
-        ):
-            return candidate.resolve()
-
-    # Fallback to upload-only static folder.
-    for candidate in candidates:
-        if (candidate / "uploads").exists():
-            return candidate.resolve()
-
-    # 2. Fallback: any existing static folder.
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate.resolve()
-
-    # 3. Default for your current backend/src/app.py structure.
-    return (BASE_DIR.parent / "static").resolve()
-
-
-# AI Chat can also auto-find images in subfolders when training data returns only the filename.
-STATIC_DIR = pick_static_dir()
+# Use only ONE static folder so uploaded files and served files use the same path.
+STATIC_DIR = BASE_DIR / "static"
 UPLOAD_FOLDER = STATIC_DIR / "uploads" / "articles"
-
-STATIC_DIR.mkdir(parents=True, exist_ok=True)
 UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
-
-print("STATIC_DIR SELECTED:", STATIC_DIR)
-print("UPLOAD_FOLDER SELECTED:", UPLOAD_FOLDER)
 
 LOG_DIR = BASE_DIR / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -139,11 +99,6 @@ AI_CHAT_MEMORY = {}
 AI_FAIL_MEMORY = {}
 AI_LAST_ANSWER_MEMORY = {}
 
-# IMPORTANT:
-# Disable Flask default static route.
-# We use the custom /static/<path:filename> route below so AI Chat images
-# can be found recursively even when training data only returns a filename
-# or a partial path such as /static/sop_images/step2_1.png.
 app = Flask(__name__, static_folder=None)
 
 CORS(
@@ -215,292 +170,89 @@ def save_article_attachments(files):
     return saved_files
 
 
-def find_static_file(filename):
-    """
-    Find a static file even if AI Chat/training data returns only a partial path.
-
-    Example:
-    Requested: /static/sop_images/step17_1.jpg
-    Actual:    backend/static/sop_images/aeon_roadshow_opening/step17_1.jpg
-    """
-    clean_filename = str(filename or "").replace("\\", "/").strip().lstrip("/")
-
-    if not clean_filename:
-        return None
-
-    # Remove duplicated static prefix if received.
-    if clean_filename.startswith("static/"):
-        clean_filename = clean_filename.replace("static/", "", 1)
-
-    # Security: do not allow path traversal.
-    if ".." in Path(clean_filename).parts:
-        return None
-
-    # 1. Exact path first.
-    exact_path = STATIC_DIR / clean_filename
-    if exact_path.exists() and exact_path.is_file():
-        return exact_path
-
-    # 2. If path starts with a known static folder but misses subfolder, search by basename.
-    basename = Path(clean_filename).name
-
-    if not basename:
-        return None
-
-    allowed_image_extensions = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"}
-    allowed_document_extensions = {".pdf", ".doc", ".docx"}
-    suffix = Path(basename).suffix.lower()
-
-    if suffix not in allowed_image_extensions and suffix not in allowed_document_extensions:
-        return None
-
-    matches = [
-        match for match in STATIC_DIR.rglob(basename)
-        if match.exists() and match.is_file()
-    ]
-
-    if not matches:
-        return None
-
-    request_text = clean_filename.replace("\\", "/").lower()
-
-    # 3. Prefer the same main folder as requested.
-    preferred_folder_order = []
-
-    if "sop_images" in request_text:
-        preferred_folder_order.append("/sop_images/")
-    if "product_images" in request_text:
-        preferred_folder_order.append("/product_images/")
-    if "notice_images" in request_text:
-        preferred_folder_order.append("/notice_images/")
-    if "uploads" in request_text:
-        preferred_folder_order.append("/uploads/")
-
-    preferred_folder_order.extend([
-        "/sop_images/",
-        "/product_images/",
-        "/notice_images/",
-        "/uploads/articles/",
-        "/uploads/",
-    ])
-
-    for folder_hint in preferred_folder_order:
-        for match in matches:
-            match_text = str(match).replace("\\", "/").lower()
-            if folder_hint in match_text:
-                return match
-
-    return matches[0]
-
-
-def static_file_response(filename, not_found_message="Static file not found."):
-    found_file = find_static_file(filename)
-
-    print("REQUESTED STATIC FILE:", filename)
-    print("STATIC_DIR:", STATIC_DIR)
-    print("FOUND FILE:", found_file)
-
-    if not found_file:
-        return jsonify({
-            "message": not_found_message,
-            "requested_filename": filename,
-            "static_dir": str(STATIC_DIR)
-        }), 404
-
-    return send_from_directory(str(found_file.parent), found_file.name)
-
-
-
-def get_static_url_for_file(file_path: Path) -> str:
-    try:
-        relative_path = file_path.relative_to(STATIC_DIR).as_posix()
-        return f"/static/{relative_path}"
-    except Exception:
-        return f"/static/{file_path.name}"
-
-
-def tokenize_for_match(value: str) -> set:
-    value = str(value or "").lower()
-    return set(re.findall(r"[a-z0-9]+", value))
-
-
-def get_step_number(step: dict) -> int | None:
-    for key in ["step", "step_number", "step_order", "order", "number"]:
-        value = step.get(key) if isinstance(step, dict) else None
-
-        if value is None:
-            continue
-
-        try:
-            return int(value)
-        except Exception:
-            pass
-
-    text = f"{step.get('title', '')} {step.get('content', '')} {step.get('answer', '')}" if isinstance(step, dict) else ""
-    match = re.search(r"\bstep\s*(\d+)\b", text, flags=re.IGNORECASE)
-
-    if match:
-        try:
-            return int(match.group(1))
-        except Exception:
-            return None
-
-    return None
-
-
-def step_already_has_image(step: dict) -> bool:
-    if not isinstance(step, dict):
-        return False
-
-    image_keys = [
-        "images",
-        "image_urls",
-        "image_url",
-        "image",
-        "image_files",
-        "attachment_url",
-        "file_url",
-        "path",
-    ]
-
-    for key in image_keys:
-        value = step.get(key)
-        if value:
-            return True
-
-    text = f"{step.get('content', '')} {step.get('answer', '')}"
-    return bool(re.search(r"(?:sop_images|uploads/articles).+\.(?:png|jpg|jpeg|webp|gif|bmp|svg)", text, flags=re.IGNORECASE))
-
-
-def find_step_images_from_static(result: dict, step: dict) -> list[str]:
-    """
-    Add SOP images even when the AI/training result only returns step text.
-    It searches backend/static/sop_images by SOP title/category/section and step number.
-    """
-    step_number = get_step_number(step)
-
-    if not step_number:
-        return []
-
-    sop_root = STATIC_DIR / "sop_images"
-
-    if not sop_root.exists():
-        return []
-
-    title_text = " ".join([
-        str(result.get("title") or ""),
-        str(result.get("question") or ""),
-        str(result.get("category") or ""),
-        str(result.get("section") or ""),
-        str(step.get("section") or ""),
-    ])
-
-    wanted_tokens = tokenize_for_match(title_text)
-
-    folders = [folder for folder in sop_root.rglob("*") if folder.is_dir()]
-
-    def folder_score(folder: Path) -> tuple[int, int]:
-        folder_tokens = tokenize_for_match(folder.relative_to(sop_root).as_posix().replace("_", " ").replace("-", " "))
-        overlap = len(wanted_tokens & folder_tokens)
-
-        # Prefer shorter/more specific folder paths when overlap ties.
-        depth_penalty = len(folder.relative_to(sop_root).parts)
-        return (overlap, -depth_penalty)
-
-    ranked_folders = sorted(folders, key=folder_score, reverse=True)
-
-    # If no folder matches the title, still search all folders, but matching folders are searched first.
-    image_extensions = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"}
-    step_patterns = [
-        f"step{step_number}_",
-        f"step_{step_number}_",
-        f"step {step_number}",
-        f"step{step_number}.",
-        f"{step_number}_",
-    ]
-
-    matches = []
-
-    for folder in ranked_folders:
-        for file_path in folder.iterdir():
-            if not file_path.is_file():
-                continue
-
-            if file_path.suffix.lower() not in image_extensions:
-                continue
-
-            filename = file_path.name.lower().replace("-", "_")
-
-            if any(pattern in filename for pattern in step_patterns):
-                matches.append(file_path)
-
-        if matches and folder_score(folder)[0] > 0:
-            break
-
-    # Fallback recursive exact step filename search.
-    if not matches:
-        for file_path in sop_root.rglob("*"):
-            if not file_path.is_file() or file_path.suffix.lower() not in image_extensions:
-                continue
-
-            filename = file_path.name.lower().replace("-", "_")
-
-            if any(pattern in filename for pattern in step_patterns):
-                matches.append(file_path)
-
-    return [get_static_url_for_file(path) for path in sorted(set(matches))]
-
-
-def enrich_result_with_static_images(result: dict | None) -> dict:
-    if not isinstance(result, dict):
-        return result or {}
-
-    steps = result.get("steps")
-
-    if not isinstance(steps, list):
-        return result
-
-    enriched_steps = []
-
-    for step in steps:
-        if not isinstance(step, dict):
-            enriched_steps.append(step)
-            continue
-
-        if step_already_has_image(step):
-            enriched_steps.append(step)
-            continue
-
-        found_images = find_step_images_from_static(result, step)
-
-        if found_images:
-            step = step.copy()
-            step["image_files"] = found_images
-
-        enriched_steps.append(step)
-
-    result = result.copy()
-    result["steps"] = enriched_steps
-    return result
-
-
 @app.route("/static/uploads/articles/<path:filename>", methods=["GET"])
 def serve_article_attachment(filename):
-    # Article upload route still tries the upload folder first, then falls back to recursive static search.
     file_path = UPLOAD_FOLDER / filename
 
     print("REQUESTED ARTICLE ATTACHMENT:", filename)
     print("UPLOAD_FOLDER:", UPLOAD_FOLDER)
     print("FILE EXISTS:", file_path.exists())
 
+    if not file_path.exists():
+        return jsonify({
+            "message": "Attachment file not found on server.",
+            "filename": filename,
+            "upload_folder": str(UPLOAD_FOLDER),
+            "expected_path": str(file_path)
+        }), 404
+
+    return send_from_directory(str(UPLOAD_FOLDER), filename)
+
+
+
+
+@app.route("/static/sop_images/<path:filename>", methods=["GET"])
+def serve_sop_image(filename):
+    clean_filename = str(filename or "").replace("\\", "/").strip().lstrip("/")
+    file_path = SOP_IMAGE_FOLDER / clean_filename
+
+    print("REQUESTED SOP IMAGE:", clean_filename)
+    print("SOP_IMAGE_FOLDER:", SOP_IMAGE_FOLDER)
+    print("EXACT FILE EXISTS:", file_path.exists())
+
     if file_path.exists() and file_path.is_file():
-        return send_from_directory(str(UPLOAD_FOLDER), filename)
+        return send_from_directory(str(file_path.parent), file_path.name)
 
-    return static_file_response(
-        filename,
-        not_found_message="Attachment file not found on server."
-    )
+    # Fallback: sometimes the AI dataset stores only sop_images/kiosk_opening/step3_1.jpg,
+    # while the server path differs slightly. Search by basename inside sop_images.
+    basename = Path(clean_filename).name
+    matched_file = None
 
+    if basename and SOP_IMAGE_FOLDER.exists():
+        for candidate in SOP_IMAGE_FOLDER.rglob(basename):
+            if candidate.exists() and candidate.is_file():
+                matched_file = candidate
+                break
+
+    print("MATCHED SOP IMAGE:", matched_file)
+
+    if matched_file:
+        return send_from_directory(str(matched_file.parent), matched_file.name)
+
+    return jsonify({
+        "message": "SOP image file not found on server.",
+        "filename": clean_filename,
+        "sop_image_folder": str(SOP_IMAGE_FOLDER),
+        "expected_path": str(file_path)
+    }), 404
+
+
+@app.route("/api/debug/sop-images", methods=["GET"])
+def debug_sop_images():
+    files = []
+
+    if SOP_IMAGE_FOLDER.exists():
+        files = [str(file.relative_to(SOP_IMAGE_FOLDER)).replace("\\", "/") for file in SOP_IMAGE_FOLDER.rglob("*") if file.is_file()]
+
+    return jsonify({
+        "sop_image_folder": str(SOP_IMAGE_FOLDER),
+        "folder_exists": SOP_IMAGE_FOLDER.exists(),
+        "files": files
+    }), 200
+
+
+@app.route("/api/debug/static-files", methods=["GET"])
+def debug_static_files():
+    files = []
+
+    if STATIC_DIR.exists():
+        files = [str(file.relative_to(STATIC_DIR)).replace("\\", "/") for file in STATIC_DIR.rglob("*") if file.is_file()]
+
+    return jsonify({
+        "static_folder": str(STATIC_DIR),
+        "folder_exists": STATIC_DIR.exists(),
+        "files": files
+    }), 200
 
 @app.route("/api/debug/uploads", methods=["GET"])
 def debug_uploads():
@@ -514,51 +266,6 @@ def debug_uploads():
         "folder_exists": UPLOAD_FOLDER.exists(),
         "files": files
     }), 200
-
-
-@app.route("/api/debug/static", methods=["GET"])
-def debug_static_files():
-    result = {
-        "base_dir": str(BASE_DIR),
-        "project_dir": str(PROJECT_DIR),
-        "static_dir": str(STATIC_DIR),
-        "static_exists": STATIC_DIR.exists(),
-        "folders": {},
-        "sample_recursive_files": [],
-    }
-
-    folders_to_check = [
-        "sop_images",
-        "sop_images/aeon_roadshow_opening",
-        "sop_images/aeon_roadshow_closing",
-        "sop_images/kiosk_opening",
-        "sop_images/kiosk_closing",
-        "sop_images/kuching_booth_closing_dustbin",
-        "sop_images/new_bee_1st_day_check_list",
-        "product_images",
-        "notice_images",
-        "uploads",
-        "uploads/articles",
-    ]
-
-    for folder in folders_to_check:
-        folder_path = STATIC_DIR / folder
-
-        if folder_path.exists():
-            result["folders"][folder] = [
-                file.name for file in folder_path.iterdir()
-            ]
-        else:
-            result["folders"][folder] = "Folder not found"
-
-    if STATIC_DIR.exists():
-        result["sample_recursive_files"] = [
-            str(file.relative_to(STATIC_DIR)).replace("\\", "/")
-            for file in list(STATIC_DIR.rglob("*"))
-            if file.is_file()
-        ][:100]
-
-    return jsonify(result), 200
 
 
 # =========================
@@ -1043,11 +750,6 @@ def standardize_ai_response(result: dict | None) -> dict:
 
     result["options"] = result.get("options", [])
 
-    try:
-        result = enrich_result_with_static_images(result)
-    except Exception as error:
-        print("IMAGE ENRICHMENT ERROR:", error)
-
     return result
 
 
@@ -1145,12 +847,6 @@ def normalize_result(result, default_source="unknown"):
             "purpose": result.get("purpose"),
             "steps": result.get("steps", []),
             "notes": result.get("notes", []),
-            "image_files": result.get("image_files"),
-            "attachment_url": result.get("attachment_url"),
-            "attachment_type": result.get("attachment_type"),
-            "image_url": result.get("image_url"),
-            "image_urls": result.get("image_urls", []),
-            "images": result.get("images", []),
             "score": float(result.get("score", result.get("confidence", 0.0)) or 0.0),
             "confidence": float(result.get("confidence", result.get("score", 0.0)) or 0.0),
             "confidence_label": result.get("confidence_label"),
@@ -1197,7 +893,7 @@ def is_valid_answer(result):
     return True
 
 
-def choose_final_result(model_result, retrieval_result):
+def choose_final_result(model_result, retrieval_result, kb_result=None):
     if model_result:
         model_source = str(model_result.get("source", ""))
         non_escalation_control_sources = {
@@ -1219,8 +915,12 @@ def choose_final_result(model_result, retrieval_result):
         ):
             return model_result
 
+    if kb_result and is_valid_answer(kb_result):
+        if kb_result.get("score", 0.0) >= 0.18:
+            return kb_result
+
     if model_result and is_valid_answer(model_result):
-        if model_result.get("type") == "sop":
+        if model_result.get("type") == "sop" and not kb_result:
             return model_result
 
         if model_result.get("score", 0.0) >= 0.60:
@@ -1240,6 +940,9 @@ def choose_final_result(model_result, retrieval_result):
     if retrieval_result and is_valid_answer(retrieval_result):
         if retrieval_result.get("score", 0.0) >= 0.20:
             return retrieval_result
+
+    if kb_result:
+        return kb_result
 
     if model_result and retrieval_result:
         if retrieval_result.get("score", 0.0) > model_result.get("score", 0.0):
@@ -1334,12 +1037,6 @@ def build_training_data_options_from_model_reply(model_result, context=None):
         option_type = "text"
         steps = []
         notes = []
-        image_files = None
-        attachment_url = None
-        attachment_type = None
-        image_url = None
-        image_urls = []
-        images = []
 
         if detail_result:
             answer = detail_result.get("answer") or detail_result.get("reply") or ""
@@ -1352,9 +1049,6 @@ def build_training_data_options_from_model_reply(model_result, context=None):
             image_files = detail_result.get("image_files")
             attachment_url = detail_result.get("attachment_url")
             attachment_type = detail_result.get("attachment_type")
-            image_url = detail_result.get("image_url")
-            image_urls = detail_result.get("image_urls", [])
-            images = detail_result.get("images", [])
 
         if not answer:
             answer = f"Please ask about {title} for more details."
@@ -1371,12 +1065,9 @@ def build_training_data_options_from_model_reply(model_result, context=None):
             "type": option_type,
             "steps": steps,
             "notes": notes,
-            "image_files": image_files,
-            "attachment_url": attachment_url,
-            "attachment_type": attachment_type,
-            "image_url": image_url,
-            "image_urls": image_urls,
-            "images": images,
+            "image_files": image_files if 'image_files' in locals() else None,
+            "attachment_url": attachment_url if 'attachment_url' in locals() else None,
+            "attachment_type": attachment_type if 'attachment_type' in locals() else None,
         })
 
     return options
@@ -1475,10 +1166,7 @@ def build_answer_options(question, model_result=None, retrieval_result=None):
             "notes": result.get("notes", []),
             "image_files": result.get("image_files"),
             "attachment_url": result.get("attachment_url"),
-            "attachment_type": result.get("attachment_type"),
-            "image_url": result.get("image_url"),
-            "image_urls": result.get("image_urls", []),
-            "images": result.get("images", [])
+            "attachment_type": result.get("attachment_type")
         })
 
     add_option(model_result, "training_data")
@@ -1489,6 +1177,222 @@ def build_answer_options(question, model_result=None, retrieval_result=None):
         key=lambda item: item.get("confidence", 0.0),
         reverse=True
     )[:6]
+
+
+def tokenize_for_knowledge_match(value):
+    value = str(value or "").lower()
+    return set(re.findall(r"[a-z0-9]+", value))
+
+
+def normalize_article_image_files(value):
+    """Return article images/files in one clean list for AI Chat."""
+    files = []
+
+    if not value:
+        return files
+
+    try:
+        parsed = json.loads(value) if isinstance(value, str) else value
+    except Exception:
+        parsed = value
+
+    if isinstance(parsed, list):
+        for item in parsed:
+            if isinstance(item, dict):
+                url = item.get("url") or item.get("path") or item.get("image_url")
+                file_type = item.get("type") or item.get("mime_type")
+                if url:
+                    files.append({"url": url, "type": file_type})
+            elif item:
+                files.append({"url": str(item), "type": None})
+    elif isinstance(parsed, dict):
+        url = parsed.get("url") or parsed.get("path") or parsed.get("image_url")
+        file_type = parsed.get("type") or parsed.get("mime_type")
+        if url:
+            files.append({"url": url, "type": file_type})
+    else:
+        files.append({"url": str(parsed), "type": None})
+
+    return files
+
+
+def calculate_article_match_score(question, article):
+    question_text = clean_question(question).lower()
+    q_tokens = tokenize_for_knowledge_match(question_text)
+
+    title = str(article.get("title") or "").lower()
+    category = str(article.get("category") or "").lower()
+    sub_category = str(article.get("sub_category") or "").lower()
+    content = str(article.get("content") or "").lower()
+
+    haystack = " ".join([title, category, sub_category, content])
+    hay_tokens = tokenize_for_knowledge_match(haystack)
+
+    if not q_tokens or not hay_tokens:
+        return 0.0
+
+    overlap = len(q_tokens & hay_tokens) / max(len(q_tokens), 1)
+    score = overlap
+
+    if question_text == title:
+        score += 0.7
+    elif question_text in title or title in question_text:
+        score += 0.45
+
+    title_tokens = tokenize_for_knowledge_match(title)
+    if title_tokens:
+        title_overlap = len(q_tokens & title_tokens) / max(len(q_tokens), 1)
+        score += title_overlap * 0.35
+
+    if question_text in haystack:
+        score += 0.2
+
+    return round(min(score, 1.0), 4)
+
+
+def parse_article_steps(content):
+    text = str(content or "").strip()
+    if not text:
+        return []
+
+    pattern = re.compile(r"(?:^|\n)\s*(?:step\s*)?(\d+)\s*[\).:-]?\s*(.*?)(?=(?:\n\s*(?:step\s*)?\d+\s*[\).:-])|\Z)", re.IGNORECASE | re.DOTALL)
+    matches = list(pattern.finditer(text))
+
+    steps = []
+    for match in matches:
+        step_no = int(match.group(1))
+        step_text = str(match.group(2) or "").strip()
+        if not step_text:
+            continue
+        steps.append({
+            "step": step_no,
+            "step_order": step_no,
+            "title": f"Step {step_no}",
+            "answer": step_text,
+            "content": step_text,
+            "image_files": []
+        })
+
+    return steps
+
+
+def build_article_ai_result(article, question, score):
+    title = article.get("title")
+    content = article.get("content") or ""
+    category = article.get("category")
+    sub_category = article.get("sub_category")
+
+    article_files = normalize_article_image_files(article.get("image_files"))
+
+    if article.get("attachment_url"):
+        article_files.append({
+            "url": article.get("attachment_url"),
+            "type": article.get("attachment_type")
+        })
+
+    # Remove duplicate file URLs.
+    unique_files = []
+    seen_urls = set()
+    for item in article_files:
+        url = str(item.get("url") or "").strip()
+        if not url or url in seen_urls:
+            continue
+        seen_urls.add(url)
+        unique_files.append(item)
+
+    steps = parse_article_steps(content)
+    result_type = "sop" if steps else "text"
+
+    if result_type == "text":
+        reply = content
+    else:
+        reply = f"{title}"
+        if unique_files:
+            # Article-level attachments are shown in the first step so staff can see them in AI Chat.
+            steps[0]["image_files"] = unique_files
+
+    return standardize_ai_response({
+        "question": question,
+        "type": result_type,
+        "category": category,
+        "title": title,
+        "section": sub_category,
+        "reply": reply,
+        "answer": content,
+        "purpose": None,
+        "steps": steps,
+        "notes": [],
+        "image_files": unique_files,
+        "attachment_url": article.get("attachment_url"),
+        "attachment_type": article.get("attachment_type"),
+        "score": score,
+        "confidence": score,
+        "confidence_label": get_confidence_label(score),
+        "source": "wiki_article_database",
+        "context": {
+            "source_type": "knowledge_base",
+            "article_id": article.get("article_id"),
+            "title": title,
+            "category": category,
+            "section": sub_category,
+        },
+        "fallback": False,
+        "fallback_message": "",
+        "escalation_ready": False,
+        "escalation_required": False,
+    })
+
+
+def search_knowledge_base_articles(question, limit=1):
+    """
+    Main AI knowledge retrieval.
+    AI Chat reads live wiki_article database first, so new Content Management articles
+    can be found without changing cleaned_knowledge.csv or retraining PyTorch.
+    """
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT
+                article_id,
+                title,
+                content,
+                category,
+                sub_category,
+                link,
+                attachment_url,
+                attachment_type,
+                image_files,
+                created_at
+            FROM wiki_article
+            WHERE COALESCE(is_deleted, 0) = 0
+            ORDER BY created_at DESC, article_id DESC
+        """)
+        articles = cursor.fetchall() or []
+    except Exception as error:
+        print("KB ARTICLE SEARCH ERROR:", error)
+        return [] if limit != 1 else None
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+    scored_results = []
+    for article in articles:
+        score = calculate_article_match_score(question, article)
+        if score >= 0.18:
+            scored_results.append(build_article_ai_result(article, question, score))
+
+    scored_results = sorted(scored_results, key=lambda item: item.get("score", 0.0), reverse=True)
+
+    if limit == 1:
+        return scored_results[0] if scored_results else None
+
+    return scored_results[:limit]
 
 def process_question(question, context=None):
     question = clean_question(question)
@@ -1514,6 +1418,9 @@ def process_question(question, context=None):
             "escalation_ready": False,
             "escalation_required": False,
         }), 400
+
+    kb_result = search_knowledge_base_articles(question, limit=1)
+    kb_options = search_knowledge_base_articles(question, limit=10)
 
     retrieval_result = search_similar_question(question)
 
@@ -1592,6 +1499,14 @@ def process_question(question, context=None):
             build_answer_options(question, model_result, None)
         )
 
+    # Add Knowledge Base article results first because wiki_article is the live main knowledge source.
+    answer_options.extend(
+        build_answer_options(question, None, kb_result)
+    )
+
+    for item in kb_options:
+        answer_options.extend(build_answer_options(question, None, item))
+
     # Add the best Team Lead/database result.
     answer_options.extend(
         build_answer_options(question, None, retrieval_result)
@@ -1667,7 +1582,7 @@ def process_question(question, context=None):
 
     # Prefer training data / PyTorch model result for normal valid questions.
     # Retrieved Team Lead answers are used mainly when the model cannot answer confidently.
-    final_result = choose_final_result(model_result, retrieval_result)  
+    final_result = choose_final_result(model_result, retrieval_result, kb_result)  
 
     response_payload = {
         "question": question,
@@ -1683,9 +1598,6 @@ def process_question(question, context=None):
         "image_files": final_result.get("image_files"),
         "attachment_url": final_result.get("attachment_url"),
         "attachment_type": final_result.get("attachment_type"),
-        "image_url": final_result.get("image_url"),
-        "image_urls": final_result.get("image_urls", []),
-        "images": final_result.get("images", []),
         "score": final_result.get("score", 0.0),
         "confidence": final_result.get("confidence", final_result.get("score", 0.0)),
         "confidence_label": final_result.get("confidence_label"),
@@ -5709,7 +5621,30 @@ def delete_message_from_view(message_id):
 
 @app.route("/static/<path:filename>", methods=["GET"])
 def serve_static(filename):
-    return static_file_response(filename)
+    clean_filename = str(filename or "").replace("\\", "/").strip().lstrip("/")
+    file_path = STATIC_DIR / clean_filename
+
+    if file_path.exists() and file_path.is_file():
+        return send_from_directory(str(file_path.parent), file_path.name)
+
+    basename = Path(clean_filename).name
+    matched_file = None
+
+    if basename and STATIC_DIR.exists():
+        for candidate in STATIC_DIR.rglob(basename):
+            if candidate.exists() and candidate.is_file():
+                matched_file = candidate
+                break
+
+    if matched_file:
+        return send_from_directory(str(matched_file.parent), matched_file.name)
+
+    return jsonify({
+        "message": "Static file not found on server.",
+        "filename": clean_filename,
+        "static_folder": str(STATIC_DIR),
+        "expected_path": str(file_path)
+    }), 404
 
 # =========================
 # RUN APP

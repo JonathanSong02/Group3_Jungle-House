@@ -12,7 +12,7 @@ const starterMessages = [
   },
 ];
 
-const API_BASE_URL = 'https://group3jungle-house-production.up.railway.app';
+const API_BASE_URL = 'http://127.0.0.1:5000';
 const CHAT_ENDPOINT = `${API_BASE_URL}/api/chat`;
 
 const CHAT_HISTORY_KEY = 'jh_ai_chat_history';
