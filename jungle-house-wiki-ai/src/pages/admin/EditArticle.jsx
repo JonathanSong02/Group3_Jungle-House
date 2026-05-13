@@ -11,6 +11,7 @@ export default function EditArticle() {
   const { id } = useParams();
   const navigate = useNavigate();
   const contentTextareaRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   const [form, setForm] = useState({
     title: '',
@@ -133,9 +134,20 @@ export default function EditArticle() {
     }));
   };
 
+  const openFilePicker = () => {
+    fileInputRef.current?.click();
+  };
+
   const handleFileChange = (event) => {
-    const files = Array.from(event.target.files || []);
-    setAttachments(files);
+    const selectedFiles = Array.from(event.target.files || []);
+
+    if (selectedFiles.length === 0) {
+      return;
+    }
+
+    setAttachments((prev) => [...prev, ...selectedFiles]);
+
+    event.target.value = '';
   };
 
   const removeAttachment = (indexToRemove) => {
@@ -143,6 +155,28 @@ export default function EditArticle() {
       prev.filter((_, index) => index !== indexToRemove)
     );
   };
+
+  const getAttachmentFileName = (file) => {
+    const fileUrl = file?.url || file?.file_url || file?.path || file;
+    return String(fileUrl || '').split('/').pop() || 'Attachment file';
+  };
+
+  const formatFileSize = (bytes) => {
+    if (!bytes) {
+      return 'Selected file';
+    }
+
+    const sizeInMb = bytes / (1024 * 1024);
+
+    if (sizeInMb >= 1) {
+      return `${sizeInMb.toFixed(2)} MB`;
+    }
+
+    return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  };
+
+  const isImageFile = (fileName = '') =>
+    /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(fileName);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -248,9 +282,28 @@ export default function EditArticle() {
               />
             </label>
 
-            <label className="full-width">
-              Attach / Replace Image or File
+            <div className="full-width article-attachment-panel">
+              <div className="article-attachment-top">
+                <div>
+                  <h3>Attach / Replace Image or File</h3>
+                  <p>
+                    Click add to select one or more images/files. You can click
+                    the button again to add more before saving the article.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  className="secondary-btn attachment-add-btn"
+                  onClick={openFilePicker}
+                >
+                  + Add Image / File
+                </button>
+              </div>
+
               <input
+                ref={fileInputRef}
+                className="hidden-file-input"
                 type="file"
                 accept={acceptedFileTypes}
                 multiple
@@ -258,47 +311,108 @@ export default function EditArticle() {
               />
 
               {currentAttachments.length > 0 && attachments.length === 0 && (
-                <div className="muted top-gap-xs">
-                  <p>Current attachments:</p>
-                  <ul>
-                    {currentAttachments.map((file, index) => {
-                      const fileUrl = file.url || file;
-                      const fileName = String(fileUrl).split('/').pop();
+                <div className="attachment-group">
+                  <p className="attachment-group-title">Current attachments</p>
 
-                      return <li key={`${fileName}-${index}`}>{fileName}</li>;
+                  <div className="attachment-list">
+                    {currentAttachments.map((file, index) => {
+                      const fileName = getAttachmentFileName(file);
+
+                      return (
+                        <div
+                          className="attachment-card current"
+                          key={`${fileName}-${index}`}
+                        >
+                          <span className="attachment-icon">
+                            {isImageFile(fileName) ? 'IMG' : 'FILE'}
+                          </span>
+
+                          <div className="attachment-info">
+                            <strong>{fileName}</strong>
+                            <span>Existing article file</span>
+                          </div>
+                        </div>
+                      );
                     })}
-                  </ul>
+                  </div>
                 </div>
               )}
 
               {currentAttachments.length === 0 &&
                 currentAttachment &&
                 attachments.length === 0 && (
-                  <p className="muted top-gap-xs">
-                    Current attachment: {currentAttachment.split('/').pop()}
-                  </p>
+                  <div className="attachment-group">
+                    <p className="attachment-group-title">Current attachment</p>
+
+                    <div className="attachment-list">
+                      <div className="attachment-card current">
+                        <span className="attachment-icon">
+                          {isImageFile(currentAttachment) ? 'IMG' : 'FILE'}
+                        </span>
+
+                        <div className="attachment-info">
+                          <strong>{getAttachmentFileName(currentAttachment)}</strong>
+                          <span>Existing article file</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 )}
 
               {attachments.length > 0 && (
-                <div className="muted top-gap-xs">
-                  <p>New selected files:</p>
-                  <ul>
+                <div className="attachment-group">
+                  <div className="attachment-group-header">
+                    <p className="attachment-group-title">
+                      New selected files ({attachments.length})
+                    </p>
+
+                    <button
+                      type="button"
+                      className="secondary-btn attachment-clear-btn"
+                      onClick={() => setAttachments([])}
+                    >
+                      Clear All
+                    </button>
+                  </div>
+
+                  <div className="attachment-list">
                     {attachments.map((file, index) => (
-                      <li key={`${file.name}-${index}`}>
-                        {file.name}{' '}
+                      <div
+                        className="attachment-card"
+                        key={`${file.name}-${file.size}-${index}`}
+                      >
+                        <span className="attachment-icon">
+                          {isImageFile(file.name) ? 'IMG' : 'FILE'}
+                        </span>
+
+                        <div className="attachment-info">
+                          <strong>{file.name}</strong>
+                          <span>{formatFileSize(file.size)}</span>
+                        </div>
+
                         <button
                           type="button"
-                          className="text-btn"
+                          className="attachment-remove-btn"
                           onClick={() => removeAttachment(index)}
                         >
                           Remove
                         </button>
-                      </li>
+                      </div>
                     ))}
-                  </ul>
+                  </div>
                 </div>
               )}
-            </label>
+
+              {attachments.length === 0 &&
+                currentAttachments.length === 0 &&
+                !currentAttachment && (
+                  <div className="empty-attachment-box">
+                    No file selected yet. Click{' '}
+                    <strong>+ Add Image / File</strong> to attach one or more
+                    files.
+                  </div>
+                )}
+            </div>
 
             <label className="full-width">
               Article Content *

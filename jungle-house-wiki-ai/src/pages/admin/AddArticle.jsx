@@ -4,12 +4,14 @@ import PageHeader from '../../components/PageHeader';
 import api from '../../services/api';
 
 const categories = ['SOP', 'PRODUCT', 'SALES', 'Training', 'Notice'];
+
 const acceptedFileTypes =
   'image/png,image/jpeg,image/jpg,image/gif,image/webp,image/bmp,image/svg+xml,.pdf,.doc,.docx';
 
 export default function AddArticle() {
   const navigate = useNavigate();
   const contentTextareaRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   const [form, setForm] = useState({
     title: '',
@@ -20,9 +22,8 @@ export default function AddArticle() {
   });
 
   const [attachments, setAttachments] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
-  const [preview, setPreview] = useState(false);
 
   const createTableHtml = (rows, columns) => {
     let tableHtml = '\n\n<table class="article-data-table">\n  <tbody>\n';
@@ -86,9 +87,21 @@ export default function AddArticle() {
     }));
   };
 
+  const openFilePicker = () => {
+    fileInputRef.current?.click();
+  };
+
   const handleFileChange = (event) => {
-    const files = Array.from(event.target.files || []);
-    setAttachments(files);
+    const selectedFiles = Array.from(event.target.files || []);
+
+    if (selectedFiles.length === 0) {
+      return;
+    }
+
+    setAttachments((prev) => [...prev, ...selectedFiles]);
+
+    // Important: reset input so user can select the same file again if needed
+    event.target.value = '';
   };
 
   const removeAttachment = (indexToRemove) => {
@@ -97,34 +110,33 @@ export default function AddArticle() {
     );
   };
 
-  const clearForm = () => {
-    setForm({
-      title: '',
-      category: 'SOP',
-      sub_category: '',
-      link: '',
-      content: '',
-    });
+  const formatFileSize = (bytes) => {
+    if (!bytes) {
+      return 'Selected file';
+    }
 
-    setAttachments([]);
-    setMessage('');
+    const sizeInMb = bytes / (1024 * 1024);
+
+    if (sizeInMb >= 1) {
+      return `${sizeInMb.toFixed(2)} MB`;
+    }
+
+    return `${Math.max(1, Math.round(bytes / 1024))} KB`;
   };
+
+  const isImageFile = (fileName = '') =>
+    /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(fileName);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
 
-    if (!form.title.trim()) {
-      setMessage('Please enter the article title.');
-      return;
-    }
-
-    if (!form.content.trim()) {
-      setMessage('Please enter the article content.');
+    if (!form.title.trim() || !form.content.trim()) {
+      setMessage('Title and content are required.');
       return;
     }
 
     try {
-      setLoading(true);
+      setSaving(true);
       setMessage('');
 
       const formData = new FormData();
@@ -146,10 +158,10 @@ export default function AddArticle() {
 
       navigate('/admin/content');
     } catch (error) {
-      console.error('Add article error:', error);
-      setMessage(error.response?.data?.message || 'Failed to save article.');
+      console.error('Create article error:', error);
+      setMessage(error.response?.data?.message || 'Failed to create article.');
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
@@ -157,28 +169,11 @@ export default function AddArticle() {
     <div>
       <PageHeader
         title="Add Article"
-        subtitle="Add new SOP, product, sales, notice, or training content into the knowledge base."
+        subtitle="Create a new knowledge base article."
       />
 
       <section className="card-like top-gap-sm">
         <form onSubmit={handleSubmit} className="stack-gap">
-          <div className="row-between wrap-gap">
-            <div>
-              <h3>Article Details</h3>
-              <p className="muted">
-                Fill in the article information. Title and content are required.
-              </p>
-            </div>
-
-            <button
-              type="button"
-              className="secondary-btn"
-              onClick={() => navigate('/admin/content')}
-            >
-              Back
-            </button>
-          </div>
-
           {message && (
             <div className="card-like danger-soft">
               <p>{message}</p>
@@ -192,7 +187,7 @@ export default function AddArticle() {
                 name="title"
                 value={form.title}
                 onChange={handleChange}
-                placeholder="Example: Opening SOP - Spring"
+                placeholder="Enter article title"
               />
             </label>
 
@@ -217,7 +212,7 @@ export default function AddArticle() {
                 name="sub_category"
                 value={form.sub_category}
                 onChange={handleChange}
-                placeholder="Example: Kiosk Opening"
+                placeholder="Example: Opening SOP"
               />
             </label>
 
@@ -227,13 +222,32 @@ export default function AddArticle() {
                 name="link"
                 value={form.link}
                 onChange={handleChange}
-                placeholder="Paste reference link if needed"
+                placeholder="Paste reference link if available"
               />
             </label>
 
-            <label className="full-width">
-              Attach Image / File
+            <div className="full-width article-attachment-panel">
+              <div className="article-attachment-top">
+                <div>
+                  <h3>Attach Image or File</h3>
+                  <p>
+                    Click add to select one or more images/files. You can click
+                    the button again to add more before creating the article.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  className="secondary-btn attachment-add-btn"
+                  onClick={openFilePicker}
+                >
+                  + Add Image / File
+                </button>
+              </div>
+
               <input
+                ref={fileInputRef}
+                className="hidden-file-input"
                 type="file"
                 accept={acceptedFileTypes}
                 multiple
@@ -241,25 +255,56 @@ export default function AddArticle() {
               />
 
               {attachments.length > 0 && (
-                <div className="muted top-gap-xs">
-                  <p>{attachments.length} file(s) selected:</p>
-                  <ul>
+                <div className="attachment-group">
+                  <div className="attachment-group-header">
+                    <p className="attachment-group-title">
+                      Selected files ({attachments.length})
+                    </p>
+
+                    <button
+                      type="button"
+                      className="secondary-btn attachment-clear-btn"
+                      onClick={() => setAttachments([])}
+                    >
+                      Clear All
+                    </button>
+                  </div>
+
+                  <div className="attachment-list">
                     {attachments.map((file, index) => (
-                      <li key={`${file.name}-${index}`}>
-                        {file.name}{' '}
+                      <div
+                        className="attachment-card"
+                        key={`${file.name}-${file.size}-${index}`}
+                      >
+                        <span className="attachment-icon">
+                          {isImageFile(file.name) ? 'IMG' : 'FILE'}
+                        </span>
+
+                        <div className="attachment-info">
+                          <strong>{file.name}</strong>
+                          <span>{formatFileSize(file.size)}</span>
+                        </div>
+
                         <button
                           type="button"
-                          className="text-btn"
+                          className="attachment-remove-btn"
                           onClick={() => removeAttachment(index)}
                         >
                           Remove
                         </button>
-                      </li>
+                      </div>
                     ))}
-                  </ul>
+                  </div>
                 </div>
               )}
-            </label>
+
+              {attachments.length === 0 && (
+                <div className="empty-attachment-box">
+                  No file selected yet. Click <strong>+ Add Image / File</strong>{' '}
+                  to attach one or more files.
+                </div>
+              )}
+            </div>
 
             <label className="full-width">
               Article Content *
@@ -297,7 +342,7 @@ export default function AddArticle() {
                 value={form.content}
                 onChange={handleChange}
                 rows="18"
-                placeholder="Write or paste article content here..."
+                placeholder="Write article content here..."
               />
             </label>
           </div>
@@ -306,55 +351,21 @@ export default function AddArticle() {
             <button
               type="button"
               className="secondary-btn"
-              onClick={() => setPreview((prev) => !prev)}
+              onClick={() => navigate('/admin/content')}
             >
-              {preview ? 'Hide Preview' : 'Preview'}
-            </button>
-
-            <button
-              type="button"
-              className="secondary-btn"
-              onClick={clearForm}
-            >
-              Clear
+              Cancel
             </button>
 
             <button
               type="submit"
               className="primary-btn narrow-btn"
-              disabled={loading}
+              disabled={saving}
             >
-              {loading ? 'Saving...' : 'Save Article'}
+              {saving ? 'Creating...' : 'Create Article'}
             </button>
           </div>
         </form>
       </section>
-
-      {preview && (
-        <section className="card-like top-gap-sm">
-          <p className="eyebrow">{form.category}</p>
-          <h3>{form.title || 'Article Title Preview'}</h3>
-
-          {form.sub_category && (
-            <p className="muted">Sub Category: {form.sub_category}</p>
-          )}
-
-          {attachments.length > 0 && (
-            <div className="muted">
-              <p>Attachments:</p>
-              <ul>
-                {attachments.map((file, index) => (
-                  <li key={`${file.name}-preview-${index}`}>{file.name}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          <div className="article-preview">
-            <pre>{form.content || 'Article content preview will appear here.'}</pre>
-          </div>
-        </section>
-      )}
     </div>
   );
 }
