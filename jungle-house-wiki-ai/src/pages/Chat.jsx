@@ -174,6 +174,10 @@ function buildImageUrl(imageUrl) {
     .replace(/^(["'])|(["'])$/g, '')
     .replace(/\\/g, '/');
 
+    if (cleanUrl.startsWith('blob:') || cleanUrl.startsWith('data:')) {
+      return cleanUrl;
+    } 
+
   // Remove repeated slashes in paths, but keep https:// unchanged.
   if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
     cleanUrl = cleanUrl.replace(/\/+/g, '/');
@@ -1225,6 +1229,8 @@ export default function Chat() {
   const [question, setQuestion] = useState('');
   const [loading, setLoading] = useState(false);
   const [previewImage, setPreviewImage] = useState(null);
+  const [selectedImage, setSelectedImage] = useState(null);
+  const [selectedImagePreview, setSelectedImagePreview] = useState('');
   const [confirmModal, setConfirmModal] = useState({
     open: false,
     type: '',
@@ -1420,36 +1426,81 @@ export default function Chat() {
     setActiveTab('ask');
   };
 
+  const handleImageSelect = (event) => {
+  const file = event.target.files?.[0];
+
+  if (!file) return;
+
+  const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'];
+
+  if (!allowedTypes.includes(file.type)) {
+    alert('Please upload image file only. Supported: PNG, JPG, JPEG, WEBP, GIF.');
+    event.target.value = '';
+    return;
+  }
+
+  setSelectedImage(file);
+  setSelectedImagePreview(URL.createObjectURL(file));
+};
+
+const removeSelectedImage = () => {
+  setSelectedImage(null);
+
+  if (selectedImagePreview) {
+    URL.revokeObjectURL(selectedImagePreview);
+  }
+
+  setSelectedImagePreview('');
+};
+
   const handleSend = async () => {
     const trimmedQuestion = cleanQuestionInput(question);
-    if (!trimmedQuestion || loading) return;
+
+    if ((!trimmedQuestion && !selectedImage) || loading) return;
+
+    const displayQuestion = trimmedQuestion || 'Uploaded an image';
 
     const userMessage = {
       id: Date.now(),
       sender: 'user',
       type: 'text',
-      text: trimmedQuestion,
+      text: displayQuestion,
+      image_files: selectedImagePreview ? [selectedImagePreview] : [],
     };
 
-    const context = extractLatestSopContext(messages, trimmedQuestion);
+    const context = extractLatestSopContext(messages, displayQuestion);
     const messagesAfterUserQuestion = [...messages, userMessage];
 
-    updateCurrentSessionMessages(messagesAfterUserQuestion, trimmedQuestion);
+    updateCurrentSessionMessages(messagesAfterUserQuestion, displayQuestion);
 
     setQuestion('');
     setLoading(true);
 
     try {
-      const response = await fetch(CHAT_ENDPOINT, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          question: trimmedQuestion,
-          context,
-        }),
-      });
+      let response;
+
+      if (selectedImage) {
+        const formData = new FormData();
+        formData.append('question', trimmedQuestion);
+        formData.append('context', JSON.stringify(context));
+        formData.append('image', selectedImage);
+
+        response = await fetch(CHAT_ENDPOINT, {
+          method: 'POST',
+          body: formData,
+        });
+      } else {
+        response = await fetch(CHAT_ENDPOINT, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            question: trimmedQuestion,
+            context,
+          }),
+        });
+      }
 
       const contentType = response.headers.get('content-type') || '';
       let data;
@@ -1477,8 +1528,12 @@ export default function Chat() {
       console.log('Backend data:', data);
       console.log('AI message:', aiMessage);
 
-      updateCurrentSessionMessages(messagesAfterAiResponse, trimmedQuestion);
-      addChatHistory(trimmedQuestion, aiMessage);
+      updateCurrentSessionMessages(messagesAfterAiResponse, displayQuestion);
+      addChatHistory(displayQuestion, aiMessage);
+
+      if (selectedImage) {
+        removeSelectedImage();
+      }
     } catch (error) {
       console.error('Chat request failed:', error);
 
@@ -1509,8 +1564,8 @@ export default function Chat() {
 
       const messagesAfterError = [...messagesAfterUserQuestion, errorMessage];
 
-      updateCurrentSessionMessages(messagesAfterError, trimmedQuestion);
-      addChatHistory(trimmedQuestion, errorMessage);
+      updateCurrentSessionMessages(messagesAfterError, displayQuestion);
+      addChatHistory(displayQuestion, errorMessage);
     } finally {
       setLoading(false);
     }
@@ -1913,6 +1968,22 @@ export default function Chat() {
             <div ref={messagesEndRef} />
           </div>
 
+          {selectedImagePreview ? (
+            <div className="chat-upload-preview">
+              <img src={selectedImagePreview} alt="Selected upload" />
+
+              <div>
+                <p style={{ margin: '0 0 6px', fontWeight: 700 }}>
+                  {selectedImage?.name || 'Selected image'}
+                </p>
+
+                <button type="button" onClick={removeSelectedImage}>
+                  Remove
+                </button>
+              </div>
+            </div>
+          ) : null}
+
           <div className="chat-input-row ai-chat-input-row">
             <input
               value={question}
@@ -1926,6 +1997,17 @@ export default function Chat() {
                 }
               }}
             />
+
+            <label className="chat-image-upload-btn">
+              📎 Image
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
+                onChange={handleImageSelect}
+                disabled={loading}
+                hidden
+              />
+            </label>
 
             <button className="primary-btn" onClick={handleSend} disabled={loading}>
               {loading ? 'Sending...' : 'Send'}

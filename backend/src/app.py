@@ -84,6 +84,9 @@ STATIC_DIR = BASE_DIR.parent / "static"
 UPLOAD_FOLDER = STATIC_DIR / "uploads" / "articles"
 UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
 
+CHAT_UPLOAD_FOLDER = STATIC_DIR / "uploads" / "chat"
+CHAT_UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
+
 SOP_IMAGE_FOLDER = STATIC_DIR / "sop_images"
 SOP_IMAGE_FOLDER.mkdir(parents=True, exist_ok=True)
 
@@ -173,6 +176,51 @@ def save_article_attachments(files):
 
     return saved_files
 
+def save_chat_image(file):
+    if not file or file.filename == "":
+        return None, None
+
+    allowed_image_extensions = {"png", "jpg", "jpeg", "gif", "webp"}
+
+    if "." not in file.filename:
+        return None, None
+
+    extension = file.filename.rsplit(".", 1)[1].lower()
+
+    if extension not in allowed_image_extensions:
+        return None, None
+
+    filename = secure_filename(file.filename)
+    unique_filename = f"{int(time.time() * 1000)}_{filename}"
+
+    file_path = CHAT_UPLOAD_FOLDER / unique_filename
+    file.save(str(file_path))
+
+    image_url = f"/static/uploads/chat/{unique_filename}"
+    image_type = file.content_type
+
+    return image_url, image_type
+
+def extract_image_search_text(image_url, original_filename, question):
+    filename_text = str(original_filename or "")
+
+    # Remove extension
+    filename_text = filename_text.rsplit(".", 1)[0]
+
+    # Make filename searchable
+    filename_text = (
+        filename_text
+        .replace("_", " ")
+        .replace("-", " ")
+        .replace(".", " ")
+    )
+
+    filename_text = " ".join(filename_text.split())
+
+    combined_text = f"{question} {filename_text}".strip()
+
+    return combined_text
+
 
 @app.route("/static/uploads/articles/<path:filename>", methods=["GET"])
 def serve_article_attachment(filename):
@@ -192,8 +240,36 @@ def serve_article_attachment(filename):
 
     return send_from_directory(str(UPLOAD_FOLDER), filename)
 
+@app.route("/static/uploads/chat/<path:filename>", methods=["GET"])
+def serve_chat_upload(filename):
+    file_path = CHAT_UPLOAD_FOLDER / filename
 
+    print("REQUESTED CHAT IMAGE:", filename)
+    print("CHAT_UPLOAD_FOLDER:", CHAT_UPLOAD_FOLDER)
+    print("FILE EXISTS:", file_path.exists())
 
+    if not file_path.exists():
+        return jsonify({
+            "message": "Chat uploaded image not found on server.",
+            "filename": filename,
+            "chat_upload_folder": str(CHAT_UPLOAD_FOLDER),
+            "expected_path": str(file_path)
+        }), 404
+
+    return send_from_directory(str(CHAT_UPLOAD_FOLDER), filename)
+
+@app.route("/api/debug/chat-uploads", methods=["GET"])
+def debug_chat_uploads():
+    files = []
+
+    if CHAT_UPLOAD_FOLDER.exists():
+        files = [file.name for file in CHAT_UPLOAD_FOLDER.iterdir() if file.is_file()]
+
+    return jsonify({
+        "chat_upload_folder": str(CHAT_UPLOAD_FOLDER),
+        "folder_exists": CHAT_UPLOAD_FOLDER.exists(),
+        "files": files
+    }), 200
 
 @app.route("/static/sop_images/<path:filename>", methods=["GET"])
 def serve_sop_image(filename):
@@ -2913,10 +2989,43 @@ def is_broad_topic_question(question):
 @app.route("/chat", methods=["POST"])
 @app.route("/api/chat", methods=["POST"])
 def chat():
-    data = request.get_json(silent=True) or {}
+    data = {}
+    uploaded_chat_image = None
+    uploaded_chat_image_url = None
+    uploaded_chat_image_type = None
+    uploaded_chat_image_filename = ""
 
     try:
-        question = data.get("question", "")
+        if request.content_type and request.content_type.startswith("multipart/form-data"):
+            question = request.form.get("question", "")
+            uploaded_chat_image = request.files.get("image")
+            uploaded_chat_image_filename = uploaded_chat_image.filename if uploaded_chat_image else ""
+
+            try:
+                context_raw = request.form.get("context", "{}")
+                data["context"] = json.loads(context_raw) if context_raw else {}
+            except Exception:
+                data["context"] = {}
+
+            data["user_id"] = request.form.get("user_id") or request.form.get("userId")
+
+            if uploaded_chat_image:
+                uploaded_chat_image_url, uploaded_chat_image_type = save_chat_image(uploaded_chat_image)
+
+                if uploaded_chat_image_url:
+                    image_search_text = extract_image_search_text(
+                        uploaded_chat_image_url,
+                        uploaded_chat_image_filename,
+                        question
+                    )
+
+                    question = image_search_text or question
+
+        else:
+            data = request.get_json(silent=True) or {}
+            question = data.get("question", "")
+
+        question = clean_question(question)
         q_lower = question.lower()
 
         greetings = ["hi", "hello", "hey", "morning", "afternoon", "evening", "good morning", "good afternoon", "good evening"]
@@ -2971,8 +3080,11 @@ def chat():
                 escalation_id = create_escalation(
                     question,
                     result,
-                    data.get("user_id") or data.get("userId")
+                    data.get("user_id") or data.get("userId"),
+                    uploaded_chat_image_url,
+                    uploaded_chat_image_type
                 )
+
                 AI_FAIL_MEMORY.pop(fail_key, None)
 
                 result["escalation"] = True
@@ -3069,9 +3181,11 @@ def chat():
                 }
 
             escalation_id = create_escalation(
-                previous_question,
-                previous_result,
-                data.get("user_id") or data.get("userId")
+                question,
+                result,
+                data.get("user_id") or data.get("userId"),
+                uploaded_chat_image_url,
+                uploaded_chat_image_type
             )
 
             return jsonify({
@@ -3141,7 +3255,9 @@ def chat():
             escalation_id = create_escalation(
                 question,
                 result,
-                data.get("user_id") or data.get("userId")
+                data.get("user_id") or data.get("userId"),
+                uploaded_chat_image_url,
+                uploaded_chat_image_type
             )
 
             result = {
@@ -3237,10 +3353,12 @@ def chat():
 
         if should_escalate:
             escalation_id = create_escalation(
-                question,
-                result,
-                data.get("user_id") or data.get("userId")
-            )
+            question,
+            result,
+            data.get("user_id") or data.get("userId"),
+            uploaded_chat_image_url,
+            uploaded_chat_image_type
+        )
 
             clear_ai_fail_count(data, question)
 
@@ -3280,11 +3398,17 @@ def chat():
 
         log_request(question, error=str(error))
 
-        escalation_id = create_escalation(question, {
-            "answer": str(error),
-            "confidence": 0.0,
-            "source": "system_error"
-        })
+        escalation_id = create_escalation(
+            question,
+            {
+                "answer": str(error),
+                "confidence": 0.0,
+                "source": "system_error"
+            },
+            data.get("user_id") or data.get("userId"),
+            uploaded_chat_image_url,
+            uploaded_chat_image_type
+        )
 
         return jsonify({
             "reply": "System error. Escalated to team lead.",
@@ -3843,7 +3967,11 @@ def get_escalations():
                 e.manual_answer,
                 e.asked_by,
                 e.handled_by,
+                e.image_url,
+                e.image_type,
                 e.status,
+                e.image_url,
+                e.image_type,
                 e.created_at,
                 e.updated_at,
                 e.resolved_at,

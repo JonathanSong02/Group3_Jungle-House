@@ -9140,3 +9140,89 @@ body.sidebar-is-collapsed .modern-sidebar .sidebar-link.active .sidebar-icon {
   font-weight: 300;
   line-height: 1;
 }
+
+/* =========================================================
+   AI CHAT IMAGE UPLOAD
+   Staff can upload image in AI Chat
+   ========================================================= */
+
+.chat-upload-preview {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  padding: 12px 1.5rem;
+  border-top: 1px solid var(--border);
+  background: #fffaf0;
+}
+
+.chat-upload-preview img {
+  width: 86px;
+  height: 86px;
+  object-fit: cover;
+  border-radius: 12px;
+  border: 1px solid #e2d2ad;
+  background: #fff;
+}
+
+.chat-upload-preview p {
+  color: var(--text);
+}
+
+.chat-upload-preview button {
+  border: none;
+  background: #fff1d6;
+  color: #8a5a00;
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.chat-upload-preview button:hover {
+  background: #ffe3a3;
+}
+
+.chat-image-upload-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 54px;
+  padding: 0 16px;
+  border-radius: 16px;
+  border: 1px solid #e6b35d;
+  background: #fff8e8;
+  color: #7a5200;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+}
+
+.chat-image-upload-btn:hover {
+  background: #ffe8b8;
+  border-color: #d89b00;
+  transform: translateY(-1px);
+}
+
+.chat-image-upload-btn input {
+  display: none;
+}
+
+/* Mobile layout for AI Chat image upload */
+@media (max-width: 640px) {
+  .chat-upload-preview {
+    padding: 12px;
+    align-items: flex-start;
+  }
+
+  .chat-upload-preview img {
+    width: 72px;
+    height: 72px;
+  }
+
+  .chat-image-upload-btn {
+    width: 100%;
+    min-height: 50px;
+  }
+}

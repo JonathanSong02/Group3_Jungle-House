@@ -224,7 +224,7 @@ def search_similar_questions(question, team_lead_only=False, limit=5):
 # ESCALATION HELPERS
 # =========================
 
-def create_escalation(question, result, user_id=None):
+def create_escalation(question, ai_result, asked_by=None, image_url=None, image_type=None):
     conn = None
     cursor = None
 
@@ -232,9 +232,16 @@ def create_escalation(question, result, user_id=None):
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        answer = result.get("answer") or result.get("reply") or ""
-        confidence = float(result.get("confidence", result.get("score", 0.0)) or 0.0)
-        source = result.get("source") or "unknown"
+        ai_answer = ""
+        ai_score = 0.0
+        ai_source = "unknown"
+
+        if isinstance(ai_result, dict):
+            ai_answer = ai_result.get("answer") or ai_result.get("reply") or ""
+            ai_score = ai_result.get("score") or ai_result.get("confidence") or 0.0
+            ai_source = ai_result.get("source") or "unknown"
+        else:
+            ai_answer = str(ai_result)
 
         cursor.execute("""
             INSERT INTO escalation
@@ -243,25 +250,31 @@ def create_escalation(question, result, user_id=None):
                 ai_answer,
                 ai_score,
                 ai_source,
-                asked_by
+                asked_by,
+                status,
+                image_url,
+                image_type
             )
-            VALUES (%s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, 'pending', %s, %s)
         """, (
             question,
-            answer,
-            confidence,
-            source,
-            user_id
+            ai_answer,
+            ai_score,
+            ai_source,
+            asked_by,
+            image_url,
+            image_type
         ))
 
         conn.commit()
-
         return cursor.lastrowid
 
-    except Exception as e:
-        print("CREATE ESCALATION ERROR:", e)
+    except Exception as error:
+        print("CREATE ESCALATION ERROR:", error)
+
         if conn:
             conn.rollback()
+
         return None
 
     finally:

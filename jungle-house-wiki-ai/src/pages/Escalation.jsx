@@ -4,6 +4,8 @@ import StatusBadge from '../components/StatusBadge';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
+const API_BASE_URL = 'https://group3jungle-house-production.up.railway.app';
+
 export default function Escalation() {
   const { user } = useAuth();
 
@@ -364,6 +366,39 @@ export default function Escalation() {
                   <StatusBadge status={item.status} />
                 </div>
               </div>
+
+              {item.image_url ? (
+                <div className="card-like top-gap-sm">
+                  <p className="eyebrow">Uploaded Image</p>
+
+                  <img
+                    src={
+                      item.image_url.startsWith('http')
+                        ? item.image_url
+                        : `${API_BASE_URL}${item.image_url}`
+                    }
+                    alt="Escalated upload"
+                    style={{
+                      width: '100%',
+                      maxWidth: '260px',
+                      maxHeight: '260px',
+                      objectFit: 'contain',
+                      borderRadius: '12px',
+                      border: '1px solid var(--border)',
+                      background: '#fff',
+                      display: 'block',
+                    }}
+                    onError={(event) => {
+                      console.log('Escalation image failed:', item.image_url);
+                      event.currentTarget.style.display = 'none';
+                    }}
+                  />
+
+                  <p className="muted small" style={{ marginTop: '0.5rem' }}>
+                    {item.image_type || 'Uploaded image'}
+                  </p>
+                </div>
+              ) : null}
 
               <div className="card-like top-gap-sm">
                 <p className="eyebrow">AI Answer</p>
