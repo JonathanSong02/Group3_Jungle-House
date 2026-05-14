@@ -112,11 +112,7 @@ export default function Escalation() {
         formData.append('image', selectedImage);
       }
 
-      await api.put(`/escalations/${id}/answer`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
+      await api.put(`/escalations/${id}/answer`, formData);
 
       setMessage('Manual answer submitted successfully.');
       setActiveTab('resolved');
