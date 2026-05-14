@@ -885,6 +885,8 @@ function buildAiMessage(data) {
       image_files: data.image_files || backendContext.image_files || [],
       attachment_url: data.attachment_url || backendContext.attachment_url || '',
       attachment_type: data.attachment_type || backendContext.attachment_type || '',
+      image_url: data.image_url || backendContext.image_url || '',
+      image_type: data.image_type || backendContext.image_type || '',
       last_step_number: data.last_step_number || backendContext.last_step_number || null,
 
     };
@@ -923,6 +925,8 @@ function buildAiMessage(data) {
       image_files: data.image_files || backendContext.image_files || [],
       attachment_url: data.attachment_url || backendContext.attachment_url || '',
       attachment_type: data.attachment_type || backendContext.attachment_type || '',
+      image_url: data.image_url || backendContext.image_url || '',
+      image_type: data.image_type || backendContext.image_type || '',
       last_step_number: lastStepNumber,
     };
   }
@@ -958,6 +962,8 @@ function buildAiMessage(data) {
     image_files: data.image_files || backendContext.image_files || [],
     attachment_url: data.attachment_url || backendContext.attachment_url || '',
     attachment_type: data.attachment_type || backendContext.attachment_type || '',
+    image_url: data.image_url || backendContext.image_url || '',
+    image_type: data.image_type || backendContext.image_type || '',
     last_step_number: data.last_step_number || backendContext.last_step_number || null,
   };
 }
@@ -1634,6 +1640,7 @@ const removeSelectedImage = () => {
       ...extractImagePathsFromText(message.reply),
       ...parseImageFiles(message.image_files),
       normalizeImageItem(message.attachment_url),
+      normalizeImageItem(message.image_url),
     ].filter(Boolean);
 
     return (

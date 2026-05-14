@@ -937,6 +937,15 @@ def normalize_result(result, default_source="unknown"):
             "escalation_ready": result.get("escalation_ready", False),
             "escalation_required": result.get("escalation_required", result.get("escalation_ready", False)),
             "options": result.get("options", []),
+            "image_url": result.get("image_url"),
+            "image_type": result.get("image_type"),
+            "image_files": result.get("image_files") or (
+                [{"url": result.get("image_url"), "type": result.get("image_type")}]
+                if result.get("image_url")
+                else []
+            ),
+            "attachment_url": result.get("attachment_url") or result.get("image_url"),
+            "attachment_type": result.get("attachment_type") or result.get("image_type"),
         })
 
     return standardize_ai_response({
@@ -4001,98 +4010,52 @@ def get_escalations():
 
 @app.route('/api/escalations/<int:escalation_id>/answer', methods=['PUT'])
 def submit_escalation_answer(escalation_id):
-    data = request.get_json() or {}
-
-    manual_answer = str(data.get('manual_answer', '')).strip()
-    handled_by = data.get('handled_by') or data.get('user_id') or data.get('userId')
-
-    if not manual_answer:
-        return jsonify({'message': 'Manual answer is required.'}), 400
-
-    success = resolve_escalation(escalation_id, manual_answer, handled_by)
-
-    if not success:
-        return jsonify({
-            'message': 'Failed to resolve escalation.'
-        }), 500
-
-    add_audit_log(
-        actor_id=handled_by,
-        actor_name="Team Lead",
-        action="Resolved escalation",
-        module="Escalation",
-        description=f"Escalation ID {escalation_id} was resolved and saved into AI knowledge."
-    )
-
-    return jsonify({
-        'message': 'Escalation resolved and saved into AI knowledge.'
-    }), 200
-
-@app.route("/api/escalations/<int:escalation_id>", methods=["DELETE"])
-def delete_escalation(escalation_id):
-    conn = None
-    cursor = None
-
     try:
-        conn = get_db_connection()
+        answer_image_url = None
+        answer_image_type = None
 
-        if conn is None:
-            return jsonify({"message": "Database connection failed."}), 500
+        if request.content_type and request.content_type.startswith('multipart/form-data'):
+            manual_answer = str(request.form.get('manual_answer', '')).strip()
+            handled_by = request.form.get('handled_by') or request.form.get('user_id') or request.form.get('userId')
 
-        cursor = conn.cursor()
+            image_file = request.files.get('image')
 
-        print("DELETE ESCALATION HIT:", escalation_id)
+            if image_file and image_file.filename:
+                answer_image_url, answer_image_type = save_chat_image(image_file)
 
-        cursor.execute("""
-            DELETE FROM escalation
-            WHERE escalation_id = %s
-        """, (escalation_id,))
+        else:
+            data = request.get_json(silent=True) or {}
+            manual_answer = str(data.get('manual_answer', '')).strip()
+            handled_by = data.get('handled_by') or data.get('user_id') or data.get('userId')
 
-        conn.commit()
+        if not manual_answer:
+            return jsonify({'message': 'Manual answer is required.'}), 400
 
-        print("DELETE ROWCOUNT:", cursor.rowcount)
+        success = resolve_escalation(
+            escalation_id=escalation_id,
+            answer=manual_answer,
+            user_id=handled_by,
+            answer_image_url=answer_image_url,
+            answer_image_type=answer_image_type
+        )
 
-        if cursor.rowcount == 0:
+        if not success:
             return jsonify({
-                "message": "Escalation not found.",
-                "escalation_id": escalation_id
-            }), 404
+                'message': 'Failed to resolve escalation.'
+            }), 500
 
         return jsonify({
-            "message": "Escalation deleted successfully.",
-            "deleted_id": escalation_id
+            'message': 'Escalation resolved and saved into AI knowledge.',
+            'image_url': answer_image_url,
+            'image_type': answer_image_type
         }), 200
 
-    except mysql.connector.Error as err:
-        if conn:
-            conn.rollback()
-
-        print("MYSQL ERROR /api/escalations DELETE:", err)
-
+    except Exception as error:
+        print("SUBMIT ESCALATION ANSWER ERROR:", error)
         return jsonify({
-            "message": "Database error while deleting escalation.",
-            "error": str(err)
+            'message': 'Failed to submit manual answer.',
+            'error': str(error)
         }), 500
-
-    except Exception as e:
-        if conn:
-            conn.rollback()
-
-        print("GENERAL ERROR /api/escalations DELETE:", e)
-
-        return jsonify({
-            "message": "Server error while deleting escalation.",
-            "error": str(e)
-        }), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-
-
 
 # =========================
 # REVIEW MANAGEMENT ROUTES

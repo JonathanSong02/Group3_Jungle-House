@@ -284,7 +284,7 @@ def create_escalation(question, ai_result, asked_by=None, image_url=None, image_
             conn.close()
 
 
-def resolve_escalation(escalation_id, answer, user_id=None):
+def resolve_escalation(escalation_id, answer, user_id=None, answer_image_url=None, answer_image_type=None):
     conn = None
     cursor = None
 
@@ -292,54 +292,68 @@ def resolve_escalation(escalation_id, answer, user_id=None):
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
 
-        # Get original escalation
+        # Get original escalation first
         cursor.execute("""
-            SELECT *
+            SELECT question, image_url, image_type
             FROM escalation
             WHERE escalation_id = %s
-            LIMIT 1
         """, (escalation_id,))
 
-        ticket = cursor.fetchone()
+        escalation = cursor.fetchone()
 
-        if not ticket:
+        if not escalation:
             return False
 
-        # Update escalation table
+        question = escalation.get("question") or ""
+
+        # Use Team Lead uploaded answer image first.
+        # If Team Lead did not upload image, use original staff uploaded image.
+        final_image_url = answer_image_url or escalation.get("image_url")
+        final_image_type = answer_image_type or escalation.get("image_type")
+
+        # Update escalation as resolved
         cursor.execute("""
             UPDATE escalation
             SET 
                 manual_answer = %s,
-                status = 'resolved',
                 handled_by = %s,
-                resolved_at = NOW()
+                status = 'resolved',
+                resolved_at = NOW(),
+                image_url = COALESCE(%s, image_url),
+                image_type = COALESCE(%s, image_type)
             WHERE escalation_id = %s
         """, (
             answer,
             user_id,
+            final_image_url,
+            final_image_type,
             escalation_id
         ))
 
-        # Save manual answer into AI knowledge
+        # Save Team Lead answer into qa_knowledge with image
         cursor.execute("""
             INSERT INTO qa_knowledge
             (
                 question,
                 answer,
                 source,
-                confidence
+                confidence,
+                image_url,
+                image_type
             )
-            VALUES (%s, %s, 'team_lead', 1.0)
+            VALUES (%s, %s, 'team_lead', 1.0, %s, %s)
         """, (
-            ticket["question"],
-            answer
+            question,
+            answer,
+            final_image_url,
+            final_image_type
         ))
 
         conn.commit()
         return True
 
-    except Exception as e:
-        print("RESOLVE ESCALATION ERROR:", e)
+    except Exception as error:
+        print("RESOLVE ESCALATION ERROR:", error)
         if conn:
             conn.rollback()
         return False

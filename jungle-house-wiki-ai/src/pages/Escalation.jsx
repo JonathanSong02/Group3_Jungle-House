@@ -4,6 +4,20 @@ import StatusBadge from '../components/StatusBadge';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
+function buildImageUrl(url) {
+  if (!url) return '';
+
+  if (url.startsWith('http')) {
+    return url;
+  }
+
+  if (url.startsWith('/')) {
+    return `${API_BASE_URL}${url}`;
+  }
+
+  return `${API_BASE_URL}/${url}`;
+}
+
 const API_BASE_URL = 'https://group3jungle-house-production.up.railway.app';
 
 export default function Escalation() {
@@ -11,6 +25,7 @@ export default function Escalation() {
 
   const [items, setItems] = useState([]);
   const [answers, setAnswers] = useState({});
+  const [answerImages, setAnswerImages] = useState({});
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
   const [activeTab, setActiveTab] = useState('pending');
@@ -79,6 +94,7 @@ export default function Escalation() {
 
   const submitAnswer = async (id) => {
     const manualAnswer = answers[id];
+    const selectedImage = answerImages[id];
 
     if (!manualAnswer || !manualAnswer.trim()) {
       setMessage('Please write a manual answer before submitting.');
@@ -88,20 +104,42 @@ export default function Escalation() {
     try {
       setMessage('');
 
-      await api.put(`/escalations/${id}/answer`, {
-        manual_answer: manualAnswer.trim(),
-        handled_by: user?.user_id || null,
+      const formData = new FormData();
+      formData.append('manual_answer', manualAnswer.trim());
+      formData.append('handled_by', user?.user_id || user?.id || '');
+
+      if (selectedImage) {
+        formData.append('image', selectedImage);
+      }
+
+      await api.put(`/escalations/${id}/answer`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
       });
 
       setMessage('Manual answer submitted successfully.');
       setActiveTab('resolved');
       setDeleteMode(false);
       setSelectedIds([]);
+
+      setAnswerImages((prev) => {
+        const updated = { ...prev };
+        delete updated[id];
+        return updated;
+      });
+
       fetchEscalations();
-    } catch (error) {
-      console.error('Submit manual answer error:', error);
-      setMessage('Failed to submit manual answer.');
-    }
+        } catch (error) {
+          console.error('Submit manual answer error:', error);
+
+          const backendMessage =
+            error?.response?.data?.error ||
+            error?.response?.data?.message ||
+            'Failed to submit manual answer.';
+
+          setMessage(backendMessage);
+        }
   };
 
   const startDeleteMode = () => {
@@ -372,11 +410,8 @@ export default function Escalation() {
                   <p className="eyebrow">Uploaded Image</p>
 
                   <img
-                    src={
-                      item.image_url.startsWith('http')
-                        ? item.image_url
-                        : `${API_BASE_URL}${item.image_url}`
-                    }
+                    src={buildImageUrl(item.image_url)}
+
                     alt="Escalated upload"
                     style={{
                       width: '100%',
@@ -419,6 +454,57 @@ export default function Escalation() {
                     placeholder="Write a manual answer for this escalated question"
                   />
 
+                  <div className="escalation-answer-image-upload">
+                    <label className="escalation-upload-btn">
+                      <span className="escalation-upload-icon">
+                        <svg
+                          width="15"
+                          height="15"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2.2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <rect x="3" y="3" width="18" height="18" rx="3" />
+                          <circle cx="8.5" cy="8.5" r="1.5" />
+                          <path d="M21 15l-5-5L5 21" />
+                        </svg>
+                      </span>
+
+                      <span>Upload answer image</span>
+
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/jpg,image/gif,image/webp"
+                        style={{ display: 'none' }}
+                        onChange={(event) => {
+                          const file = event.target.files?.[0];
+
+                          setAnswerImages((prev) => ({
+                            ...prev,
+                            [item.escalation_id]: file || null,
+                          }));
+                        }}
+                      />
+                    </label>
+
+                    {answerImages[item.escalation_id] ? (
+                      <div className="answer-image-preview-box">
+                        <p className="muted small">
+                          Selected image: {answerImages[item.escalation_id].name}
+                        </p>
+
+                        <img
+                          src={URL.createObjectURL(answerImages[item.escalation_id])}
+                          alt="Answer preview"
+                          className="answer-image-preview"
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+
                   <div className="row-between wrap-gap top-gap">
                     <p className="muted small">
                       After submitting, this question will move to the resolved tab.
@@ -439,6 +525,35 @@ export default function Escalation() {
                     <p className="eyebrow">Manual Answer</p>
                     <p>{item.manual_answer || 'No manual answer recorded.'}</p>
                   </div>
+
+                  {item.image_url ? (
+                    <div className="card-like top-gap-sm">
+                      <p className="eyebrow">Related Image</p>
+
+                      <img
+                        src={buildImageUrl(item.image_url)}
+                        alt="Resolved escalation upload"
+                        style={{
+                          width: '100%',
+                          maxWidth: '260px',
+                          maxHeight: '260px',
+                          objectFit: 'contain',
+                          borderRadius: '12px',
+                          border: '1px solid var(--border)',
+                          background: '#fff',
+                          display: 'block',
+                        }}
+                        onError={(event) => {
+                          console.log('Resolved escalation image failed:', buildImageUrl(item.image_url));
+                          event.currentTarget.style.display = 'none';
+                        }}
+                      />
+
+                      <p className="muted small" style={{ marginTop: '0.5rem' }}>
+                        {item.image_type || 'Uploaded image'}
+                      </p>
+                    </div>
+                  ) : null}
 
                   <p className="muted small top-gap">
                     Resolved at: {item.resolved_at || 'Not recorded'}
