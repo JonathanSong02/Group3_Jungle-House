@@ -9226,3 +9226,193 @@ body.sidebar-is-collapsed .modern-sidebar .sidebar-link.active .sidebar-icon {
     min-height: 50px;
   }
 }
+/* =========================================================
+   100. RICH TEXT ARTICLE EDITOR (JODIT)
+   Add Article / Edit Article content editor toolbar styling
+   Paste-safe section added for JoditEditor in AddArticle.jsx.
+   ========================================================= */
+
+.article-rich-editor {
+  width: 100%;
+  margin-top: 10px;
+  background: var(--surface);
+  border: 1px solid rgba(180, 132, 40, 0.24);
+  border-radius: 18px;
+  box-shadow: 0 8px 22px rgba(84, 55, 13, 0.07);
+  overflow: hidden;
+}
+
+.article-rich-editor .jodit-container,
+.article-rich-editor .jodit {
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  border: none !important;
+  border-radius: 18px !important;
+  background: #ffffff !important;
+  font-family: 'Manrope', Arial, sans-serif !important;
+  color: var(--text) !important;
+}
+
+.article-rich-editor .jodit-toolbar__box,
+.article-rich-editor .jodit-toolbar-editor-collection {
+  background: linear-gradient(180deg, #fffaf0, #fff4dc) !important;
+  border: 0 !important;
+  border-bottom: 1px solid rgba(180, 132, 40, 0.2) !important;
+  padding: 8px 10px !important;
+}
+
+.article-rich-editor .jodit-toolbar__box:not(:empty) {
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  scrollbar-width: thin !important;
+}
+
+.article-rich-editor .jodit-toolbar-button,
+.article-rich-editor .jodit-toolbar-button__button {
+  border-radius: 10px !important;
+}
+
+.article-rich-editor .jodit-toolbar-button__button {
+  min-width: 34px !important;
+  min-height: 34px !important;
+  color: var(--text) !important;
+}
+
+.article-rich-editor .jodit-toolbar-button__button:hover,
+.article-rich-editor .jodit-toolbar-button_active .jodit-toolbar-button__button {
+  background: #f8e4b6 !important;
+  color: var(--primary-dark) !important;
+}
+
+.article-rich-editor .jodit-toolbar-button__text {
+  color: var(--text) !important;
+  font-weight: 800 !important;
+}
+
+.article-rich-editor .jodit-icon {
+  fill: var(--text) !important;
+}
+
+.article-rich-editor .jodit-workplace {
+  background: #ffffff !important;
+  border: none !important;
+}
+
+.article-rich-editor .jodit-wysiwyg,
+.article-rich-editor .jodit-wysiwyg_iframe {
+  min-height: 330px !important;
+  padding: 18px !important;
+  background: #ffffff !important;
+  color: var(--text) !important;
+  font-size: 15px !important;
+  line-height: 1.75 !important;
+}
+
+.article-rich-editor .jodit-wysiwyg:focus {
+  outline: none !important;
+}
+
+.article-rich-editor .jodit-status-bar {
+  display: none !important;
+}
+
+.article-rich-editor p,
+.article-rich-editor div,
+.article-rich-editor span,
+.article-rich-editor li {
+  color: var(--text);
+}
+
+.article-rich-editor h1,
+.article-rich-editor h2,
+.article-rich-editor h3,
+.article-rich-editor h4 {
+  color: var(--heading);
+}
+
+.article-rich-editor ul,
+.article-rich-editor ol {
+  padding-left: 24px;
+}
+
+.article-rich-editor table {
+  width: 100% !important;
+  max-width: 100% !important;
+  margin: 14px 0 !important;
+  border-collapse: collapse !important;
+  background: #fffdf8 !important;
+  overflow-x: auto !important;
+}
+
+.article-rich-editor table td,
+.article-rich-editor table th {
+  min-width: 120px;
+  padding: 10px 12px !important;
+  border: 1px solid #d8c7a4 !important;
+  color: var(--text) !important;
+  vertical-align: top !important;
+}
+
+.article-rich-editor table th {
+  background: #fff1cf !important;
+  color: var(--primary-dark) !important;
+  font-weight: 900 !important;
+}
+
+.article-rich-editor img {
+  max-width: 100% !important;
+  height: auto !important;
+  border-radius: 12px !important;
+  border: 1px solid rgba(234, 216, 183, 0.9);
+}
+
+.article-rich-editor a {
+  color: var(--primary-dark) !important;
+  font-weight: 800 !important;
+}
+
+.article-rich-editor a:hover {
+  text-decoration: underline !important;
+}
+
+/* Hide old custom Insert Table picker if old JSX still exists somewhere */
+.article-editor-toolbar {
+  display: none !important;
+}
+
+/* Jodit popup/dropdown should appear above cards and modals correctly */
+.jodit-popup,
+.jodit-dialog,
+.jodit-ui-popup {
+  z-index: 999999 !important;
+}
+
+@media (max-width: 768px) {
+  .article-rich-editor {
+    border-radius: 16px;
+  }
+
+  .article-rich-editor .jodit-toolbar__box,
+  .article-rich-editor .jodit-toolbar-editor-collection {
+    padding: 6px !important;
+  }
+
+  .article-rich-editor .jodit-toolbar-button__button {
+    min-width: 32px !important;
+    min-height: 32px !important;
+  }
+
+  .article-rich-editor .jodit-wysiwyg,
+  .article-rich-editor .jodit-wysiwyg_iframe {
+    min-height: 280px !important;
+    padding: 14px !important;
+    font-size: 14px !important;
+  }
+
+  .article-rich-editor table {
+    display: block !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+  }
+}
