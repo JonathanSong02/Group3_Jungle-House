@@ -15,9 +15,49 @@ const starterMessages = [
 const API_BASE_URL = 'https://group3jungle-house-production.up.railway.app';
 const CHAT_ENDPOINT = `${API_BASE_URL}/api/chat`;
 
-const CHAT_HISTORY_KEY = 'jh_ai_chat_history';
-const CHAT_SESSIONS_KEY = 'jh_ai_chat_sessions';
-const ACTIVE_CHAT_SESSION_KEY = 'jh_active_chat_session';
+function getCurrentUserForChat() {
+  try {
+    const possibleKeys = ['user', 'currentUser', 'authUser', 'jh_user'];
+
+    for (const key of possibleKeys) {
+      const saved = localStorage.getItem(key);
+
+      if (!saved) continue;
+
+      const parsed = JSON.parse(saved);
+
+      if (parsed?.id || parsed?.user_id || parsed?.email) {
+        return parsed;
+      }
+
+      if (parsed?.user?.id || parsed?.user?.user_id || parsed?.user?.email) {
+        return parsed.user;
+      }
+    }
+  } catch (error) {
+    console.error('Unable to read current user for chat:', error);
+  }
+
+  return null;
+}
+
+function getCurrentChatOwnerKey() {
+  const user = getCurrentUserForChat();
+
+  const userIdentity =
+    user?.id ||
+    user?.user_id ||
+    user?.email ||
+    'guest';
+
+  return String(userIdentity).replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+const CHAT_OWNER_KEY = getCurrentChatOwnerKey();
+
+const CHAT_HISTORY_KEY = `jh_ai_chat_history_${CHAT_OWNER_KEY}`;
+const CHAT_SESSIONS_KEY = `jh_ai_chat_sessions_${CHAT_OWNER_KEY}`;
+const ACTIVE_CHAT_SESSION_KEY = `jh_active_chat_session_${CHAT_OWNER_KEY}`;
 
 function normalizeText(text) {
   return String(text || '')
@@ -1468,6 +1508,9 @@ const removeSelectedImage = () => {
       image_files: selectedImagePreview ? [selectedImagePreview] : [],
     };
 
+    const currentUser = getCurrentUserForChat();
+    const currentUserId = currentUser?.id || currentUser?.user_id || null;
+
     const context = extractLatestSopContext(messages, displayQuestion);
     const messagesAfterUserQuestion = [...messages, userMessage];
 
@@ -1483,6 +1526,7 @@ const removeSelectedImage = () => {
         const formData = new FormData();
         formData.append('question', trimmedQuestion);
         formData.append('context', JSON.stringify(context));
+        formData.append('user_id', currentUserId || '');
         formData.append('image', selectedImage);
 
         response = await fetch(CHAT_ENDPOINT, {
@@ -1498,6 +1542,7 @@ const removeSelectedImage = () => {
           body: JSON.stringify({
             question: trimmedQuestion,
             context,
+            user_id: currentUserId,
           }),
         });
       }
