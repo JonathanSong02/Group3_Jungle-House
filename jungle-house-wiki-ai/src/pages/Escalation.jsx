@@ -24,6 +24,7 @@ export default function Escalation() {
   const { user } = useAuth();
 
   const [items, setItems] = useState([]);
+  const [trashItems, setTrashItems] = useState([]);
   const [answers, setAnswers] = useState({});
   const [answerImages, setAnswerImages] = useState({});
   const [loading, setLoading] = useState(true);
@@ -39,13 +40,20 @@ export default function Escalation() {
   const fetchEscalations = async () => {
     try {
       setLoading(true);
-      const response = await api.get('/escalations');
-      const data = Array.isArray(response.data) ? response.data : [];
 
-      setItems(data);
+      const [activeResponse, trashResponse] = await Promise.all([
+        api.get('/escalations'),
+        api.get('/escalations?deleted=true'),
+      ]);
+
+      const activeData = Array.isArray(activeResponse.data) ? activeResponse.data : [];
+      const trashData = Array.isArray(trashResponse.data) ? trashResponse.data : [];
+
+      setItems(activeData);
+      setTrashItems(trashData);
 
       const answerMap = {};
-      data.forEach((item) => {
+      activeData.forEach((item) => {
         answerMap[item.escalation_id] = item.manual_answer || '';
       });
 
@@ -72,7 +80,12 @@ export default function Escalation() {
     return items.filter((item) => item.status === 'resolved');
   }, [items]);
 
-  const filteredItems = activeTab === 'pending' ? pendingItems : resolvedItems;
+  const filteredItems =
+    activeTab === 'pending'
+      ? pendingItems
+      : activeTab === 'resolved'
+        ? resolvedItems
+        : trashItems;
 
   const filteredItemIds = useMemo(() => {
     return filteredItems.map((item) => item.escalation_id);
@@ -203,7 +216,13 @@ export default function Escalation() {
       setBulkDeleting(true);
 
       await Promise.all(
-        selectedVisibleIds.map((id) => api.delete(`/escalations/${id}`))
+        selectedVisibleIds.map((id) =>
+          api.delete(`/escalations/${id}`, {
+            data: {
+              deleted_by: user?.user_id || user?.id || null,
+            },
+          })
+        )
       );
 
       setItems((prev) =>
@@ -220,7 +239,7 @@ export default function Escalation() {
         return updatedAnswers;
       });
 
-      setMessage(`${selectedVisibleIds.length} escalation(s) deleted successfully.`);
+      setMessage(`${selectedVisibleIds.length} escalation(s) moved to Trash Bin successfully.`);
       setSelectedIds([]);
       setBulkDeleteOpen(false);
       setDeleteMode(false);
@@ -236,6 +255,44 @@ export default function Escalation() {
       );
     } finally {
       setBulkDeleting(false);
+    }
+  };
+
+  const restoreEscalation = async (id) => {
+    try {
+      setMessage('');
+
+      await api.put(`/escalations/${id}/restore`);
+
+      setMessage('Escalation restored successfully.');
+      fetchEscalations();
+    } catch (error) {
+      console.error('Restore escalation error:', error);
+
+      setMessage(
+        error.response?.data?.message ||
+        error.response?.data?.error ||
+        'Failed to restore escalation.'
+      );
+    }
+  };
+
+  const permanentDeleteEscalation = async (id) => {
+    try {
+      setMessage('');
+
+      await api.delete(`/escalations/${id}/permanent-delete`);
+
+      setMessage('Escalation permanently deleted successfully.');
+      fetchEscalations();
+    } catch (error) {
+      console.error('Permanent delete escalation error:', error);
+
+      setMessage(
+        error.response?.data?.message ||
+        error.response?.data?.error ||
+        'Failed to permanently delete escalation.'
+      );
     }
   };
 
@@ -278,6 +335,18 @@ export default function Escalation() {
               }}
             >
               Resolved ({resolvedItems.length})
+            </button>
+
+            <button
+              type="button"
+              className={activeTab === 'trash' ? 'primary-btn' : 'secondary-btn'}
+              onClick={() => {
+                setActiveTab('trash');
+                setDeleteMode(false);
+                setSelectedIds([]);
+              }}
+            >
+              Trash Bin ({trashItems.length})
             </button>
 
             {!deleteMode ? (
@@ -357,12 +426,17 @@ export default function Escalation() {
           <h3>
             {activeTab === 'pending'
               ? 'No pending escalations'
-              : 'No resolved escalations'}
+              : activeTab === 'resolved'
+                ? 'No resolved escalations'
+                : 'No deleted escalations'}
           </h3>
+
           <p className="muted">
             {activeTab === 'pending'
               ? 'Low-confidence AI questions will appear here for Team Lead or Manager review.'
-              : 'Resolved escalation questions will appear here after a manual answer is submitted.'}
+              : activeTab === 'resolved'
+                ? 'Resolved escalation questions will appear here after a manual answer is submitted.'
+                : 'Deleted escalation questions will appear here and can be restored when needed.'}
           </p>
         </section>
       ) : (
@@ -397,7 +471,27 @@ export default function Escalation() {
                 </div>
 
                 <div className="row-gap">
-                  <StatusBadge status={item.status} />
+                  <StatusBadge status={activeTab === 'trash' ? 'deleted' : item.status} />
+
+                  {activeTab === 'trash' && (
+                    <>
+                      <button
+                        type="button"
+                        className="secondary-btn"
+                        onClick={() => restoreEscalation(item.escalation_id)}
+                      >
+                        Restore
+                      </button>
+
+                      <button
+                        type="button"
+                        className="danger-btn"
+                        onClick={() => permanentDeleteEscalation(item.escalation_id)}
+                      >
+                        Delete Forever
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -595,10 +689,10 @@ export default function Escalation() {
             </div>
 
             <div className="delete-modal-content">
-              <h2>Delete selected escalations?</h2>
+              <h2>Move selected escalations to Trash Bin?</h2>
               <p>
-                This will permanently remove {selectedVisibleIds.length} selected escalation(s)
-                from the system.
+                This will move {selectedVisibleIds.length} selected escalation(s) to the Trash Bin.
+                You can restore them later if needed.
               </p>
 
               <div className="delete-modal-question">
@@ -621,7 +715,7 @@ export default function Escalation() {
                   onClick={confirmBulkDelete}
                   disabled={bulkDeleting}
                 >
-                  {bulkDeleting ? 'Deleting...' : 'Delete Selected'}
+                  {bulkDeleting ? 'Moving...' : 'Move to Trash Bin'}
                 </button>
               </div>
             </div>

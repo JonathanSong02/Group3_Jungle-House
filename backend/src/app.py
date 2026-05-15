@@ -3963,6 +3963,8 @@ def get_escalations():
     cursor = None
 
     try:
+        show_deleted = request.args.get("deleted", "false").lower() == "true"
+
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
 
@@ -3979,19 +3981,22 @@ def get_escalations():
                 e.image_url,
                 e.image_type,
                 e.status,
-                e.image_url,
-                e.image_type,
                 e.created_at,
                 e.updated_at,
                 e.resolved_at,
-                u.full_name AS asked_by_name
+                e.is_deleted,
+                e.deleted_at,
+                e.deleted_by,
+                u.full_name AS asked_by_name,
+                deleted_user.full_name AS deleted_by_name
             FROM escalation e
             LEFT JOIN users u ON e.asked_by = u.user_id
+            LEFT JOIN users deleted_user ON e.deleted_by = deleted_user.user_id
+            WHERE COALESCE(e.is_deleted, 0) = %s
             ORDER BY e.created_at DESC
-        """)
+        """, (1 if show_deleted else 0,))
 
         escalations = cursor.fetchall()
-
         return jsonify(escalations), 200
 
     except Exception as error:
@@ -4020,8 +4025,20 @@ def submit_escalation_answer(escalation_id):
 
             image_file = request.files.get('image')
 
+            print("CONTENT TYPE:", request.content_type)
+            print("FORM DATA:", request.form)
+            print("FILES:", request.files)
+            print("IMAGE FILE:", image_file)
+
             if image_file and image_file.filename:
                 answer_image_url, answer_image_type = save_chat_image(image_file)
+
+                if not answer_image_url:
+                    return jsonify({
+                        'message': 'Image upload failed. Please check image type or server upload folder.',
+                        'filename': image_file.filename,
+                        'content_type': image_file.content_type
+                    }), 400
 
         else:
             data = request.get_json(silent=True) or {}
@@ -4056,6 +4073,189 @@ def submit_escalation_answer(escalation_id):
             'message': 'Failed to submit manual answer.',
             'error': str(error)
         }), 500
+    
+# =========================
+# SOFT DELETE ESCALATION ROUTE
+# Move escalation to Trash Bin
+# =========================
+@app.route('/api/escalations/<int:escalation_id>', methods=['DELETE'])
+def delete_escalation(escalation_id):
+    conn = None
+    cursor = None
+
+    try:
+        data = request.get_json(silent=True) or {}
+        deleted_by = data.get("deleted_by")
+
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            UPDATE escalation
+            SET 
+                is_deleted = 1,
+                deleted_at = NOW(),
+                deleted_by = %s
+            WHERE escalation_id = %s
+            AND COALESCE(is_deleted, 0) = 0
+        """, (deleted_by, escalation_id))
+
+        conn.commit()
+
+        if cursor.rowcount == 0:
+            return jsonify({
+                'message': 'Escalation not found or already moved to Trash Bin.'
+            }), 404
+
+        add_audit_log(
+            actor_id=deleted_by,
+            action="Moved escalation to Trash Bin",
+            module="Escalation",
+            description=f"Escalation ID {escalation_id} was moved to Trash Bin."
+        )
+
+        return jsonify({
+            'message': 'Escalation moved to Trash Bin successfully.'
+        }), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print('MYSQL ERROR /api/escalations DELETE:', error)
+
+        return jsonify({
+            'message': 'Failed to move escalation to Trash Bin.',
+            'error': str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+# =========================
+# RESTORE ESCALATION ROUTE
+# Restore escalation from Trash Bin
+# =========================
+@app.route('/api/escalations/<int:escalation_id>/restore', methods=['PUT'])
+def restore_escalation(escalation_id):
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            UPDATE escalation
+            SET 
+                is_deleted = 0,
+                deleted_at = NULL,
+                deleted_by = NULL
+            WHERE escalation_id = %s
+            AND COALESCE(is_deleted, 0) = 1
+        """, (escalation_id,))
+
+        conn.commit()
+
+        if cursor.rowcount == 0:
+            return jsonify({
+                'message': 'Escalation not found in Trash Bin.'
+            }), 404
+
+        add_audit_log(
+            action="Restored escalation",
+            module="Escalation",
+            description=f"Escalation ID {escalation_id} was restored from Trash Bin."
+        )
+
+        return jsonify({
+            'message': 'Escalation restored successfully.'
+        }), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print('MYSQL ERROR /api/escalations RESTORE:', error)
+
+        return jsonify({
+            'message': 'Failed to restore escalation.',
+            'error': str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+# =========================
+# PERMANENT DELETE ESCALATION ROUTE
+# Delete escalation permanently from Trash Bin only
+# =========================
+@app.route('/api/escalations/<int:escalation_id>/permanent-delete', methods=['DELETE'])
+def permanent_delete_escalation(escalation_id):
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT escalation_id
+            FROM escalation
+            WHERE escalation_id = %s
+            AND COALESCE(is_deleted, 0) = 1
+            LIMIT 1
+        """, (escalation_id,))
+
+        escalation = cursor.fetchone()
+
+        if not escalation:
+            return jsonify({
+                'message': 'Escalation not found in Trash Bin.'
+            }), 404
+
+        cursor.execute("""
+            DELETE FROM escalation
+            WHERE escalation_id = %s
+            AND COALESCE(is_deleted, 0) = 1
+        """, (escalation_id,))
+
+        conn.commit()
+
+        add_audit_log(
+            action="Permanently deleted escalation",
+            module="Escalation",
+            description=f"Escalation ID {escalation_id} was permanently deleted from Trash Bin."
+        )
+
+        return jsonify({
+            'message': 'Escalation permanently deleted successfully.'
+        }), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print('MYSQL ERROR /api/escalations PERMANENT DELETE:', error)
+
+        return jsonify({
+            'message': 'Failed to permanently delete escalation.',
+            'error': str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 # =========================
 # REVIEW MANAGEMENT ROUTES
