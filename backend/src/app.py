@@ -215,8 +215,32 @@ def extract_image_search_text(image_url, original_filename, question):
         .replace(".", " ")
     )
 
-    filename_text = " ".join(filename_text.split())
+    filename_text = " ".join(filename_text.split()).strip()
 
+    q = str(question or "").lower().strip()
+
+    generic_image_questions = {
+        "what is this image",
+        "what is this image?",
+        "what is this photo",
+        "what is this photo?",
+        "what is this picture",
+        "what is this picture?",
+        "identify this image",
+        "identify this photo",
+        "can you identify this image",
+        "can you identify this photo",
+    }
+
+    # IMPORTANT:
+    # If staff asks a generic image question, do NOT search "what is this image".
+    # Only use filename keywords first, for example phoenix_bird.jpg -> phoenix bird.
+    if q in generic_image_questions:
+        return filename_text
+
+    # If staff gives useful words, combine both.
+    # Example: question = "is this bird?", filename = "phoenix_bird"
+    # Search text = "is this bird phoenix bird"
     combined_text = f"{question} {filename_text}".strip()
 
     return combined_text
@@ -3027,6 +3051,9 @@ def chat():
                         uploaded_chat_image_filename,
                         question
                     )
+
+                    print("UPLOADED IMAGE FILENAME:", uploaded_chat_image_filename)
+                    print("IMAGE SEARCH TEXT:", image_search_text)
 
                     question = image_search_text or question
 
