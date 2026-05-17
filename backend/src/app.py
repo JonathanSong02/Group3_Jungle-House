@@ -613,6 +613,8 @@ def is_staff_not_satisfied(text: str) -> bool:
         "i don't mean this",
         "i dont mean this",
         "not this",
+        "not this one",
+        "wrong",
         "wrong answer",
         "this is wrong",
         "not the content",
@@ -620,6 +622,14 @@ def is_staff_not_satisfied(text: str) -> bool:
         "not correct",
         "i mean another",
         "i mean something else",
+        "dont know",
+        "don't know",
+        "i dont know",
+        "i don't know",
+        "no idea",
+        "not sure",
+        "none of these",
+        "not these",
     ]
 
     return any(phrase in text for phrase in phrases)
@@ -3172,66 +3182,86 @@ def chat():
                 "fallback": True
             }), 400
 
-         # =========================
-        # ✅ STEP 2.5: STAFF SAYS PREVIOUS ANSWER IS NOT WHAT THEY MEAN
-        # =========================
+
         # =========================
         # ✅ STEP 2.5: STAFF SAYS PREVIOUS ANSWER IS NOT WHAT THEY MEAN
+        # Example:
+        # Staff asks: "Liong"
+        # AI gives possible answers
+        # Staff replies: "not this" / "dont know"
+        # Escalation should save original question: "Liong"
         # =========================
         if is_staff_not_satisfied(question):
             last_answer = AI_LAST_ANSWER_MEMORY.get(get_last_answer_key(data))
 
-            previous_question = question
-            previous_result = {
-                "answer": f"Staff said the previous AI answer was wrong. Staff latest message: {question}",
-                "reply": f"Staff said the previous AI answer was wrong. Staff latest message: {question}",
-                "confidence": 0.0,
-                "score": 0.0,
-                "source": "staff_not_satisfied"
-            }
-
-            if last_answer:
-                previous_question = (
-                    last_answer.get("question")
-                    or question
-                )
-
-                old_result = last_answer.get("result") or {}
-
-                previous_result = {
-                    "answer": (
-                        "Staff said this previous AI answer was not correct.\n\n"
-                        f"Original staff question: {previous_question}\n\n"
-                        f"Wrong AI answer/source: {old_result.get('title') or old_result.get('answer') or old_result.get('reply') or 'No previous answer text'}\n\n"
-                        f"Staff latest message: {question}"
-                    ),
+            if not last_answer:
+                return jsonify({
                     "reply": (
-                        "Staff said this previous AI answer was not correct.\n\n"
-                        f"Original staff question: {previous_question}\n\n"
-                        f"Wrong AI answer/source: {old_result.get('title') or old_result.get('answer') or old_result.get('reply') or 'No previous answer text'}\n\n"
-                        f"Staff latest message: {question}"
+                        "I understand this answer is not what you want, but I cannot find the previous question clearly.\n\n"
+                        "Please type the original question again so I can escalate the correct question to the team lead."
+                    ),
+                    "answer": (
+                        "I understand this answer is not what you want, but I cannot find the previous question clearly. "
+                        "Please type the original question again so I can escalate the correct question to the team lead."
                     ),
                     "confidence": 0.0,
                     "score": 0.0,
-                    "source": "staff_not_satisfied_escalated"
-                }
+                    "source": "staff_not_satisfied_no_previous_question",
+                    "fallback": True,
+                    "escalation_ready": False,
+                    "escalation_required": False
+                }), 200
+
+            previous_question = clean_question(last_answer.get("question") or question)
+            old_result = last_answer.get("result") or {}
+
+            wrong_answer_text = (
+                old_result.get("title")
+                or old_result.get("answer")
+                or old_result.get("reply")
+                or "No previous answer text"
+            )
+
+            previous_result = {
+                "answer": (
+                    "Staff said this previous AI answer was not correct.\n\n"
+                    f"Original staff question: {previous_question}\n\n"
+                    f"Wrong AI answer/source: {wrong_answer_text}\n\n"
+                    f"Staff latest message: {question}"
+                ),
+                "reply": (
+                    "Staff said this previous AI answer was not correct.\n\n"
+                    f"Original staff question: {previous_question}\n\n"
+                    f"Wrong AI answer/source: {wrong_answer_text}\n\n"
+                    f"Staff latest message: {question}"
+                ),
+                "confidence": 0.0,
+                "score": 0.0,
+                "source": "staff_not_satisfied_escalated",
+                "fallback": True,
+                "escalation_ready": True,
+                "escalation_required": True
+            }
 
             escalation_id = create_escalation(
-                question,
-                result,
+                previous_question,
+                previous_result,
                 data.get("user_id") or data.get("userId"),
                 uploaded_chat_image_url,
                 uploaded_chat_image_type
             )
 
+            clear_ai_fail_count(data, previous_question)
+
             return jsonify({
+                "question": previous_question,
                 "reply": (
                     "I detected that the previous answer may not be the content you wanted.\n\n"
-                    "I have escalated this question to a team lead for confirmation."
+                    f"I have escalated the original question to a team lead: {previous_question}"
                 ),
                 "answer": (
                     "I detected that the previous answer may not be the content you wanted. "
-                    "I have escalated this question to a team lead for confirmation."
+                    f"I have escalated the original question to a team lead: {previous_question}"
                 ),
                 "confidence": 0.0,
                 "score": 0.0,
