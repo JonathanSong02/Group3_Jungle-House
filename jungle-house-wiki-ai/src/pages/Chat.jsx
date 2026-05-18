@@ -73,6 +73,7 @@ function cleanQuestionInput(text) {
     .replace(/[’‘`´]/g, "'")
     .replace(/[“”]/g, '"')
     .replace(/[–—]/g, '-')
+    .replace(/^\s*(?:[-*•]+\s*|\d+[.)]\s*)+/, '')
     .trim();
 }
 
@@ -155,7 +156,22 @@ const FOLLOW_UP_KEYWORDS = [
 ];
 
 function isNewTopicQuestion(question) {
-  return containsAny(question, NEW_TOPIC_KEYWORDS);
+  const q = normalizeText(question);
+
+  if (containsAny(q, NEW_TOPIC_KEYWORDS)) return true;
+  if (containsAny(q, FOLLOW_UP_KEYWORDS)) return false;
+
+  const stopWords = new Set([
+    'what', 'which', 'who', 'when', 'where', 'why', 'how', 'can', 'could',
+    'should', 'would', 'please', 'tell', 'show', 'give', 'me', 'about',
+    'the', 'a', 'an', 'is', 'are', 'do', 'does', 'to', 'for', 'of', 'in',
+  ]);
+
+  const meaningfulTokens = q
+    .split(/\s+/)
+    .filter((token) => token.length > 2 && !stopWords.has(token));
+
+  return meaningfulTokens.length >= 2;
 }
 
 function isFollowUpQuestion(question) {
@@ -968,9 +984,25 @@ function buildAiMessage(data) {
   };
 }
 
+function getMoreCompleteStepList(message) {
+  const messageSteps = Array.isArray(message?.steps) ? message.steps : [];
+  const contextSteps = Array.isArray(message?.context?.steps) ? message.context.steps : [];
+
+  return contextSteps.length > messageSteps.length ? contextSteps : messageSteps;
+}
+
+function getLastStepFromList(steps, fallbackValue = null) {
+  if (!Array.isArray(steps) || steps.length === 0) {
+    return fallbackValue;
+  }
+
+  return Number(steps[steps.length - 1]?.step_number || steps[steps.length - 1]?.step || steps[steps.length - 1]?.step_order || fallbackValue || 0) || fallbackValue;
+}
+
 function extractLatestSopContext(messages, question) {
   const questionIsNewTopic = isNewTopicQuestion(question);
   const questionIsFollowUp = isFollowUpQuestion(question);
+  let fallbackContext = null;
 
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const msg = messages[i];
@@ -978,11 +1010,9 @@ function extractLatestSopContext(messages, question) {
 
     const unclearCount = getUnclearCountFromMessage(msg);
 
-    if (msg.type === 'sop' && msg.title) {
-      const lastStep =
-        Array.isArray(msg.steps) && msg.steps.length > 0
-          ? Number(msg.steps[msg.steps.length - 1]?.step_number || 0)
-          : msg.last_step_number || null;
+    if ((msg.type === 'sop' || msg.type === 'text') && msg.title) {
+      const selectedSteps = getMoreCompleteStepList(msg);
+      const lastStep = getLastStepFromList(selectedSteps, msg.last_step_number || msg.context?.last_step_number || null);
 
       if (questionIsNewTopic && !questionIsFollowUp) {
         return {
@@ -995,36 +1025,26 @@ function extractLatestSopContext(messages, question) {
         };
       }
 
-      return {
+      const candidateContext = {
         title: msg.title,
         category: msg.category || msg.context?.category || '',
         section: msg.section || msg.context?.section || '',
-        steps: Array.isArray(msg.steps) ? msg.steps : [],
+        steps: selectedSteps,
         unclear_count: unclearCount,
         last_step_number: lastStep,
+        link: msg.link || msg.article_link || msg.context?.link || '',
+        article_link: msg.article_link || msg.link || msg.context?.article_link || '',
       };
-    }
 
-    if (msg.type === 'text' && msg.title) {
-      if (questionIsNewTopic && !questionIsFollowUp) {
-        return {
-          title: '',
-          category: '',
-          section: '',
-          steps: [],
-          unclear_count: 0,
-          last_step_number: null,
-        };
+      if (selectedSteps.length > 1) {
+        return candidateContext;
       }
 
-      return {
-        title: msg.title,
-        category: msg.category || msg.context?.category || '',
-        section: msg.section || msg.context?.section || '',
-        steps: Array.isArray(msg.steps) ? msg.steps : [],
-        unclear_count: unclearCount,
-        last_step_number: msg.last_step_number || null,
-      };
+      if (!fallbackContext) {
+        fallbackContext = candidateContext;
+      }
+
+      continue;
     }
 
     if (msg.type === 'text' && unclearCount > 0) {
@@ -1039,6 +1059,10 @@ function extractLatestSopContext(messages, question) {
     }
   }
 
+  if (fallbackContext) {
+    return fallbackContext;
+  }
+
   return {
     title: '',
     category: '',
@@ -1046,6 +1070,217 @@ function extractLatestSopContext(messages, question) {
     steps: [],
     unclear_count: 0,
     last_step_number: null,
+  };
+}
+
+
+function getStepNumber(step, fallbackIndex) {
+  const possibleNumber =
+    step?.step_number ??
+    step?.step ??
+    step?.step_order ??
+    fallbackIndex;
+
+  const parsedNumber = Number(possibleNumber);
+
+  return Number.isFinite(parsedNumber) && parsedNumber > 0
+    ? parsedNumber
+    : fallbackIndex;
+}
+
+function normalizeStepForDirectAnswer(step, index) {
+  const stepNumber = getStepNumber(step, index + 1);
+  const content =
+    step?.content ||
+    step?.answer ||
+    step?.reply ||
+    step?.text ||
+    '';
+
+  const images =
+    step?.images ||
+    step?.image_urls ||
+    step?.image_files ||
+    [];
+
+  return {
+    ...step,
+    step_number: stepNumber,
+    step: step?.step || stepNumber,
+    step_order: step?.step_order || stepNumber,
+    title: step?.title || `Step ${stepNumber}`,
+    section: step?.section || '',
+    content,
+    answer: step?.answer || content,
+    images,
+    image_urls: step?.image_urls || images,
+    image_files: step?.image_files || images,
+  };
+}
+
+function getSpecificStepRangeRequest(question) {
+  const q = normalizeText(question);
+  const patterns = [
+    /\bstep\s*(\d+)\s*(?:to|-|until|hingga)\s*step\s*(\d+)\b/,
+    /\bstep\s*(\d+)\s*(?:to|-|until|hingga)\s*(\d+)\b/,
+    /\bfrom\s*step\s*(\d+)\s*(?:to|until|hingga)\s*step\s*(\d+)\b/,
+    /\bfrom\s*step\s*(\d+)\s*(?:to|until|hingga)\s*(\d+)\b/,
+  ];
+
+  for (const pattern of patterns) {
+    const match = q.match(pattern);
+
+    if (match) {
+      let start = Number(match[1]);
+      let end = Number(match[2]);
+
+      if (start > end) {
+        [start, end] = [end, start];
+      }
+
+      return { start, end };
+    }
+  }
+
+  return null;
+}
+
+function getSpecificStepNumberRequest(question) {
+  const q = normalizeText(question);
+  const match = q.match(/\bstep\s*(\d+)\b/);
+
+  return match ? Number(match[1]) : null;
+}
+
+function formatDirectStepAnswer(title, steps) {
+  return steps
+    .map((step) => {
+      const stepNumber = getStepNumber(step, 0);
+      const content = step.content || step.answer || step.reply || '';
+      const sectionLine = step.section ? `\nSection: ${step.section}` : '';
+
+      return `${title}\nStep ${stepNumber}${sectionLine}\n${content}`.trim();
+    })
+    .join('\n\n');
+}
+
+function buildDirectStepMessageFromContext(context, question) {
+  if (!context?.title || !Array.isArray(context.steps) || context.steps.length === 0) {
+    return null;
+  }
+
+  const rangeRequest = getSpecificStepRangeRequest(question);
+  const stepRequest = getSpecificStepNumberRequest(question);
+
+  if (!rangeRequest && stepRequest === null) {
+    return null;
+  }
+
+  const steps = context.steps.map((step, index) =>
+    normalizeStepForDirectAnswer(step, index)
+  );
+
+  const stepNumbers = steps.map((step, index) => getStepNumber(step, index + 1));
+  const minStep = Math.min(...stepNumbers);
+  const maxStep = Math.max(...stepNumbers);
+
+  let matchedSteps = [];
+  let reply = '';
+  let source = '';
+
+  if (rangeRequest) {
+    matchedSteps = steps.filter((step, index) => {
+      const stepNumber = getStepNumber(step, index + 1);
+      return stepNumber >= rangeRequest.start && stepNumber <= rangeRequest.end;
+    });
+
+    reply = `Got it — here are Steps ${rangeRequest.start} to ${rangeRequest.end} for ${context.title}.`;
+    source = 'frontend_direct_step_range';
+  } else {
+    matchedSteps = steps.filter((step, index) =>
+      getStepNumber(step, index + 1) === stepRequest
+    );
+
+    reply = `Got it — this is Step ${stepRequest} for ${context.title}.`;
+    source = 'frontend_direct_step';
+  }
+
+  if (matchedSteps.length === 0) {
+    const outOfRangeText =
+      `I found ${context.title}, but this topic only has Step ${minStep} to Step ${maxStep}.\n\n` +
+      `Please ask for a valid step, for example:\n` +
+      `- step ${minStep}\n` +
+      `- step ${Math.min(minStep + 1, maxStep)} to step ${Math.min(minStep + 3, maxStep)}\n` +
+      `- show all`;
+
+    return {
+      id: Date.now() + 1,
+      sender: 'ai',
+      type: 'text',
+      text: outOfRangeText,
+      reply: outOfRangeText,
+      answer: outOfRangeText,
+      title: context.title,
+      category: context.category || '',
+      section: context.section || '',
+      steps: [],
+      notes: [],
+      context: {
+        ...context,
+        steps,
+        unclear_count: 0,
+      },
+      unclear_count: 0,
+      escalation_ready: false,
+      escalation_required: false,
+      confidence: 0.88,
+      confidence_label: 'medium',
+      source: 'frontend_direct_step_out_of_bounds',
+      fallback: false,
+      fallback_message: '',
+      message: outOfRangeText,
+      image_files: [],
+      attachment_url: '',
+      attachment_type: '',
+      last_step_number: context.last_step_number || maxStep,
+    };
+  }
+
+  const answer = formatDirectStepAnswer(context.title, matchedSteps);
+
+  return {
+    id: Date.now() + 1,
+    sender: 'ai',
+    type: 'sop',
+    text: '',
+    reply,
+    answer,
+    title: context.title,
+    category: context.category || '',
+    purpose: '',
+    section: matchedSteps[0]?.section || context.section || '',
+    steps: matchedSteps,
+    notes: [],
+    context: {
+      ...context,
+      steps,
+      unclear_count: 0,
+    },
+    unclear_count: 0,
+    escalation_ready: false,
+    escalation_required: false,
+    confidence: 0.99,
+    confidence_label: 'high',
+    source,
+    fallback: false,
+    fallback_message: '',
+    message: reply,
+    link: context.link || '',
+    article_link: context.article_link || context.link || '',
+    image_files: [],
+    attachment_url: '',
+    attachment_type: '',
+    last_step_number: getStepNumber(matchedSteps[matchedSteps.length - 1], context.last_step_number || null),
   };
 }
 
@@ -1236,7 +1471,13 @@ function buildSelectedOptionMessage(option, optionIndex = 0) {
       title: option.title || option.label || '',
       category: option.category || '',
       section: option.section || '',
+      steps: hasSteps ? option.steps : [],
+      last_step_number: hasSteps
+        ? getLastStepFromList(option.steps, null)
+        : null,
       unclear_count: 0,
+      link: option.link || option.article_link || '',
+      article_link: option.article_link || option.link || '',
     },
 
     unclear_count: 0,
@@ -1253,6 +1494,9 @@ function buildSelectedOptionMessage(option, optionIndex = 0) {
     image_files: option.image_files || [],
     attachment_url: option.attachment_url || '',
     attachment_type: option.attachment_type || '',
+    last_step_number: hasSteps
+      ? getLastStepFromList(option.steps, null)
+      : null,
   };
 }
 
@@ -1521,6 +1765,19 @@ const removeSelectedImage = () => {
     const messagesAfterUserQuestion = [...messages, userMessage];
 
     updateCurrentSessionMessages(messagesAfterUserQuestion, displayQuestion);
+
+    const directStepMessage = !selectedImage
+      ? buildDirectStepMessageFromContext(context, displayQuestion)
+      : null;
+
+    if (directStepMessage) {
+      const messagesAfterAiResponse = [...messagesAfterUserQuestion, directStepMessage];
+
+      setQuestion('');
+      updateCurrentSessionMessages(messagesAfterAiResponse, displayQuestion);
+      addChatHistory(displayQuestion, directStepMessage);
+      return;
+    }
 
     setQuestion('');
     setLoading(true);

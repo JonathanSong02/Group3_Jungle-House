@@ -47,6 +47,7 @@ def safe_str(value: Any) -> str:
 
 def normalize_text(text: str) -> str:
     text = safe_str(text)
+    text = re.sub(r"^\s*(?:[-*•]+\s*|\d+[.)]\s*)+", "", text).strip()
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
@@ -608,7 +609,12 @@ def load_knowledge() -> pd.DataFrame:
 
 
 KNOWLEDGE_DF = load_knowledge()
-KNOWN_TITLES = sorted([safe_str(x) for x in KNOWLEDGE_DF["title"].dropna().unique().tolist() if safe_str(x)])
+# Use both live CSV titles and training-data titles.
+# This prevents training/onboarding topics such as "New Bee 3rd day Check List"
+# from disappearing when the CSV/database file is missing that title.
+CSV_TITLES = [safe_str(x) for x in KNOWLEDGE_DF["title"].dropna().unique().tolist() if safe_str(x)]
+TRAINING_TITLES = [safe_str(x) for x in get_all_titles() if safe_str(x)]
+KNOWN_TITLES = sorted(unique_keep_order(CSV_TITLES + TRAINING_TITLES))
 
 TITLE_TO_CATEGORY = get_title_to_category()
 
@@ -1426,9 +1432,122 @@ def title_variants(title: str) -> list[str]:
     return unique_keep_order([normalize_text(v) for v in variants if safe_str(v)])
 
 
+TITLE_MATCH_STOP_WORDS = {
+    "a", "an", "the", "i", "me", "my", "you", "your", "we", "our",
+    "what", "which", "who", "when", "where", "why", "how", "do", "does",
+    "did", "can", "could", "should", "would", "is", "are", "am", "be",
+    "to", "for", "of", "in", "on", "at", "it", "this", "that", "all",
+    "show", "give", "tell", "have", "has", "with", "about", "information",
+    "info", "guide", "guidance", "answer", "explain", "me", "please",
+    "list", "check", "checklist", "app", "preparation", "prepared", "prepare",
+    "procedure", "procedures", "sop", "steps", "step", "daily",
+}
+
+TITLE_REQUIRED_GROUPS = [
+    (["aeon"], ["aeon"]),
+    (["spring"], ["spring"]),
+    (["kuching", "booth", "dustbin"], ["kuching", "booth", "dustbin"]),
+    (["kiosk"], ["kiosk"]),
+    (["shopify", "pos"], ["shopify", "pos"]),
+    (["ice bin", "ice", "bin"], ["ice", "bin"]),
+    (["warehouse"], ["warehouse"]),
+    (["printer", "receipt"], ["printer", "receipt"]),
+    (["new bee"], ["new", "bee"]),
+    (["1st day", "first day", "day 1"], ["1st", "first", "day", "1"]),
+    (["3rd day", "third day", "day 3"], ["3rd", "third", "day", "3"]),
+]
+
+
+def compact_text(text: str) -> str:
+    return " ".join(tokenize(text))
+
+
+def title_match_tokens(text: str) -> set[str]:
+    return {
+        token for token in tokenize(text)
+        if token not in TITLE_MATCH_STOP_WORDS and len(token) >= 2
+    }
+
+
+def has_opposite_title_intent(question: str, title: str) -> bool:
+    q = compact_text(question)
+    t = compact_text(title)
+
+    if "opening" in q and "closing" in t and "opening" not in t:
+        return True
+    if "closing" in q and "opening" in t and "closing" not in t:
+        return True
+    if any(x in q for x in ["1st day", "first day", "day 1"]) and any(x in t for x in ["3rd day", "third day", "day 3"]):
+        return True
+    if any(x in q for x in ["3rd day", "third day", "day 3"]) and any(x in t for x in ["1st day", "first day", "day 1"]):
+        return True
+
+    return False
+
+
+def missing_required_title_word(question: str, title: str) -> bool:
+    q = compact_text(question)
+    t = compact_text(title)
+    title_tokens = title_match_tokens(title)
+
+    for question_words, title_words in TITLE_REQUIRED_GROUPS:
+        if any(word in q for word in question_words):
+            if not any((word in t) or (word in title_tokens) for word in title_words):
+                return True
+
+    return False
+
+
+def exact_title_or_alias(question: str, title: str) -> bool:
+    q = compact_text(question)
+    if not q:
+        return False
+
+    for variant in title_variants(title):
+        if q == compact_text(variant):
+            return True
+
+    return False
+
+
+def should_allow_loose_title_match(question: str, title: str) -> bool:
+    q_tokens = title_match_tokens(question)
+    t_tokens = title_match_tokens(title)
+
+    if not q_tokens or not t_tokens:
+        return False
+
+    overlap = q_tokens & t_tokens
+
+    if len(q_tokens) >= 2 and len(overlap) < 2:
+        return False
+
+    if len(q_tokens) >= 3 and len(overlap) < max(2, len(q_tokens) - 1):
+        return False
+
+    return True
+
+
 def score_title_match(question: str, title: str) -> float:
     q = normalize_lower(question)
-    q_tokens = set(tokenize(q))
+    title_lower = normalize_lower(title)
+
+    if not q or not title_lower:
+        return 0.0
+
+    if has_opposite_title_intent(q, title_lower):
+        return 0.0
+
+    if missing_required_title_word(q, title_lower):
+        return 0.0
+
+    if exact_title_or_alias(q, title_lower):
+        return 1.0
+
+    if not should_allow_loose_title_match(q, title_lower):
+        return 0.0
+
+    q_tokens = title_match_tokens(q)
     best = 0.0
 
     for variant in title_variants(title):
@@ -1436,81 +1555,47 @@ def score_title_match(question: str, title: str) -> float:
         if not v:
             continue
 
-        if q == v:
-            best = max(best, 1.0)
+        if has_opposite_title_intent(q, v) or missing_required_title_word(q, v):
             continue
 
-        if v in q:
-            best = max(best, 0.96)
+        v_tokens = title_match_tokens(v)
+        if not v_tokens:
+            continue
 
-        v_tokens = set(tokenize(v))
         overlap = len(q_tokens & v_tokens)
-        token_score = overlap / max(len(v_tokens), 1)
+        q_overlap = overlap / max(len(q_tokens), 1)
+        title_overlap = overlap / max(len(v_tokens), 1)
 
-        if token_score >= 0.75:
+        if compact_text(v) in compact_text(q) and q_overlap >= 0.75:
+            best = max(best, 0.94)
+        elif compact_text(q) in compact_text(v) and title_overlap >= 0.60:
+            best = max(best, 0.90)
+        elif q_overlap >= 0.90 and title_overlap >= 0.60:
             best = max(best, 0.88)
-        elif token_score >= 0.5:
+        elif q_overlap >= 0.70 and title_overlap >= 0.50:
             best = max(best, 0.76)
-        elif token_score >= 0.34:
+        elif q_overlap >= 0.50 and title_overlap >= 0.50 and len(q_tokens) <= 3:
             best = max(best, 0.64)
 
-    title_lower = normalize_lower(title)
+        ratio = SequenceMatcher(None, compact_text(q), compact_text(v)).ratio()
+        if ratio >= 0.88 and q_overlap >= 0.70:
+            best = max(best, 0.84)
 
+    # Small boost only after strict required-word checking passed.
     if "roadshow" in q and "roadshow" in title_lower:
-        best += 0.05
+        best += 0.03
     if "kiosk" in q and "kiosk" in title_lower:
-        best += 0.05
+        best += 0.03
     if "opening" in q and "opening" in title_lower:
-        best += 0.05
+        best += 0.02
     if "closing" in q and "closing" in title_lower:
-        best += 0.05
+        best += 0.02
     if "aeon" in q and "aeon" in title_lower:
-        best += 0.05
+        best += 0.03
     if "spring" in q and "spring" in title_lower:
         best += 0.03
-    if any(x in q for x in ["1st day", "first day", "day 1", "day one"]) and "new bee 1st day" in title_lower:
-        best += 0.12
-    if any(x in q for x in ["3rd day", "third day", "day 3", "day three"]) and "new bee 3rd day" in title_lower:
-        best += 0.12
-    if "onboarding" in q and "onboarding" in title_lower:
-        best += 0.10
-    if "new bee" in q and "new bee" in title_lower:
-        best += 0.10
-    if "new staff" in q and any(x in q for x in ["first day", "1st day", "day 1", "day one"]) and "new bee 1st day" in title_lower:
-        best = max(best, 0.88)
 
-    # Fuzzy fallback helps testing questions with small spelling mistakes,
-    # for example: opning, kios, clsoing, shopfy, recipt, promosion.
-    # It must not run for broad category questions like "Show me all SOP",
-    # otherwise short words such as "sop" can accidentally match "shop".
-    q_meaningful_tokens = meaningful_tokens(q)
-    if q_meaningful_tokens and not is_generic_category_question(q):
-        for variant in title_variants(title):
-            v = normalize_lower(variant)
-            if not v:
-                continue
-
-            ratio = SequenceMatcher(None, q, v).ratio()
-            if ratio >= 0.82:
-                best = max(best, 0.84)
-
-            v_tokens = [token for token in tokenize(v) if len(token) >= 4]
-            if v_tokens:
-                fuzzy_hits = 0
-                for v_token in v_tokens:
-                    if any(
-                        SequenceMatcher(None, q_token, v_token).ratio() >= 0.86
-                        for q_token in q_meaningful_tokens
-                    ):
-                        fuzzy_hits += 1
-                fuzzy_token_score = fuzzy_hits / max(len(v_tokens), 1)
-                if fuzzy_token_score >= 0.75:
-                    best = max(best, 0.82)
-                elif fuzzy_token_score >= 0.50 and len(q_meaningful_tokens) >= 2:
-                    best = max(best, 0.72)
-
-    return min(best, 1.0)
-
+    return round(min(best, 1.0), 4)
 
 def match_titles(question: str) -> list[tuple[str, float]]:
     scored = []
@@ -1554,8 +1639,28 @@ def match_titles(question: str) -> list[tuple[str, float]]:
         if printer_scored:
             scored = printer_scored
 
-    if "ice bin" in q:
-        ice_scored = [item for item in scored if "ice bin" in normalize_lower(item[0])]
+    if "aeon" in q:
+        aeon_scored = [item for item in scored if "aeon" in normalize_lower(item[0])]
+        if aeon_scored:
+            scored = aeon_scored
+
+    if "spring" in q:
+        spring_scored = [item for item in scored if "spring" in normalize_lower(item[0])]
+        if spring_scored:
+            scored = spring_scored
+
+    if "warehouse" in q:
+        warehouse_scored = [item for item in scored if "warehouse" in normalize_lower(item[0])]
+        if warehouse_scored:
+            scored = warehouse_scored
+
+    if "booth" in q or "dustbin" in q:
+        booth_scored = [item for item in scored if "booth" in normalize_lower(item[0]) or "dustbin" in normalize_lower(item[0])]
+        if booth_scored:
+            scored = booth_scored
+
+    if "ice bin" in q or ("ice" in q and "bin" in q):
+        ice_scored = [item for item in scored if "ice bin" in normalize_lower(item[0]) or ("ice" in normalize_lower(item[0]) and "bin" in normalize_lower(item[0]))]
         if ice_scored:
             scored = ice_scored
 
