@@ -7,7 +7,9 @@ from typing import Dict, List
 # =========================
 
 def normalize_text(text: str) -> str:
-    return re.sub(r"\s+", " ", str(text or "").strip()).lower()
+    text = str(text or "").strip()
+    text = re.sub(r"^\s*(?:[-*•]+\s*|\d+[.)]\s*)+", "", text).strip()
+    return re.sub(r"\s+", " ", text).lower()
 
 
 def unique_keep_order(items: List[str]) -> List[str]:
