@@ -4014,121 +4014,6 @@ def permanent_delete_article(article_id):
 # ESCALATION ROUTES
 # =========================
 
-def _safe_int_value(value):
-    if value is None:
-        return None
-
-    text_value = str(value).strip()
-    if text_value == "" or text_value.lower() in {"null", "none", "undefined"}:
-        return None
-
-    try:
-        return int(text_value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _get_table_columns(cursor, table_name):
-    cursor.execute(f"SHOW COLUMNS FROM {table_name}")
-    rows = cursor.fetchall()
-    columns = set()
-
-    for row in rows:
-        if isinstance(row, dict):
-            column_name = row.get("Field")
-        else:
-            column_name = row[0] if row else None
-
-        if column_name:
-            columns.add(str(column_name))
-
-    return columns
-
-
-def _save_approved_escalation_to_qa_knowledge(cursor, question, answer, image_url=None, image_type=None):
-    """
-    Save approved escalation answer into qa_knowledge only after Manager/Admin approval.
-    This helper updates an existing same-question row first to avoid duplicate-key errors.
-    """
-    question = str(question or "").strip()
-    answer = str(answer or "").strip()
-
-    if not question or not answer:
-        return
-
-    columns = _get_table_columns(cursor, "qa_knowledge")
-
-    if "question" not in columns or "answer" not in columns:
-        return
-
-    cursor.execute("""
-        SELECT question
-        FROM qa_knowledge
-        WHERE question = %s
-        LIMIT 1
-    """, (question,))
-    existing = cursor.fetchone()
-
-    if existing:
-        set_parts = ["answer = %s"]
-        params = [answer]
-
-        if "source" in columns:
-            set_parts.append("source = %s")
-            params.append("manager_approved_review")
-
-        if "confidence" in columns:
-            set_parts.append("confidence = %s")
-            params.append(1.0)
-
-        if "image_url" in columns:
-            set_parts.append("image_url = %s")
-            params.append(image_url)
-
-        if "image_type" in columns:
-            set_parts.append("image_type = %s")
-            params.append(image_type)
-
-        params.append(question)
-
-        cursor.execute(f"""
-            UPDATE qa_knowledge
-            SET {', '.join(set_parts)}
-            WHERE question = %s
-        """, tuple(params))
-
-        return
-
-    insert_columns = ["question", "answer"]
-    placeholders = ["%s", "%s"]
-    params = [question, answer]
-
-    if "source" in columns:
-        insert_columns.append("source")
-        placeholders.append("%s")
-        params.append("manager_approved_review")
-
-    if "confidence" in columns:
-        insert_columns.append("confidence")
-        placeholders.append("%s")
-        params.append(1.0)
-
-    if "image_url" in columns:
-        insert_columns.append("image_url")
-        placeholders.append("%s")
-        params.append(image_url)
-
-    if "image_type" in columns:
-        insert_columns.append("image_type")
-        placeholders.append("%s")
-        params.append(image_type)
-
-    cursor.execute(f"""
-        INSERT INTO qa_knowledge ({', '.join(insert_columns)})
-        VALUES ({', '.join(placeholders)})
-    """, tuple(params))
-
-
 @app.route('/api/escalations', methods=['GET'])
 def get_escalations():
     conn = None
@@ -4160,24 +4045,10 @@ def get_escalations():
                 e.deleted_at,
                 e.deleted_by,
                 u.full_name AS asked_by_name,
-                deleted_user.full_name AS deleted_by_name,
-                latest_review.review_id,
-                latest_review.status AS review_status,
-                latest_review.reviewer_comment,
-                latest_review.reviewed_at,
-                latest_review.published_at
+                deleted_user.full_name AS deleted_by_name
             FROM escalation e
             LEFT JOIN users u ON e.asked_by = u.user_id
             LEFT JOIN users deleted_user ON e.deleted_by = deleted_user.user_id
-            LEFT JOIN (
-                SELECT rq.*
-                FROM review_queue rq
-                INNER JOIN (
-                    SELECT escalation_id, MAX(review_id) AS max_review_id
-                    FROM review_queue
-                    GROUP BY escalation_id
-                ) latest_rq ON rq.review_id = latest_rq.max_review_id
-            ) latest_review ON e.escalation_id = latest_review.escalation_id
             WHERE COALESCE(e.is_deleted, 0) = %s
             ORDER BY e.created_at DESC
         """, (1 if show_deleted else 0,))
@@ -4201,9 +4072,6 @@ def get_escalations():
 
 @app.route('/api/escalations/<int:escalation_id>/answer', methods=['PUT'])
 def submit_escalation_answer(escalation_id):
-    conn = None
-    cursor = None
-
     try:
         answer_image_url = None
         answer_image_type = None
@@ -4237,371 +4105,32 @@ def submit_escalation_answer(escalation_id):
         if not manual_answer:
             return jsonify({'message': 'Manual answer is required.'}), 400
 
-        handled_by = _safe_int_value(handled_by)
-
-        conn = get_db_connection()
-        conn.start_transaction()
-        cursor = conn.cursor(dictionary=True)
-
-        cursor.execute("""
-            SELECT escalation_id, question, image_url, image_type
-            FROM escalation
-            WHERE escalation_id = %s
-              AND COALESCE(is_deleted, 0) = 0
-            LIMIT 1
-        """, (escalation_id,))
-        escalation = cursor.fetchone()
-
-        if not escalation:
-            conn.rollback()
-            return jsonify({'message': 'Escalation not found.'}), 404
-
-        final_image_url = answer_image_url or escalation.get('image_url')
-        final_image_type = answer_image_type or escalation.get('image_type')
-        question = escalation.get('question') or ''
-
-        cursor.execute("""
-            UPDATE escalation
-            SET
-                manual_answer = %s,
-                handled_by = %s,
-                status = 'resolved',
-                resolved_at = NOW(),
-                image_url = COALESCE(%s, image_url),
-                image_type = COALESCE(%s, image_type)
-            WHERE escalation_id = %s
-        """, (
-            manual_answer,
-            handled_by,
-            final_image_url,
-            final_image_type,
-            escalation_id
-        ))
-
-        cursor.execute("""
-            SELECT review_id
-            FROM review_queue
-            WHERE escalation_id = %s
-            ORDER BY review_id DESC
-            LIMIT 1
-        """, (escalation_id,))
-        review = cursor.fetchone()
-
-        if review:
-            cursor.execute("""
-                UPDATE review_queue
-                SET
-                    question = %s,
-                    answer = %s,
-                    submitted_by = %s,
-                    reviewed_by = NULL,
-                    reviewer_comment = '',
-                    status = 'pending',
-                    reviewed_at = NULL,
-                    published_at = NULL
-                WHERE review_id = %s
-            """, (
-                question,
-                manual_answer,
-                handled_by,
-                review['review_id']
-            ))
-        else:
-            cursor.execute("""
-                INSERT INTO review_queue
-                (escalation_id, question, answer, submitted_by, status, created_at)
-                VALUES (%s, %s, %s, %s, 'pending', NOW())
-            """, (
-                escalation_id,
-                question,
-                manual_answer,
-                handled_by
-            ))
-
-        cursor.execute("""
-            DELETE FROM qa_knowledge
-            WHERE question = %s
-              AND answer = %s
-              AND source = 'team_lead'
-        """, (question, manual_answer))
-
-        conn.commit()
-
-        add_audit_log(
-            actor_id=handled_by,
-            actor_name="Team Lead",
-            action="Submitted escalation answer for admin review",
-            module="Escalation",
-            description=f"Escalation ID {escalation_id} was answered and sent for admin approval."
+        success = resolve_escalation(
+            escalation_id=escalation_id,
+            answer=manual_answer,
+            user_id=handled_by,
+            answer_image_url=answer_image_url,
+            answer_image_type=answer_image_type
         )
 
+        if not success:
+            return jsonify({
+                'message': 'Failed to resolve escalation.'
+            }), 500
+
         return jsonify({
-            'message': 'Manual answer submitted for admin approval.',
-            'image_url': final_image_url,
-            'image_type': final_image_type
+            'message': 'Escalation resolved and saved into AI knowledge.',
+            'image_url': answer_image_url,
+            'image_type': answer_image_type
         }), 200
 
     except Exception as error:
-        if conn:
-            conn.rollback()
-
         print("SUBMIT ESCALATION ANSWER ERROR:", error)
         return jsonify({
             'message': 'Failed to submit manual answer.',
             'error': str(error)
         }), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-
-@app.route('/api/escalations/<int:escalation_id>/approve', methods=['PUT'])
-def approve_escalation_answer(escalation_id):
-    data = request.get_json(silent=True) or {}
-    reviewed_by = _safe_int_value(data.get('reviewed_by') or data.get('user_id') or data.get('userId'))
-    reviewer_comment = str(data.get('reviewer_comment', '')).strip()
-
-    conn = None
-    cursor = None
-
-    try:
-        conn = get_db_connection()
-        conn.start_transaction()
-        cursor = conn.cursor(dictionary=True)
-
-        cursor.execute("""
-            SELECT escalation_id, question, manual_answer, asked_by, handled_by, image_url, image_type
-            FROM escalation
-            WHERE escalation_id = %s
-              AND COALESCE(is_deleted, 0) = 0
-            LIMIT 1
-        """, (escalation_id,))
-        escalation = cursor.fetchone()
-
-        if not escalation:
-            conn.rollback()
-            return jsonify({'message': 'Escalation not found.'}), 404
-
-        question = escalation.get('question') or ''
-        manual_answer = str(escalation.get('manual_answer') or '').strip()
-
-        if not manual_answer:
-            conn.rollback()
-            return jsonify({'message': 'No manual answer to approve.'}), 400
-
-        if reviewed_by is None:
-            reviewed_by = _safe_int_value(escalation.get('handled_by')) or _safe_int_value(escalation.get('asked_by'))
-
-        cursor.execute("""
-            SELECT review_id
-            FROM review_queue
-            WHERE escalation_id = %s
-            ORDER BY review_id DESC
-            LIMIT 1
-        """, (escalation_id,))
-        review = cursor.fetchone()
-
-        if review:
-            cursor.execute("""
-                UPDATE review_queue
-                SET
-                    question = %s,
-                    answer = %s,
-                    reviewed_by = %s,
-                    reviewer_comment = %s,
-                    status = 'approved',
-                    reviewed_at = NOW()
-                WHERE review_id = %s
-            """, (
-                question,
-                manual_answer,
-                reviewed_by,
-                reviewer_comment,
-                review['review_id']
-            ))
-        else:
-            cursor.execute("""
-                INSERT INTO review_queue
-                (escalation_id, question, answer, submitted_by, reviewed_by, status, reviewer_comment, created_at, reviewed_at)
-                VALUES (%s, %s, %s, %s, %s, 'approved', %s, NOW(), NOW())
-            """, (
-                escalation_id,
-                question,
-                manual_answer,
-                escalation.get('handled_by'),
-                reviewed_by,
-                reviewer_comment
-            ))
-
-        _save_approved_escalation_to_qa_knowledge(
-            cursor,
-            question,
-            manual_answer,
-            escalation.get('image_url'),
-            escalation.get('image_type')
-        )
-
-        cursor.execute("""
-            UPDATE escalation
-            SET
-                status = 'resolved',
-                resolved_at = COALESCE(resolved_at, NOW())
-            WHERE escalation_id = %s
-        """, (escalation_id,))
-
-        conn.commit()
-
-        add_audit_log(
-            actor_id=reviewed_by,
-            actor_name="Admin",
-            action="Approved escalation answer",
-            module="Escalation",
-            description=f"Approved escalation answer ID {escalation_id} and saved it into AI knowledge."
-        )
-
-        return jsonify({'message': 'Escalation answer approved and saved into AI knowledge.'}), 200
-
-    except Exception as error:
-        if conn:
-            conn.rollback()
-
-        print('MYSQL ERROR /api/escalations APPROVE:', error)
-        return jsonify({
-            'message': 'Failed to approve escalation answer.',
-            'error': str(error)
-        }), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-
-@app.route('/api/escalations/<int:escalation_id>/reject', methods=['PUT'])
-def reject_escalation_answer(escalation_id):
-    data = request.get_json(silent=True) or {}
-    reviewed_by = _safe_int_value(data.get('reviewed_by') or data.get('user_id') or data.get('userId'))
-    reviewer_comment = str(data.get('reviewer_comment', '')).strip()
-
-    conn = None
-    cursor = None
-
-    try:
-        conn = get_db_connection()
-        conn.start_transaction()
-        cursor = conn.cursor(dictionary=True)
-
-        cursor.execute("""
-            SELECT escalation_id, question, manual_answer, asked_by, handled_by
-            FROM escalation
-            WHERE escalation_id = %s
-              AND COALESCE(is_deleted, 0) = 0
-            LIMIT 1
-        """, (escalation_id,))
-        escalation = cursor.fetchone()
-
-        if not escalation:
-            conn.rollback()
-            return jsonify({'message': 'Escalation not found.'}), 404
-
-        question = escalation.get('question') or ''
-        manual_answer = str(escalation.get('manual_answer') or '').strip()
-
-        if reviewed_by is None:
-            reviewed_by = _safe_int_value(escalation.get('handled_by')) or _safe_int_value(escalation.get('asked_by'))
-
-        cursor.execute("""
-            SELECT review_id
-            FROM review_queue
-            WHERE escalation_id = %s
-            ORDER BY review_id DESC
-            LIMIT 1
-        """, (escalation_id,))
-        review = cursor.fetchone()
-
-        if review:
-            cursor.execute("""
-                UPDATE review_queue
-                SET
-                    question = %s,
-                    answer = %s,
-                    reviewed_by = %s,
-                    reviewer_comment = %s,
-                    status = 'rejected',
-                    reviewed_at = NOW()
-                WHERE review_id = %s
-            """, (
-                question,
-                manual_answer,
-                reviewed_by,
-                reviewer_comment,
-                review['review_id']
-            ))
-        else:
-            cursor.execute("""
-                INSERT INTO review_queue
-                (escalation_id, question, answer, submitted_by, reviewed_by, status, reviewer_comment, created_at, reviewed_at)
-                VALUES (%s, %s, %s, %s, %s, 'rejected', %s, NOW(), NOW())
-            """, (
-                escalation_id,
-                question,
-                manual_answer,
-                escalation.get('handled_by'),
-                reviewed_by,
-                reviewer_comment
-            ))
-
-        if manual_answer:
-            cursor.execute("""
-                DELETE FROM qa_knowledge
-                WHERE question = %s
-                  AND answer = %s
-                  AND source IN ('team_lead', 'manager_approved_review')
-            """, (question, manual_answer))
-
-        cursor.execute("""
-            UPDATE escalation
-            SET
-                status = 'pending',
-                manual_answer = NULL,
-                handled_by = NULL,
-                resolved_at = NULL
-            WHERE escalation_id = %s
-        """, (escalation_id,))
-
-        conn.commit()
-
-        add_audit_log(
-            actor_id=reviewed_by,
-            actor_name="Admin",
-            action="Rejected escalation answer",
-            module="Escalation",
-            description=f"Rejected escalation answer ID {escalation_id} and moved it back to pending."
-        )
-
-        return jsonify({'message': 'Escalation answer rejected and moved back to pending.'}), 200
-
-    except Exception as error:
-        if conn:
-            conn.rollback()
-
-        print('MYSQL ERROR /api/escalations REJECT:', error)
-        return jsonify({
-            'message': 'Failed to reject escalation answer.',
-            'error': str(error)
-        }), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-
+    
 # =========================
 # SOFT DELETE ESCALATION ROUTE
 # Move escalation to Trash Bin

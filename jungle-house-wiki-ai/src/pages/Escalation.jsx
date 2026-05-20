@@ -30,37 +30,6 @@ export default function Escalation() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
   const [activeTab, setActiveTab] = useState('pending');
-  const [reviewActionLoading, setReviewActionLoading] = useState({});
-
-  const userRole = String(
-    user?.role ||
-    user?.role_name ||
-    user?.roleName ||
-    ''
-  ).toLowerCase().replace(/[\s_-]/g, '');
-
-  const isAdminUser =
-    userRole === 'admin' ||
-    userRole === 'manager' ||
-    Number(user?.role_id || user?.roleId) === 1;
-
-  const currentUserId =
-    user?.user_id ||
-    user?.userId ||
-    user?.userID ||
-    user?.id ||
-    null;
-
-  const getBackendErrorMessage = (error, fallbackMessage) => {
-    const backendMessage = error?.response?.data?.message;
-    const backendError = error?.response?.data?.error;
-
-    if (backendMessage && backendError) {
-      return `${backendMessage} ${backendError}`;
-    }
-
-    return backendMessage || backendError || fallbackMessage;
-  };
 
   // Delete mode states
   const [deleteMode, setDeleteMode] = useState(false);
@@ -150,7 +119,7 @@ export default function Escalation() {
 
       const formData = new FormData();
       formData.append('manual_answer', manualAnswer.trim());
-      formData.append('handled_by', currentUserId || '');
+      formData.append('handled_by', user?.user_id || user?.id || '');
 
       if (selectedImage) {
         formData.append('image', selectedImage);
@@ -158,7 +127,7 @@ export default function Escalation() {
 
       await api.put(`/escalations/${id}/answer`, formData);
 
-      setMessage('Manual answer submitted successfully and sent for admin review.');
+      setMessage('Manual answer submitted successfully.');
       setActiveTab('resolved');
       setDeleteMode(false);
       setSelectedIds([]);
@@ -173,7 +142,12 @@ export default function Escalation() {
         } catch (error) {
           console.error('Submit manual answer error:', error);
 
-          setMessage(getBackendErrorMessage(error, 'Failed to submit manual answer.'));
+          const backendMessage =
+            error?.response?.data?.error ||
+            error?.response?.data?.message ||
+            'Failed to submit manual answer.';
+
+          setMessage(backendMessage);
         }
   };
 
@@ -245,7 +219,7 @@ export default function Escalation() {
         selectedVisibleIds.map((id) =>
           api.delete(`/escalations/${id}`, {
             data: {
-              deleted_by: currentUserId,
+              deleted_by: user?.user_id || user?.id || null,
             },
           })
         )
@@ -319,55 +293,6 @@ export default function Escalation() {
         error.response?.data?.error ||
         'Failed to permanently delete escalation.'
       );
-    }
-  };
-
-  const approveEscalationAnswer = async (id) => {
-    try {
-      setMessage('');
-      setReviewActionLoading((prev) => ({ ...prev, [id]: 'approve' }));
-
-      await api.put(`/escalations/${id}/approve`, {
-        reviewed_by: currentUserId,
-      });
-
-      setMessage('Escalation answer approved successfully.');
-      fetchEscalations();
-    } catch (error) {
-      console.error('Approve escalation answer error:', error);
-
-      setMessage(getBackendErrorMessage(error, 'Failed to approve escalation answer.'));
-    } finally {
-      setReviewActionLoading((prev) => {
-        const updated = { ...prev };
-        delete updated[id];
-        return updated;
-      });
-    }
-  };
-
-  const rejectEscalationAnswer = async (id) => {
-    try {
-      setMessage('');
-      setReviewActionLoading((prev) => ({ ...prev, [id]: 'reject' }));
-
-      await api.put(`/escalations/${id}/reject`, {
-        reviewed_by: currentUserId,
-      });
-
-      setMessage('Escalation answer rejected. The question has been moved back to pending.');
-      setActiveTab('pending');
-      fetchEscalations();
-    } catch (error) {
-      console.error('Reject escalation answer error:', error);
-
-      setMessage(getBackendErrorMessage(error, 'Failed to reject escalation answer.'));
-    } finally {
-      setReviewActionLoading((prev) => {
-        const updated = { ...prev };
-        delete updated[id];
-        return updated;
-      });
     }
   };
 
@@ -567,30 +492,6 @@ export default function Escalation() {
                       </button>
                     </>
                   )}
-
-                  {activeTab === 'resolved' &&
-                    isAdminUser &&
-                    (!item.review_status || item.review_status === 'pending') && (
-                      <>
-                        <button
-                          type="button"
-                          className="primary-btn"
-                          onClick={() => approveEscalationAnswer(item.escalation_id)}
-                          disabled={!!reviewActionLoading[item.escalation_id]}
-                        >
-                          {reviewActionLoading[item.escalation_id] === 'approve' ? 'Approving...' : 'Approve'}
-                        </button>
-
-                        <button
-                          type="button"
-                          className="danger-btn"
-                          onClick={() => rejectEscalationAnswer(item.escalation_id)}
-                          disabled={!!reviewActionLoading[item.escalation_id]}
-                        >
-                          {reviewActionLoading[item.escalation_id] === 'reject' ? 'Rejecting...' : 'Reject'}
-                        </button>
-                      </>
-                    )}
                 </div>
               </div>
 
@@ -696,7 +597,7 @@ export default function Escalation() {
 
                   <div className="row-between wrap-gap top-gap">
                     <p className="muted small">
-                      After submitting, this question will move to the resolved tab and wait for admin approval.
+                      After submitting, this question will move to the resolved tab.
                     </p>
 
                     <button
@@ -714,10 +615,6 @@ export default function Escalation() {
                     <p className="eyebrow">Manual Answer</p>
                     <p>{item.manual_answer || 'No manual answer recorded.'}</p>
                   </div>
-
-                  <p className="muted small top-gap">
-                    Admin review: {item.review_status || 'pending'}
-                  </p>
 
                   {item.image_url ? (
                     <div className="card-like top-gap-sm">

@@ -44,40 +44,6 @@ def similarity_ratio(a, b):
     return len(a_tokens & b_tokens) / max(len(a_tokens), len(b_tokens))
 
 
-def is_low_quality_saved_ai_answer(row):
-    """
-    Ignore old AI-saved fallback/suggestion rows from qa_knowledge.
-    Team Lead answers are still trusted because those are reviewed manually.
-    """
-    row = row or {}
-    source = str(row.get("source") or "").lower().strip()
-    answer = normalize_text(row.get("answer") or row.get("reply") or "")
-
-    if source == "team_lead":
-        return False
-
-    bad_phrases = [
-        "i found a few possible answers",
-        "i found more than one possible answer",
-        "please select one",
-        "please choose one",
-        "i could not understand",
-        "i m not fully sure",
-        "im not fully sure",
-        "not fully sure which topic",
-        "please ask again using a clearer",
-        "please escalate this question",
-        "system error",
-        "model prediction failed",
-        "ai model is not available",
-    ]
-
-    if any(phrase in answer for phrase in bad_phrases):
-        return True
-
-    return False
-
-
 # =========================
 # QA KNOWLEDGE HELPERS
 # =========================
@@ -154,9 +120,6 @@ def search_similar_question(question, team_lead_only=False):
         best_score = 0.0
 
         for row in rows:
-            if is_low_quality_saved_ai_answer(row):
-                continue
-
             db_q = normalize_text(row.get("question"))
 
             # Exact resolved question should always return.
@@ -224,9 +187,6 @@ def search_similar_questions(question, team_lead_only=False, limit=5):
         matches = []
 
         for row in rows:
-            if is_low_quality_saved_ai_answer(row):
-                continue
-
             db_q = normalize_text(row.get("question"))
             ratio = similarity_ratio(question, db_q)
 
