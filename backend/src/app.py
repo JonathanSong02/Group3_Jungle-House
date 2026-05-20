@@ -1,4 +1,3 @@
-from __future__ import annotations
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import os
@@ -66,15 +65,10 @@ try:
         from predict_intent import MODEL_ERROR as PREDICT_MODEL_ERROR
     except Exception:
         PREDICT_MODEL_ERROR = None
-    try:
-        from predict_intent import KNOWN_TITLES as TRAINING_KNOWN_TITLES
-    except Exception:
-        TRAINING_KNOWN_TITLES = []
     MODEL_AVAILABLE = True
     MODEL_LOAD_ERROR = None
 except Exception as error:
     get_model_answer = None
-    TRAINING_KNOWN_TITLES = []
     PREDICT_MODEL_ERROR = str(error)
     MODEL_AVAILABLE = False
     MODEL_LOAD_ERROR = str(error)
@@ -511,551 +505,10 @@ def add_audit_log(actor_id=None, actor_name="System", action="", module="", desc
 
 def clean_question(value) -> str:
     text = str(value or "").strip()
-    text = re.sub(r"^\s*(?:[-*•]+\s*|\d+[.)]\s*)+", "", text).strip()
     text = " ".join(text.split())
     if len(text) > 500:
         text = text[:500].strip()
     return text
-
-
-# =========================
-# EXACT KNOWLEDGE TITLE MATCH HELPERS
-# =========================
-CANONICAL_KNOWLEDGE_TITLES = [
-    "Aeon Roadshow Closing List",
-    "Aeon Roadshow Opening List",
-    "Backend Opening Checklist",
-    "Closing Spring Warehouse",
-    "Ice Bin Daily Closing Checklist",
-    "JHKC Kiosk Opening",
-    "Kiosk Closing Check List",
-    "Kuching Booth Closing dustbin check list",
-    "Opening Notes",
-    "Receipt printer preparation for opening",
-    "Sales Closing Reminders Material",
-    "Shopify POS app Closing",
-    "Shopify POS app Opening",
-    "Spring Roadshow Closing List",
-    "Spring Roadshow Opening List",
-    "Win the Heart Gift Guide",
-    "Promotion",
-    "Lab Report in Website - temporarily removed",
-    "Golden Passion Honey (New Product)",
-    "How shifts arrangements are given",
-    "Bee Point Policy – Crew Member Guideline",
-    "Hari Raya Aidilfitri Public Holiday – Retail (2026)",
-    "Hari Raya Aidilfitri – Dress Code",
-    "Kuching incentive data submission",
-    "PUBLIC HOLIDAY 2026",
-    "Do not open raw honey tester without permission.",
-    "Purple lavender out of stock",
-    "Free wooden stirrer",
-    "Mask and Badge",
-    "Proper way to stack HDPC",
-    "Price for new packaging for HWJ and SHVP",
-    "Customer signature for card payment",
-    "Eating inside the store is strictly prohibited",
-    "Emergency Guide – Responding to Danger or Harassment",
-    "Fake Jungle House",
-    "Bee Points: Redeem Only When Needed",
-    "Bee Green 15",
-    "OT Submission Reminder",
-    "Do not Block The Chiller",
-    "Place Tissue on Cold drinks",
-    "Can not use KB/QB IDs to check customer history",
-    "What is the best answer for client asking how much Honey we are using for our honey Juice?",
-    "Hygiene Compliance Notice – Juice Making (Effective Immediately)",
-    "Cashless",
-    "Morning Shift Attendance Responsibility & Penalty Notice",
-    "New Bee 3rd day Check List",
-    "New Bee 1st day Check List",
-    "Wanna-Bee onboarding Check list",
-]
-
-EXACT_TITLE_ALIASES = {
-    "Aeon Roadshow Closing List": ["aeon roadshow closing", "aeon roadshow closing checklist"],
-    "Aeon Roadshow Opening List": ["aeon roadshow opening", "aeon roadshow opening checklist"],
-    "Backend Opening Checklist": ["backend opening", "backend open checklist"],
-    "Closing Spring Warehouse": ["spring warehouse closing", "close spring warehouse"],
-    "Ice Bin Daily Closing Checklist": ["ice bin daily closing", "ice bin closing checklist"],
-    "JHKC Kiosk Opening": ["jhkc kiosk opening", "kiosk opening", "spring kiosk opening"],
-    "Kiosk Closing Check List": ["kiosk closing checklist", "kiosk closing", "spring kiosk closing"],
-    "Kuching Booth Closing dustbin check list": ["kuching booth closing dustbin checklist", "kuching booth dustbin checklist"],
-    "Receipt printer preparation for opening": ["receipt printer opening", "printer preparation for opening"],
-    "Shopify POS app Closing": ["shopify pos closing", "shopify closing"],
-    "Shopify POS app Opening": ["shopify pos opening", "shopify opening"],
-    "Spring Roadshow Closing List": ["spring roadshow closing", "spring roadshow closing checklist"],
-    "Spring Roadshow Opening List": ["spring roadshow opening", "spring roadshow opening checklist"],
-    "Golden Passion Honey (New Product)": ["golden passion honey", "golden passion"],
-    "Bee Point Policy – Crew Member Guideline": ["bee point policy", "bee points policy", "crew member guideline"],
-    "Hari Raya Aidilfitri Public Holiday – Retail (2026)": ["hari raya public holiday retail 2026", "hari raya aidilfitri public holiday retail"],
-    "Hari Raya Aidilfitri – Dress Code": ["hari raya dress code", "aidilfitri dress code"],
-    "PUBLIC HOLIDAY 2026": ["public holiday 2026"],
-    "Do not open raw honey tester without permission.": ["raw honey tester", "do not open raw honey tester"],
-    "Purple lavender out of stock": ["purple lavender", "lavender out of stock"],
-    "Free wooden stirrer": ["wooden stirrer"],
-    "Proper way to stack HDPC": ["stack hdpc", "hdpc stacking"],
-    "Customer signature for card payment": ["card payment signature", "customer signature"],
-    "Emergency Guide – Responding to Danger or Harassment": ["emergency guide", "danger or harassment"],
-    "Bee Points: Redeem Only When Needed": ["bee points redeem only when needed", "bee points redeem"],
-    "OT Submission Reminder": ["ot reminder", "ot submission"],
-    "Do not Block The Chiller": ["do not block chiller", "block chiller"],
-    "Place Tissue on Cold drinks": ["place tissue on cold drinks", "tissue cold drinks"],
-    "Can not use KB/QB IDs to check customer history": ["cannot use kb qb ids", "kb qb ids customer history"],
-    "Hygiene Compliance Notice – Juice Making (Effective Immediately)": ["hygiene compliance notice", "juice making hygiene"],
-    "Morning Shift Attendance Responsibility & Penalty Notice": ["morning shift attendance", "attendance penalty notice"],
-    "New Bee 3rd day Check List": ["new bee 3rd day", "new bee third day", "new bee day 3"],
-    "New Bee 1st day Check List": ["new bee 1st day", "new bee first day", "new bee day 1"],
-    "Wanna-Bee onboarding Check list": ["wanna bee onboarding checklist", "wanna-bee onboarding", "onboarding checklist"],
-}
-
-EXACT_TITLE_PREFIX_WORDS = [
-    "show me", "show", "give me", "tell me", "i want", "i need",
-    "what is", "what are", "please show", "please give", "can you show",
-    "can you give", "can you tell me about", "explain", "open",
-]
-
-
-def normalize_exact_title_key(value):
-    text = clean_question(value).lower()
-    text = text.replace("&", " and ")
-    text = re.sub(r"[’‘`´]", "'", text)
-    text = re.sub(r"[“”]", '"', text)
-    text = re.sub(r"[–—−-]", " ", text)
-    text = re.sub(r"[^a-z0-9]+", " ", text)
-    text = re.sub(r"\bcheck\s+list\b", "checklist", text)
-    text = re.sub(r"\bcannot\b", "can not", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
-
-
-def exact_title_tokens(value):
-    return [token for token in normalize_exact_title_key(value).split() if token]
-
-
-def build_exact_title_lookup():
-    lookup = {}
-    for title in CANONICAL_KNOWLEDGE_TITLES:
-        variants = [title]
-        variants.extend(EXACT_TITLE_ALIASES.get(title, []))
-        for variant in variants:
-            key = normalize_exact_title_key(variant)
-            if key:
-                lookup.setdefault(key, title)
-    for title in TRAINING_KNOWN_TITLES or []:
-        key = normalize_exact_title_key(title)
-        if key:
-            lookup.setdefault(key, title)
-    return lookup
-
-
-EXACT_TITLE_LOOKUP = build_exact_title_lookup()
-
-
-def strip_exact_title_prefix(question):
-    q_key = normalize_exact_title_key(question)
-    for prefix in EXACT_TITLE_PREFIX_WORDS:
-        p_key = normalize_exact_title_key(prefix)
-        if q_key.startswith(p_key + " "):
-            return q_key[len(p_key):].strip()
-    return q_key
-
-
-def find_requested_canonical_title(question):
-    q_key = normalize_exact_title_key(question)
-    if not q_key:
-        return None
-
-    possible_keys = [q_key, strip_exact_title_prefix(question)]
-
-    for key in possible_keys:
-        if key in EXACT_TITLE_LOOKUP:
-            return EXACT_TITLE_LOOKUP[key]
-
-    # Allow staff to write a sentence around an exact title, but choose the
-    # longest exact title only. This avoids broad words like "opening" matching
-    # the wrong SOP.
-    best_title = None
-    best_len = 0
-    for title_key, title in EXACT_TITLE_LOOKUP.items():
-        title_len = len(title_key.split())
-        if title_len < 2:
-            continue
-        if re.search(rf"(^|\\s){re.escape(title_key)}($|\\s)", q_key):
-            if title_len > best_len:
-                best_title = title
-                best_len = title_len
-
-    return best_title
-
-
-def is_same_exact_title(left, right):
-    left_key = normalize_exact_title_key(left)
-    right_key = normalize_exact_title_key(right)
-    if not left_key or not right_key:
-        return False
-    if left_key == right_key:
-        return True
-    canonical_left = EXACT_TITLE_LOOKUP.get(left_key)
-    canonical_right = EXACT_TITLE_LOOKUP.get(right_key)
-    return bool(canonical_left and canonical_right and canonical_left == canonical_right)
-
-
-def exact_title_option_key(option):
-    return "|".join([
-        str(option.get("source") or "").lower().strip(),
-        normalize_exact_title_key(option.get("title") or option.get("label") or option.get("question") or ""),
-        normalize_exact_title_key(option.get("answer") or option.get("reply") or "")[:80],
-    ])
-
-
-def option_matches_requested_title(option, canonical_title):
-    title = option.get("title") or option.get("label") or option.get("question") or ""
-    if is_same_exact_title(title, canonical_title):
-        return True
-    return calculate_title_relevance_score(canonical_title, title) >= 0.88
-
-
-
-def is_specific_step_follow_up(question: str) -> bool:
-    """
-    Detect short follow-up requests after staff already opened an SOP topic.
-    Example: "step 11", "step 1 to 5", "show picture", "show all".
-    These should return the requested SOP content directly, not suggestion options.
-    """
-    q = clean_question(question).lower()
-
-    if not q:
-        return False
-
-    if re.search(r"\bstep\s*\d+\s*(?:to|-|until|hingga)\s*(?:step\s*)?\d+\b", q):
-        return True
-
-    if re.search(r"\bstep\s*\d+\b", q):
-        return True
-
-    direct_follow_up_phrases = {
-        "show all",
-        "all step",
-        "all steps",
-        "full sop",
-        "full checklist",
-        "show full",
-        "full guide",
-        "entire sop",
-        "whole sop",
-        "picture",
-        "pictures",
-        "image",
-        "images",
-        "photo",
-        "photos",
-        "show picture",
-        "show image",
-        "show photo",
-        "next",
-        "next step",
-        "what next",
-        "what should i do next",
-    }
-
-    return q in direct_follow_up_phrases
-
-
-def extract_specific_step_number_request(question: str):
-    q = clean_question(question).lower()
-    match = re.search(r"\bstep\s*(\d+)\b", q)
-    if match:
-        return int(match.group(1))
-    return None
-
-
-def extract_specific_step_range_request(question: str):
-    q = clean_question(question).lower()
-    patterns = [
-        r"\bstep\s*(\d+)\s*(?:to|-|until|hingga)\s*step\s*(\d+)\b",
-        r"\bstep\s*(\d+)\s*(?:to|-|until|hingga)\s*(\d+)\b",
-        r"\bfrom\s*step\s*(\d+)\s*(?:to|until|hingga)\s*step\s*(\d+)\b",
-        r"\bfrom\s*step\s*(\d+)\s*(?:to|until|hingga)\s*(\d+)\b",
-    ]
-
-    for pattern in patterns:
-        match = re.search(pattern, q)
-        if match:
-            start_step = int(match.group(1))
-            end_step = int(match.group(2))
-            if start_step > end_step:
-                start_step, end_step = end_step, start_step
-            return start_step, end_step
-
-    return None
-
-
-def get_context_step_number(step: dict, fallback_index: int = 0) -> int:
-    if not isinstance(step, dict):
-        return fallback_index
-
-    for key in ["step_number", "step", "step_order"]:
-        try:
-            value = step.get(key)
-            if value not in [None, ""]:
-                return int(value)
-        except Exception:
-            pass
-
-    return fallback_index
-
-
-def normalize_context_step(step: dict, fallback_index: int = 0) -> dict:
-    step = step if isinstance(step, dict) else {}
-    step_number = get_context_step_number(step, fallback_index)
-
-    content = (
-        step.get("content")
-        or step.get("answer")
-        or step.get("reply")
-        or step.get("text")
-        or ""
-    )
-
-    images = (
-        step.get("images")
-        or step.get("image_urls")
-        or step.get("image_files")
-        or []
-    )
-
-    return {
-        **step,
-        "step_number": step_number,
-        "step": step.get("step", step_number),
-        "step_order": step.get("step_order", step_number),
-        "title": step.get("title") or f"Step {step_number}",
-        "section": step.get("section"),
-        "content": content,
-        "answer": step.get("answer") or content,
-        "images": images,
-        "image_urls": step.get("image_urls") or images,
-        "image_files": step.get("image_files") or images,
-    }
-
-
-def format_context_steps_answer(title: str, steps: list[dict]) -> str:
-    lines = [title]
-
-    for step in steps:
-        step_number = get_context_step_number(step)
-        content = (
-            step.get("content")
-            or step.get("answer")
-            or step.get("reply")
-            or ""
-        )
-
-        lines.append(f"Step {step_number}")
-
-        if step.get("section"):
-            lines.append(f"Section: {step.get('section')}")
-
-        lines.append(str(content).strip())
-        lines.append("")
-
-    return "\n".join(lines).strip()
-
-
-def build_context_step_out_of_range_response(title: str, category: str, steps: list[dict], source: str) -> dict:
-    step_numbers = [get_context_step_number(step, index + 1) for index, step in enumerate(steps)]
-
-    if step_numbers:
-        min_step = min(step_numbers)
-        max_step = max(step_numbers)
-        reply = (
-            f"I found {title}, but that step is outside the available range.\n\n"
-            f"This topic only has Step {min_step} to Step {max_step}.\n"
-            f"Please ask for a valid step, for example:\n"
-            f"- step {min_step}\n"
-            f"- step {min(min_step + 1, max_step)} to step {min(min_step + 3, max_step)}\n"
-            f"- show all"
-        )
-    else:
-        reply = f"I found {title}, but there are no numbered steps available for this topic."
-
-    return {
-        "question": "",
-        "type": "text",
-        "category": category,
-        "title": title,
-        "section": "",
-        "reply": reply,
-        "answer": reply,
-        "purpose": None,
-        "steps": [],
-        "notes": [],
-        "score": 0.88,
-        "confidence": 0.88,
-        "confidence_label": get_confidence_label(0.88),
-        "source": source,
-        "context": {
-            "title": title,
-            "category": category,
-            "steps": steps,
-            "unclear_count": 0,
-        },
-        "fallback": False,
-        "fallback_message": "",
-        "escalation_ready": False,
-        "escalation_required": False,
-        "options": [],
-    }
-
-
-def answer_specific_step_from_context(question: str, context: dict | None) -> dict | None:
-    """
-    Use the latest SOP steps from the current chat context to answer "step 11" directly.
-    This prevents the short keyword logic from showing suggestion options.
-    """
-    context = normalize_context(context or {})
-    title = context.get("title")
-    category = context.get("category")
-    raw_steps = context.get("steps", [])
-
-    if not title or not isinstance(raw_steps, list) or len(raw_steps) == 0:
-        return None
-
-    steps = [
-        normalize_context_step(step, index + 1)
-        for index, step in enumerate(raw_steps)
-    ]
-
-    requested_range = extract_specific_step_range_request(question)
-    if requested_range:
-        start_step, end_step = requested_range
-        matched_steps = [
-            step for step in steps
-            if start_step <= get_context_step_number(step) <= end_step
-        ]
-
-        if not matched_steps:
-            return build_context_step_out_of_range_response(
-                title,
-                category,
-                steps,
-                "frontend_context_step_range_out_of_bounds"
-            )
-
-        answer = format_context_steps_answer(title, matched_steps)
-
-        return {
-            "question": question,
-            "type": "sop",
-            "category": category,
-            "title": title,
-            "section": "",
-            "reply": f"Got it — here are Steps {start_step} to {end_step} for {title}.",
-            "answer": answer,
-            "purpose": None,
-            "steps": matched_steps,
-            "notes": [],
-            "score": 0.99,
-            "confidence": 0.99,
-            "confidence_label": get_confidence_label(0.99),
-            "source": "frontend_context_step_range",
-            "context": {
-                "title": title,
-                "category": category,
-                "steps": steps,
-                "unclear_count": 0,
-            },
-            "fallback": False,
-            "fallback_message": "",
-            "escalation_ready": False,
-            "escalation_required": False,
-            "options": [],
-        }
-
-    requested_step = extract_specific_step_number_request(question)
-    if requested_step is not None:
-        matched_step = None
-
-        for step in steps:
-            if get_context_step_number(step) == requested_step:
-                matched_step = step
-                break
-
-        if not matched_step:
-            return build_context_step_out_of_range_response(
-                title,
-                category,
-                steps,
-                "frontend_context_step_out_of_bounds"
-            )
-
-        answer = format_context_steps_answer(title, [matched_step])
-
-        return {
-            "question": question,
-            "type": "sop",
-            "category": category,
-            "title": title,
-            "section": matched_step.get("section"),
-            "reply": f"Got it — this is Step {requested_step} for {title}.",
-            "answer": answer,
-            "purpose": None,
-            "steps": [matched_step],
-            "notes": [],
-            "score": 0.99,
-            "confidence": 0.99,
-            "confidence_label": get_confidence_label(0.99),
-            "source": "frontend_context_step",
-            "context": {
-                "title": title,
-                "category": category,
-                "section": matched_step.get("section"),
-                "steps": steps,
-                "unclear_count": 0,
-            },
-            "fallback": False,
-            "fallback_message": "",
-            "escalation_ready": False,
-            "escalation_required": False,
-            "options": [],
-        }
-
-    return None
-
-
-def is_direct_sop_follow_up_result(result: dict | None) -> bool:
-    """
-    True when predict_intent already returned the exact SOP/step answer.
-    This prevents app.py from converting the answer into multiple-choice options.
-    """
-    result = result or {}
-    source = str(result.get("source", "")).strip().lower()
-
-    direct_sources = {
-        "context_step",
-        "context_step_range",
-        "context_show_all",
-        "context_picture",
-        "context_next_step",
-        "matched_title_step",
-        "matched_title_step_range",
-        "matched_title_show_all",
-        "matched_title_show_all_first",
-        "matched_title_picture",
-        "matched_title_section",
-    }
-
-    if source in direct_sources:
-        return True
-
-    if source.endswith("_step") or source.endswith("_step_range"):
-        return True
-
-    if result.get("type") == "sop" and isinstance(result.get("steps"), list) and len(result.get("steps")) > 0:
-        return True
-
-    return False
 
 
 def normalize_context(context) -> dict:
@@ -1067,14 +520,10 @@ def normalize_context(context) -> dict:
     except Exception:
         unclear_count = 0
 
-    raw_steps = context.get("steps", [])
-    steps = raw_steps if isinstance(raw_steps, list) else []
-
     return {
         "title": str(context.get("title", "")).strip(),
         "category": str(context.get("category", "")).strip(),
         "section": str(context.get("section", "")).strip(),
-        "steps": steps,
         "last_step_number": context.get("last_step_number"),
         "unclear_count": unclear_count,
     }
@@ -1088,13 +537,6 @@ def get_chat_memory_key(data: dict | None = None) -> str:
     return f"ip:{request.remote_addr or 'local'}"
 
 
-def get_more_complete_steps(primary_steps, secondary_steps):
-    primary_steps = primary_steps if isinstance(primary_steps, list) else []
-    secondary_steps = secondary_steps if isinstance(secondary_steps, list) else []
-
-    return primary_steps if len(primary_steps) >= len(secondary_steps) else secondary_steps
-
-
 def prepare_chat_context(data: dict | None = None) -> dict:
     data = data or {}
     request_context = normalize_context(data.get("context") or {})
@@ -1103,36 +545,16 @@ def prepare_chat_context(data: dict | None = None) -> dict:
     merged_context = memory_context.copy()
     for key, value in request_context.items():
         if value not in [None, "", 0]:
-            if key == "steps":
-                merged_context["steps"] = get_more_complete_steps(value, memory_context.get("steps", []))
-            else:
-                merged_context[key] = value
+            merged_context[key] = value
 
     return normalize_context(merged_context)
 
 
 def remember_chat_context(data: dict | None, result: dict | None) -> None:
     result = result or {}
-    memory_context = normalize_context(AI_CHAT_MEMORY.get(get_chat_memory_key(data)) or {})
     result_context = normalize_context(result.get("context") or {})
 
-    if not result_context.get("title") and (result.get("title") or result.get("category")):
-        result_context = normalize_context({
-            "title": result.get("title", ""),
-            "category": result.get("category", ""),
-            "section": result.get("section", ""),
-            "steps": result.get("steps", []),
-            "last_step_number": result.get("last_step_number"),
-            "unclear_count": result.get("unclear_count", 0),
-        })
-    elif not result_context.get("steps") and isinstance(result.get("steps"), list):
-        result_context["steps"] = result.get("steps", [])
-
     if result_context.get("title") or result_context.get("category") or result_context.get("unclear_count", 0) > 0:
-        result_context["steps"] = get_more_complete_steps(
-            result_context.get("steps", []),
-            memory_context.get("steps", [])
-        )
         AI_CHAT_MEMORY[get_chat_memory_key(data)] = result_context
         return
 
@@ -1594,7 +1016,7 @@ def is_valid_answer(result):
     return True
 
 
-def choose_final_result(model_result, retrieval_result, kb_result=None, question=""):
+def choose_final_result(model_result, retrieval_result, kb_result=None):
     if model_result:
         model_source = str(model_result.get("source", ""))
         non_escalation_control_sources = {
@@ -1617,7 +1039,7 @@ def choose_final_result(model_result, retrieval_result, kb_result=None, question
             return model_result
 
     if kb_result and is_valid_answer(kb_result):
-        if is_trusted_article_result(question, kb_result):
+        if kb_result.get("score", 0.0) >= 0.18:
             return kb_result
 
     if model_result and is_valid_answer(model_result):
@@ -1642,7 +1064,7 @@ def choose_final_result(model_result, retrieval_result, kb_result=None, question
         if retrieval_result.get("score", 0.0) >= 0.20:
             return retrieval_result
 
-    if kb_result and is_trusted_article_result(question, kb_result):
+    if kb_result:
         return kb_result
 
     if model_result and retrieval_result:
@@ -1696,13 +1118,10 @@ def extract_numbered_option_titles(text):
     for line in str(text or "").splitlines():
         line = line.strip()
 
-        match = re.match(r"^\d+[\).]\s*(.+)$", line)
-        if not match:
-            match = re.match(r"^[-*•]\s*(.+)$", line)
-
+        match = re.match(r"^\d+\.\s*(.+)$", line)
         if match:
             title = match.group(1).strip()
-            if title and not title.lower().startswith(("show all", "step ", "1st day", "3rd day", "onboarding")):
+            if title:
                 titles.append(title)
 
     return titles
@@ -1885,33 +1304,8 @@ def build_answer_options(question, model_result=None, retrieval_result=None):
     )[:6]
 
 
-KNOWLEDGE_MATCH_STOP_WORDS = {
-    "a", "an", "the", "i", "me", "my", "you", "your", "we", "our",
-    "what", "which", "who", "when", "where", "why", "how", "do", "does",
-    "did", "can", "could", "should", "would", "is", "are", "am", "be",
-    "to", "for", "of", "in", "on", "at", "it", "this", "that", "all",
-    "show", "give", "tell", "have", "has", "with", "about", "information",
-    "info", "guide", "guidance", "answer", "explain", "me", "please",
-    "list", "check", "checklist", "app", "preparation", "prepared", "prepare",
-    "procedure", "procedures", "sop", "steps", "step", "daily",
-}
-
-
-def compact_match_text(value):
-    value = clean_question(value).lower()
-    return " ".join(re.findall(r"[a-z0-9]+", value))
-
-
 def tokenize_for_knowledge_match(value):
-    value = clean_question(value).lower()
-    return {
-        token for token in re.findall(r"[a-z0-9]+", value)
-        if token not in KNOWLEDGE_MATCH_STOP_WORDS and len(token) >= 2
-    }
-
-
-def tokenize_all_for_knowledge_match(value):
-    value = clean_question(value).lower()
+    value = str(value or "").lower()
     return set(re.findall(r"[a-z0-9]+", value))
 
 
@@ -1947,123 +1341,6 @@ def normalize_article_image_files(value):
     return files
 
 
-def has_conflicting_intent(question, title):
-    question_text = clean_question(question).lower()
-    title_text = str(title or "").lower()
-
-    if any(word in question_text for word in ["opening", "open"]) and any(word in title_text for word in ["closing", "close"]):
-        return True
-
-    if any(word in question_text for word in ["closing", "close"]) and any(word in title_text for word in ["opening", "open"]):
-        return True
-
-    day_1_words = ["1st", "first", "day 1", "day one"]
-    day_3_words = ["3rd", "third", "day 3", "day three"]
-
-    if any(word in question_text for word in day_1_words) and any(word in title_text for word in ["3rd", "third", "day 3"]):
-        return True
-
-    if any(word in question_text for word in day_3_words) and any(word in title_text for word in ["1st", "first", "day 1"]):
-        return True
-
-    return False
-
-
-def has_missing_required_title_keyword(question, title):
-    question_text = compact_match_text(question)
-    title_text = compact_match_text(title)
-    title_tokens = tokenize_all_for_knowledge_match(title_text)
-
-    required_groups = [
-        (["aeon"], ["aeon"]),
-        (["spring"], ["spring"]),
-        (["kuching", "booth", "dustbin"], ["kuching", "booth", "dustbin"]),
-        (["kiosk"], ["kiosk"]),
-        (["shopify", "pos"], ["shopify", "pos"]),
-        (["ice bin", "ice", "bin"], ["ice", "bin"]),
-        (["warehouse"], ["warehouse"]),
-        (["printer", "receipt"], ["printer", "receipt"]),
-        (["new bee"], ["new", "bee"]),
-        (["1st day", "first day", "day 1"], ["1st", "first", "day", "1"]),
-        (["3rd day", "third day", "day 3"], ["3rd", "third", "day", "3"]),
-        (["promotion", "promo"], ["promotion", "promo"]),
-    ]
-
-    for question_words, title_words in required_groups:
-        if any(word in question_text for word in question_words):
-            if not any((word in title_text) or (word in title_tokens) for word in title_words):
-                return True
-
-    return False
-
-def calculate_title_relevance_score(question, title):
-    question_text = compact_match_text(question)
-    title_text = compact_match_text(title)
-
-    if not question_text or not title_text:
-        return 0.0
-
-    if has_conflicting_intent(question_text, title_text):
-        return 0.0
-
-    if has_missing_required_title_keyword(question_text, title_text):
-        return 0.0
-
-    q_tokens = tokenize_for_knowledge_match(question_text)
-    title_tokens = tokenize_for_knowledge_match(title_text)
-
-    if question_text == title_text:
-        return 1.0
-
-    if not q_tokens or not title_tokens:
-        return 0.0
-
-    overlap = q_tokens & title_tokens
-    if not overlap:
-        return 0.0
-
-    # Do not direct-answer from one shared word such as only "closing" or only "opening".
-    if len(q_tokens) >= 2 and len(overlap) < 2:
-        return 0.0
-
-    if len(q_tokens) >= 3 and len(overlap) < max(2, len(q_tokens) - 1):
-        return 0.0
-
-    q_overlap = len(overlap) / max(len(q_tokens), 1)
-    title_overlap = len(overlap) / max(len(title_tokens), 1)
-
-    if question_text in title_text and title_overlap >= 0.60:
-        return 0.94
-
-    if title_text in question_text and q_overlap >= 0.75:
-        return 0.94
-
-    if q_overlap >= 0.90 and title_overlap >= 0.60:
-        return 0.88
-
-    if q_overlap >= 0.70 and title_overlap >= 0.50:
-        return 0.72
-
-    if q_overlap >= 0.50 and title_overlap >= 0.50 and len(q_tokens) <= 3:
-        return 0.58
-
-    return 0.0
-
-def is_relevant_option_for_question(question, option):
-    title = option.get("title") or option.get("label") or ""
-    title_score = calculate_title_relevance_score(question, title)
-
-    if title_score >= 0.50:
-        return True
-
-    # Keep generic model guidance, but do not keep unrelated article titles.
-    source = str(option.get("source", "")).lower().strip()
-    if source in {"broad_topic_clarification", "category_choice", "ambiguous_title_choice"}:
-        return True
-
-    return False
-
-
 def calculate_article_match_score(question, article):
     question_text = clean_question(question).lower()
     q_tokens = tokenize_for_knowledge_match(question_text)
@@ -2073,200 +1350,29 @@ def calculate_article_match_score(question, article):
     sub_category = str(article.get("sub_category") or "").lower()
     content = str(article.get("content") or "").lower()
 
-    if not q_tokens or not title:
+    haystack = " ".join([title, category, sub_category, content])
+    hay_tokens = tokenize_for_knowledge_match(haystack)
+
+    if not q_tokens or not hay_tokens:
         return 0.0
 
-    # The title is the most important field.
-    # This prevents a question such as "Aeon Roadshow Opening List" from matching
-    # "Aeon Roadshow Closing List" only because the article content contains similar words.
-    title_score = calculate_title_relevance_score(question_text, title)
-
-    if title_score <= 0.0:
-        return 0.0
-
-    category_tokens = tokenize_for_knowledge_match(" ".join([category, sub_category]))
-    content_tokens = tokenize_for_knowledge_match(content)
-
-    category_overlap = len(q_tokens & category_tokens) / max(len(q_tokens), 1) if category_tokens else 0.0
-    content_overlap = len(q_tokens & content_tokens) / max(len(q_tokens), 1) if content_tokens else 0.0
-
-    score = title_score
-    score += min(category_overlap * 0.05, 0.05)
-    score += min(content_overlap * 0.07, 0.07)
-
-    # Do not let weak title matches become a fake 100% answer because of content overlap.
-    if title_score < 0.72:
-        score = min(score, 0.68)
-
-    return round(min(score, 1.0), 4)
-
-
-def is_trusted_article_result(question, result):
-    """
-    Only direct-answer a Knowledge Base article when the title is clearly the same
-    as what the staff asked. Weak matches become selectable options instead.
-    """
-    if not result:
-        return False
-
-    source = str(result.get("source", "")).lower().strip()
-    if source != "wiki_article_database":
-        return True
-
-    try:
-        confidence = float(result.get("confidence", result.get("score", 0.0)) or 0.0)
-    except Exception:
-        confidence = 0.0
-
-    question_text = clean_question(question).lower()
-    title = str(result.get("title") or "").lower().strip()
-
-    if not title:
-        return False
-
-    if has_conflicting_intent(question_text, title):
-        return False
-
-    if has_missing_required_title_keyword(question_text, title):
-        return False
-
-    title_score = calculate_title_relevance_score(question_text, title)
+    overlap = len(q_tokens & hay_tokens) / max(len(q_tokens), 1)
+    score = overlap
 
     if question_text == title:
-        return True
+        score += 0.7
+    elif question_text in title or title in question_text:
+        score += 0.45
 
-    if title_score >= 0.94 and confidence >= 0.90:
-        return True
+    title_tokens = tokenize_for_knowledge_match(title)
+    if title_tokens:
+        title_overlap = len(q_tokens & title_tokens) / max(len(q_tokens), 1)
+        score += title_overlap * 0.35
 
-    if title_score >= 0.88 and confidence >= 0.88:
-        return True
+    if question_text in haystack:
+        score += 0.2
 
-    return False
-
-
-def filter_relevant_answer_options(question, options):
-    relevant_options = []
-    seen_titles = set()
-
-    for option in options or []:
-        title = str(option.get("title") or option.get("label") or "").strip()
-        if not title:
-            continue
-
-        title_key = title.lower()
-        if title_key in seen_titles:
-            continue
-
-        if not is_relevant_option_for_question(question, option):
-            continue
-
-        seen_titles.add(title_key)
-        relevant_options.append(option)
-
-    return relevant_options
-
-
-def find_exact_title_option(question, options):
-    question_text = clean_question(question).lower()
-
-    for option in options or []:
-        title = str(option.get("title") or option.get("label") or "").lower().strip()
-        if title and question_text == title:
-            return option
-
-    return None
-
-
-def option_to_direct_result(option, question):
-    return standardize_ai_response({
-        "question": question,
-        "type": option.get("type", "text"),
-        "category": option.get("category"),
-        "title": option.get("title") or option.get("label"),
-        "section": option.get("section"),
-        "reply": option.get("reply") or option.get("answer") or "",
-        "answer": option.get("answer") or option.get("reply") or "",
-        "purpose": option.get("purpose"),
-        "steps": option.get("steps", []),
-        "notes": option.get("notes", []),
-        "image_files": option.get("image_files"),
-        "attachment_url": option.get("attachment_url"),
-        "attachment_type": option.get("attachment_type"),
-        "score": option.get("confidence", 0.0),
-        "confidence": option.get("confidence", 0.0),
-        "confidence_label": get_confidence_label(option.get("confidence", 0.0)),
-        "source": option.get("source", "selected_option"),
-        "context": {
-            "title": option.get("title") or option.get("label"),
-            "category": option.get("category"),
-            "section": option.get("section"),
-            "steps": option.get("steps", []),
-            "unclear_count": 0,
-        },
-        "fallback": False,
-        "fallback_message": "",
-        "escalation_ready": False,
-        "escalation_required": False,
-        "options": [],
-    })
-
-
-def build_all_training_data_options(question, context=None, limit=10):
-    context = normalize_context(context or {})
-    scored_titles = []
-
-    for title in TRAINING_KNOWN_TITLES or []:
-        score = calculate_title_relevance_score(question, title)
-        if score >= 0.50:
-            scored_titles.append((title, score))
-
-    scored_titles.sort(key=lambda item: item[1], reverse=True)
-
-    options = []
-    seen = set()
-
-    for title, score in scored_titles[:limit]:
-        key = str(title).lower().strip()
-        if not key or key in seen:
-            continue
-
-        seen.add(key)
-
-        try:
-            detail_result = normalize_result(
-                call_model_answer(title, context=context),
-                default_source="training_data"
-            )
-        except Exception:
-            detail_result = None
-
-        if not detail_result:
-            continue
-
-        answer = detail_result.get("answer") or detail_result.get("reply") or ""
-        if not answer:
-            continue
-
-        options.append({
-            "label": title,
-            "title": title,
-            "category": detail_result.get("category"),
-            "section": detail_result.get("section"),
-            "source": "training_data",
-            "confidence": max(float(detail_result.get("confidence", detail_result.get("score", 0.0)) or 0.0), score),
-            "reply": detail_result.get("reply") or answer,
-            "answer": answer,
-            "type": detail_result.get("type", "text"),
-            "steps": detail_result.get("steps", []),
-            "notes": detail_result.get("notes", []),
-            "image_files": detail_result.get("image_files"),
-            "attachment_url": detail_result.get("attachment_url"),
-            "attachment_type": detail_result.get("attachment_type"),
-            "link": detail_result.get("link") or detail_result.get("article_link"),
-            "article_link": detail_result.get("article_link") or detail_result.get("link"),
-        })
-
-    return options
+    return round(min(score, 1.0), 4)
 
 
 def parse_article_steps(content):
@@ -2382,7 +1488,6 @@ def build_article_ai_result(article, question, score):
             "title": title,
             "category": category,
             "section": sub_category,
-            "steps": steps,
         },
         "fallback": False,
         "fallback_message": "",
@@ -2391,8 +1496,12 @@ def build_article_ai_result(article, question, score):
     })
 
 
-
-def fetch_active_wiki_articles():
+def search_knowledge_base_articles(question, limit=1):
+    """
+    Main AI knowledge retrieval.
+    AI Chat reads live wiki_article database first, so new Content Management articles
+    can be found without changing cleaned_knowledge.csv or retraining PyTorch.
+    """
     conn = None
     cursor = None
 
@@ -2415,187 +1524,20 @@ def fetch_active_wiki_articles():
             WHERE COALESCE(is_deleted, 0) = 0
             ORDER BY created_at DESC, article_id DESC
         """)
-        return cursor.fetchall() or []
+        articles = cursor.fetchall() or []
     except Exception as error:
-        print("KB ARTICLE FETCH ERROR:", error)
-        return []
+        print("KB ARTICLE SEARCH ERROR:", error)
+        return [] if limit != 1 else None
     finally:
         if cursor:
             cursor.close()
         if conn:
             conn.close()
 
-
-def search_knowledge_base_articles_by_exact_title(canonical_title, question=None, limit=6):
-    articles = fetch_active_wiki_articles()
-    scored_results = []
-
-    for article in articles:
-        article_title = article.get("title") or ""
-        if is_same_exact_title(article_title, canonical_title):
-            scored_results.append(build_article_ai_result(article, question or canonical_title, 1.0))
-
-    if not scored_results:
-        return []
-
-    return scored_results[:limit]
-
-
-def build_exact_title_options_response(question, options):
-    if not options:
-        return None
-
-    if len(options) == 1:
-        direct = dict(options[0])
-        direct["confidence"] = float(direct.get("confidence", direct.get("score", 1.0)) or 1.0)
-        direct["score"] = float(direct.get("score", direct.get("confidence", 1.0)) or 1.0)
-        direct["confidence_label"] = get_confidence_label(direct.get("confidence", 1.0))
-        return standardize_ai_response(direct)
-
-    options = sorted(
-        options,
-        key=lambda item: (
-            1 if str(item.get("source", "")).lower() == "team_lead" else 0,
-            float(item.get("confidence", item.get("score", 0.0)) or 0.0),
-        ),
-        reverse=True,
-    )
-
-    return standardize_ai_response({
-        "question": question,
-        "type": "multiple_choice",
-        "category": None,
-        "title": None,
-        "section": None,
-        "reply": "I found more than one possible answer. Please select one:",
-        "answer": "I found more than one possible answer. Please select one:",
-        "purpose": None,
-        "steps": [],
-        "notes": [],
-        "score": float(options[0].get("confidence", options[0].get("score", 1.0)) or 1.0),
-        "confidence": float(options[0].get("confidence", options[0].get("score", 1.0)) or 1.0),
-        "confidence_label": get_confidence_label(options[0].get("confidence", options[0].get("score", 1.0))),
-        "source": "exact_title_options",
-        "context": {},
-        "fallback": False,
-        "fallback_message": "",
-        "escalation_ready": False,
-        "escalation_required": False,
-        "options": options,
-    })
-
-
-def get_exact_title_answer(question, context=None):
-    canonical_title = find_requested_canonical_title(question)
-    if not canonical_title:
-        return None
-
-    options = []
-    seen = set()
-
-    def add_result(result, fallback_source):
-        if not result:
-            return
-
-        normalized = normalize_result(result, fallback_source)
-        if not is_valid_answer(normalized):
-            return
-
-        if not option_matches_requested_title(normalized, canonical_title):
-            return
-
-        normalized["title"] = canonical_title
-        normalized["label"] = canonical_title
-        normalized["confidence"] = float(normalized.get("confidence", normalized.get("score", 1.0)) or 1.0)
-        normalized["score"] = float(normalized.get("score", normalized.get("confidence", 1.0)) or 1.0)
-        normalized["confidence_label"] = get_confidence_label(normalized.get("confidence", 1.0))
-
-        key = exact_title_option_key(normalized)
-        if key in seen:
-            return
-        seen.add(key)
-        options.append(normalized)
-
-    # 1. Training dataset / AI model answer for this exact title.
-    model_result = call_model_answer(question, context or {}) if get_model_answer else None
-    add_result(model_result, "training_data")
-
-    # 2. Live Knowledge Base article with the exact same title only.
-    for kb_result in search_knowledge_base_articles_by_exact_title(canonical_title, question, limit=6):
-        add_result(kb_result, "wiki_article_database")
-
-    # 3. Team Lead escalation answers saved in qa_knowledge, exact/near title only.
-    try:
-        retrieval_results = search_similar_questions(canonical_title, team_lead_only=False, limit=8) or []
-    except Exception as error:
-        print("EXACT TITLE RETRIEVAL OPTIONS ERROR:", error)
-        retrieval_results = []
-
-    for retrieval_result in retrieval_results:
-        retrieval_source = str(retrieval_result.get("source") or "team_lead").strip() or "team_lead"
-        add_result(retrieval_result, retrieval_source)
-
-    # If staff asked a specific step together with a title, do not show options.
-    # The model already returns the exact step/range when it can find it.
-    if is_specific_step_follow_up(question):
-        for item in options:
-            direct_step = answer_specific_step_from_context(question, item.get("context"))
-            if direct_step is not None:
-                return build_exact_title_options_response(question, [direct_step])
-
-        exact_step_options = [item for item in options if item.get("type") == "sop" and item.get("steps")]
-        if exact_step_options:
-            return build_exact_title_options_response(question, [exact_step_options[0]])
-
-    if options:
-        return build_exact_title_options_response(question, options)
-
-    # Exact title was recognised, so do not fall through to fuzzy search and return
-    # a wrong article such as Opening becoming Closing.
-    return standardize_ai_response({
-        "question": question,
-        "type": "text",
-        "category": None,
-        "title": canonical_title,
-        "section": None,
-        "reply": f"I found the title {canonical_title}, but no answer content is available for it yet.",
-        "answer": f"I found the title {canonical_title}, but no answer content is available for it yet.",
-        "purpose": None,
-        "steps": [],
-        "notes": [],
-        "score": 0.0,
-        "confidence": 0.0,
-        "confidence_label": "low",
-        "source": "exact_title_no_content",
-        "context": {"title": canonical_title},
-        "fallback": False,
-        "fallback_message": "",
-        "escalation_ready": False,
-        "escalation_required": False,
-        "options": [],
-    })
-
-
-def search_knowledge_base_articles(question, limit=1):
-    """
-    Main AI knowledge retrieval.
-    AI Chat reads live wiki_article database first, so new Content Management articles
-    can be found without changing cleaned_knowledge.csv or retraining PyTorch.
-    """
-    canonical_title = find_requested_canonical_title(question)
-
-    if canonical_title:
-        exact_results = search_knowledge_base_articles_by_exact_title(canonical_title, question, limit=max(limit, 6))
-        if limit == 1:
-            return exact_results[0] if exact_results else None
-        return exact_results[:limit]
-
-    articles = fetch_active_wiki_articles()
-
     scored_results = []
     for article in articles:
         score = calculate_article_match_score(question, article)
-        if score >= 0.50:
+        if score >= 0.18:
             scored_results.append(build_article_ai_result(article, question, score))
 
     scored_results = sorted(scored_results, key=lambda item: item.get("score", 0.0), reverse=True)
@@ -2629,20 +1571,6 @@ def process_question(question, context=None):
             "escalation_ready": False,
             "escalation_required": False,
         }), 400
-
-    # =========================
-    # SPECIFIC STEP FROM CURRENT CHAT CONTEXT
-    # =========================
-    # When staff already opened an SOP and then types "step 11",
-    # answer directly from the latest SOP steps instead of showing options.
-    context_step_result = answer_specific_step_from_context(question, context)
-
-    if context_step_result:
-        return standardize_ai_response(context_step_result), 200
-
-    exact_title_result = get_exact_title_answer(question, context)
-    if exact_title_result is not None:
-        return standardize_ai_response(exact_title_result), 200
 
     kb_result = search_knowledge_base_articles(question, limit=1)
     kb_options = search_knowledge_base_articles(question, limit=10)
@@ -2705,59 +1633,24 @@ def process_question(question, context=None):
             "escalation_required": True,
         })
 
-    # =========================
-    # DIRECT SPECIFIC STEP FIX
-    # =========================
-    # Short follow-up questions like "step 11" are keyword questions,
-    # so the old code converted them into suggestion_options.
-    # If predict_intent already used the current SOP context and found
-    # the exact step/range/picture/show-all result, return it directly.
-    if (
-        model_result
-        and is_specific_step_follow_up(question)
-        and is_direct_sop_follow_up_result(model_result)
-        and model_result.get("source") not in {
-            "step_request_missing_topic",
-            "context_step_out_of_bounds",
-            "context_step_range_out_of_bounds",
-            "matched_title_step_out_of_bounds",
-            "matched_title_step_range_out_of_bounds",
-        }
-    ):
-        model_result["options"] = []
-        return standardize_ai_response(model_result), 200
-
     # Build selectable options from PyTorch training data and Team Lead/database data.
     answer_options = []
 
     model_source = str(model_result.get("source", "") if model_result else "")
 
     # If PyTorch returns a broad numbered list, convert each numbered item into a clickable option.
-    if (
-        model_source in {
-            "broad_topic_clarification",
-            "category_choice",
-            "ambiguous_title_choice",
-        }
-        or model_source.startswith("generic_")
-    ):
-        model_reply_options = build_training_data_options_from_model_reply(model_result, context=context)
-        if model_reply_options:
-            answer_options.extend(model_reply_options)
-        else:
-            answer_options.extend(
-                build_answer_options(question, model_result, None)
-            )
+    if model_source in {
+        "broad_topic_clarification",
+        "category_choice",
+        "ambiguous_title_choice",
+    }:
+        answer_options.extend(
+            build_training_data_options_from_model_reply(model_result, context=context)
+        )
     else:
         answer_options.extend(
             build_answer_options(question, model_result, None)
         )
-
-    # Add matching titles from the whole PyTorch/training dataset.
-    # This prevents the AI from depending only on one wrong Knowledge Base match.
-    answer_options.extend(
-        build_all_training_data_options(question, context=context, limit=10)
-    )
 
     # Add Knowledge Base article results first because wiki_article is the live main knowledge source.
     answer_options.extend(
@@ -2778,77 +1671,25 @@ def process_question(question, context=None):
 
     # remove duplicates after adding multiple retrieval options
     unique_options = []
-    option_by_title = {}
-
-    def option_source_priority(option):
-        source = str(option.get("source", "")).lower().strip()
-        if source == "team_lead":
-            return 5
-        if source == "wiki_article_database":
-            return 4
-        if source in {"training_data", "pytorch_model"}:
-            return 3
-        if source in {"database", "qa_knowledge"}:
-            return 2
-        return 1
-
-    def option_richness(option):
-        images = option.get("image_files") or []
-        if not isinstance(images, list):
-            images = [images]
-        steps = option.get("steps") or []
-        return len(steps) + len(images)
+    seen_titles = set()
 
     for option in answer_options:
-        title_key = str(option.get("title", "") or option.get("label", "")).lower().strip()
-        if not title_key:
-            continue
-
-        existing = option_by_title.get(title_key)
-        if existing is None:
-            option_by_title[title_key] = option
-            continue
-
-        existing_rank = (
-            option_source_priority(existing),
-            option_richness(existing),
-            float(existing.get("confidence", 0.0) or 0.0),
-        )
-        new_rank = (
-            option_source_priority(option),
-            option_richness(option),
-            float(option.get("confidence", 0.0) or 0.0),
-        )
-
-        if new_rank > existing_rank:
-            option_by_title[title_key] = option
-
-    unique_options = list(option_by_title.values())
-
-    filtered_unique_options = filter_relevant_answer_options(question, unique_options)
-    if filtered_unique_options:
-        unique_options = filtered_unique_options
+        title_key = str(option.get("title", "")).lower().strip()
+        if title_key and title_key not in seen_titles:
+            seen_titles.add(title_key)
+            unique_options.append(option)
 
     def option_rank(item):
         source = str(item.get("source", "")).lower()
-        title = str(item.get("title", item.get("label", ""))).lower().strip()
-        question_text = clean_question(question).lower()
-        question_tokens = tokenize_for_knowledge_match(question_text)
-        title_tokens = tokenize_for_knowledge_match(title)
+        title = str(item.get("title", item.get("label", ""))).lower()
+        question_text = question.lower()
 
         team_lead_priority = 1 if source == "team_lead" else 0
-        title_relevance = calculate_title_relevance_score(question_text, title)
-        exact_title_priority = 1 if question_text == title else 0
-        token_match_priority = 0
-
-        if question_tokens and title_tokens:
-            token_match_priority = len(question_tokens & title_tokens) / max(len(question_tokens), 1)
+        exact_title_priority = 1 if question_text in title or title in question_text else 0
 
         return (
-            exact_title_priority,
-            title_relevance,
             team_lead_priority,
-            token_match_priority,
+            exact_title_priority,
             item.get("confidence", 0.0),
         )
 
@@ -2858,59 +1699,7 @@ def process_question(question, context=None):
         reverse=True
     )
 
-    exact_title_option = find_exact_title_option(question, answer_options)
-    if exact_title_option and not is_specific_step_follow_up(question):
-        return option_to_direct_result(exact_title_option, question), 200
-
-    model_score = 0.0
-    try:
-        model_score = float(model_result.get("confidence", model_result.get("score", 0.0)) or 0.0) if model_result else 0.0
-    except Exception:
-        model_score = 0.0
-
-    model_title_relevance = calculate_title_relevance_score(
-        question,
-        model_result.get("title") if model_result else ""
-    )
-
-    competing_relevant_titles = []
-    for option in answer_options:
-        option_title = str(option.get("title") or option.get("label") or "").strip()
-        if not option_title:
-            continue
-        option_title_score = calculate_title_relevance_score(question, option_title)
-        if option_title_score >= 0.72:
-            title_key = option_title.lower()
-            if title_key not in competing_relevant_titles:
-                competing_relevant_titles.append(title_key)
-
-    has_multiple_possible_titles = bool(
-        len(competing_relevant_titles) >= 2
-        and find_exact_title_option(question, answer_options) is None
-    )
-
-    strong_direct_model = bool(
-        model_result
-        and is_valid_answer(model_result)
-        and not is_specific_step_follow_up(question)
-        and not has_multiple_possible_titles
-        and not model_source.startswith("generic_")
-        and model_source not in {
-            "broad_topic_clarification",
-            "category_choice",
-            "ambiguous_title_choice",
-            "unclear_question_clarification",
-            "system_problem_clarification",
-        }
-        and model_score >= 0.88
-        and model_title_relevance >= 0.72
-    )
-
-    keyword_question = (
-        len(question.split()) <= 3
-        and not is_specific_step_follow_up(question)
-        and not strong_direct_model
-    )
+    keyword_question = len(question.split()) <= 3
 
     if keyword_question:
         filtered_options = filter_short_keyword_options(question, answer_options)
@@ -2920,31 +1709,7 @@ def process_question(question, context=None):
 
     answer_options = answer_options[:5]
 
-    kb_is_weak_match = bool(
-        kb_result
-        and str(kb_result.get("source", "")).lower().strip() == "wiki_article_database"
-        and not is_trusted_article_result(question, kb_result)
-    )
-
-    should_show_suggestion_options = bool(
-        len(answer_options) >= 1
-        and not is_specific_step_follow_up(question)
-        and not strong_direct_model
-        and (
-            keyword_question
-            or kb_is_weak_match
-            or has_multiple_possible_titles
-            or model_source.startswith("generic_")
-            or model_source in {
-                "broad_topic_clarification",
-                "category_choice",
-                "ambiguous_title_choice",
-            }
-            or (answer_options[0].get("confidence", 0.0) < 0.88)
-        )
-    )
-
-    if should_show_suggestion_options:
+    if keyword_question and len(answer_options) >= 1:
         return standardize_ai_response({
             "question": question,
             "type": "multiple_choice",
@@ -2970,7 +1735,7 @@ def process_question(question, context=None):
 
     # Prefer training data / PyTorch model result for normal valid questions.
     # Retrieved Team Lead answers are used mainly when the model cannot answer confidently.
-    final_result = choose_final_result(model_result, retrieval_result, kb_result, question)  
+    final_result = choose_final_result(model_result, retrieval_result, kb_result)  
 
     response_payload = {
         "question": question,
@@ -4515,30 +3280,6 @@ def chat():
                     }
                 ]
             }), 200
-
-        # =========================
-        # STRICT EXACT TITLE GUARD
-        # =========================
-        # If staff typed one of the existing knowledge titles, answer that title first.
-        # Do this BEFORE Team Lead fuzzy search, because old escalation/QA rows can be
-        # similar and can wrongly turn Opening into Closing or another article.
-        exact_title_route_result = get_exact_title_answer(
-            question,
-            prepare_chat_context(data),
-        )
-
-        if exact_title_route_result is not None:
-            result = standardize_ai_response(exact_title_route_result)
-
-            clear_ai_fail_count(data, question)
-            remember_chat_context(data, result)
-            log_request(question, result=result)
-            remember_last_ai_answer(data, question, result)
-
-            result["final_source"] = result.get("source")
-            result["served_by"] = "exact_title_guard"
-
-            return jsonify(result), 200
 
         # =========================
         # CHECK TEAM LEAD ANSWER FIRST
