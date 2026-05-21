@@ -4321,9 +4321,7 @@ def submit_escalation_answer(escalation_id):
         cursor.execute("""
             DELETE FROM qa_knowledge
             WHERE question = %s
-              AND answer = %s
-              AND source = 'team_lead'
-        """, (question, manual_answer))
+        """, (question,))
 
         conn.commit()
 
@@ -4555,13 +4553,10 @@ def reject_escalation_answer(escalation_id):
                 reviewer_comment
             ))
 
-        if manual_answer:
-            cursor.execute("""
-                DELETE FROM qa_knowledge
-                WHERE question = %s
-                  AND answer = %s
-                  AND source IN ('team_lead', 'manager_approved_review')
-            """, (question, manual_answer))
+        cursor.execute("""
+            DELETE FROM qa_knowledge
+            WHERE question = %s
+        """, (question,))
 
         cursor.execute("""
             UPDATE escalation

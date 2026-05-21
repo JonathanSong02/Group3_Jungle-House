@@ -46,15 +46,17 @@ def similarity_ratio(a, b):
 
 def is_low_quality_saved_ai_answer(row):
     """
-    Ignore old AI-saved fallback/suggestion rows from qa_knowledge.
-    Team Lead answers are still trusted because those are reviewed manually.
+    Ignore old unapproved Team Lead answers and bad AI fallback rows.
+    Only Manager-approved manual answers should be trusted for escalation retrieval.
     """
     row = row or {}
     source = str(row.get("source") or "").lower().strip()
     answer = normalize_text(row.get("answer") or row.get("reply") or "")
 
+    # IMPORTANT:
+    # Team Lead answer should NOT be retrieved by AI Chat before Manager approval.
     if source == "team_lead":
-        return False
+        return True
 
     bad_phrases = [
         "i found a few possible answers",
@@ -203,20 +205,20 @@ def search_similar_questions(question, team_lead_only=False, limit=5):
             cursor.execute("""
                 SELECT *
                 FROM qa_knowledge
-                WHERE source = 'team_lead'
+                WHERE source = 'manager_approved_review'
                 ORDER BY confidence DESC, created_at DESC
             """)
         else:
             cursor.execute("""
                 SELECT *
                 FROM qa_knowledge
+                WHERE COALESCE(source, '') <> 'team_lead'
                 ORDER BY 
                     CASE 
-                        WHEN source = 'team_lead' THEN 1
+                        WHEN source = 'manager_approved_review' THEN 1
                         ELSE 2
                     END,
-                    confidence DESC,
-                    created_at DESC
+                    confidence DESC
             """)
 
         rows = cursor.fetchall()
@@ -330,9 +332,9 @@ def resolve_escalation(escalation_id, answer, user_id=None, answer_image_url=Non
 
     try:
         conn = get_db_connection()
+        conn.start_transaction()
         cursor = conn.cursor(dictionary=True)
 
-        # Get original escalation first
         cursor.execute("""
             SELECT question, image_url, image_type
             FROM escalation
@@ -342,16 +344,16 @@ def resolve_escalation(escalation_id, answer, user_id=None, answer_image_url=Non
         escalation = cursor.fetchone()
 
         if not escalation:
+            conn.rollback()
             return False
 
         question = escalation.get("question") or ""
 
-        # Use Team Lead uploaded answer image first.
-        # If Team Lead did not upload image, use original staff uploaded image.
         final_image_url = answer_image_url or escalation.get("image_url")
         final_image_type = answer_image_type or escalation.get("image_type")
 
-        # Update escalation as resolved
+        # Team Lead answer only updates escalation status.
+        # Do NOT save into qa_knowledge here.
         cursor.execute("""
             UPDATE escalation
             SET 
@@ -370,32 +372,62 @@ def resolve_escalation(escalation_id, answer, user_id=None, answer_image_url=Non
             escalation_id
         ))
 
-        # Save Team Lead answer into qa_knowledge with image
         cursor.execute("""
-            INSERT INTO qa_knowledge
-            (
+            SELECT review_id
+            FROM review_queue
+            WHERE escalation_id = %s
+            ORDER BY review_id DESC
+            LIMIT 1
+        """, (escalation_id,))
+
+        review = cursor.fetchone()
+
+        if review:
+            cursor.execute("""
+                UPDATE review_queue
+                SET
+                    question = %s,
+                    answer = %s,
+                    submitted_by = %s,
+                    reviewed_by = NULL,
+                    reviewer_comment = '',
+                    status = 'pending',
+                    reviewed_at = NULL,
+                    published_at = NULL
+                WHERE review_id = %s
+            """, (
                 question,
                 answer,
-                source,
-                confidence,
-                image_url,
-                image_type
-            )
-            VALUES (%s, %s, 'team_lead', 1.0, %s, %s)
-        """, (
-            question,
-            answer,
-            final_image_url,
-            final_image_type
-        ))
+                user_id,
+                review["review_id"]
+            ))
+        else:
+            cursor.execute("""
+                INSERT INTO review_queue
+                (escalation_id, question, answer, submitted_by, status, created_at)
+                VALUES (%s, %s, %s, %s, 'pending', NOW())
+            """, (
+                escalation_id,
+                question,
+                answer,
+                user_id
+            ))
+
+        # Remove old trusted answer for this same question while waiting for Manager approval.
+        cursor.execute("""
+            DELETE FROM qa_knowledge
+            WHERE question = %s
+        """, (question,))
 
         conn.commit()
         return True
 
     except Exception as error:
         print("RESOLVE ESCALATION ERROR:", error)
+
         if conn:
             conn.rollback()
+
         return False
 
     finally:
