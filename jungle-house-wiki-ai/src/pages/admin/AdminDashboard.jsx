@@ -1,6 +1,8 @@
 import { Link } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
 
+const SHOW_AI_SETTINGS = false;
+
 export default function AdminDashboard() {
   return (
     <div>
@@ -52,11 +54,13 @@ export default function AdminDashboard() {
           <p className="muted">Handle low-confidence AI questions that need human review.</p>
         </Link>
 
-        <Link to="/admin/ai-settings" className="card-like admin-action-card">
-          <p className="eyebrow">AI</p>
-          <h3>AI Settings</h3>
-          <p className="muted">Adjust confidence threshold and AI behaviour settings.</p>
-        </Link>
+        {SHOW_AI_SETTINGS && (
+          <Link to="/admin/ai-settings" className="card-like admin-action-card">
+            <p className="eyebrow">AI</p>
+            <h3>AI Settings</h3>
+            <p className="muted">Adjust confidence threshold and AI behaviour settings.</p>
+          </Link>
+        )}
 
         <Link to="/admin/security" className="card-like admin-action-card">
           <p className="eyebrow">Security</p>

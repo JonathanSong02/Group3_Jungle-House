@@ -500,7 +500,7 @@ export default function Profile() {
               <div className="password-hint-box">
                 <span className="profile-detail-label">Password Tips</span>
                 <p className="muted small" style={{ marginBottom: 0 }}>
-                  Use at least 6 characters and avoid reusing your current password.
+                  Use at least 8 characters with one uppercase letter and one number.
                 </p>
               </div>
 
