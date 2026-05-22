@@ -237,35 +237,52 @@ export default function Escalation() {
   const confirmBulkDelete = async () => {
     if (selectedVisibleIds.length === 0) return;
 
+    const idsToDelete = [...selectedVisibleIds];
+    const isTrashAction = activeTab === 'trash';
+
     try {
       setMessage('');
       setBulkDeleting(true);
 
-      await Promise.all(
-        selectedVisibleIds.map((id) =>
-          api.delete(`/escalations/${id}`, {
-            data: {
-              deleted_by: currentUserId,
-            },
-          })
-        )
-      );
+      if (isTrashAction) {
+        const response = await api.post('/escalations/bulk-permanent-delete', {
+          escalation_ids: idsToDelete,
+        });
 
-      setItems((prev) =>
-        prev.filter((item) => !selectedVisibleIds.includes(item.escalation_id))
-      );
+        setTrashItems((prev) =>
+          prev.filter((item) => !idsToDelete.includes(item.escalation_id))
+        );
+
+        setMessage(
+          response.data?.message ||
+          `${idsToDelete.length} escalation(s) permanently deleted successfully.`
+        );
+      } else {
+        const response = await api.post('/escalations/bulk-delete', {
+          escalation_ids: idsToDelete,
+          deleted_by: currentUserId,
+        });
+
+        setItems((prev) =>
+          prev.filter((item) => !idsToDelete.includes(item.escalation_id))
+        );
+
+        setMessage(
+          response.data?.message ||
+          `${idsToDelete.length} escalation(s) moved to Trash Bin successfully.`
+        );
+      }
 
       setAnswers((prev) => {
         const updatedAnswers = { ...prev };
 
-        selectedVisibleIds.forEach((id) => {
+        idsToDelete.forEach((id) => {
           delete updatedAnswers[id];
         });
 
         return updatedAnswers;
       });
 
-      setMessage(`${selectedVisibleIds.length} escalation(s) moved to Trash Bin successfully.`);
       setSelectedIds([]);
       setBulkDeleteOpen(false);
       setDeleteMode(false);
@@ -485,7 +502,7 @@ export default function Escalation() {
                 onClick={openBulkDeleteModal}
                 disabled={selectedVisibleIds.length === 0}
               >
-                Delete Selected ({selectedVisibleIds.length})
+                {activeTab === 'trash' ? 'Delete Forever Selected' : 'Delete Selected'} ({selectedVisibleIds.length})
               </button>
             </div>
           </div>
@@ -792,10 +809,16 @@ export default function Escalation() {
             </div>
 
             <div className="delete-modal-content">
-              <h2>Move selected escalations to Trash Bin?</h2>
+              <h2>
+                {activeTab === 'trash'
+                  ? 'Delete selected escalations forever?'
+                  : 'Move selected escalations to Trash Bin?'}
+              </h2>
+
               <p>
-                This will move {selectedVisibleIds.length} selected escalation(s) to the Trash Bin.
-                You can restore them later if needed.
+                {activeTab === 'trash'
+                  ? `This will permanently delete ${selectedVisibleIds.length} selected escalation(s). You cannot restore them later.`
+                  : `This will move ${selectedVisibleIds.length} selected escalation(s) to the Trash Bin. You can restore them later if needed.`}
               </p>
 
               <div className="delete-modal-question">
@@ -818,7 +841,13 @@ export default function Escalation() {
                   onClick={confirmBulkDelete}
                   disabled={bulkDeleting}
                 >
-                  {bulkDeleting ? 'Moving...' : 'Move to Trash Bin'}
+                  {bulkDeleting
+                    ? activeTab === 'trash'
+                      ? 'Deleting...'
+                      : 'Moving...'
+                    : activeTab === 'trash'
+                      ? 'Delete Forever'
+                      : 'Move to Trash Bin'}
                 </button>
               </div>
             </div>

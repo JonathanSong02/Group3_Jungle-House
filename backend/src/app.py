@@ -4637,6 +4637,174 @@ def reject_escalation_answer(escalation_id):
         if conn:
             conn.close()
 
+# =========================
+# BULK SOFT DELETE ESCALATION ROUTE
+# Move selected escalations to Trash Bin
+# =========================
+@app.route('/api/escalations/bulk-delete', methods=['POST'])
+def bulk_delete_escalations():
+    conn = None
+    cursor = None
+
+    try:
+        data = request.get_json(silent=True) or {}
+
+        escalation_ids = data.get("escalation_ids") or data.get("ids") or []
+        deleted_by = _safe_int_value(data.get("deleted_by"))
+
+        clean_ids = []
+
+        for item in escalation_ids:
+            clean_id = _safe_int_value(item)
+
+            if clean_id is not None and clean_id not in clean_ids:
+                clean_ids.append(clean_id)
+
+        if not clean_ids:
+            return jsonify({
+                "message": "No escalation selected for deletion."
+            }), 400
+
+        placeholders = ",".join(["%s"] * len(clean_ids))
+
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute(f"""
+            UPDATE escalation
+            SET
+                is_deleted = 1,
+                deleted_at = NOW(),
+                deleted_by = %s
+            WHERE escalation_id IN ({placeholders})
+            AND COALESCE(is_deleted, 0) = 0
+        """, [deleted_by] + clean_ids)
+
+        deleted_count = cursor.rowcount
+
+        conn.commit()
+
+        add_audit_log(
+            actor_id=deleted_by,
+            action="Bulk moved escalations to Trash Bin",
+            module="Escalation",
+            description=f"{deleted_count} escalation(s) were moved to Trash Bin."
+        )
+
+        return jsonify({
+            "message": f"{deleted_count} escalation(s) moved to Trash Bin successfully.",
+            "deleted_count": deleted_count
+        }), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("MYSQL ERROR /api/escalations/bulk-delete:", error)
+
+        return jsonify({
+            "message": "Failed to move selected escalations to Trash Bin.",
+            "error": str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+# =========================
+# BULK PERMANENT DELETE ESCALATION ROUTE
+# Delete selected Trash Bin escalations forever
+# =========================
+@app.route('/api/escalations/bulk-permanent-delete', methods=['POST'])
+def bulk_permanent_delete_escalations():
+    conn = None
+    cursor = None
+
+    try:
+        data = request.get_json(silent=True) or {}
+
+        escalation_ids = data.get("escalation_ids") or data.get("ids") or []
+
+        clean_ids = []
+
+        for item in escalation_ids:
+            clean_id = _safe_int_value(item)
+
+            if clean_id is not None and clean_id not in clean_ids:
+                clean_ids.append(clean_id)
+
+        if not clean_ids:
+            return jsonify({
+                "message": "No escalation selected for permanent deletion."
+            }), 400
+
+        placeholders = ",".join(["%s"] * len(clean_ids))
+
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute(f"""
+            SELECT escalation_id
+            FROM escalation
+            WHERE escalation_id IN ({placeholders})
+            AND COALESCE(is_deleted, 0) = 1
+        """, clean_ids)
+
+        trash_rows = cursor.fetchall()
+        trash_ids = [row["escalation_id"] for row in trash_rows]
+
+        if not trash_ids:
+            return jsonify({
+                "message": "No selected escalation found in Trash Bin."
+            }), 404
+
+        trash_placeholders = ",".join(["%s"] * len(trash_ids))
+
+        cursor.execute(f"""
+            DELETE FROM review_queue
+            WHERE escalation_id IN ({trash_placeholders})
+        """, trash_ids)
+
+        cursor.execute(f"""
+            DELETE FROM escalation
+            WHERE escalation_id IN ({trash_placeholders})
+            AND COALESCE(is_deleted, 0) = 1
+        """, trash_ids)
+
+        deleted_count = cursor.rowcount
+
+        conn.commit()
+
+        add_audit_log(
+            action="Bulk permanently deleted escalations",
+            module="Escalation",
+            description=f"{deleted_count} escalation(s) were permanently deleted from Trash Bin."
+        )
+
+        return jsonify({
+            "message": f"{deleted_count} escalation(s) permanently deleted successfully.",
+            "deleted_count": deleted_count
+        }), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("MYSQL ERROR /api/escalations/bulk-permanent-delete:", error)
+
+        return jsonify({
+            "message": "Failed to permanently delete selected escalations.",
+            "error": str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 # =========================
 # SOFT DELETE ESCALATION ROUTE
