@@ -18,6 +18,88 @@ function buildImageUrl(url) {
   return `${API_BASE_URL}/${url}`;
 }
 
+function isImageAttachment(type, url = '') {
+  const cleanType = String(type || '').toLowerCase();
+  const cleanUrl = String(url || '').split('?')[0].toLowerCase();
+
+  return (
+    cleanType.startsWith('image/') ||
+    /\.(png|jpg|jpeg|gif|webp|heic|heif)$/i.test(cleanUrl)
+  );
+}
+
+function isAllowedEscalationUpload(file) {
+  if (!file) return false;
+
+  const allowedMimeTypes = [
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  ];
+
+  const extension = String(file.name || '').split('.').pop()?.toLowerCase();
+
+  const allowedExtensions = [
+    'png',
+    'jpg',
+    'jpeg',
+    'webp',
+    'gif',
+    'heic',
+    'heif',
+    'pdf',
+    'doc',
+    'docx',
+  ];
+
+  return (
+    String(file.type || '').startsWith('image/') ||
+    allowedMimeTypes.includes(file.type) ||
+    allowedExtensions.includes(extension)
+  );
+}
+
+function AttachmentPreview({ url, type, label = 'Uploaded attachment' }) {
+  const finalUrl = buildImageUrl(url);
+
+  if (!finalUrl) return null;
+
+  if (isImageAttachment(type, url)) {
+    return (
+      <img
+        src={finalUrl}
+        alt={label}
+        style={{
+          width: '100%',
+          maxWidth: '260px',
+          maxHeight: '260px',
+          objectFit: 'contain',
+          borderRadius: '12px',
+          border: '1px solid var(--border)',
+          background: '#fff',
+          display: 'block',
+        }}
+        onError={(event) => {
+          console.log('Escalation attachment failed:', finalUrl);
+          event.currentTarget.style.display = 'none';
+        }}
+      />
+    );
+  }
+
+  return (
+    <a
+      href={finalUrl}
+      target="_blank"
+      rel="noreferrer"
+      className="secondary-btn"
+      style={{ display: 'inline-flex', textDecoration: 'none' }}
+    >
+      Open uploaded file
+    </a>
+  );
+}
+
 const API_BASE_URL = 'https://group3jungle-house-production.up.railway.app';
 
 export default function Escalation() {
@@ -153,7 +235,7 @@ export default function Escalation() {
       formData.append('handled_by', currentUserId || '');
 
       if (selectedImage) {
-        formData.append('image', selectedImage);
+        formData.append('attachment', selectedImage);
       }
 
       await api.put(`/escalations/${id}/answer`, formData);
@@ -613,30 +695,16 @@ export default function Escalation() {
 
               {item.image_url ? (
                 <div className="card-like top-gap-sm">
-                  <p className="eyebrow">Uploaded Image</p>
+                  <p className="eyebrow">Uploaded Attachment</p>
 
-                  <img
-                    src={buildImageUrl(item.image_url)}
-
-                    alt="Escalated upload"
-                    style={{
-                      width: '100%',
-                      maxWidth: '260px',
-                      maxHeight: '260px',
-                      objectFit: 'contain',
-                      borderRadius: '12px',
-                      border: '1px solid var(--border)',
-                      background: '#fff',
-                      display: 'block',
-                    }}
-                    onError={(event) => {
-                      console.log('Escalation image failed:', item.image_url);
-                      event.currentTarget.style.display = 'none';
-                    }}
+                  <AttachmentPreview
+                    url={item.image_url}
+                    type={item.image_type}
+                    label="Escalated upload"
                   />
 
                   <p className="muted small" style={{ marginTop: '0.5rem' }}>
-                    {item.image_type || 'Uploaded image'}
+                    {item.image_type || 'Uploaded attachment'}
                   </p>
                 </div>
               ) : null}
@@ -662,36 +730,54 @@ export default function Escalation() {
 
                   <div className="escalation-answer-image-upload">
                     <label className="escalation-upload-btn">
-                      <span className="escalation-upload-icon">
-                        <svg
-                          width="15"
-                          height="15"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2.2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <rect x="3" y="3" width="18" height="18" rx="3" />
-                          <circle cx="8.5" cy="8.5" r="1.5" />
-                          <path d="M21 15l-5-5L5 21" />
-                        </svg>
-                      </span>
-
-                      <span>Upload answer image</span>
+                      <span>📷 Take photo</span>
 
                       <input
                         type="file"
-                        accept="image/png,image/jpeg,image/jpg,image/gif,image/webp"
+                        accept="image/*"
+                        capture="environment"
                         style={{ display: 'none' }}
                         onChange={(event) => {
                           const file = event.target.files?.[0];
+
+                          if (file && !isAllowedEscalationUpload(file)) {
+                            setMessage('Please upload a supported file only. Supported: image, PDF, DOC, DOCX.');
+                            event.target.value = '';
+                            return;
+                          }
 
                           setAnswerImages((prev) => ({
                             ...prev,
                             [item.escalation_id]: file || null,
                           }));
+
+                          event.target.value = '';
+                        }}
+                      />
+                    </label>
+
+                    <label className="escalation-upload-btn">
+                      <span>📎 Upload file</span>
+
+                      <input
+                        type="file"
+                        accept="image/*,.pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        style={{ display: 'none' }}
+                        onChange={(event) => {
+                          const file = event.target.files?.[0];
+
+                          if (file && !isAllowedEscalationUpload(file)) {
+                            setMessage('Please upload a supported file only. Supported: image, PDF, DOC, DOCX.');
+                            event.target.value = '';
+                            return;
+                          }
+
+                          setAnswerImages((prev) => ({
+                            ...prev,
+                            [item.escalation_id]: file || null,
+                          }));
+
+                          event.target.value = '';
                         }}
                       />
                     </label>
@@ -699,14 +785,23 @@ export default function Escalation() {
                     {answerImages[item.escalation_id] ? (
                       <div className="answer-image-preview-box">
                         <p className="muted small">
-                          Selected image: {answerImages[item.escalation_id].name}
+                          Selected file: {answerImages[item.escalation_id].name}
                         </p>
 
-                        <img
-                          src={URL.createObjectURL(answerImages[item.escalation_id])}
-                          alt="Answer preview"
-                          className="answer-image-preview"
-                        />
+                        {isImageAttachment(
+                          answerImages[item.escalation_id].type,
+                          answerImages[item.escalation_id].name
+                        ) ? (
+                          <img
+                            src={URL.createObjectURL(answerImages[item.escalation_id])}
+                            alt="Answer preview"
+                            className="answer-image-preview"
+                          />
+                        ) : (
+                          <p className="muted small">
+                            File will be attached after you submit the manual answer.
+                          </p>
+                        )}
                       </div>
                     ) : null}
                   </div>
@@ -738,29 +833,16 @@ export default function Escalation() {
 
                   {item.image_url ? (
                     <div className="card-like top-gap-sm">
-                      <p className="eyebrow">Related Image</p>
+                      <p className="eyebrow">Related Attachment</p>
 
-                      <img
-                        src={buildImageUrl(item.image_url)}
-                        alt="Resolved escalation upload"
-                        style={{
-                          width: '100%',
-                          maxWidth: '260px',
-                          maxHeight: '260px',
-                          objectFit: 'contain',
-                          borderRadius: '12px',
-                          border: '1px solid var(--border)',
-                          background: '#fff',
-                          display: 'block',
-                        }}
-                        onError={(event) => {
-                          console.log('Resolved escalation image failed:', buildImageUrl(item.image_url));
-                          event.currentTarget.style.display = 'none';
-                        }}
+                      <AttachmentPreview
+                        url={item.image_url}
+                        type={item.image_type}
+                        label="Resolved escalation upload"
                       />
 
                       <p className="muted small" style={{ marginTop: '0.5rem' }}>
-                        {item.image_type || 'Uploaded image'}
+                        {item.image_type || 'Uploaded attachment'}
                       </p>
                     </div>
                   ) : null}

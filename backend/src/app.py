@@ -127,7 +127,7 @@ CORS(
 # =========================
 
 # Save uploaded article files inside the same static folder served by Flask.
-ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp", "pdf", "doc", "docx"}
+ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "pdf", "doc", "docx"}
 
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -177,17 +177,15 @@ def save_article_attachments(files):
     return saved_files
 
 def save_chat_image(file):
+    """
+    Save an upload from AI Chat or Escalation.
+    The function name is kept as save_chat_image so existing routes still work,
+    but it now supports mobile camera photos, images, PDF, DOC and DOCX files.
+    """
     if not file or file.filename == "":
         return None, None
 
-    allowed_image_extensions = {"png", "jpg", "jpeg", "gif", "webp"}
-
-    if "." not in file.filename:
-        return None, None
-
-    extension = file.filename.rsplit(".", 1)[1].lower()
-
-    if extension not in allowed_image_extensions:
+    if not allowed_file(file.filename):
         return None, None
 
     filename = secure_filename(file.filename)
@@ -196,10 +194,10 @@ def save_chat_image(file):
     file_path = CHAT_UPLOAD_FOLDER / unique_filename
     file.save(str(file_path))
 
-    image_url = f"/static/uploads/chat/{unique_filename}"
-    image_type = file.content_type
+    attachment_url = f"/static/uploads/chat/{unique_filename}"
+    attachment_type = file.content_type or "application/octet-stream"
 
-    return image_url, image_type
+    return attachment_url, attachment_type
 
 def extract_image_search_text(image_url, original_filename, question):
     filename_text = str(original_filename or "")
@@ -3082,7 +3080,7 @@ def chat():
     try:
         if request.content_type and request.content_type.startswith("multipart/form-data"):
             question = request.form.get("question", "")
-            uploaded_chat_image = request.files.get("image")
+            uploaded_chat_image = request.files.get("image") or request.files.get("attachment")
             uploaded_chat_image_filename = uploaded_chat_image.filename if uploaded_chat_image else ""
 
             try:
@@ -4253,7 +4251,7 @@ def submit_escalation_answer(escalation_id):
             manual_answer = str(request.form.get('manual_answer', '')).strip()
             handled_by = request.form.get('handled_by') or request.form.get('user_id') or request.form.get('userId')
 
-            image_file = request.files.get('image')
+            image_file = request.files.get('image') or request.files.get('attachment')
 
             print("CONTENT TYPE:", request.content_type)
             print("FORM DATA:", request.form)
@@ -4265,7 +4263,7 @@ def submit_escalation_answer(escalation_id):
 
                 if not answer_image_url:
                     return jsonify({
-                        'message': 'Image upload failed. Please check image type or server upload folder.',
+                        'message': 'Attachment upload failed. Please check file type or server upload folder.',
                         'filename': image_file.filename,
                         'content_type': image_file.content_type
                     }), 400

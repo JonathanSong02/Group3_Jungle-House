@@ -406,6 +406,48 @@ function getStepImages(step) {
   return [...new Set(images.filter(Boolean))];
 }
 
+function isAllowedUploadFile(file) {
+  if (!file) return false;
+
+  const allowedMimeTypes = [
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  ];
+
+  const allowedExtensions = [
+    'png',
+    'jpg',
+    'jpeg',
+    'webp',
+    'gif',
+    'heic',
+    'heif',
+    'pdf',
+    'doc',
+    'docx',
+  ];
+
+  const extension = String(file.name || '').split('.').pop()?.toLowerCase();
+
+  return (
+    String(file.type || '').startsWith('image/') ||
+    allowedMimeTypes.includes(file.type) ||
+    allowedExtensions.includes(extension)
+  );
+}
+
+function isImageUploadFile(file) {
+  if (!file) return false;
+
+  const extension = String(file.name || '').split('.').pop()?.toLowerCase();
+
+  return (
+    String(file.type || '').startsWith('image/') ||
+    ['png', 'jpg', 'jpeg', 'webp', 'gif', 'heic', 'heif'].includes(extension)
+  );
+}
+
 function ChatImage({ imageUrl, alt, onImageClick }) {
   const finalImageUrl = buildImageUrl(imageUrl);
   const safeImageUrl = finalImageUrl ? encodeURI(finalImageUrl).replace(/#/g, '%23') : '';
@@ -1473,21 +1515,30 @@ export default function Chat() {
   };
 
   const handleImageSelect = (event) => {
-  const file = event.target.files?.[0];
+    const file = event.target.files?.[0];
 
-  if (!file) return;
+    if (!file) return;
 
-  const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'];
+    if (!isAllowedUploadFile(file)) {
+      alert('Please upload a supported file only. Supported: image, PDF, DOC, DOCX.');
+      event.target.value = '';
+      return;
+    }
 
-  if (!allowedTypes.includes(file.type)) {
-    alert('Please upload image file only. Supported: PNG, JPG, JPEG, WEBP, GIF.');
+    if (selectedImagePreview) {
+      URL.revokeObjectURL(selectedImagePreview);
+    }
+
+    setSelectedImage(file);
+
+    if (isImageUploadFile(file)) {
+      setSelectedImagePreview(URL.createObjectURL(file));
+    } else {
+      setSelectedImagePreview('');
+    }
+
     event.target.value = '';
-    return;
-  }
-
-  setSelectedImage(file);
-  setSelectedImagePreview(URL.createObjectURL(file));
-};
+  };
 
 const removeSelectedImage = () => {
   setSelectedImage(null);
@@ -1504,7 +1555,8 @@ const removeSelectedImage = () => {
 
     if ((!trimmedQuestion && !selectedImage) || loading) return;
 
-    const displayQuestion = trimmedQuestion || 'Uploaded an image';
+    const displayQuestion =
+      trimmedQuestion || (isImageUploadFile(selectedImage) ? 'Uploaded an image' : 'Uploaded a file');
 
     const userMessage = {
       id: Date.now(),
@@ -1533,7 +1585,7 @@ const removeSelectedImage = () => {
         formData.append('question', trimmedQuestion);
         formData.append('context', JSON.stringify(context));
         formData.append('user_id', currentUserId || '');
-        formData.append('image', selectedImage);
+        formData.append('attachment', selectedImage);
 
         response = await fetch(CHAT_ENDPOINT, {
           method: 'POST',
@@ -2020,13 +2072,36 @@ const removeSelectedImage = () => {
             <div ref={messagesEndRef} />
           </div>
 
-          {selectedImagePreview ? (
+          {selectedImage ? (
             <div className="chat-upload-preview">
-              <img src={selectedImagePreview} alt="Selected upload" />
+              {selectedImagePreview ? (
+                <img src={selectedImagePreview} alt="Selected upload" />
+              ) : (
+                <div
+                  style={{
+                    width: '72px',
+                    height: '72px',
+                    borderRadius: '12px',
+                    border: '1px solid #e5d2a8',
+                    backgroundColor: '#fff8e1',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontWeight: 700,
+                    color: '#7a5c00',
+                  }}
+                >
+                  FILE
+                </div>
+              )}
 
               <div>
                 <p style={{ margin: '0 0 6px', fontWeight: 700 }}>
-                  {selectedImage?.name || 'Selected image'}
+                  {selectedImage?.name || 'Selected file'}
+                </p>
+
+                <p style={{ margin: '0 0 6px', fontSize: '12px', color: '#7a5c00' }}>
+                  {selectedImage?.type || 'Selected upload'}
                 </p>
 
                 <button type="button" onClick={removeSelectedImage}>
@@ -2051,16 +2126,27 @@ const removeSelectedImage = () => {
             />
 
             <label className="chat-image-upload-btn">
-              📎 Image
+              📷 Camera
               <input
                 type="file"
-                accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
+                accept="image/*"
+                capture="environment"
                 onChange={handleImageSelect}
                 disabled={loading}
                 hidden
               />
             </label>
 
+            <label className="chat-image-upload-btn">
+              📎 File
+              <input
+                type="file"
+                accept="image/*,.pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                onChange={handleImageSelect}
+                disabled={loading}
+                hidden
+              />
+            </label>
             <button className="primary-btn" onClick={handleSend} disabled={loading}>
               {loading ? 'Sending...' : 'Send'}
             </button>
