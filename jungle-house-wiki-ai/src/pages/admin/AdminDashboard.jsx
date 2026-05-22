@@ -10,7 +10,7 @@ export default function AdminDashboard() {
       />
 
       <section className="admin-hero-card card-like">
-        <div>
+        <div className="admin-hero-content">
           <p className="eyebrow">Manager Workspace</p>
           <h2>Jungle House AI Wiki Control Centre</h2>
           <p className="muted">
@@ -19,9 +19,12 @@ export default function AdminDashboard() {
           </p>
         </div>
 
-        <Link to="/admin/content/add" className="primary-btn link-btn">
-          + Add New Article
-        </Link>
+        <div className="admin-hero-action">
+          <Link to="/admin/content/add" className="primary-btn link-btn admin-add-article-btn">
+            <span className="admin-add-plus">+</span>
+            <span>Add New Article</span>
+          </Link>
+        </div>
       </section>
 
       <section className="admin-dashboard-grid top-gap">

@@ -9489,3 +9489,136 @@ body.sidebar-is-collapsed .modern-sidebar .sidebar-link.active .sidebar-icon {
   color: #8a6a35;
   font-size: 12px;
 }
+
+
+
+/* =========================================================
+   FINAL FIX: ADMIN DASHBOARD HERO BUTTON
+   Fix Add New Article button clipping / alignment
+   ========================================================= */
+
+.admin-hero-card {
+  width: 100% !important;
+  max-width: 100% !important;
+
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  align-items: center !important;
+  gap: 24px !important;
+
+  padding: 30px 34px !important;
+  overflow: visible !important;
+
+  background:
+    linear-gradient(135deg, rgba(255, 253, 248, 0.98), rgba(255, 231, 177, 0.96)),
+    var(--surface) !important;
+}
+
+.admin-hero-content {
+  min-width: 0 !important;
+}
+
+.admin-hero-content .eyebrow {
+  margin-bottom: 14px !important;
+}
+
+.admin-hero-content h2 {
+  margin: 0 0 10px !important;
+  color: var(--primary-dark) !important;
+  font-size: clamp(24px, 2vw, 34px) !important;
+  font-weight: 900 !important;
+  line-height: 1.15 !important;
+  letter-spacing: -0.045em !important;
+}
+
+.admin-hero-content p:last-child {
+  margin-bottom: 0 !important;
+  max-width: 980px !important;
+}
+
+.admin-hero-action {
+  display: flex !important;
+  justify-content: flex-end !important;
+  align-items: center !important;
+  min-width: max-content !important;
+}
+
+.admin-add-article-btn {
+  width: auto !important;
+  min-width: 176px !important;
+  height: 48px !important;
+  min-height: 48px !important;
+
+  padding: 0 22px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 8px !important;
+
+  border-radius: 0 !important;
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+
+  color: #ffffff !important;
+  background: linear-gradient(180deg, #d99a25, var(--primary)) !important;
+  box-shadow: 0 10px 22px rgba(200, 137, 24, 0.24) !important;
+
+  font-size: 16px !important;
+  font-weight: 800 !important;
+  line-height: 1 !important;
+  text-decoration: none !important;
+}
+
+.admin-add-article-btn span {
+  white-space: nowrap !important;
+  overflow: visible !important;
+}
+
+.admin-add-plus {
+  font-size: 20px !important;
+  font-weight: 700 !important;
+  line-height: 1 !important;
+}
+
+.admin-add-article-btn:hover {
+  background: linear-gradient(180deg, #c98d1c, var(--primary-hover)) !important;
+  box-shadow: 0 12px 26px rgba(200, 137, 24, 0.3) !important;
+  transform: translateY(-1px) !important;
+}
+
+/* Responsive layout */
+@media (max-width: 900px) {
+  .admin-hero-card {
+    grid-template-columns: 1fr !important;
+    padding: 24px !important;
+  }
+
+  .admin-hero-action {
+    justify-content: flex-start !important;
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .admin-add-article-btn {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .admin-hero-card {
+    padding: 20px !important;
+    border-radius: 20px !important;
+  }
+
+  .admin-hero-content h2 {
+    font-size: 24px !important;
+  }
+
+  .admin-add-article-btn {
+    height: 46px !important;
+    min-height: 46px !important;
+    font-size: 15px !important;
+  }
+}
