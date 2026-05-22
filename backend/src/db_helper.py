@@ -26,13 +26,44 @@ def normalize_text(text):
 
 def token_set(text):
     import re
+
     stop_words = {
         "a", "an", "the", "to", "for", "of", "and", "or", "is", "are", "do", "does",
         "can", "i", "me", "my", "you", "your", "what", "how", "when", "where", "which",
-        "show", "tell", "need", "want", "about", "info", "information"
+        "show", "tell", "need", "want", "about", "info", "information", "please",
+        "this", "that", "with", "in", "on", "at", "from", "by"
     }
+
+    word_map = {
+        "opening": "open",
+        "opened": "open",
+        "opens": "open",
+        "closing": "close",
+        "closed": "close",
+        "closes": "close",
+        "products": "product",
+        "promotions": "promotion",
+        "questions": "question",
+        "answers": "answer",
+        "staffs": "staff",
+        "articles": "article",
+        "steps": "step",
+    }
+
     tokens = re.findall(r"[a-z0-9]+", normalize_text(text))
-    return {token for token in tokens if token not in stop_words and len(token) > 1}
+
+    cleaned_tokens = set()
+
+    for token in tokens:
+        if token in stop_words:
+            continue
+
+        if len(token) <= 1:
+            continue
+
+        cleaned_tokens.add(word_map.get(token, token))
+
+    return cleaned_tokens
 
 def similarity_ratio(a, b):
     a_tokens = token_set(a)
@@ -131,24 +162,15 @@ def search_similar_question(question, team_lead_only=False):
 
         question = normalize_text(question)
 
-        if team_lead_only:
-            cursor.execute("""
-                SELECT *
-                FROM qa_knowledge
-                WHERE source = 'team_lead'
-                ORDER BY confidence DESC, created_at DESC
-            """)
-        else:
-            cursor.execute("""
-                SELECT *
-                FROM qa_knowledge
-                ORDER BY 
-                    CASE 
-                        WHEN source = 'team_lead' THEN 1
-                        ELSE 2
-                    END,
-                    confidence DESC
-            """)
+        # IMPORTANT:
+        # AI Chat should only reuse Manager-approved Team Lead answers.
+        # Do not reuse source='team_lead' because that means not approved yet.
+        cursor.execute("""
+            SELECT *
+            FROM qa_knowledge
+            WHERE source = 'manager_approved_review'
+            ORDER BY confidence DESC, created_at DESC
+        """)
 
         rows = cursor.fetchall()
 
@@ -161,22 +183,22 @@ def search_similar_question(question, team_lead_only=False):
 
             db_q = normalize_text(row.get("question"))
 
-            # Exact resolved question should always return.
             if question == db_q:
-                row["score"] = float(row.get("confidence", 1.0) or 1.0)
-                row["confidence"] = float(row.get("confidence", 1.0) or 1.0)
+                row["score"] = 1.0
+                row["confidence"] = 1.0
                 return row
 
             ratio = similarity_ratio(question, db_q)
 
-            # Avoid broad words like "product" or "holiday" wrongly overriding training data.
-            if ratio >= 0.80 and ratio > best_score:
+            # Strict rule:
+            # Only accept if the important words fully match.
+            if ratio >= 1.0 and ratio > best_score:
                 best_match = row
                 best_score = ratio
 
         if best_match:
-            best_match["score"] = float(best_match.get("confidence", best_score) or best_score)
-            best_match["confidence"] = float(best_match.get("confidence", best_score) or best_score)
+            best_match["score"] = 1.0
+            best_match["confidence"] = 1.0
             return best_match
 
         return None
@@ -201,25 +223,12 @@ def search_similar_questions(question, team_lead_only=False, limit=5):
 
         question = normalize_text(question)
 
-        if team_lead_only:
-            cursor.execute("""
-                SELECT *
-                FROM qa_knowledge
-                WHERE source = 'manager_approved_review'
-                ORDER BY confidence DESC, created_at DESC
-            """)
-        else:
-            cursor.execute("""
-                SELECT *
-                FROM qa_knowledge
-                WHERE COALESCE(source, '') <> 'team_lead'
-                ORDER BY 
-                    CASE 
-                        WHEN source = 'manager_approved_review' THEN 1
-                        ELSE 2
-                    END,
-                    confidence DESC
-            """)
+        cursor.execute("""
+            SELECT *
+            FROM qa_knowledge
+            WHERE source = 'manager_approved_review'
+            ORDER BY confidence DESC, created_at DESC
+        """)
 
         rows = cursor.fetchall()
 
@@ -235,10 +244,11 @@ def search_similar_questions(question, team_lead_only=False, limit=5):
             if question == db_q:
                 ratio = 1.0
 
-            if ratio >= 0.30:
-                row["score"] = float(row.get("confidence", ratio) or ratio)
-                row["confidence"] = float(row.get("confidence", ratio) or ratio)
-                row["match_score"] = ratio
+            # Only show optional answer when it is fully matched.
+            if ratio >= 1.0:
+                row["score"] = 1.0
+                row["confidence"] = 1.0
+                row["match_score"] = 1.0
                 matches.append(row)
 
         matches.sort(

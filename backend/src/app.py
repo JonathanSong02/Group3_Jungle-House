@@ -718,7 +718,7 @@ def update_ai_fail_count(data: dict | None, question: str, result: dict | None) 
     is_failed_answer = (
         source in bad_sources
         or bool(result.get("fallback", False))
-        or confidence < 0.60
+        or confidence < 1.0
     )
 
     fail_key = get_ai_fail_key(data, question)
@@ -1017,6 +1017,21 @@ def is_valid_answer(result):
 
 
 def choose_final_result(model_result, retrieval_result, kb_result=None):
+    REQUIRED_CONFIDENCE = 1.0
+
+    def is_fully_confident(result):
+        if not result:
+            return False
+
+        if not is_valid_answer(result):
+            return False
+
+        confidence = float(result.get("confidence", result.get("score", 0.0)) or 0.0)
+
+        return confidence >= REQUIRED_CONFIDENCE
+
+    # Allow control messages such as step out of bounds to return.
+    # These are not wrong knowledge answers; they guide the staff.
     if model_result:
         model_source = str(model_result.get("source", ""))
         non_escalation_control_sources = {
@@ -1038,76 +1053,41 @@ def choose_final_result(model_result, retrieval_result, kb_result=None):
         ):
             return model_result
 
-    if kb_result and is_valid_answer(kb_result):
-        if kb_result.get("score", 0.0) >= 0.18:
-            return kb_result
-
-    if model_result and is_valid_answer(model_result):
-        if model_result.get("type") == "sop" and not kb_result:
-            return model_result
-
-        if model_result.get("score", 0.0) >= 0.60:
-            return model_result
-
-        if model_result.get("source") in {
-            "unclear_question_clarification",
-            "repeated_unclear_question",
-            "system_problem_clarification",
-            "repeated_system_problem",
-            }:
-            return model_result
-
-        if model_result.get("escalation_ready", False):
-            return model_result
-
-    if retrieval_result and is_valid_answer(retrieval_result):
-        if retrieval_result.get("score", 0.0) >= 0.20:
-            return retrieval_result
-
-    if kb_result:
+    # Priority 1: live Knowledge Base article.
+    if is_fully_confident(kb_result):
+        kb_result["score"] = 1.0
+        kb_result["confidence"] = 1.0
         return kb_result
 
-    if model_result and retrieval_result:
-        if retrieval_result.get("score", 0.0) > model_result.get("score", 0.0):
-            return retrieval_result
-
-        if model_result.get("score", 0.0) >= 0.45:
-            return model_result
-
-    if retrieval_result:
+    # Priority 2: Manager-approved Team Lead answer.
+    if is_fully_confident(retrieval_result):
+        retrieval_result["score"] = 1.0
+        retrieval_result["confidence"] = 1.0
         return retrieval_result
 
-    if model_result:
-        if model_result.get("escalation_ready", False):
-            return model_result
+    # Priority 3: PyTorch/training answer only if truly 100%.
+    if is_fully_confident(model_result):
+        model_result["score"] = 1.0
+        model_result["confidence"] = 1.0
+        return model_result
 
-        if model_result.get("source") in {
-            "unclear_question_clarification",
-            "repeated_unclear_question",
-            "system_problem_clarification",
-            "repeated_system_problem",
-            }:
-            return model_result
-
-        if model_result.get("score", 0.0) >= 0.45:
-            return model_result
-
+    # Anything below 100% must not guess.
     return standardize_ai_response({
         "type": "text",
         "category": None,
         "title": None,
         "section": None,
-        "reply": ESCALATION_MESSAGE,
-        "answer": ESCALATION_MESSAGE,
+        "reply": "Sorry, I don’t understand this topic clearly. I have escalated it to the Team Lead.",
+        "answer": "Sorry, I don’t understand this topic clearly. I have escalated it to the Team Lead.",
         "purpose": None,
         "steps": [],
         "notes": [],
         "score": 0.0,
         "confidence": 0.0,
-        "source": "fallback",
+        "source": "low_confidence_direct_escalation",
         "context": {},
         "fallback": True,
-        "fallback_message": "Please escalate this question to team lead.",
+        "fallback_message": "Confidence is below 100%, so this question was escalated to the Team Lead.",
         "escalation_ready": True,
         "escalation_required": True,
     })
@@ -1306,7 +1286,44 @@ def build_answer_options(question, model_result=None, retrieval_result=None):
 
 def tokenize_for_knowledge_match(value):
     value = str(value or "").lower()
-    return set(re.findall(r"[a-z0-9]+", value))
+
+    stop_words = {
+        "a", "an", "the", "to", "for", "of", "and", "or", "is", "are", "do", "does",
+        "can", "i", "me", "my", "you", "your", "what", "how", "when", "where", "which",
+        "show", "tell", "need", "want", "about", "info", "information", "please",
+        "this", "that", "with", "in", "on", "at", "from", "by"
+    }
+
+    word_map = {
+        "opening": "open",
+        "opened": "open",
+        "opens": "open",
+        "closing": "close",
+        "closed": "close",
+        "closes": "close",
+        "products": "product",
+        "promotions": "promotion",
+        "questions": "question",
+        "answers": "answer",
+        "staffs": "staff",
+        "articles": "article",
+        "steps": "step",
+    }
+
+    raw_tokens = re.findall(r"[a-z0-9]+", value)
+
+    tokens = set()
+
+    for token in raw_tokens:
+        if token in stop_words:
+            continue
+
+        if len(token) <= 1:
+            continue
+
+        tokens.add(word_map.get(token, token))
+
+    return tokens
 
 
 def normalize_article_image_files(value):
@@ -1350,29 +1367,46 @@ def calculate_article_match_score(question, article):
     sub_category = str(article.get("sub_category") or "").lower()
     content = str(article.get("content") or "").lower()
 
-    haystack = " ".join([title, category, sub_category, content])
-    hay_tokens = tokenize_for_knowledge_match(haystack)
+    title_tokens = tokenize_for_knowledge_match(title)
+    category_tokens = tokenize_for_knowledge_match(category)
+    sub_category_tokens = tokenize_for_knowledge_match(sub_category)
+    content_tokens = tokenize_for_knowledge_match(content)
 
-    if not q_tokens or not hay_tokens:
+    meta_tokens = title_tokens | category_tokens | sub_category_tokens
+    all_tokens = meta_tokens | content_tokens
+
+    if not q_tokens or not all_tokens:
         return 0.0
 
-    overlap = len(q_tokens & hay_tokens) / max(len(q_tokens), 1)
-    score = overlap
-
+    # Exact title match.
     if question_text == title:
-        score += 0.7
-    elif question_text in title or title in question_text:
-        score += 0.45
+        return 1.0
 
-    title_tokens = tokenize_for_knowledge_match(title)
-    if title_tokens:
-        title_overlap = len(q_tokens & title_tokens) / max(len(q_tokens), 1)
-        score += title_overlap * 0.35
+    # Example: "kiosk opening" matches "JHKC Kiosk Opening".
+    if q_tokens.issubset(title_tokens):
+        return 1.0
 
-    if question_text in haystack:
-        score += 0.2
+    # Example: "how to open kiosk" matches title/category/subcategory.
+    if q_tokens.issubset(meta_tokens):
+        return 1.0
 
-    return round(min(score, 1.0), 4)
+    title_overlap_count = len(q_tokens & title_tokens)
+    title_overlap_ratio = title_overlap_count / max(len(q_tokens), 1)
+
+    # Strong title match.
+    if len(q_tokens) >= 2 and title_overlap_ratio >= 0.75:
+        return 1.0
+
+    # Step/detail question can still match article if the main topic is in the title.
+    # Example: "step 2 kiosk opening".
+    if title_overlap_count >= 2 and q_tokens.issubset(all_tokens):
+        return 1.0
+
+    # Anything else is not fully confident.
+    overlap = len(q_tokens & all_tokens) / max(len(q_tokens), 1)
+    weak_score = round(min(overlap, 0.99), 4)
+
+    return weak_score
 
 
 def parse_article_steps(content):
@@ -1537,8 +1571,11 @@ def search_knowledge_base_articles(question, limit=1):
     scored_results = []
     for article in articles:
         score = calculate_article_match_score(question, article)
-        if score >= 0.18:
-            scored_results.append(build_article_ai_result(article, question, score))
+
+        # Strict lecturer rule:
+        # Only return Knowledge Base answer when confidence is 100%.
+        if score >= 1.0:
+            scored_results.append(build_article_ai_result(article, question, 1.0))
 
     scored_results = sorted(scored_results, key=lambda item: item.get("score", 0.0), reverse=True)
 
@@ -1709,7 +1746,11 @@ def process_question(question, context=None):
 
     answer_options = answer_options[:5]
 
-    if keyword_question and len(answer_options) >= 1:
+    if (
+        keyword_question
+        and len(answer_options) >= 1
+        and float(answer_options[0].get("confidence", 0.0) or 0.0) >= 1.0
+    ):
         return standardize_ai_response({
             "question": question,
             "type": "multiple_choice",
@@ -3364,7 +3405,7 @@ def chat():
         # =========================
         # ✅ STEP 4: ESCALATION LOGIC
         # =========================
-        LOW_CONFIDENCE_THRESHOLD = 0.6
+        LOW_CONFIDENCE_THRESHOLD = 1.0
 
         clarification_sources = [
             "clarification_round_1",
@@ -3414,7 +3455,7 @@ def chat():
         elif source in clarification_sources:
             should_escalate = False
 
-        elif result.get("confidence", result.get("score", 0)) < LOW_CONFIDENCE_THRESHOLD and result.get("fallback"):
+        elif result.get("confidence", result.get("score", 0)) < LOW_CONFIDENCE_THRESHOLD:
             should_escalate = True
 
         if should_escalate:
