@@ -3966,6 +3966,128 @@ def restore_article(article_id):
 
 
 # =========================
+# BULK PERMANENT DELETE ARTICLE ROUTE
+# Delete selected articles permanently from Retrieve Bin only
+# =========================
+@app.route('/api/articles/bulk-permanent-delete', methods=['POST'])
+def bulk_permanent_delete_articles():
+    conn = None
+    cursor = None
+
+    try:
+        data = request.get_json(silent=True) or {}
+
+        article_ids = data.get("article_ids") or data.get("ids") or []
+        deleted_by = data.get("deleted_by")
+
+        clean_ids = []
+
+        for item in article_ids:
+            try:
+                clean_id = int(item)
+
+                if clean_id not in clean_ids:
+                    clean_ids.append(clean_id)
+
+            except (TypeError, ValueError):
+                continue
+
+        if not clean_ids:
+            return jsonify({
+                "message": "No article selected for permanent deletion."
+            }), 400
+
+        placeholders = ",".join(["%s"] * len(clean_ids))
+
+        conn = get_db_connection()
+        conn.start_transaction()
+        cursor = conn.cursor(dictionary=True)
+
+        # 1. Only delete articles that are already inside Retrieve Bin.
+        cursor.execute(f"""
+            SELECT article_id
+            FROM wiki_article
+            WHERE article_id IN ({placeholders})
+            AND COALESCE(is_deleted, 0) = 1
+        """, tuple(clean_ids))
+
+        trash_rows = cursor.fetchall()
+        trash_ids = [row["article_id"] for row in trash_rows]
+
+        if not trash_ids:
+            conn.rollback()
+            return jsonify({
+                "message": "No selected article found in Retrieve Bin."
+            }), 404
+
+        trash_placeholders = ",".join(["%s"] * len(trash_ids))
+
+        # 2. Delete related article links first.
+        # If the article_links table does not exist, skip this part safely.
+        try:
+            cursor.execute(f"""
+                DELETE FROM article_links
+                WHERE article_id IN ({trash_placeholders})
+            """, tuple(trash_ids))
+        except mysql.connector.Error as link_error:
+            if getattr(link_error, "errno", None) == 1146:
+                print("article_links table does not exist, skipping article link delete.")
+            else:
+                raise
+
+        # 3. Delete selected articles permanently.
+        cursor.execute(f"""
+            DELETE FROM wiki_article
+            WHERE article_id IN ({trash_placeholders})
+            AND COALESCE(is_deleted, 0) = 1
+        """, tuple(trash_ids))
+
+        deleted_count = cursor.rowcount
+
+        conn.commit()
+
+        add_audit_log(
+            actor_id=deleted_by,
+            action="Bulk permanently deleted articles",
+            module="Content Management",
+            description=f"{deleted_count} article(s) were permanently deleted from Retrieve Bin."
+        )
+
+        return jsonify({
+            "message": f"{deleted_count} article(s) permanently deleted successfully.",
+            "deleted_count": deleted_count
+        }), 200
+
+    except mysql.connector.Error as err:
+        if conn:
+            conn.rollback()
+
+        print("MYSQL ERROR /api/articles/bulk-permanent-delete:", err)
+
+        return jsonify({
+            "message": "Failed to permanently delete selected articles.",
+            "error": str(err)
+        }), 500
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("GENERAL ERROR /api/articles/bulk-permanent-delete:", error)
+
+        return jsonify({
+            "message": "Failed to permanently delete selected articles.",
+            "error": str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+# =========================
 # PERMANENT DELETE ARTICLE ROUTE
 # Delete article permanently from Retrieve Bin only
 # Also removes related article links first

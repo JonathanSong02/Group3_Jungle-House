@@ -167,7 +167,11 @@ export default function ContentManagement() {
       await fetchArticles();
     } catch (error) {
       console.error('Permanent delete article error:', error);
-      alert(error.response?.data?.message || 'Failed to permanently delete article.');
+      alert(
+        error.response?.data?.error ||
+          error.response?.data?.message ||
+          'Failed to permanently delete article.'
+      );
     }
   };
 
@@ -191,18 +195,26 @@ export default function ContentManagement() {
       setBulkDeleting(true);
       setMessage('');
 
-      await Promise.all(
-        selectedVisibleIds.map((articleId) =>
-          api.delete(`/articles/${articleId}/permanent-delete`)
-        )
+      const response = await api.post('/articles/bulk-permanent-delete', {
+        article_ids: selectedVisibleIds,
+        deleted_by: currentUserId,
+      });
+
+      setMessage(
+        response.data?.message ||
+          `${selectedVisibleIds.length} article(s) permanently deleted.`
       );
 
-      setMessage(`${selectedVisibleIds.length} article(s) permanently deleted.`);
       setSelectedDeletedIds([]);
       await fetchArticles();
     } catch (error) {
       console.error('Bulk permanent delete error:', error);
-      alert(error.response?.data?.message || 'Failed to delete selected articles.');
+
+      alert(
+        error.response?.data?.error ||
+          error.response?.data?.message ||
+          'Failed to delete selected articles.'
+      );
     } finally {
       setBulkDeleting(false);
     }
