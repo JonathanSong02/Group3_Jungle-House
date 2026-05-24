@@ -14465,3 +14465,86 @@ body.sidebar-is-collapsed .ai-chat-shell {
     font-size: 10px !important;
   }
 }
+
+/* =========================================================
+   40. FINAL FIX: MOBILE NORMAL PAGES CAN SCROLL
+   AI Chat remains full-screen, but Dashboard/Profile/Knowledge/etc.
+   return to normal document scrolling.
+   ========================================================= */
+
+@media (max-width: 1024px) {
+  /* Normal pages only: pages WITHOUT the AI Chat component should scroll. */
+  body:not(:has(.ai-chat-page)):not(:has(.ai-chat-shell)),
+  body:not(:has(.ai-chat-page)):not(:has(.ai-chat-shell)) #root {
+    width: 100% !important;
+    height: auto !important;
+    min-height: 100dvh !important;
+    max-height: none !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+  }
+
+  body:not(:has(.ai-chat-page)):not(:has(.ai-chat-shell)) .app-shell {
+    width: 100% !important;
+    height: auto !important;
+    min-height: 100dvh !important;
+    max-height: none !important;
+    overflow-x: hidden !important;
+    overflow-y: visible !important;
+    display: block !important;
+  }
+
+  body:not(:has(.ai-chat-page)):not(:has(.ai-chat-shell)) .main-area,
+  body.sidebar-is-collapsed:not(:has(.ai-chat-page)):not(:has(.ai-chat-shell)) .main-area {
+    margin-left: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 100dvh !important;
+    max-height: none !important;
+    padding: 72px 16px 28px !important;
+    overflow-x: hidden !important;
+    overflow-y: visible !important;
+  }
+
+  body:not(:has(.ai-chat-page)):not(:has(.ai-chat-shell)) .page-content {
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    gap: 16px !important;
+    overflow: visible !important;
+  }
+
+  body:not(:has(.ai-chat-page)):not(:has(.ai-chat-shell)) .page-header,
+  body:not(:has(.ai-chat-page)):not(:has(.ai-chat-shell)) .dashboard-page-header,
+  body:not(:has(.ai-chat-page)):not(:has(.ai-chat-shell)) .admin-page-header {
+    margin-top: 0 !important;
+    padding-top: 0 !important;
+  }
+
+  body:not(:has(.ai-chat-page)):not(:has(.ai-chat-shell)) .stats-grid,
+  body:not(:has(.ai-chat-page)):not(:has(.ai-chat-shell)) .cards-grid,
+  body:not(:has(.ai-chat-page)):not(:has(.ai-chat-shell)) .three-column-grid,
+  body:not(:has(.ai-chat-page)):not(:has(.ai-chat-shell)) .two-column-grid,
+  body:not(:has(.ai-chat-page)):not(:has(.ai-chat-shell)) .content-card-grid,
+  body:not(:has(.ai-chat-page)):not(:has(.ai-chat-shell)) .messages-inbox-layout,
+  body:not(:has(.ai-chat-page)):not(:has(.ai-chat-shell)) .messages-layout {
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  /* When the left sidebar drawer is open, prevent background page scrolling only then. */
+  body.sidebar-mobile-open {
+    overflow: hidden !important;
+  }
+}
+
+@media (max-width: 430px) {
+  body:not(:has(.ai-chat-page)):not(:has(.ai-chat-shell)) .main-area,
+  body.sidebar-is-collapsed:not(:has(.ai-chat-page)):not(:has(.ai-chat-shell)) .main-area {
+    padding: 68px 12px 24px !important;
+  }
+}
