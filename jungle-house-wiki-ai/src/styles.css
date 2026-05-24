@@ -9622,3 +9622,4846 @@ body.sidebar-is-collapsed .modern-sidebar .sidebar-link.active .sidebar-icon {
     font-size: 15px !important;
   }
 }
+
+/* =========================================================
+   34. AI CHAT RIGHT SIDEBAR LAYOUT - FINAL CLIENT FEEDBACK
+   Main system sidebar stays on the left. AI chat occupies most space.
+   Chat session / recents panel is moved to the right, similar to ChatGPT/Gemini.
+   ========================================================= */
+
+.ai-chat-page {
+  height: calc(100dvh - 40px) !important;
+  min-height: 680px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 14px !important;
+  overflow: hidden !important;
+}
+
+.ai-chat-top-row {
+  min-height: 52px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 18px !important;
+  flex-wrap: wrap !important;
+  flex-shrink: 0 !important;
+}
+
+.ai-chat-page-title h1 {
+  margin: 0 !important;
+  color: var(--heading) !important;
+  font-size: clamp(30px, 3vw, 42px) !important;
+  line-height: 1.05 !important;
+  letter-spacing: -0.05em !important;
+}
+
+.ai-chat-tabs,
+.tab-row.ai-chat-tabs {
+  position: static !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  gap: 10px !important;
+  z-index: 1 !important;
+}
+
+.ai-chat-tabs button,
+.tab-row.ai-chat-tabs button {
+  min-width: 150px !important;
+  min-height: 46px !important;
+  padding: 10px 20px !important;
+  border-radius: 999px !important;
+  font-size: 14px !important;
+  font-weight: 900 !important;
+  white-space: nowrap !important;
+}
+
+.ai-chat-shell {
+  flex: 1 1 auto !important;
+  width: 100% !important;
+  height: auto !important;
+  min-height: 0 !important;
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 310px) !important;
+  gap: 18px !important;
+  align-items: stretch !important;
+  overflow: hidden !important;
+  margin-top: 0 !important;
+}
+
+/* Main conversation area */
+.ai-chat-panel {
+  order: 1 !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+  padding: 0 !important;
+  border-radius: 24px !important;
+  box-shadow: 0 14px 34px rgba(84, 55, 13, 0.10) !important;
+}
+
+/* Right AI chat sidebar */
+.chat-recents-panel {
+  order: 2 !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+  padding: 18px !important;
+  border-radius: 24px !important;
+  background: linear-gradient(180deg, rgba(255, 253, 248, 0.98), rgba(255, 247, 231, 0.98)) !important;
+  box-shadow: 0 14px 34px rgba(84, 55, 13, 0.08) !important;
+}
+
+.chat-recents-header {
+  flex-shrink: 0 !important;
+  margin-bottom: 14px !important;
+}
+
+.chat-recents-header h3 {
+  margin: 0 !important;
+  font-size: 19px !important;
+  font-weight: 900 !important;
+}
+
+.chat-recents-header .secondary-btn {
+  min-width: 74px !important;
+  min-height: 40px !important;
+  padding: 8px 14px !important;
+  border-radius: 999px !important;
+}
+
+.chat-recents-list {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  padding-right: 4px !important;
+}
+
+.chat-recent-item {
+  min-height: 52px !important;
+  padding: 6px !important;
+  border-radius: 16px !important;
+}
+
+.chat-recent-title {
+  font-size: 13px !important;
+}
+
+/* Compact header so messages use more space */
+.ai-chat-header {
+  min-height: 58px !important;
+  padding: 11px 24px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 14px !important;
+  flex-shrink: 0 !important;
+  border-bottom: 1px solid var(--border) !important;
+}
+
+.ai-chat-header > div:first-child {
+  min-width: 0 !important;
+}
+
+.ai-chat-header-eyebrow {
+  display: block !important;
+  margin: 0 0 3px !important;
+  font-size: 10px !important;
+  letter-spacing: 0.12em !important;
+}
+
+.ai-chat-header h3 {
+  margin: 0 !important;
+  max-width: 100% !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  font-size: clamp(18px, 1.35vw, 22px) !important;
+  line-height: 1.15 !important;
+}
+
+.ai-chat-header .danger-btn {
+  min-height: 40px !important;
+  padding: 8px 15px !important;
+  border-radius: 999px !important;
+  font-size: 13px !important;
+  white-space: nowrap !important;
+}
+
+/* Conversation messages should feel like ChatGPT/Gemini */
+.ai-chat-messages {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  overflow-y: auto !important;
+  padding: clamp(18px, 2vw, 30px) !important;
+  gap: 16px !important;
+  background:
+    radial-gradient(circle at top left, rgba(255, 239, 204, 0.36), transparent 30%),
+    linear-gradient(180deg, #fffdf8 0%, #fbf4e6 100%) !important;
+}
+
+.ai-chat-messages .message-bubble {
+  width: fit-content !important;
+  max-width: min(860px, 88%) !important;
+}
+
+.ai-chat-messages .message-bubble.ai {
+  align-self: flex-start !important;
+}
+
+.ai-chat-messages .message-bubble.user {
+  align-self: flex-end !important;
+  background: linear-gradient(180deg, #fff0cf, #ffe3a5) !important;
+  border-color: #e7bd61 !important;
+}
+
+/* Bottom composer: one row on desktop */
+.ai-chat-input-row {
+  flex-shrink: 0 !important;
+  min-height: 76px !important;
+  margin: 0 !important;
+  padding: 12px 24px !important;
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) auto auto auto !important;
+  gap: 10px !important;
+  align-items: center !important;
+  border-top: 1px solid var(--border) !important;
+  background: rgba(255, 253, 248, 0.98) !important;
+  box-shadow: 0 -8px 22px rgba(84, 55, 13, 0.05) !important;
+}
+
+.ai-chat-input-row input {
+  min-height: 48px !important;
+  padding: 0 18px !important;
+  border-radius: 999px !important;
+  border: 1px solid var(--border) !important;
+  background: #ffffff !important;
+}
+
+.ai-chat-input-row input:focus {
+  border-color: var(--primary) !important;
+  box-shadow: 0 0 0 4px var(--primary-glow) !important;
+}
+
+.ai-chat-tool-btn,
+.chat-image-upload-btn {
+  min-height: 48px !important;
+  padding: 0 16px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  border: 1px solid var(--border-strong) !important;
+  border-radius: 999px !important;
+  background: #fff8ea !important;
+  color: var(--primary-dark) !important;
+  font-weight: 900 !important;
+  cursor: pointer !important;
+  white-space: nowrap !important;
+}
+
+.ai-chat-tool-btn:hover,
+.chat-image-upload-btn:hover {
+  background: #ffefcc !important;
+  border-color: var(--primary) !important;
+}
+
+.ai-chat-send-btn,
+.ai-chat-input-row .primary-btn {
+  min-width: 96px !important;
+  min-height: 48px !important;
+  padding: 0 20px !important;
+  border-radius: 999px !important;
+}
+
+.chat-upload-preview {
+  flex-shrink: 0 !important;
+  margin: 0 !important;
+  padding: 12px 24px !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+  border-top: 1px solid var(--border) !important;
+  background: #fff8ea !important;
+}
+
+.chat-upload-preview img {
+  width: 72px !important;
+  height: 72px !important;
+  object-fit: cover !important;
+  border-radius: 14px !important;
+  border: 1px solid var(--border) !important;
+}
+
+/* Chat history should also occupy the page space */
+.ai-chat-page > .card-like:not(.ai-chat-panel):not(.chat-recents-panel) {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  border-radius: 24px !important;
+}
+
+/* Sidebar collapsed: keep same structure but slightly narrower right panel */
+body.sidebar-is-collapsed .ai-chat-shell {
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 290px) !important;
+}
+
+/* Medium screens */
+@media (max-width: 1200px) {
+  .ai-chat-page {
+    height: auto !important;
+    min-height: calc(100dvh - 40px) !important;
+    overflow: visible !important;
+  }
+
+  .ai-chat-shell {
+    min-height: 720px !important;
+    grid-template-columns: minmax(0, 1fr) 260px !important;
+    overflow: visible !important;
+  }
+
+  .ai-chat-input-row {
+    grid-template-columns: minmax(0, 1fr) auto auto auto !important;
+    padding: 12px 18px !important;
+  }
+}
+
+/* Tablet and mobile: chat first, recents below, so staff see the conversation immediately */
+@media (max-width: 820px) {
+  .ai-chat-page {
+    height: auto !important;
+    min-height: calc(100dvh - 90px) !important;
+    overflow: visible !important;
+    gap: 12px !important;
+  }
+
+  .ai-chat-top-row {
+    align-items: stretch !important;
+    flex-direction: column !important;
+    gap: 10px !important;
+  }
+
+  .ai-chat-tabs,
+  .tab-row.ai-chat-tabs {
+    width: 100% !important;
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 10px !important;
+  }
+
+  .ai-chat-tabs button,
+  .tab-row.ai-chat-tabs button {
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: 42px !important;
+    padding: 9px 10px !important;
+    font-size: 13px !important;
+  }
+
+  .ai-chat-shell {
+    height: auto !important;
+    min-height: 0 !important;
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+    overflow: visible !important;
+  }
+
+  .ai-chat-panel {
+    order: 1 !important;
+    height: calc(100dvh - 185px) !important;
+    min-height: 560px !important;
+  }
+
+  .chat-recents-panel {
+    order: 2 !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: 190px !important;
+  }
+
+  .chat-recents-list {
+    max-height: 120px !important;
+  }
+
+  .ai-chat-header {
+    padding: 10px 14px !important;
+    flex-wrap: wrap !important;
+  }
+
+  .ai-chat-header h3 {
+    font-size: 18px !important;
+    white-space: normal !important;
+  }
+
+  .ai-chat-header .danger-btn {
+    width: 100% !important;
+    min-height: 38px !important;
+  }
+
+  .ai-chat-messages {
+    padding: 14px !important;
+  }
+
+  .ai-chat-messages .message-bubble {
+    max-width: 100% !important;
+  }
+
+  .ai-chat-input-row {
+    grid-template-columns: 1fr !important;
+    min-height: auto !important;
+    padding: 10px 14px !important;
+  }
+
+  .ai-chat-tool-btn,
+  .chat-image-upload-btn,
+  .ai-chat-send-btn,
+  .ai-chat-input-row .primary-btn {
+    width: 100% !important;
+    min-height: 44px !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .ai-chat-page-title h1 {
+    font-size: 28px !important;
+  }
+
+  .ai-chat-panel {
+    height: calc(100dvh - 210px) !important;
+    min-height: 530px !important;
+  }
+
+  .chat-recents-panel {
+    max-height: 170px !important;
+  }
+}
+
+/* =========================================================
+   35. AI CHAT NO PAGE TITLE + CLEANER CHAT-FIRST LAYOUT
+   Remove the big "AI Chat" title and give more space to the chat.
+   ========================================================= */
+
+/* Hide old title safely even if older JSX still contains it */
+.ai-chat-page-title,
+.ai-chat-page-title h1 {
+  display: none !important;
+}
+
+.ai-chat-page {
+  height: calc(100dvh - 24px) !important;
+  min-height: 660px !important;
+  gap: 10px !important;
+  overflow: hidden !important;
+}
+
+/* Tabs now become the only top control row */
+.ai-chat-top-row,
+.ai-chat-top-row-tabs-only {
+  min-height: 46px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  gap: 10px !important;
+  flex-shrink: 0 !important;
+}
+
+.ai-chat-tabs,
+.tab-row.ai-chat-tabs {
+  margin-left: auto !important;
+  width: auto !important;
+  display: flex !important;
+  justify-content: flex-end !important;
+  align-items: center !important;
+  gap: 10px !important;
+}
+
+.ai-chat-tabs button,
+.tab-row.ai-chat-tabs button {
+  min-width: 145px !important;
+  min-height: 44px !important;
+  padding: 9px 20px !important;
+  border-radius: 999px !important;
+}
+
+/* Main chat uses almost the full page height */
+.ai-chat-shell {
+  height: calc(100dvh - 80px) !important;
+  min-height: 0 !important;
+  grid-template-columns: minmax(0, 1fr) minmax(250px, 300px) !important;
+  gap: 16px !important;
+}
+
+/* Smaller session header: title left, clear button right */
+.ai-chat-header {
+  min-height: 52px !important;
+  padding: 10px 18px !important;
+  flex-wrap: nowrap !important;
+  align-items: center !important;
+}
+
+.ai-chat-header > div:first-child {
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+}
+
+.ai-chat-header h3 {
+  text-align: left !important;
+  font-size: clamp(17px, 1.25vw, 21px) !important;
+  line-height: 1.15 !important;
+}
+
+.ai-chat-header .danger-btn {
+  width: auto !important;
+  min-width: 118px !important;
+  min-height: 38px !important;
+  padding: 8px 14px !important;
+  font-size: 13px !important;
+  flex: 0 0 auto !important;
+}
+
+.ai-chat-messages {
+  padding: 18px 24px !important;
+}
+
+.ai-chat-input-row {
+  min-height: 70px !important;
+  padding: 10px 18px !important;
+  gap: 10px !important;
+}
+
+.ai-chat-input-row input,
+.ai-chat-tool-btn,
+.chat-image-upload-btn,
+.ai-chat-send-btn,
+.ai-chat-input-row .primary-btn {
+  min-height: 44px !important;
+}
+
+/* Mobile: no title, tabs on top, chat first, recents short below */
+@media (max-width: 820px) {
+  .ai-chat-page {
+    height: auto !important;
+    min-height: calc(100dvh - 76px) !important;
+    gap: 10px !important;
+    overflow: visible !important;
+  }
+
+  .ai-chat-top-row,
+  .ai-chat-top-row-tabs-only {
+    min-height: 42px !important;
+    justify-content: stretch !important;
+  }
+
+  .ai-chat-tabs,
+  .tab-row.ai-chat-tabs {
+    width: 100% !important;
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 10px !important;
+  }
+
+  .ai-chat-tabs button,
+  .tab-row.ai-chat-tabs button {
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: 42px !important;
+    padding: 9px 10px !important;
+    font-size: 13px !important;
+  }
+
+  .ai-chat-shell {
+    height: auto !important;
+    min-height: 0 !important;
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+  }
+
+  .ai-chat-panel {
+    order: 1 !important;
+    height: calc(100dvh - 142px) !important;
+    min-height: 620px !important;
+  }
+
+  .chat-recents-panel {
+    order: 2 !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: 150px !important;
+    padding: 14px !important;
+  }
+
+  .chat-recents-header {
+    margin-bottom: 10px !important;
+  }
+
+  .chat-recents-list {
+    max-height: 84px !important;
+  }
+
+  .ai-chat-header {
+    min-height: 48px !important;
+    padding: 9px 14px !important;
+    flex-wrap: nowrap !important;
+  }
+
+  .ai-chat-header h3 {
+    font-size: 17px !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+
+  .ai-chat-header .danger-btn {
+    width: auto !important;
+    min-width: 92px !important;
+    min-height: 36px !important;
+    padding: 7px 11px !important;
+    font-size: 12px !important;
+  }
+
+  .ai-chat-messages {
+    padding: 14px !important;
+  }
+
+  /* Cleaner phone composer: input full row, Camera / File / Send below */
+  .ai-chat-input-row {
+    display: grid !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 9px !important;
+    padding: 10px 14px !important;
+  }
+
+  .ai-chat-input-row > input {
+    grid-column: 1 / -1 !important;
+    width: 100% !important;
+  }
+
+  .ai-chat-tool-btn,
+  .chat-image-upload-btn,
+  .ai-chat-send-btn,
+  .ai-chat-input-row .primary-btn {
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: 42px !important;
+    padding: 0 8px !important;
+    font-size: 13px !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .ai-chat-panel {
+    height: calc(100dvh - 136px) !important;
+    min-height: 600px !important;
+  }
+
+  .chat-recents-panel {
+    max-height: 145px !important;
+  }
+
+  .ai-chat-header .danger-btn {
+    min-width: 86px !important;
+  }
+}
+
+
+/* =========================================================
+   34. FINAL MOBILE CHATGPT-STYLE AI CHAT
+   Mobile layout follows ChatGPT idea:
+   - no page title
+   - tabs stay at the top
+   - conversation uses almost full screen
+   - recents do not appear below the chat on mobile
+   - composer stays at the bottom of the chat
+   ========================================================= */
+
+@media (max-width: 820px) {
+  /* Keep the AI Chat page clean and close to the top */
+  .main-area {
+    padding: 10px 12px !important;
+  }
+
+  .page-content:has(.ai-chat-page),
+  .page-content:has(.ai-chat-shell) {
+    gap: 8px !important;
+    padding-top: 0 !important;
+    margin-top: 0 !important;
+  }
+
+  .ai-chat-page {
+    min-height: calc(100dvh - 74px) !important;
+    height: calc(100dvh - 74px) !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 8px !important;
+    overflow: hidden !important;
+  }
+
+  /* Top tabs only, like ChatGPT mobile project tabs */
+  .ai-chat-top-row,
+  .ai-chat-top-row-tabs-only {
+    flex: 0 0 auto !important;
+    min-height: 42px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .ai-chat-tabs,
+  .tab-row.ai-chat-tabs {
+    width: 100% !important;
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 8px !important;
+  }
+
+  .ai-chat-tabs button,
+  .tab-row.ai-chat-tabs button {
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: 40px !important;
+    padding: 8px 10px !important;
+    border-radius: 999px !important;
+    font-size: 13px !important;
+    font-weight: 900 !important;
+  }
+
+  /* The ask page should be only the chat, not chat + recents below */
+  .ai-chat-shell {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    height: auto !important;
+    display: block !important;
+    overflow: hidden !important;
+  }
+
+  .ai-chat-shell .chat-recents-panel {
+    display: none !important;
+  }
+
+  .ai-chat-panel {
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    border-radius: 22px !important;
+  }
+
+  /* Hide the extra session title row on mobile so chat gets more space */
+  .ai-chat-header {
+    min-height: 0 !important;
+    height: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    overflow: hidden !important;
+  }
+
+  .ai-chat-header h3,
+  .ai-chat-header .danger-btn {
+    display: none !important;
+  }
+
+  .ai-chat-messages {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow-y: auto !important;
+    padding: 14px 14px 12px !important;
+    gap: 12px !important;
+    background: linear-gradient(180deg, #fffdf8 0%, #fbf4e6 100%) !important;
+  }
+
+  .ai-chat-messages .message-bubble,
+  .ai-chat-panel .message-bubble,
+  .message-bubble {
+    max-width: 92% !important;
+    padding: 12px 14px !important;
+    border-radius: 18px !important;
+  }
+
+  .message-bubble.user {
+    border-radius: 18px 18px 6px 18px !important;
+  }
+
+  .message-bubble.ai {
+    border-radius: 18px 18px 18px 6px !important;
+  }
+
+  /* Bottom composer like ChatGPT mobile */
+  .ai-chat-input-row {
+    flex: 0 0 auto !important;
+    position: sticky !important;
+    bottom: 0 !important;
+    z-index: 50 !important;
+    margin: 0 !important;
+    padding: 10px !important;
+    display: grid !important;
+    grid-template-columns: 44px 44px minmax(78px, auto) !important;
+    grid-template-areas:
+      "input input input"
+      "camera file send" !important;
+    gap: 8px !important;
+    border-radius: 0 !important;
+    border-left: 0 !important;
+    border-right: 0 !important;
+    border-bottom: 0 !important;
+    background: rgba(255, 253, 248, 0.98) !important;
+    box-shadow: 0 -12px 28px rgba(84, 55, 13, 0.08) !important;
+  }
+
+  .ai-chat-input-row > input {
+    grid-area: input !important;
+    min-height: 46px !important;
+    padding: 0 14px !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 18px !important;
+    background: #fffaf0 !important;
+    font-size: 14px !important;
+  }
+
+  .ai-chat-tool-btn,
+  .chat-image-upload-btn {
+    width: 44px !important;
+    min-width: 44px !important;
+    height: 44px !important;
+    min-height: 44px !important;
+    padding: 0 !important;
+    border-radius: 999px !important;
+    font-size: 0 !important;
+  }
+
+  .ai-chat-tool-btn span:first-child,
+  .chat-image-upload-btn span:first-child {
+    font-size: 16px !important;
+  }
+
+  .ai-chat-tool-btn span:last-child,
+  .chat-image-upload-btn span:last-child {
+    display: none !important;
+  }
+
+  .ai-chat-input-row label:nth-of-type(1) {
+    grid-area: camera !important;
+  }
+
+  .ai-chat-input-row label:nth-of-type(2) {
+    grid-area: file !important;
+  }
+
+  .ai-chat-send-btn,
+  .ai-chat-input-row .primary-btn {
+    grid-area: send !important;
+    width: 100% !important;
+    min-width: 78px !important;
+    min-height: 44px !important;
+    padding: 0 14px !important;
+    border-radius: 999px !important;
+    font-size: 13px !important;
+  }
+
+  .chat-upload-preview {
+    flex: 0 0 auto !important;
+    margin: 0 !important;
+    padding: 10px 12px !important;
+    border-left: 0 !important;
+    border-right: 0 !important;
+    border-radius: 0 !important;
+  }
+
+  /* Chat History tab becomes a simple mobile list page */
+  .ai-chat-history-page {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    height: calc(100dvh - 126px) !important;
+    overflow-y: auto !important;
+    padding: 14px !important;
+    border-radius: 22px !important;
+  }
+
+  .ai-chat-history-page > .row-between {
+    align-items: stretch !important;
+    gap: 10px !important;
+  }
+
+  .ai-chat-history-page > .row-between h3 {
+    margin-bottom: 4px !important;
+    font-size: 20px !important;
+  }
+
+  .ai-chat-history-page > .row-between p {
+    display: none !important;
+  }
+
+  .ai-chat-history-page .stack-gap {
+    gap: 8px !important;
+  }
+
+  .ai-chat-history-page article.card-like {
+    padding: 12px !important;
+    border-radius: 16px !important;
+    box-shadow: none !important;
+  }
+
+  .ai-chat-history-page article h3 {
+    margin-bottom: 4px !important;
+    font-size: 15px !important;
+    line-height: 1.35 !important;
+  }
+
+  .ai-chat-history-page article .muted {
+    font-size: 12px !important;
+  }
+}
+
+@media (max-width: 430px) {
+  .ai-chat-page {
+    height: calc(100dvh - 70px) !important;
+    min-height: calc(100dvh - 70px) !important;
+  }
+
+  .ai-chat-tabs button,
+  .tab-row.ai-chat-tabs button {
+    min-height: 38px !important;
+    font-size: 12.5px !important;
+  }
+
+  .ai-chat-input-row {
+    grid-template-columns: 42px 42px minmax(76px, auto) !important;
+    padding: 9px !important;
+  }
+
+  .ai-chat-tool-btn,
+  .chat-image-upload-btn {
+    width: 42px !important;
+    min-width: 42px !important;
+    height: 42px !important;
+    min-height: 42px !important;
+  }
+}
+
+/* =========================================================
+   35. FINAL MOBILE READJUSTMENT + SIDEBAR DRAWER FIX
+   Keeps desktop right-recents layout, but makes mobile behave like ChatGPT.
+   Place at the very bottom to override earlier duplicated sidebar/chat rules.
+   ========================================================= */
+
+@media (max-width: 1024px) {
+  /* Mobile uses a floating drawer, not a desktop collapsed sidebar. */
+  .app-shell {
+    display: block !important;
+    width: 100% !important;
+    min-height: 100dvh !important;
+    overflow-x: hidden !important;
+  }
+
+  .main-area,
+  body.sidebar-is-collapsed .main-area {
+    margin-left: 0 !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    padding: 76px 16px 14px !important;
+    overflow-x: hidden !important;
+  }
+
+  /* Closed mobile state: show only the small hamburger area. */
+  body.sidebar-mobile-closed .sidebar,
+  body.sidebar-mobile-closed .modern-sidebar {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 74px !important;
+    height: 72px !important;
+    min-height: 72px !important;
+    padding: 14px 16px !important;
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+    z-index: 3000 !important;
+  }
+
+  body.sidebar-mobile-closed .sidebar-inner,
+  body.sidebar-mobile-closed .sidebar-main,
+  body.sidebar-mobile-closed .sidebar-brand {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: 0 !important;
+  }
+
+  body.sidebar-mobile-closed .sidebar-logo-wrap,
+  body.sidebar-mobile-closed .sidebar-nav,
+  body.sidebar-mobile-closed .sidebar-section-label,
+  body.sidebar-mobile-closed .sidebar-user-card {
+    display: none !important;
+  }
+
+  body.sidebar-mobile-closed .sidebar-brand-top {
+    width: auto !important;
+    display: flex !important;
+    justify-content: flex-start !important;
+    align-items: center !important;
+  }
+
+  body.sidebar-mobile-closed .mobile-toggle,
+  body.sidebar-mobile-closed .sidebar-toggle-btn {
+    display: inline-flex !important;
+    width: 44px !important;
+    height: 44px !important;
+    min-width: 44px !important;
+    min-height: 44px !important;
+    padding: 0 !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border-radius: 15px !important;
+    background: rgba(255, 253, 248, 0.94) !important;
+    border: 1px solid rgba(234, 216, 183, 0.95) !important;
+    box-shadow: 0 8px 18px rgba(84, 55, 13, 0.12) !important;
+    color: var(--heading) !important;
+    font-size: 22px !important;
+    z-index: 3100 !important;
+  }
+
+  /* Open mobile state: real slide-out drawer with full labels. */
+  body:not(.sidebar-mobile-closed) .sidebar,
+  body:not(.sidebar-mobile-closed) .modern-sidebar,
+  body.sidebar-is-collapsed:not(.sidebar-mobile-closed) .sidebar,
+  body.sidebar-is-collapsed:not(.sidebar-mobile-closed) .modern-sidebar {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: min(82vw, 320px) !important;
+    height: 100dvh !important;
+    min-height: 100dvh !important;
+    padding: 18px 16px !important;
+    overflow: hidden !important;
+    z-index: 3000 !important;
+    background: linear-gradient(180deg, #fff7df 0%, #f4d99d 100%) !important;
+    border-right: 1px solid rgba(216, 189, 133, 0.75) !important;
+    box-shadow: 18px 0 45px rgba(42, 31, 18, 0.28) !important;
+  }
+
+  body:not(.sidebar-mobile-closed) .sidebar-inner,
+  body:not(.sidebar-mobile-closed) .sidebar-main,
+  body.sidebar-is-collapsed:not(.sidebar-mobile-closed) .sidebar-inner,
+  body.sidebar-is-collapsed:not(.sidebar-mobile-closed) .sidebar-main {
+    height: 100% !important;
+    min-height: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+  }
+
+  body:not(.sidebar-mobile-closed) .sidebar-main,
+  body.sidebar-is-collapsed:not(.sidebar-mobile-closed) .sidebar-main {
+    flex: 1 1 auto !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    padding-right: 4px !important;
+  }
+
+  body:not(.sidebar-mobile-closed) .sidebar-brand,
+  body.sidebar-is-collapsed:not(.sidebar-mobile-closed) .sidebar-brand {
+    display: block !important;
+    margin-bottom: 18px !important;
+    padding: 4px 0 16px !important;
+    border-bottom: 1px solid rgba(111, 71, 8, 0.14) !important;
+  }
+
+  body:not(.sidebar-mobile-closed) .sidebar-brand-top,
+  body.sidebar-is-collapsed:not(.sidebar-mobile-closed) .sidebar-brand-top {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 12px !important;
+    width: 100% !important;
+  }
+
+  body:not(.sidebar-mobile-closed) .sidebar-logo-wrap,
+  body.sidebar-is-collapsed:not(.sidebar-mobile-closed) .sidebar-logo-wrap {
+    display: flex !important;
+    justify-content: flex-start !important;
+    align-items: center !important;
+    gap: 12px !important;
+    min-width: 0 !important;
+  }
+
+  body:not(.sidebar-mobile-closed) .sidebar-brand-text,
+  body:not(.sidebar-mobile-closed) .sidebar-link-text,
+  body.sidebar-is-collapsed:not(.sidebar-mobile-closed) .sidebar-brand-text,
+  body.sidebar-is-collapsed:not(.sidebar-mobile-closed) .sidebar-link-text {
+    display: inline !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+    width: auto !important;
+    transform: none !important;
+  }
+
+  body:not(.sidebar-mobile-closed) .sidebar-section-label,
+  body.sidebar-is-collapsed:not(.sidebar-mobile-closed) .sidebar-section-label {
+    display: block !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+    margin: 20px 8px 8px !important;
+  }
+
+  body:not(.sidebar-mobile-closed) .sidebar-nav,
+  body.sidebar-is-collapsed:not(.sidebar-mobile-closed) .sidebar-nav {
+    width: 100% !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 8px !important;
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+
+  body:not(.sidebar-mobile-closed) .sidebar-link,
+  body.sidebar-is-collapsed:not(.sidebar-mobile-closed) .sidebar-link,
+  body.sidebar-is-collapsed:not(.sidebar-mobile-closed) .modern-sidebar .sidebar-link {
+    width: 100% !important;
+    height: auto !important;
+    min-height: 46px !important;
+    padding: 11px 13px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 12px !important;
+    border-radius: 16px !important;
+    white-space: normal !important;
+    font-size: 14px !important;
+  }
+
+  body:not(.sidebar-mobile-closed) .sidebar-icon,
+  body.sidebar-is-collapsed:not(.sidebar-mobile-closed) .sidebar-icon {
+    width: 22px !important;
+    height: 22px !important;
+    flex-shrink: 0 !important;
+  }
+
+  body:not(.sidebar-mobile-closed) .sidebar-user-card,
+  body.sidebar-is-collapsed:not(.sidebar-mobile-closed) .sidebar-user-card {
+    display: block !important;
+    flex-shrink: 0 !important;
+    margin-top: 12px !important;
+    margin-bottom: 0 !important;
+  }
+
+  body:not(.sidebar-mobile-closed) .sidebar-user-main,
+  body.sidebar-is-collapsed:not(.sidebar-mobile-closed) .sidebar-user-main {
+    width: 100% !important;
+    height: auto !important;
+    min-height: 56px !important;
+    padding: 9px 10px !important;
+    justify-content: flex-start !important;
+  }
+
+  body:not(.sidebar-mobile-closed) .sidebar-user-info,
+  body:not(.sidebar-mobile-closed) .sidebar-user-arrow,
+  body.sidebar-is-collapsed:not(.sidebar-mobile-closed) .sidebar-user-info,
+  body.sidebar-is-collapsed:not(.sidebar-mobile-closed) .sidebar-user-arrow {
+    display: flex !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+  }
+
+  body:not(.sidebar-mobile-closed) .sidebar-user-arrow,
+  body.sidebar-is-collapsed:not(.sidebar-mobile-closed) .sidebar-user-arrow {
+    display: inline-flex !important;
+  }
+
+  body:not(.sidebar-mobile-closed)::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 2500;
+    background: rgba(25, 22, 16, 0.34);
+    backdrop-filter: blur(3px);
+    pointer-events: none;
+  }
+
+  /* Keep the drawer above the overlay pseudo element. */
+  body:not(.sidebar-mobile-closed) .sidebar,
+  body:not(.sidebar-mobile-closed) .modern-sidebar {
+    z-index: 3000 !important;
+  }
+}
+
+@media (max-width: 820px) {
+  /* ChatGPT-like mobile chat page: top tabs + one tall chat card + bottom composer. */
+  .main-area,
+  body.sidebar-is-collapsed .main-area {
+    padding: 76px 16px 12px !important;
+  }
+
+  .page-content:has(.ai-chat-page),
+  .page-content:has(.ai-chat-shell) {
+    min-height: calc(100dvh - 88px) !important;
+    gap: 0 !important;
+    overflow: hidden !important;
+  }
+
+  .ai-chat-page {
+    width: 100% !important;
+    height: calc(100dvh - 88px) !important;
+    min-height: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 10px !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+  }
+
+  .ai-chat-top-row,
+  .ai-chat-top-row-tabs-only,
+  .ai-chat-title-row {
+    flex: 0 0 auto !important;
+    min-height: 42px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: flex !important;
+    align-items: stretch !important;
+    justify-content: stretch !important;
+    overflow: visible !important;
+  }
+
+  .ai-chat-tabs,
+  .tab-row.ai-chat-tabs,
+  .ai-chat-top-row .tab-row {
+    width: 100% !important;
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 8px !important;
+  }
+
+  .ai-chat-tabs button,
+  .tab-row.ai-chat-tabs button,
+  .ai-chat-top-row .tab-row button {
+    width: 100% !important;
+    min-height: 40px !important;
+    padding: 8px 10px !important;
+    border-radius: 999px !important;
+    font-size: 13px !important;
+    line-height: 1.2 !important;
+  }
+
+  .ai-chat-shell {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    height: auto !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    margin: 0 !important;
+  }
+
+  .ai-chat-shell .chat-recents-panel {
+    display: none !important;
+  }
+
+  .ai-chat-panel {
+    flex: 1 1 auto !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    border-radius: 22px !important;
+  }
+
+  .ai-chat-header {
+    display: none !important;
+  }
+
+  .ai-chat-messages {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow-y: auto !important;
+    padding: 14px !important;
+    gap: 12px !important;
+  }
+
+  .ai-chat-messages .message-bubble,
+  .ai-chat-panel .message-bubble,
+  .message-bubble {
+    max-width: 92% !important;
+    padding: 12px 14px !important;
+    border-radius: 18px !important;
+  }
+
+  .message-bubble.user {
+    align-self: flex-end !important;
+    border-radius: 18px 18px 6px 18px !important;
+  }
+
+  .message-bubble.ai {
+    align-self: flex-start !important;
+    border-radius: 18px 18px 18px 6px !important;
+  }
+
+  .ai-chat-input-row {
+    flex: 0 0 auto !important;
+    position: relative !important;
+    bottom: auto !important;
+    z-index: 10 !important;
+    margin: 0 !important;
+    padding: 10px !important;
+    display: grid !important;
+    grid-template-columns: 44px 44px minmax(82px, 1fr) !important;
+    grid-template-areas:
+      'input input input'
+      'camera file send' !important;
+    gap: 8px !important;
+    border-radius: 0 !important;
+    background: rgba(255, 253, 248, 0.98) !important;
+    box-shadow: 0 -10px 24px rgba(84, 55, 13, 0.08) !important;
+  }
+
+  .ai-chat-input-row > input {
+    grid-area: input !important;
+    width: 100% !important;
+    min-height: 46px !important;
+    padding: 0 14px !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 18px !important;
+    background: #fffaf0 !important;
+  }
+
+  .ai-chat-input-row label:nth-of-type(1) {
+    grid-area: camera !important;
+  }
+
+  .ai-chat-input-row label:nth-of-type(2) {
+    grid-area: file !important;
+  }
+
+  .ai-chat-tool-btn,
+  .chat-image-upload-btn {
+    width: 44px !important;
+    min-width: 44px !important;
+    height: 44px !important;
+    min-height: 44px !important;
+    padding: 0 !important;
+    border-radius: 999px !important;
+    font-size: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+
+  .ai-chat-tool-btn span:first-child,
+  .chat-image-upload-btn span:first-child {
+    display: inline !important;
+    font-size: 16px !important;
+  }
+
+  .ai-chat-tool-btn span:last-child,
+  .chat-image-upload-btn span:last-child {
+    display: none !important;
+  }
+
+  .ai-chat-send-btn,
+  .ai-chat-input-row .primary-btn {
+    grid-area: send !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: 44px !important;
+    padding: 0 14px !important;
+    border-radius: 999px !important;
+    font-size: 13px !important;
+  }
+}
+
+@media (max-width: 430px) {
+  .main-area,
+  body.sidebar-is-collapsed .main-area {
+    padding: 72px 14px 10px !important;
+  }
+
+  .ai-chat-page {
+    height: calc(100dvh - 82px) !important;
+  }
+
+  .ai-chat-tabs button,
+  .tab-row.ai-chat-tabs button {
+    min-height: 38px !important;
+    font-size: 12.5px !important;
+  }
+
+  .ai-chat-input-row {
+    grid-template-columns: 42px 42px minmax(78px, 1fr) !important;
+    padding: 9px !important;
+  }
+
+  .ai-chat-tool-btn,
+  .chat-image-upload-btn {
+    width: 42px !important;
+    min-width: 42px !important;
+    height: 42px !important;
+    min-height: 42px !important;
+  }
+}
+
+/* =========================================================
+   36. AI CHAT MOBILE RIGHT MENU + OVERLAY FIX
+   Fixes the black transparent overlay showing when the left
+   sidebar is closed, and moves AI Chat actions into a right
+   drawer on mobile.
+   ========================================================= */
+
+.mobile-ai-chat-menu-btn,
+.mobile-ai-chat-menu-overlay,
+.mobile-ai-chat-menu {
+  display: none !important;
+}
+
+@media (max-width: 1024px) {
+  /* IMPORTANT: the dark page overlay must only appear when the real left sidebar is open. */
+  .mobile-sidebar-overlay {
+    display: none !important;
+    pointer-events: none !important;
+    opacity: 0 !important;
+  }
+
+  body.sidebar-mobile-open .mobile-sidebar-overlay {
+    display: block !important;
+    pointer-events: auto !important;
+    opacity: 1 !important;
+  }
+
+  body.sidebar-mobile-closed::after,
+  body:not(.sidebar-mobile-open)::after {
+    content: none !important;
+    display: none !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+  }
+
+  body.sidebar-mobile-open::after {
+    content: none !important;
+    display: none !important;
+  }
+}
+
+@media (max-width: 820px) {
+  body.ai-chat-mobile-menu-open {
+    overflow: hidden !important;
+  }
+
+  .ai-chat-top-row,
+  .ai-chat-top-row-tabs-only {
+    display: flex !important;
+    justify-content: flex-end !important;
+    align-items: center !important;
+    min-height: 44px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .ai-chat-tabs,
+  .tab-row.ai-chat-tabs,
+  .ai-chat-top-row .tab-row {
+    display: none !important;
+  }
+
+  .mobile-ai-chat-menu-btn {
+    width: auto !important;
+    min-width: 132px !important;
+    min-height: 42px !important;
+    padding: 0 16px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 8px !important;
+    background: rgba(255, 253, 248, 0.96) !important;
+    color: var(--heading) !important;
+    border: 1px solid rgba(234, 216, 183, 0.95) !important;
+    border-radius: 999px !important;
+    box-shadow: 0 8px 20px rgba(84, 55, 13, 0.1) !important;
+    font-size: 13.5px !important;
+    font-weight: 900 !important;
+    line-height: 1 !important;
+  }
+
+  .mobile-ai-chat-menu-btn:hover {
+    transform: none !important;
+    background: #fff5d8 !important;
+    border-color: var(--primary) !important;
+  }
+
+  .mobile-ai-chat-menu-overlay {
+    position: fixed !important;
+    inset: 0 !important;
+    z-index: 3500 !important;
+    display: block !important;
+    width: 100vw !important;
+    height: 100dvh !important;
+    padding: 0 !important;
+    background: rgba(31, 24, 13, 0.18) !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    backdrop-filter: blur(1.5px) !important;
+  }
+
+  .mobile-ai-chat-menu-overlay:hover {
+    transform: none !important;
+  }
+
+  .mobile-ai-chat-menu {
+    position: fixed !important;
+    top: 0 !important;
+    right: 0 !important;
+    z-index: 3600 !important;
+    width: min(86vw, 330px) !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    padding: 18px 16px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 16px !important;
+    overflow: hidden !important;
+    background:
+      radial-gradient(circle at top right, rgba(255, 239, 188, 0.88), transparent 42%),
+      linear-gradient(180deg, #fffaf0 0%, #f8dda2 100%) !important;
+    border-left: 1px solid rgba(216, 189, 133, 0.8) !important;
+    box-shadow: -18px 0 46px rgba(42, 31, 18, 0.22) !important;
+    animation: mobileAiChatMenuIn 0.2s ease both !important;
+  }
+
+  @keyframes mobileAiChatMenuIn {
+    from {
+      transform: translateX(100%);
+    }
+
+    to {
+      transform: translateX(0);
+    }
+  }
+
+  .mobile-ai-chat-menu-header {
+    flex: 0 0 auto !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 12px !important;
+    padding-bottom: 14px !important;
+    border-bottom: 1px solid rgba(111, 71, 8, 0.14) !important;
+  }
+
+  .mobile-ai-chat-menu-header .eyebrow {
+    margin: 0 0 4px !important;
+    color: rgba(111, 71, 8, 0.62) !important;
+    font-size: 10px !important;
+    font-weight: 900 !important;
+    letter-spacing: 0.14em !important;
+  }
+
+  .mobile-ai-chat-menu-header h3 {
+    margin: 0 !important;
+    color: var(--heading) !important;
+    font-size: 23px !important;
+    font-weight: 900 !important;
+    line-height: 1.1 !important;
+    letter-spacing: -0.04em !important;
+  }
+
+  .mobile-ai-chat-close-btn {
+    width: 42px !important;
+    min-width: 42px !important;
+    height: 42px !important;
+    min-height: 42px !important;
+    padding: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: linear-gradient(180deg, #f3b43f, var(--primary)) !important;
+    color: #ffffff !important;
+    border: 0 !important;
+    border-radius: 999px !important;
+    box-shadow: 0 10px 20px rgba(212, 143, 17, 0.22) !important;
+    font-size: 22px !important;
+    font-weight: 900 !important;
+    line-height: 1 !important;
+  }
+
+  .mobile-ai-chat-menu-actions {
+    flex: 0 0 auto !important;
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 10px !important;
+  }
+
+  .mobile-ai-chat-menu-actions button {
+    width: 100% !important;
+    min-height: 46px !important;
+    padding: 10px 14px !important;
+    border-radius: 16px !important;
+    font-size: 14px !important;
+    font-weight: 900 !important;
+  }
+
+  .mobile-ai-chat-new-btn {
+    background: rgba(255, 253, 248, 0.78) !important;
+  }
+
+  .mobile-ai-chat-recents {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 10px !important;
+    padding-top: 4px !important;
+    overflow: hidden !important;
+  }
+
+  .mobile-ai-chat-recents-title {
+    flex: 0 0 auto !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 10px !important;
+  }
+
+  .mobile-ai-chat-recents-title h4 {
+    margin: 0 !important;
+    color: var(--heading) !important;
+    font-size: 18px !important;
+    font-weight: 900 !important;
+  }
+
+  .mobile-ai-chat-recents-title span {
+    color: var(--muted) !important;
+    font-size: 12px !important;
+    font-weight: 800 !important;
+  }
+
+  .mobile-ai-chat-recents-list {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 10px !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    padding-right: 3px !important;
+  }
+
+  .mobile-ai-chat-recent-item {
+    width: 100% !important;
+    min-height: 54px !important;
+    padding: 11px 12px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 10px !important;
+    background: rgba(255, 253, 248, 0.72) !important;
+    border: 1px solid rgba(226, 205, 167, 0.9) !important;
+    border-radius: 16px !important;
+    box-shadow: 0 8px 18px rgba(84, 55, 13, 0.06) !important;
+  }
+
+  .mobile-ai-chat-recent-item.active {
+    background: #fff3d1 !important;
+    border-color: var(--primary) !important;
+    box-shadow: 0 10px 22px rgba(212, 143, 17, 0.13) !important;
+  }
+
+  .mobile-ai-chat-recent-title {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: transparent !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    color: var(--heading) !important;
+    font-size: 14px !important;
+    font-weight: 900 !important;
+    text-align: left !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+  }
+
+  .mobile-ai-chat-recent-delete {
+    flex: 0 0 30px !important;
+    width: 30px !important;
+    height: 30px !important;
+    min-width: 30px !important;
+    min-height: 30px !important;
+    padding: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: #fff7f0 !important;
+    color: #9b3d28 !important;
+    border: 1px solid #ffd5c9 !important;
+    border-radius: 999px !important;
+    box-shadow: none !important;
+    font-size: 15px !important;
+    font-weight: 900 !important;
+    line-height: 1 !important;
+  }
+
+  .mobile-ai-chat-recent-delete:hover {
+    transform: none !important;
+    background: #ffe4dc !important;
+  }
+}
+
+@media (max-width: 430px) {
+  .mobile-ai-chat-menu-btn {
+    min-width: 124px !important;
+    min-height: 40px !important;
+    padding: 0 14px !important;
+    font-size: 13px !important;
+  }
+
+  .mobile-ai-chat-menu {
+    width: min(88vw, 318px) !important;
+    padding: 16px 14px !important;
+  }
+}
+
+@media (max-width: 1024px) {
+  /* Treat mobile sidebar as closed unless the app explicitly adds sidebar-mobile-open. */
+  body:not(.sidebar-mobile-open) .sidebar,
+  body:not(.sidebar-mobile-open) .modern-sidebar,
+  body.sidebar-is-collapsed:not(.sidebar-mobile-open) .sidebar,
+  body.sidebar-is-collapsed:not(.sidebar-mobile-open) .modern-sidebar {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 74px !important;
+    height: 72px !important;
+    min-height: 72px !important;
+    padding: 14px 16px !important;
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+    transform: none !important;
+    z-index: 3000 !important;
+  }
+
+  body:not(.sidebar-mobile-open) .sidebar-inner,
+  body:not(.sidebar-mobile-open) .sidebar-main,
+  body:not(.sidebar-mobile-open) .sidebar-brand {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: 0 !important;
+  }
+
+  body:not(.sidebar-mobile-open) .sidebar-logo-wrap,
+  body:not(.sidebar-mobile-open) .sidebar-nav,
+  body:not(.sidebar-mobile-open) .sidebar-section-label,
+  body:not(.sidebar-mobile-open) .sidebar-user-card {
+    display: none !important;
+  }
+
+  body:not(.sidebar-mobile-open) .sidebar-brand-top {
+    width: auto !important;
+    display: flex !important;
+    justify-content: flex-start !important;
+    align-items: center !important;
+  }
+
+  body:not(.sidebar-mobile-open) .mobile-toggle,
+  body:not(.sidebar-mobile-open) .sidebar-toggle-btn {
+    display: inline-flex !important;
+    width: 44px !important;
+    height: 44px !important;
+    min-width: 44px !important;
+    min-height: 44px !important;
+    padding: 0 !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border-radius: 15px !important;
+    background: rgba(255, 253, 248, 0.94) !important;
+    border: 1px solid rgba(234, 216, 183, 0.95) !important;
+    box-shadow: 0 8px 18px rgba(84, 55, 13, 0.12) !important;
+    color: var(--heading) !important;
+    font-size: 22px !important;
+    z-index: 3100 !important;
+  }
+
+  body.sidebar-mobile-open .sidebar,
+  body.sidebar-mobile-open .modern-sidebar,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar,
+  body.sidebar-is-collapsed.sidebar-mobile-open .modern-sidebar {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: min(82vw, 320px) !important;
+    height: 100dvh !important;
+    min-height: 100dvh !important;
+    padding: 18px 16px !important;
+    overflow: hidden !important;
+    transform: none !important;
+    z-index: 3000 !important;
+    background: linear-gradient(180deg, #fff7df 0%, #f4d99d 100%) !important;
+    border-right: 1px solid rgba(216, 189, 133, 0.75) !important;
+    box-shadow: 18px 0 45px rgba(42, 31, 18, 0.28) !important;
+  }
+}
+
+/* =========================================================
+   37. FINAL MOBILE FIX: CHAT MENU TOP-RIGHT, SIDEBAR OVERLAY,
+   CAMERA/FILE BUTTONS
+   Put this at the very bottom so it overrides all previous AI chat/mobile
+   sidebar rules.
+   ========================================================= */
+
+@media (max-width: 1024px) {
+  /* Remove the accidental dark transparent page layer. */
+  body::after,
+  body:not(.sidebar-mobile-open)::after,
+  body.sidebar-mobile-closed::after,
+  body.ai-chat-mobile-menu-open::after {
+    content: none !important;
+    display: none !important;
+    opacity: 0 !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+  }
+
+  /* The actual mobile-sidebar overlay only appears when Sidebar.jsx adds sidebar-mobile-open. */
+  .mobile-sidebar-overlay {
+    display: none !important;
+    opacity: 0 !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+  }
+
+  body.sidebar-mobile-open .mobile-sidebar-overlay {
+    display: block !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+    pointer-events: auto !important;
+  }
+
+  /* Closed sidebar = show only the hamburger button area. */
+  body.sidebar-mobile-closed .sidebar,
+  body.sidebar-mobile-closed .modern-sidebar {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 74px !important;
+    height: 72px !important;
+    min-height: 72px !important;
+    padding: 14px 16px !important;
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+    z-index: 3000 !important;
+  }
+
+  body.sidebar-mobile-closed .sidebar-logo-wrap,
+  body.sidebar-mobile-closed .sidebar-nav,
+  body.sidebar-mobile-closed .sidebar-section-label,
+  body.sidebar-mobile-closed .sidebar-user-card {
+    display: none !important;
+  }
+
+  body.sidebar-mobile-closed .sidebar-brand,
+  body.sidebar-mobile-closed .sidebar-inner,
+  body.sidebar-mobile-closed .sidebar-main {
+    width: auto !important;
+    height: auto !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    border: 0 !important;
+  }
+
+  body.sidebar-mobile-closed .sidebar-brand-top {
+    width: auto !important;
+    display: flex !important;
+    justify-content: flex-start !important;
+    align-items: center !important;
+  }
+
+  body.sidebar-mobile-closed .mobile-toggle,
+  body.sidebar-mobile-closed .sidebar-toggle-btn {
+    display: inline-flex !important;
+    width: 44px !important;
+    height: 44px !important;
+    min-width: 44px !important;
+    min-height: 44px !important;
+    padding: 0 !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border-radius: 15px !important;
+    background: rgba(255, 253, 248, 0.96) !important;
+    border: 1px solid rgba(234, 216, 183, 0.95) !important;
+    box-shadow: 0 8px 18px rgba(84, 55, 13, 0.12) !important;
+    color: var(--heading) !important;
+    font-size: 22px !important;
+    z-index: 3100 !important;
+  }
+
+  /* Open sidebar drawer should show full labels instead of icon-only. */
+  body.sidebar-mobile-open .sidebar,
+  body.sidebar-mobile-open .modern-sidebar,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar,
+  body.sidebar-is-collapsed.sidebar-mobile-open .modern-sidebar {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: min(82vw, 320px) !important;
+    height: 100dvh !important;
+    min-height: 100dvh !important;
+    padding: 18px 16px !important;
+    overflow: hidden !important;
+    z-index: 3600 !important;
+    background: linear-gradient(180deg, #fff7df 0%, #f4d99d 100%) !important;
+    border-right: 1px solid rgba(216, 189, 133, 0.75) !important;
+    box-shadow: 18px 0 45px rgba(42, 31, 18, 0.26) !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-inner,
+  body.sidebar-mobile-open .sidebar-main,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-inner,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-main {
+    height: 100% !important;
+    min-height: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-main,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-main {
+    flex: 1 1 auto !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    padding-right: 4px !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-brand,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-brand {
+    display: block !important;
+    margin-bottom: 18px !important;
+    padding: 4px 0 16px !important;
+    border-bottom: 1px solid rgba(111, 71, 8, 0.14) !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-brand-top,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-brand-top {
+    width: 100% !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 12px !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-logo-wrap,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-logo-wrap {
+    display: flex !important;
+    justify-content: flex-start !important;
+    align-items: center !important;
+    gap: 12px !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-nav,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-nav {
+    width: 100% !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 8px !important;
+    overflow: visible !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-section-label,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-section-label {
+    display: block !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+    margin: 20px 8px 8px !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-brand-text,
+  body.sidebar-mobile-open .sidebar-link-text,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-brand-text,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-link-text {
+    display: inline !important;
+    width: auto !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-link,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-link {
+    width: 100% !important;
+    height: auto !important;
+    min-height: 46px !important;
+    padding: 11px 13px !important;
+    justify-content: flex-start !important;
+    gap: 12px !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-user-card,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-user-card {
+    display: block !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+    margin-top: 12px !important;
+  }
+}
+
+@media (max-width: 820px) {
+  /* Chat menu button must sit at the top-right, not centered. */
+  .ai-chat-top-row,
+  .ai-chat-top-row-tabs-only {
+    width: 100% !important;
+    min-height: 44px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+  }
+
+  .mobile-ai-chat-menu-btn {
+    margin-left: auto !important;
+    margin-right: 0 !important;
+    min-width: 104px !important;
+    min-height: 40px !important;
+    padding: 0 14px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 6px !important;
+    border-radius: 999px !important;
+    font-size: 13px !important;
+    font-weight: 900 !important;
+  }
+
+  /* Mobile composer: input full row, Camera + File left, Send right. */
+  .ai-chat-input-row {
+    display: grid !important;
+    grid-template-columns: 46px 46px minmax(0, 1fr) 88px !important;
+    grid-template-areas:
+      'input input input input'
+      'camera file . send' !important;
+    gap: 10px !important;
+    padding: 12px 14px !important;
+    align-items: center !important;
+    background: rgba(255, 253, 248, 0.98) !important;
+    border-top: 1px solid var(--border) !important;
+  }
+
+  .ai-chat-input-row > input {
+    grid-area: input !important;
+    width: 100% !important;
+    min-height: 48px !important;
+    padding: 0 15px !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 17px !important;
+    background: #fffaf0 !important;
+  }
+
+  .ai-chat-input-row label:nth-of-type(1) {
+    grid-area: camera !important;
+  }
+
+  .ai-chat-input-row label:nth-of-type(2) {
+    grid-area: file !important;
+  }
+
+  .ai-chat-tool-btn,
+  .chat-image-upload-btn {
+    width: 46px !important;
+    min-width: 46px !important;
+    height: 46px !important;
+    min-height: 46px !important;
+    padding: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border-radius: 999px !important;
+    background: #fffaf0 !important;
+    border: 1px solid var(--border-strong) !important;
+    color: var(--primary-dark) !important;
+    box-shadow: none !important;
+    font-size: 0 !important;
+    line-height: 1 !important;
+  }
+
+  .ai-chat-tool-btn:hover,
+  .chat-image-upload-btn:hover {
+    transform: none !important;
+    background: #fff1d2 !important;
+    border-color: var(--primary) !important;
+  }
+
+  .ai-chat-tool-btn span:first-child,
+  .chat-image-upload-btn span:first-child {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-size: 17px !important;
+    line-height: 1 !important;
+  }
+
+  .ai-chat-tool-btn span:last-child,
+  .chat-image-upload-btn span:last-child {
+    display: none !important;
+  }
+
+  .ai-chat-send-btn,
+  .ai-chat-input-row .primary-btn {
+    grid-area: send !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: 46px !important;
+    padding: 0 16px !important;
+    border-radius: 999px !important;
+    font-size: 13px !important;
+    font-weight: 900 !important;
+  }
+}
+
+@media (max-width: 430px) {
+  .mobile-ai-chat-menu-btn {
+    min-width: 96px !important;
+    min-height: 38px !important;
+    padding: 0 12px !important;
+  }
+
+  .ai-chat-input-row {
+    grid-template-columns: 44px 44px minmax(0, 1fr) 84px !important;
+    gap: 9px !important;
+    padding: 10px 12px !important;
+  }
+
+  .ai-chat-tool-btn,
+  .chat-image-upload-btn {
+    width: 44px !important;
+    min-width: 44px !important;
+    height: 44px !important;
+    min-height: 44px !important;
+  }
+
+  .ai-chat-send-btn,
+  .ai-chat-input-row .primary-btn {
+    min-height: 44px !important;
+  }
+}
+
+
+/* =========================================================
+   38. FINAL MOBILE COMPACT NAV + BIGGER AI CHAT SPACE
+   Aligns Chat Menu with the left system sidebar arrow and gives
+   the chat panel more vertical space on phone screens.
+   ========================================================= */
+
+@media (max-width: 820px) {
+  html,
+  body,
+  #root {
+    min-height: 100dvh !important;
+  }
+
+  body {
+    overflow-x: hidden !important;
+  }
+
+  .main-area,
+  body.sidebar-is-collapsed .main-area {
+    width: 100% !important;
+    margin-left: 0 !important;
+    padding: 0 16px 8px !important;
+    min-height: 100dvh !important;
+    overflow-x: hidden !important;
+  }
+
+  .page-content:has(.ai-chat-page),
+  .page-content:has(.ai-chat-shell) {
+    width: 100% !important;
+    min-height: 100dvh !important;
+    gap: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: visible !important;
+  }
+
+  .ai-chat-page {
+    width: 100% !important;
+    height: 100dvh !important;
+    min-height: 100dvh !important;
+    gap: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+  }
+
+  /* Keep the system sidebar button and Chat Menu on the same top row. */
+  body.sidebar-mobile-closed .sidebar,
+  body.sidebar-mobile-closed .modern-sidebar {
+    top: 0 !important;
+    left: 0 !important;
+    width: 70px !important;
+    height: 66px !important;
+    min-height: 66px !important;
+    padding: 14px 16px !important;
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    z-index: 3300 !important;
+  }
+
+  body.sidebar-mobile-closed .mobile-toggle,
+  body.sidebar-mobile-closed .sidebar-toggle-btn {
+    width: 40px !important;
+    height: 40px !important;
+    min-width: 40px !important;
+    min-height: 40px !important;
+    border-radius: 14px !important;
+    font-size: 20px !important;
+    background: rgba(255, 253, 248, 0.97) !important;
+    border: 1px solid rgba(234, 216, 183, 0.95) !important;
+    box-shadow: 0 8px 18px rgba(84, 55, 13, 0.12) !important;
+  }
+
+  .ai-chat-top-row,
+  .ai-chat-top-row-tabs-only {
+    position: fixed !important;
+    top: 14px !important;
+    right: 16px !important;
+    left: auto !important;
+    width: auto !important;
+    min-width: 0 !important;
+    min-height: 40px !important;
+    height: 40px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    background: transparent !important;
+    border: 0 !important;
+    z-index: 3350 !important;
+  }
+
+  .ai-chat-tabs,
+  .ai-chat-top-row .tab-row,
+  .ai-chat-title-row .tab-row {
+    display: none !important;
+  }
+
+  .mobile-ai-chat-menu-btn {
+    width: auto !important;
+    min-width: 92px !important;
+    height: 40px !important;
+    min-height: 40px !important;
+    margin: 0 !important;
+    padding: 0 14px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 5px !important;
+    border-radius: 999px !important;
+    background: rgba(255, 253, 248, 0.97) !important;
+    border: 1px solid rgba(234, 216, 183, 0.95) !important;
+    box-shadow: 0 8px 18px rgba(84, 55, 13, 0.10) !important;
+    color: var(--heading) !important;
+    font-size: 13px !important;
+    font-weight: 900 !important;
+    line-height: 1 !important;
+  }
+
+  .mobile-ai-chat-menu-btn:hover {
+    transform: none !important;
+    background: #fff6e6 !important;
+    border-color: var(--border-strong) !important;
+  }
+
+  /* Bigger chat card: starts right below the small top nav row. */
+  .ai-chat-shell {
+    width: 100% !important;
+    height: calc(100dvh - 76px) !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    margin: 66px 0 0 !important;
+    padding: 0 !important;
+    display: block !important;
+    overflow: hidden !important;
+  }
+
+  .ai-chat-shell .chat-recents-panel {
+    display: none !important;
+  }
+
+  .ai-chat-panel,
+  .chat-panel.ai-chat-panel {
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    border-radius: 22px !important;
+    border: 1px solid rgba(234, 216, 183, 0.95) !important;
+    box-shadow: 0 12px 30px rgba(84, 55, 13, 0.08) !important;
+  }
+
+  /* Hide the small session title bar on mobile to save space. */
+  .ai-chat-panel .ai-chat-header {
+    display: none !important;
+  }
+
+  .ai-chat-messages,
+  .chat-messages.ai-chat-messages {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    height: auto !important;
+    padding: 14px !important;
+    gap: 14px !important;
+    overflow-y: auto !important;
+    background:
+      radial-gradient(circle at top left, rgba(255, 239, 204, 0.32), transparent 32%),
+      linear-gradient(180deg, #fffdf8 0%, #fbf4e6 100%) !important;
+  }
+
+  .ai-chat-messages .chat-message-row,
+  .chat-message-row {
+    width: 100% !important;
+  }
+
+  .ai-chat-messages .message-bubble,
+  .ai-chat-panel .message-bubble,
+  .message-bubble {
+    max-width: 92% !important;
+    padding: 13px 16px !important;
+    border-radius: 16px !important;
+  }
+
+  .chat-message-row.user .message-bubble,
+  .message-bubble.user {
+    max-width: 78% !important;
+  }
+
+  /* Compact but clean bottom composer. */
+  .ai-chat-input-row,
+  .chat-input-row.ai-chat-input-row {
+    flex-shrink: 0 !important;
+    min-height: 112px !important;
+    margin: 0 !important;
+    padding: 12px 14px !important;
+    display: grid !important;
+    grid-template-columns: 44px 44px minmax(0, 1fr) 84px !important;
+    grid-template-areas:
+      'input input input input'
+      'camera file . send' !important;
+    gap: 10px !important;
+    align-items: center !important;
+    background: rgba(255, 253, 248, 0.98) !important;
+    border-top: 1px solid var(--border) !important;
+    border-radius: 0 !important;
+    box-shadow: 0 -8px 24px rgba(84, 55, 13, 0.06) !important;
+  }
+
+  .ai-chat-input-row > input {
+    grid-area: input !important;
+    width: 100% !important;
+    min-height: 48px !important;
+    padding: 0 15px !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 17px !important;
+    background: #fffaf0 !important;
+    box-shadow: none !important;
+    font-size: 14px !important;
+  }
+
+  .ai-chat-input-row > input:focus {
+    border-color: var(--primary) !important;
+    box-shadow: 0 0 0 3px var(--primary-glow) !important;
+  }
+
+  .ai-chat-input-row label:nth-of-type(1) {
+    grid-area: camera !important;
+  }
+
+  .ai-chat-input-row label:nth-of-type(2) {
+    grid-area: file !important;
+  }
+
+  .ai-chat-tool-btn,
+  .chat-image-upload-btn {
+    width: 44px !important;
+    min-width: 44px !important;
+    height: 44px !important;
+    min-height: 44px !important;
+    padding: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border-radius: 999px !important;
+    background: #fffaf0 !important;
+    border: 1px solid var(--border-strong) !important;
+    color: var(--primary-dark) !important;
+    box-shadow: none !important;
+    font-size: 0 !important;
+    line-height: 1 !important;
+    cursor: pointer !important;
+  }
+
+  .ai-chat-tool-btn span:first-child,
+  .chat-image-upload-btn span:first-child {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 100% !important;
+    height: 100% !important;
+    font-size: 16px !important;
+    line-height: 1 !important;
+  }
+
+  .ai-chat-tool-btn span:last-child,
+  .chat-image-upload-btn span:last-child {
+    display: none !important;
+  }
+
+  .ai-chat-send-btn,
+  .ai-chat-input-row .primary-btn {
+    grid-area: send !important;
+    width: 84px !important;
+    min-width: 84px !important;
+    min-height: 44px !important;
+    height: 44px !important;
+    padding: 0 14px !important;
+    border-radius: 999px !important;
+    font-size: 13px !important;
+    font-weight: 900 !important;
+  }
+
+  .chat-upload-preview {
+    margin: 0 !important;
+    padding: 10px 14px !important;
+    border-top: 1px solid var(--border) !important;
+    background: #fffaf0 !important;
+  }
+
+  /* Chat History screen also starts below the small top nav row. */
+  .ai-chat-history-page {
+    margin-top: 66px !important;
+    height: calc(100dvh - 76px) !important;
+    min-height: 0 !important;
+    overflow-y: auto !important;
+    border-radius: 22px !important;
+  }
+
+  /* Keep AI right drawer above the chat but below the real left sidebar drawer. */
+  .mobile-ai-chat-menu-overlay {
+    z-index: 3400 !important;
+  }
+
+  .mobile-ai-chat-menu {
+    z-index: 3450 !important;
+  }
+
+  body.sidebar-mobile-open .sidebar,
+  body.sidebar-mobile-open .modern-sidebar,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar,
+  body.sidebar-is-collapsed.sidebar-mobile-open .modern-sidebar {
+    z-index: 3600 !important;
+  }
+}
+
+@media (max-width: 430px) {
+  .main-area,
+  body.sidebar-is-collapsed .main-area {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+    padding-bottom: 6px !important;
+  }
+
+  body.sidebar-mobile-closed .sidebar,
+  body.sidebar-mobile-closed .modern-sidebar {
+    height: 62px !important;
+    min-height: 62px !important;
+    padding: 12px 16px !important;
+  }
+
+  body.sidebar-mobile-closed .mobile-toggle,
+  body.sidebar-mobile-closed .sidebar-toggle-btn {
+    width: 38px !important;
+    height: 38px !important;
+    min-width: 38px !important;
+    min-height: 38px !important;
+    border-radius: 13px !important;
+    font-size: 19px !important;
+  }
+
+  .ai-chat-top-row,
+  .ai-chat-top-row-tabs-only {
+    top: 12px !important;
+    right: 16px !important;
+    height: 38px !important;
+    min-height: 38px !important;
+  }
+
+  .mobile-ai-chat-menu-btn {
+    min-width: 86px !important;
+    height: 38px !important;
+    min-height: 38px !important;
+    padding: 0 12px !important;
+    font-size: 12.5px !important;
+  }
+
+  .ai-chat-shell {
+    margin-top: 60px !important;
+    height: calc(100dvh - 68px) !important;
+  }
+
+  .ai-chat-history-page {
+    margin-top: 60px !important;
+    height: calc(100dvh - 68px) !important;
+  }
+
+  .ai-chat-messages,
+  .chat-messages.ai-chat-messages {
+    padding: 12px !important;
+  }
+
+  .ai-chat-input-row,
+  .chat-input-row.ai-chat-input-row {
+    min-height: 108px !important;
+    padding: 10px 12px !important;
+    grid-template-columns: 42px 42px minmax(0, 1fr) 82px !important;
+    gap: 9px !important;
+  }
+
+  .ai-chat-input-row > input {
+    min-height: 46px !important;
+  }
+
+  .ai-chat-tool-btn,
+  .chat-image-upload-btn {
+    width: 42px !important;
+    min-width: 42px !important;
+    height: 42px !important;
+    min-height: 42px !important;
+  }
+
+  .ai-chat-send-btn,
+  .ai-chat-input-row .primary-btn {
+    width: 82px !important;
+    min-width: 82px !important;
+    height: 42px !important;
+    min-height: 42px !important;
+  }
+}
+
+/* =========================================================
+   39. GPT-STYLE MOBILE FINAL FIX
+   Fixes duplicate left sidebar toggle, makes the mobile AI chat
+   fill the screen like ChatGPT, and keeps the top nav very small.
+   ========================================================= */
+
+@media (max-width: 820px) {
+  html,
+  body,
+  #root {
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 100dvh !important;
+    overflow-x: hidden !important;
+  }
+
+  body {
+    overflow-x: hidden !important;
+  }
+
+  /* Main content should not create extra empty space below the chat. */
+  .main-area,
+  body.sidebar-is-collapsed .main-area {
+    width: 100% !important;
+    min-height: 100dvh !important;
+    margin-left: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+  }
+
+  .page-content:has(.ai-chat-page),
+  .page-content:has(.ai-chat-shell) {
+    width: 100% !important;
+    min-height: 100dvh !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    gap: 0 !important;
+    overflow: hidden !important;
+  }
+
+  .ai-chat-page {
+    width: 100% !important;
+    height: 100dvh !important;
+    min-height: 100dvh !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    gap: 0 !important;
+    overflow: hidden !important;
+  }
+
+  /* Closed left system sidebar: show ONE clean toggle only. */
+  body:not(.sidebar-mobile-open) .sidebar,
+  body:not(.sidebar-mobile-open) .modern-sidebar,
+  body.sidebar-mobile-closed .sidebar,
+  body.sidebar-mobile-closed .modern-sidebar,
+  body.sidebar-is-collapsed:not(.sidebar-mobile-open) .sidebar,
+  body.sidebar-is-collapsed:not(.sidebar-mobile-open) .modern-sidebar {
+    position: fixed !important;
+    top: 8px !important;
+    left: 10px !important;
+    width: 42px !important;
+    height: 42px !important;
+    min-width: 42px !important;
+    min-height: 42px !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+    z-index: 3600 !important;
+  }
+
+  body:not(.sidebar-mobile-open) .sidebar-inner,
+  body:not(.sidebar-mobile-open) .sidebar-main,
+  body:not(.sidebar-mobile-open) .sidebar-brand,
+  body.sidebar-mobile-closed .sidebar-inner,
+  body.sidebar-mobile-closed .sidebar-main,
+  body.sidebar-mobile-closed .sidebar-brand {
+    width: 42px !important;
+    height: 42px !important;
+    min-height: 42px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    border: 0 !important;
+  }
+
+  body:not(.sidebar-mobile-open) .sidebar-logo-wrap,
+  body:not(.sidebar-mobile-open) .sidebar-nav,
+  body:not(.sidebar-mobile-open) .sidebar-section-label,
+  body:not(.sidebar-mobile-open) .sidebar-user-card,
+  body.sidebar-mobile-closed .sidebar-logo-wrap,
+  body.sidebar-mobile-closed .sidebar-nav,
+  body.sidebar-mobile-closed .sidebar-section-label,
+  body.sidebar-mobile-closed .sidebar-user-card {
+    display: none !important;
+  }
+
+  body:not(.sidebar-mobile-open) .sidebar-brand-top,
+  body.sidebar-mobile-closed .sidebar-brand-top {
+    width: 42px !important;
+    height: 42px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 0 !important;
+  }
+
+  /* Hide the desktop toggle on mobile so the left button is not duplicated. */
+  body:not(.sidebar-mobile-open) .sidebar-brand-top .desktop-toggle,
+  body.sidebar-mobile-closed .sidebar-brand-top .desktop-toggle {
+    display: none !important;
+  }
+
+  body:not(.sidebar-mobile-open) .sidebar-brand-top .mobile-toggle,
+  body:not(.sidebar-mobile-open) .sidebar-brand-top .sidebar-toggle-btn.mobile-toggle,
+  body.sidebar-mobile-closed .sidebar-brand-top .mobile-toggle,
+  body.sidebar-mobile-closed .sidebar-brand-top .sidebar-toggle-btn.mobile-toggle {
+    display: inline-flex !important;
+  }
+
+  body:not(.sidebar-mobile-open) .sidebar-toggle-btn,
+  body.sidebar-mobile-closed .sidebar-toggle-btn {
+    width: 40px !important;
+    height: 40px !important;
+    min-width: 40px !important;
+    min-height: 40px !important;
+    padding: 0 !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border-radius: 14px !important;
+    background: rgba(255, 253, 248, 0.98) !important;
+    border: 1px solid rgba(234, 216, 183, 0.95) !important;
+    box-shadow: 0 8px 18px rgba(84, 55, 13, 0.12) !important;
+    color: var(--heading) !important;
+    font-size: 19px !important;
+    line-height: 1 !important;
+  }
+
+  body:not(.sidebar-mobile-open) .sidebar-toggle-btn:hover,
+  body.sidebar-mobile-closed .sidebar-toggle-btn:hover {
+    transform: none !important;
+    background: #fff6e6 !important;
+  }
+
+  /* Open left sidebar still works as a full drawer. */
+  body.sidebar-mobile-open .sidebar,
+  body.sidebar-mobile-open .modern-sidebar,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar,
+  body.sidebar-is-collapsed.sidebar-mobile-open .modern-sidebar {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: min(82vw, 320px) !important;
+    height: 100dvh !important;
+    min-height: 100dvh !important;
+    padding: 18px 16px !important;
+    overflow: hidden !important;
+    z-index: 3900 !important;
+    background: linear-gradient(180deg, #fff7df 0%, #f4d99d 100%) !important;
+    border-right: 1px solid rgba(216, 189, 133, 0.75) !important;
+    box-shadow: 18px 0 45px rgba(42, 31, 18, 0.26) !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-inner,
+  body.sidebar-mobile-open .sidebar-main,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-inner,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-main {
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-main,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-main {
+    flex: 1 1 auto !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+  }
+
+  /* Small top-right menu, same row as the left sidebar button. */
+  .ai-chat-top-row,
+  .ai-chat-top-row-tabs-only {
+    position: fixed !important;
+    top: 8px !important;
+    right: 10px !important;
+    left: auto !important;
+    width: auto !important;
+    height: 42px !important;
+    min-height: 42px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    z-index: 3500 !important;
+  }
+
+  .ai-chat-tabs,
+  .tab-row.ai-chat-tabs,
+  .ai-chat-top-row .tab-row {
+    display: none !important;
+  }
+
+  .mobile-ai-chat-menu-btn {
+    width: auto !important;
+    min-width: 78px !important;
+    height: 40px !important;
+    min-height: 40px !important;
+    margin: 0 !important;
+    padding: 0 12px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 4px !important;
+    border-radius: 999px !important;
+    background: rgba(255, 253, 248, 0.98) !important;
+    border: 1px solid rgba(234, 216, 183, 0.95) !important;
+    box-shadow: 0 8px 18px rgba(84, 55, 13, 0.1) !important;
+    color: var(--heading) !important;
+    font-size: 12.5px !important;
+    font-weight: 900 !important;
+    line-height: 1 !important;
+  }
+
+  .mobile-ai-chat-menu-btn:hover {
+    transform: none !important;
+    background: #fff6e6 !important;
+    border-color: var(--border-strong) !important;
+  }
+
+  /* GPT-style mobile chat: fixed full-height workspace below the top icons. */
+  .ai-chat-shell {
+    position: fixed !important;
+    top: 56px !important;
+    left: 10px !important;
+    right: 10px !important;
+    bottom: 8px !important;
+    width: auto !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: block !important;
+    overflow: hidden !important;
+    z-index: 1 !important;
+  }
+
+  .ai-chat-shell .chat-recents-panel {
+    display: none !important;
+  }
+
+  .ai-chat-panel,
+  .chat-panel.ai-chat-panel {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    border-radius: 22px !important;
+    border: 1px solid rgba(234, 216, 183, 0.95) !important;
+    background: rgba(255, 253, 248, 0.74) !important;
+    box-shadow: 0 12px 30px rgba(84, 55, 13, 0.08) !important;
+  }
+
+  .ai-chat-panel .ai-chat-header {
+    display: none !important;
+  }
+
+  .ai-chat-messages,
+  .chat-messages.ai-chat-messages {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    height: auto !important;
+    max-height: none !important;
+    padding: 14px !important;
+    gap: 14px !important;
+    overflow-y: auto !important;
+    background:
+      radial-gradient(circle at top left, rgba(255, 239, 204, 0.28), transparent 32%),
+      linear-gradient(180deg, #fffdf8 0%, #fbf4e6 100%) !important;
+  }
+
+  .ai-chat-messages .message-bubble,
+  .ai-chat-panel .message-bubble,
+  .message-bubble {
+    max-width: 92% !important;
+    padding: 13px 16px !important;
+    border-radius: 16px !important;
+  }
+
+  .chat-message-row.user .message-bubble,
+  .message-bubble.user {
+    max-width: 78% !important;
+  }
+
+  /* Compact composer at the bottom, like ChatGPT mobile. */
+  .ai-chat-input-row,
+  .chat-input-row.ai-chat-input-row {
+    flex: 0 0 auto !important;
+    min-height: 104px !important;
+    margin: 0 !important;
+    padding: 10px 12px !important;
+    display: grid !important;
+    grid-template-columns: 42px 42px minmax(0, 1fr) 82px !important;
+    grid-template-areas:
+      'input input input input'
+      'camera file . send' !important;
+    gap: 8px !important;
+    align-items: center !important;
+    background: rgba(255, 253, 248, 0.99) !important;
+    border-top: 1px solid var(--border) !important;
+    border-radius: 0 !important;
+    box-shadow: 0 -8px 22px rgba(84, 55, 13, 0.06) !important;
+  }
+
+  .ai-chat-input-row > input {
+    grid-area: input !important;
+    width: 100% !important;
+    min-height: 46px !important;
+    padding: 0 14px !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 17px !important;
+    background: #fffaf0 !important;
+    box-shadow: none !important;
+    font-size: 14px !important;
+  }
+
+  .ai-chat-input-row label:nth-of-type(1) {
+    grid-area: camera !important;
+  }
+
+  .ai-chat-input-row label:nth-of-type(2) {
+    grid-area: file !important;
+  }
+
+  .ai-chat-tool-btn,
+  .chat-image-upload-btn {
+    width: 42px !important;
+    min-width: 42px !important;
+    height: 42px !important;
+    min-height: 42px !important;
+    padding: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border-radius: 999px !important;
+    background: #fffaf0 !important;
+    border: 1px solid var(--border-strong) !important;
+    color: var(--primary-dark) !important;
+    box-shadow: none !important;
+    font-size: 0 !important;
+    line-height: 1 !important;
+  }
+
+  .ai-chat-tool-btn span:first-child,
+  .chat-image-upload-btn span:first-child {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 100% !important;
+    height: 100% !important;
+    font-size: 16px !important;
+    line-height: 1 !important;
+  }
+
+  .ai-chat-tool-btn span:last-child,
+  .chat-image-upload-btn span:last-child {
+    display: none !important;
+  }
+
+  .ai-chat-send-btn,
+  .ai-chat-input-row .primary-btn {
+    grid-area: send !important;
+    width: 82px !important;
+    min-width: 82px !important;
+    height: 42px !important;
+    min-height: 42px !important;
+    padding: 0 12px !important;
+    border-radius: 999px !important;
+    font-size: 13px !important;
+    font-weight: 900 !important;
+  }
+
+  /* History view also fills the phone screen under the small top row. */
+  .ai-chat-history-page {
+    position: fixed !important;
+    top: 56px !important;
+    left: 10px !important;
+    right: 10px !important;
+    bottom: 8px !important;
+    width: auto !important;
+    height: auto !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    overflow-y: auto !important;
+    border-radius: 22px !important;
+  }
+}
+
+@media (max-width: 430px) {
+  .ai-chat-shell,
+  .ai-chat-history-page {
+    top: 54px !important;
+    left: 8px !important;
+    right: 8px !important;
+    bottom: 6px !important;
+  }
+
+  body:not(.sidebar-mobile-open) .sidebar,
+  body:not(.sidebar-mobile-open) .modern-sidebar,
+  body.sidebar-mobile-closed .sidebar,
+  body.sidebar-mobile-closed .modern-sidebar {
+    top: 8px !important;
+    left: 8px !important;
+  }
+
+  .ai-chat-top-row,
+  .ai-chat-top-row-tabs-only {
+    top: 8px !important;
+    right: 8px !important;
+  }
+
+  .mobile-ai-chat-menu-btn {
+    min-width: 76px !important;
+    height: 38px !important;
+    min-height: 38px !important;
+    padding: 0 11px !important;
+    font-size: 12px !important;
+  }
+
+  .ai-chat-input-row,
+  .chat-input-row.ai-chat-input-row {
+    min-height: 100px !important;
+    padding: 9px 10px !important;
+    grid-template-columns: 40px 40px minmax(0, 1fr) 80px !important;
+  }
+
+  .ai-chat-input-row > input {
+    min-height: 44px !important;
+  }
+
+  .ai-chat-tool-btn,
+  .chat-image-upload-btn {
+    width: 40px !important;
+    min-width: 40px !important;
+    height: 40px !important;
+    min-height: 40px !important;
+  }
+
+  .ai-chat-send-btn,
+  .ai-chat-input-row .primary-btn {
+    width: 80px !important;
+    min-width: 80px !important;
+    height: 40px !important;
+    min-height: 40px !important;
+  }
+}
+
+/* =========================================================
+   99. FINAL MOBILE AI CHAT FIX - GPT STYLE
+   Fixes: right drawer z-index, hidden menu button when drawer opens,
+   single left sidebar toggle, and full-height mobile chat area.
+   Keep this section at the very bottom of styles.css.
+   ========================================================= */
+
+@media (max-width: 820px) {
+  html,
+  body,
+  #root {
+    width: 100% !important;
+    height: 100% !important;
+    overflow-x: hidden !important;
+  }
+
+  body.ai-chat-mobile-menu-open {
+    overflow: hidden !important;
+    touch-action: none !important;
+  }
+
+  /* Make mobile page behave like a real app screen. */
+  .main-area,
+  body.sidebar-is-collapsed .main-area {
+    width: 100% !important;
+    min-height: 100dvh !important;
+    margin-left: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+  }
+
+  .page-content,
+  .page-content:has(.ai-chat-page),
+  .page-content:has(.ai-chat-shell),
+  .ai-chat-page {
+    width: 100% !important;
+    height: 100dvh !important;
+    min-height: 100dvh !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    gap: 0 !important;
+    overflow: hidden !important;
+  }
+
+  /* Closed left system sidebar: only show ONE small toggle button. */
+  body:not(.sidebar-mobile-open) .sidebar,
+  body:not(.sidebar-mobile-open) .modern-sidebar,
+  body.sidebar-mobile-closed .sidebar,
+  body.sidebar-mobile-closed .modern-sidebar {
+    position: fixed !important;
+    top: 10px !important;
+    left: 10px !important;
+    width: 40px !important;
+    height: 40px !important;
+    min-height: 40px !important;
+    max-height: 40px !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: visible !important;
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    z-index: 5000 !important;
+  }
+
+  body:not(.sidebar-mobile-open) .sidebar-inner,
+  body.sidebar-mobile-closed .sidebar-inner,
+  body:not(.sidebar-mobile-open) .sidebar-brand,
+  body.sidebar-mobile-closed .sidebar-brand,
+  body:not(.sidebar-mobile-open) .sidebar-brand-top,
+  body.sidebar-mobile-closed .sidebar-brand-top {
+    width: 40px !important;
+    height: 40px !important;
+    min-height: 40px !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+  }
+
+  body:not(.sidebar-mobile-open) .sidebar-logo-wrap,
+  body:not(.sidebar-mobile-open) .sidebar-main,
+  body:not(.sidebar-mobile-open) .sidebar-nav,
+  body:not(.sidebar-mobile-open) .sidebar-user-card,
+  body:not(.sidebar-mobile-open) .sidebar-section-label,
+  body:not(.sidebar-mobile-open) .desktop-toggle,
+  body:not(.sidebar-mobile-open) .sidebar-toggle-btn:not(.mobile-toggle),
+  body.sidebar-mobile-closed .sidebar-logo-wrap,
+  body.sidebar-mobile-closed .sidebar-main,
+  body.sidebar-mobile-closed .sidebar-nav,
+  body.sidebar-mobile-closed .sidebar-user-card,
+  body.sidebar-mobile-closed .sidebar-section-label,
+  body.sidebar-mobile-closed .desktop-toggle,
+  body.sidebar-mobile-closed .sidebar-toggle-btn:not(.mobile-toggle) {
+    display: none !important;
+  }
+
+  body:not(.sidebar-mobile-open) .mobile-toggle,
+  body.sidebar-mobile-closed .mobile-toggle {
+    width: 40px !important;
+    height: 40px !important;
+    min-width: 40px !important;
+    min-height: 40px !important;
+    padding: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border-radius: 14px !important;
+    background: rgba(255, 253, 248, 0.98) !important;
+    border: 1px solid rgba(234, 216, 183, 0.95) !important;
+    box-shadow: 0 8px 18px rgba(84, 55, 13, 0.12) !important;
+    color: var(--heading) !important;
+    font-size: 18px !important;
+    line-height: 1 !important;
+    z-index: 5001 !important;
+  }
+
+  /* Open left system sidebar should be above page, but below AI chat menu drawer. */
+  body.sidebar-mobile-open .sidebar,
+  body.sidebar-mobile-open .modern-sidebar {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: min(82vw, 310px) !important;
+    height: 100dvh !important;
+    min-height: 100dvh !important;
+    padding: 14px !important;
+    overflow: hidden !important;
+    z-index: 6000 !important;
+    background: linear-gradient(180deg, #fff7df 0%, #f4d99d 100%) !important;
+    border-right: 1px solid rgba(216, 189, 133, 0.75) !important;
+    box-shadow: 14px 0 44px rgba(42, 31, 18, 0.22) !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-inner {
+    width: 100% !important;
+    height: 100% !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-main {
+    display: block !important;
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    overflow-y: auto !important;
+  }
+
+  body.sidebar-mobile-open .mobile-toggle {
+    display: inline-flex !important;
+  }
+
+  /* AI chat top menu row: same row as the left sidebar button, smaller. */
+  .ai-chat-top-row,
+  .ai-chat-top-row-tabs-only {
+    position: fixed !important;
+    top: 10px !important;
+    right: 10px !important;
+    left: auto !important;
+    width: auto !important;
+    height: 40px !important;
+    min-height: 40px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    z-index: 5000 !important;
+  }
+
+  .ai-chat-tabs,
+  .tab-row.ai-chat-tabs,
+  .ai-chat-top-row .tab-row {
+    display: none !important;
+  }
+
+  .mobile-ai-chat-menu-btn {
+    width: auto !important;
+    min-width: 76px !important;
+    height: 40px !important;
+    min-height: 40px !important;
+    margin: 0 !important;
+    padding: 0 12px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 4px !important;
+    border-radius: 999px !important;
+    background: rgba(255, 253, 248, 0.98) !important;
+    border: 1px solid rgba(234, 216, 183, 0.95) !important;
+    box-shadow: 0 8px 18px rgba(84, 55, 13, 0.1) !important;
+    color: var(--heading) !important;
+    font-size: 12px !important;
+    font-weight: 900 !important;
+    line-height: 1 !important;
+  }
+
+  .mobile-ai-chat-menu-btn:hover {
+    transform: none !important;
+    background: #fff6e6 !important;
+  }
+
+  /* Hide the top Menu button while the drawer is open, so it will not cover the drawer close button. */
+  body.ai-chat-mobile-menu-open .ai-chat-top-row,
+  body.ai-chat-mobile-menu-open .mobile-ai-chat-menu-btn {
+    visibility: hidden !important;
+    pointer-events: none !important;
+  }
+
+  /* Full-screen GPT-style chat workspace. */
+  .ai-chat-shell {
+    position: fixed !important;
+    top: 54px !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: block !important;
+    overflow: hidden !important;
+    z-index: 1 !important;
+  }
+
+  .ai-chat-shell .chat-recents-panel {
+    display: none !important;
+  }
+
+  .ai-chat-panel,
+  .chat-panel.ai-chat-panel {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    border-left: 0 !important;
+    border-right: 0 !important;
+    border-bottom: 0 !important;
+    border-radius: 22px 22px 0 0 !important;
+    background: rgba(255, 253, 248, 0.82) !important;
+    box-shadow: 0 -2px 28px rgba(84, 55, 13, 0.07) !important;
+  }
+
+  .ai-chat-panel .ai-chat-header {
+    display: none !important;
+  }
+
+  .ai-chat-messages,
+  .chat-messages.ai-chat-messages {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    height: auto !important;
+    max-height: none !important;
+    padding: 14px 16px !important;
+    gap: 14px !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    background:
+      radial-gradient(circle at top left, rgba(255, 239, 204, 0.28), transparent 32%),
+      linear-gradient(180deg, #fffdf8 0%, #fbf4e6 100%) !important;
+  }
+
+  .chat-message-row {
+    width: 100% !important;
+  }
+
+  .ai-chat-messages .message-bubble,
+  .ai-chat-panel .message-bubble,
+  .message-bubble {
+    max-width: min(92%, 560px) !important;
+    padding: 13px 16px !important;
+    border-radius: 16px !important;
+  }
+
+  .chat-message-row.user .message-bubble,
+  .message-bubble.user {
+    max-width: 78% !important;
+  }
+
+  /* Compact composer at bottom. */
+  .ai-chat-input-row,
+  .chat-input-row.ai-chat-input-row {
+    flex: 0 0 auto !important;
+    min-height: 96px !important;
+    margin: 0 !important;
+    padding: 8px 12px 10px !important;
+    display: grid !important;
+    grid-template-columns: 40px 40px minmax(0, 1fr) 82px !important;
+    grid-template-areas:
+      'input input input input'
+      'camera file . send' !important;
+    gap: 8px !important;
+    align-items: center !important;
+    background: rgba(255, 253, 248, 0.99) !important;
+    border-top: 1px solid var(--border) !important;
+    border-radius: 0 !important;
+    box-shadow: 0 -8px 22px rgba(84, 55, 13, 0.06) !important;
+  }
+
+  .ai-chat-input-row > input {
+    grid-area: input !important;
+    width: 100% !important;
+    min-height: 44px !important;
+    padding: 0 14px !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 17px !important;
+    background: #fffaf0 !important;
+    box-shadow: none !important;
+    font-size: 14px !important;
+  }
+
+  .ai-chat-input-row label:nth-of-type(1) {
+    grid-area: camera !important;
+  }
+
+  .ai-chat-input-row label:nth-of-type(2) {
+    grid-area: file !important;
+  }
+
+  .ai-chat-tool-btn,
+  .chat-image-upload-btn {
+    width: 40px !important;
+    min-width: 40px !important;
+    height: 40px !important;
+    min-height: 40px !important;
+    padding: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border-radius: 999px !important;
+    background: #fffaf0 !important;
+    border: 1px solid var(--border-strong) !important;
+    color: var(--primary-dark) !important;
+    box-shadow: none !important;
+    font-size: 0 !important;
+    line-height: 1 !important;
+  }
+
+  .ai-chat-tool-btn span:first-child,
+  .chat-image-upload-btn span:first-child {
+    width: 100% !important;
+    height: 100% !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-size: 15px !important;
+    line-height: 1 !important;
+  }
+
+  .ai-chat-tool-btn span:last-child,
+  .chat-image-upload-btn span:last-child {
+    display: none !important;
+  }
+
+  .ai-chat-send-btn,
+  .ai-chat-input-row .primary-btn {
+    grid-area: send !important;
+    width: 82px !important;
+    min-width: 82px !important;
+    height: 40px !important;
+    min-height: 40px !important;
+    padding: 0 12px !important;
+    border-radius: 999px !important;
+    font-size: 13px !important;
+    font-weight: 900 !important;
+  }
+
+  /* Right chat drawer: must be above the left sidebar button and above the Menu button. */
+  .mobile-ai-chat-menu-overlay {
+    position: fixed !important;
+    inset: 0 !important;
+    width: 100vw !important;
+    height: 100dvh !important;
+    display: block !important;
+    padding: 0 !important;
+    background: rgba(31, 24, 13, 0.32) !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    backdrop-filter: blur(2px) !important;
+    z-index: 90000 !important;
+  }
+
+  .mobile-ai-chat-menu {
+    position: fixed !important;
+    top: 0 !important;
+    right: 0 !important;
+    width: min(84vw, 330px) !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    padding: 18px 16px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 16px !important;
+    overflow: hidden !important;
+    background:
+      radial-gradient(circle at top right, rgba(255, 239, 188, 0.9), transparent 42%),
+      linear-gradient(180deg, #fffaf0 0%, #f8dda2 100%) !important;
+    border-left: 1px solid rgba(216, 189, 133, 0.8) !important;
+    box-shadow: -18px 0 46px rgba(42, 31, 18, 0.26) !important;
+    z-index: 90001 !important;
+  }
+
+  .mobile-ai-chat-menu-header {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 12px !important;
+    padding-bottom: 14px !important;
+    border-bottom: 1px solid rgba(111, 71, 8, 0.14) !important;
+  }
+
+  .mobile-ai-chat-close-btn {
+    width: 42px !important;
+    min-width: 42px !important;
+    height: 42px !important;
+    min-height: 42px !important;
+    padding: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: linear-gradient(180deg, #f3b43f, var(--primary)) !important;
+    color: #ffffff !important;
+    border: 0 !important;
+    border-radius: 999px !important;
+    box-shadow: 0 10px 20px rgba(212, 143, 17, 0.22) !important;
+    font-size: 24px !important;
+    font-weight: 900 !important;
+    line-height: 1 !important;
+  }
+
+  .mobile-ai-chat-menu-actions {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 10px !important;
+  }
+
+  .mobile-ai-chat-menu-actions button {
+    width: 100% !important;
+    min-height: 46px !important;
+    border-radius: 16px !important;
+  }
+
+  .mobile-ai-chat-recents {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+  }
+
+  .mobile-ai-chat-recents-list {
+    max-height: none !important;
+    overflow-y: auto !important;
+  }
+
+  /* History page also fills the screen below the small top row. */
+  .ai-chat-history-page {
+    position: fixed !important;
+    top: 54px !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    border-radius: 22px 22px 0 0 !important;
+    overflow-y: auto !important;
+  }
+}
+
+@media (max-width: 430px) {
+  body:not(.sidebar-mobile-open) .sidebar,
+  body:not(.sidebar-mobile-open) .modern-sidebar,
+  body.sidebar-mobile-closed .sidebar,
+  body.sidebar-mobile-closed .modern-sidebar {
+    top: 8px !important;
+    left: 8px !important;
+  }
+
+  .ai-chat-top-row,
+  .ai-chat-top-row-tabs-only {
+    top: 8px !important;
+    right: 8px !important;
+  }
+
+  .ai-chat-shell,
+  .ai-chat-history-page {
+    top: 52px !important;
+  }
+
+  .mobile-ai-chat-menu-btn {
+    height: 38px !important;
+    min-height: 38px !important;
+    min-width: 74px !important;
+    padding: 0 11px !important;
+  }
+
+  .ai-chat-input-row,
+  .chat-input-row.ai-chat-input-row {
+    min-height: 94px !important;
+    padding: 8px 10px 9px !important;
+    grid-template-columns: 38px 38px minmax(0, 1fr) 78px !important;
+  }
+
+  .ai-chat-tool-btn,
+  .chat-image-upload-btn {
+    width: 38px !important;
+    min-width: 38px !important;
+    height: 38px !important;
+    min-height: 38px !important;
+  }
+
+  .ai-chat-send-btn,
+  .ai-chat-input-row .primary-btn {
+    width: 78px !important;
+    min-width: 78px !important;
+    height: 38px !important;
+    min-height: 38px !important;
+  }
+}
+
+/* =========================================================
+   35. FINAL MOBILE SIDEBAR + CHAT POSITION FIX
+   Restores the real left sidebar drawer and keeps AI Chat full-screen.
+   Place at the very bottom to override earlier repeated mobile rules.
+   ========================================================= */
+
+@media (max-width: 1024px) {
+  /* Mobile app viewport */
+  html,
+  body,
+  #root {
+    width: 100% !important;
+    min-height: 100dvh !important;
+    overflow-x: hidden !important;
+  }
+
+  .app-shell {
+    display: block !important;
+    width: 100% !important;
+    min-height: 100dvh !important;
+    overflow-x: hidden !important;
+  }
+
+  .main-area,
+  body.sidebar-is-collapsed .main-area {
+    margin-left: 0 !important;
+    width: 100% !important;
+    min-height: 100dvh !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+  }
+
+  .page-content,
+  .page-content:has(.ai-chat-page),
+  .page-content:has(.ai-chat-shell),
+  .ai-chat-page {
+    width: 100% !important;
+    height: 100dvh !important;
+    min-height: 100dvh !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    gap: 0 !important;
+    overflow: hidden !important;
+  }
+
+  /* Use the original left-sidebar open button. Do not shrink the real sidebar into a button. */
+  .mobile-sidebar-open-btn {
+    position: fixed !important;
+    top: 12px !important;
+    left: 12px !important;
+    z-index: 7002 !important;
+    width: 42px !important;
+    height: 42px !important;
+    min-width: 42px !important;
+    min-height: 42px !important;
+    padding: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: rgba(255, 253, 248, 0.98) !important;
+    color: var(--heading) !important;
+    border: 1px solid rgba(234, 216, 183, 0.95) !important;
+    border-radius: 14px !important;
+    box-shadow: 0 8px 18px rgba(84, 55, 13, 0.12) !important;
+    font-size: 22px !important;
+    font-weight: 900 !important;
+    line-height: 1 !important;
+  }
+
+  .mobile-sidebar-open-btn:hover {
+    transform: none !important;
+    background: #fff6e6 !important;
+  }
+
+  body.sidebar-mobile-open .mobile-sidebar-open-btn {
+    display: none !important;
+  }
+
+  /* Overlay appears only when the left system sidebar is open. */
+  .mobile-sidebar-overlay {
+    display: none !important;
+    pointer-events: none !important;
+  }
+
+  body.sidebar-mobile-open .mobile-sidebar-overlay {
+    position: fixed !important;
+    inset: 0 !important;
+    z-index: 6990 !important;
+    display: block !important;
+    width: 100vw !important;
+    height: 100dvh !important;
+    padding: 0 !important;
+    background: rgba(42, 36, 24, 0.26) !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    backdrop-filter: blur(2px) !important;
+    pointer-events: auto !important;
+  }
+
+  /* Real left sidebar drawer: hidden off-canvas when closed, slides in when open. */
+  .sidebar,
+  .modern-sidebar,
+  body.sidebar-is-collapsed .sidebar,
+  body.sidebar-is-collapsed .modern-sidebar,
+  body:not(.sidebar-mobile-open) .sidebar,
+  body:not(.sidebar-mobile-open) .modern-sidebar,
+  body.sidebar-mobile-closed .sidebar,
+  body.sidebar-mobile-closed .modern-sidebar {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: min(82vw, 310px) !important;
+    max-width: 310px !important;
+    height: 100dvh !important;
+    min-height: 100dvh !important;
+    max-height: 100dvh !important;
+    padding: 14px !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+    background: linear-gradient(180deg, #fff7df 0%, #f4d99d 100%) !important;
+    border-right: 1px solid rgba(216, 189, 133, 0.75) !important;
+    border-bottom: 0 !important;
+    box-shadow: 14px 0 44px rgba(42, 31, 18, 0.22) !important;
+    transform: translateX(-106%) !important;
+    transition: transform 0.24s ease !important;
+    z-index: 7001 !important;
+  }
+
+  body.sidebar-mobile-open .sidebar,
+  body.sidebar-mobile-open .modern-sidebar,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar,
+  body.sidebar-is-collapsed.sidebar-mobile-open .modern-sidebar,
+  body.sidebar-mobile-open.sidebar-mobile-closed .sidebar,
+  body.sidebar-mobile-open.sidebar-mobile-closed .modern-sidebar {
+    transform: translateX(0) !important;
+    width: min(82vw, 310px) !important;
+    max-width: 310px !important;
+    height: 100dvh !important;
+    min-height: 100dvh !important;
+    padding: 14px !important;
+    overflow: hidden !important;
+  }
+
+  /* Re-show full sidebar content after opening, even if desktop collapsed class exists. */
+  body.sidebar-mobile-open .sidebar-inner,
+  body.sidebar-mobile-open .sidebar-main,
+  body.sidebar-mobile-open .sidebar-brand,
+  body.sidebar-mobile-open .sidebar-brand-top,
+  body.sidebar-mobile-open .sidebar-logo-wrap,
+  body.sidebar-mobile-open .sidebar-nav,
+  body.sidebar-mobile-open .sidebar-section-label,
+  body.sidebar-mobile-open .sidebar-user-card,
+  body.sidebar-mobile-open .sidebar-brand-text,
+  body.sidebar-mobile-open .sidebar-link-text,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-inner,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-main,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-brand,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-brand-top,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-logo-wrap,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-nav,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-section-label,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-user-card,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-brand-text,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-link-text {
+    display: flex !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-inner,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-inner {
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 0 !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-main,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-main {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    padding-right: 4px !important;
+    flex-direction: column !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-brand,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-brand {
+    width: 100% !important;
+    height: auto !important;
+    min-height: auto !important;
+    margin: 0 0 14px !important;
+    padding: 0 0 16px !important;
+    border-bottom: 1px solid rgba(111, 71, 8, 0.13) !important;
+    background: transparent !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-brand-top,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-brand-top {
+    width: 100% !important;
+    height: auto !important;
+    min-height: auto !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 12px !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-logo-wrap,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-logo-wrap {
+    min-width: 0 !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 12px !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-title,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-title {
+    font-size: 22px !important;
+    white-space: normal !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-nav,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-nav {
+    width: 100% !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 8px !important;
+    overflow: visible !important;
+    padding-bottom: 12px !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-link,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-link {
+    width: 100% !important;
+    height: auto !important;
+    min-height: 46px !important;
+    padding: 11px 14px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 12px !important;
+    border-radius: 16px !important;
+    white-space: normal !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-link-text,
+  body.sidebar-mobile-open .sidebar-user-info,
+  body.sidebar-mobile-open .sidebar-user-arrow,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-link-text,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-user-info,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-user-arrow {
+    display: inline-flex !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-user-card,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-user-card {
+    display: block !important;
+    flex-shrink: 0 !important;
+    margin-top: 12px !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-user-main,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-user-main {
+    width: 100% !important;
+    height: auto !important;
+    min-height: 56px !important;
+    padding: 10px 12px !important;
+    justify-content: flex-start !important;
+    border-radius: 18px !important;
+  }
+
+  /* Inside the sidebar, show only the mobile close button, not desktop collapse button. */
+  body.sidebar-mobile-open .desktop-toggle,
+  body.sidebar-is-collapsed.sidebar-mobile-open .desktop-toggle {
+    display: none !important;
+  }
+
+  body.sidebar-mobile-open .mobile-close-toggle,
+  body.sidebar-mobile-open .mobile-toggle,
+  body.sidebar-is-collapsed.sidebar-mobile-open .mobile-close-toggle,
+  body.sidebar-is-collapsed.sidebar-mobile-open .mobile-toggle {
+    display: inline-flex !important;
+  }
+
+  /* Hide AI chat menu button when the left system sidebar is open. */
+  body.sidebar-mobile-open .ai-chat-top-row,
+  body.sidebar-mobile-open .mobile-ai-chat-menu-btn {
+    visibility: hidden !important;
+    pointer-events: none !important;
+  }
+
+  /* Top AI chat menu button: same row and height as left sidebar button. */
+  .ai-chat-top-row,
+  .ai-chat-top-row-tabs-only {
+    position: fixed !important;
+    top: 12px !important;
+    right: 12px !important;
+    left: auto !important;
+    width: auto !important;
+    height: 42px !important;
+    min-height: 42px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    z-index: 6500 !important;
+  }
+
+  .ai-chat-tabs,
+  .tab-row.ai-chat-tabs,
+  .ai-chat-top-row .tab-row {
+    display: none !important;
+  }
+
+  .mobile-ai-chat-menu-btn {
+    width: auto !important;
+    min-width: 78px !important;
+    height: 42px !important;
+    min-height: 42px !important;
+    margin: 0 !important;
+    padding: 0 12px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 4px !important;
+    border-radius: 999px !important;
+    background: rgba(255, 253, 248, 0.98) !important;
+    border: 1px solid rgba(234, 216, 183, 0.95) !important;
+    box-shadow: 0 8px 18px rgba(84, 55, 13, 0.1) !important;
+    color: var(--heading) !important;
+    font-size: 12px !important;
+    font-weight: 900 !important;
+    line-height: 1 !important;
+  }
+
+  body.ai-chat-mobile-menu-open .ai-chat-top-row,
+  body.ai-chat-mobile-menu-open .mobile-ai-chat-menu-btn {
+    visibility: hidden !important;
+    pointer-events: none !important;
+  }
+
+  /* Chat takes all remaining screen below the small nav row. */
+  .ai-chat-shell {
+    position: fixed !important;
+    top: 58px !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: block !important;
+    overflow: hidden !important;
+    z-index: 1 !important;
+  }
+
+  .ai-chat-shell .chat-recents-panel {
+    display: none !important;
+  }
+
+  .ai-chat-panel,
+  .chat-panel.ai-chat-panel {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    border-left: 0 !important;
+    border-right: 0 !important;
+    border-bottom: 0 !important;
+    border-radius: 22px 22px 0 0 !important;
+    background: rgba(255, 253, 248, 0.9) !important;
+    box-shadow: 0 -2px 28px rgba(84, 55, 13, 0.07) !important;
+  }
+
+  .ai-chat-panel .ai-chat-header {
+    display: none !important;
+  }
+
+  .ai-chat-messages,
+  .chat-messages.ai-chat-messages {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    height: auto !important;
+    max-height: none !important;
+    padding: 14px 16px !important;
+    gap: 14px !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    background:
+      radial-gradient(circle at top left, rgba(255, 239, 204, 0.28), transparent 32%),
+      linear-gradient(180deg, #fffdf8 0%, #fbf4e6 100%) !important;
+  }
+
+  .ai-chat-input-row,
+  .chat-input-row.ai-chat-input-row {
+    flex: 0 0 auto !important;
+    min-height: 96px !important;
+    margin: 0 !important;
+    padding: 8px 12px 10px !important;
+    display: grid !important;
+    grid-template-columns: 40px 40px minmax(0, 1fr) 82px !important;
+    grid-template-areas:
+      'input input input input'
+      'camera file . send' !important;
+    gap: 8px !important;
+    align-items: center !important;
+    background: rgba(255, 253, 248, 0.99) !important;
+    border-top: 1px solid var(--border) !important;
+    border-radius: 0 !important;
+    box-shadow: 0 -8px 22px rgba(84, 55, 13, 0.06) !important;
+  }
+
+  .ai-chat-input-row > input {
+    grid-area: input !important;
+    width: 100% !important;
+    min-height: 44px !important;
+    padding: 0 14px !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 17px !important;
+    background: #fffaf0 !important;
+    box-shadow: none !important;
+    font-size: 14px !important;
+  }
+
+  .ai-chat-input-row label:nth-of-type(1) {
+    grid-area: camera !important;
+  }
+
+  .ai-chat-input-row label:nth-of-type(2) {
+    grid-area: file !important;
+  }
+
+  .ai-chat-tool-btn,
+  .chat-image-upload-btn {
+    width: 40px !important;
+    min-width: 40px !important;
+    height: 40px !important;
+    min-height: 40px !important;
+    padding: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border-radius: 999px !important;
+    background: #fffaf0 !important;
+    border: 1px solid var(--border-strong) !important;
+    color: var(--primary-dark) !important;
+    box-shadow: none !important;
+    font-size: 0 !important;
+    line-height: 1 !important;
+  }
+
+  .ai-chat-tool-btn span:first-child,
+  .chat-image-upload-btn span:first-child {
+    width: 100% !important;
+    height: 100% !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-size: 15px !important;
+    line-height: 1 !important;
+  }
+
+  .ai-chat-tool-btn span:last-child,
+  .chat-image-upload-btn span:last-child {
+    display: none !important;
+  }
+
+  .ai-chat-send-btn,
+  .ai-chat-input-row .primary-btn {
+    grid-area: send !important;
+    width: 82px !important;
+    min-width: 82px !important;
+    height: 40px !important;
+    min-height: 40px !important;
+    padding: 0 12px !important;
+    border-radius: 999px !important;
+    font-size: 13px !important;
+    font-weight: 900 !important;
+  }
+
+  .ai-chat-history-page {
+    position: fixed !important;
+    top: 58px !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    border-radius: 22px 22px 0 0 !important;
+    overflow-y: auto !important;
+  }
+}
+
+@media (max-width: 430px) {
+  .mobile-sidebar-open-btn {
+    top: 10px !important;
+    left: 10px !important;
+    width: 40px !important;
+    height: 40px !important;
+    min-width: 40px !important;
+    min-height: 40px !important;
+  }
+
+  .ai-chat-top-row,
+  .ai-chat-top-row-tabs-only {
+    top: 10px !important;
+    right: 10px !important;
+    height: 40px !important;
+    min-height: 40px !important;
+  }
+
+  .mobile-ai-chat-menu-btn {
+    height: 40px !important;
+    min-height: 40px !important;
+    min-width: 76px !important;
+    padding: 0 11px !important;
+  }
+
+  .ai-chat-shell,
+  .ai-chat-history-page {
+    top: 56px !important;
+  }
+}
+
+/* =========================================================
+   36. FINAL FIX: MOBILE TOP BUTTON SHOULD NOT BLOCK OTHER PAGES
+   Keeps Dashboard/Profile/Knowledge pages readable while AI Chat stays full screen.
+   Put at the very bottom of styles.css.
+   ========================================================= */
+
+@media (max-width: 1024px) {
+  /* Default mobile pages: reserve space for the left sidebar menu button. */
+  .main-area,
+  body.sidebar-is-collapsed .main-area {
+    margin-left: 0 !important;
+    width: 100% !important;
+    min-height: 100dvh !important;
+    padding: 72px 16px 18px !important;
+    overflow-x: hidden !important;
+    overflow-y: visible !important;
+  }
+
+  .page-content {
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    gap: 16px !important;
+    overflow: visible !important;
+  }
+
+  .page-header,
+  .dashboard-page-header,
+  .admin-page-header {
+    margin-top: 0 !important;
+    padding-top: 0 !important;
+  }
+
+  /* Keep the left sidebar button at the top, but do not let it cover page titles. */
+  .mobile-sidebar-open-btn {
+    position: fixed !important;
+    top: 14px !important;
+    left: 14px !important;
+    z-index: 7002 !important;
+    width: 42px !important;
+    height: 42px !important;
+    min-width: 42px !important;
+    min-height: 42px !important;
+  }
+
+  /* AI Chat is the only page that should become full-screen like ChatGPT. */
+  body:has(.ai-chat-page) .main-area,
+  body:has(.ai-chat-shell) .main-area,
+  body:has(.ai-chat-page).sidebar-is-collapsed .main-area,
+  body:has(.ai-chat-shell).sidebar-is-collapsed .main-area {
+    padding: 0 !important;
+    overflow: hidden !important;
+  }
+
+  body:has(.ai-chat-page) .page-content,
+  body:has(.ai-chat-shell) .page-content,
+  body:has(.ai-chat-page) .ai-chat-page,
+  body:has(.ai-chat-shell) .ai-chat-page {
+    width: 100% !important;
+    height: 100dvh !important;
+    min-height: 100dvh !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    gap: 0 !important;
+    overflow: hidden !important;
+  }
+
+  /* Only show the AI chat right menu button on the AI Chat page. */
+  .mobile-ai-chat-menu-btn,
+  .ai-chat-top-row,
+  .ai-chat-top-row-tabs-only {
+    display: none !important;
+  }
+
+  body:has(.ai-chat-page) .ai-chat-top-row,
+  body:has(.ai-chat-shell) .ai-chat-top-row,
+  body:has(.ai-chat-page) .ai-chat-top-row-tabs-only,
+  body:has(.ai-chat-shell) .ai-chat-top-row-tabs-only {
+    position: fixed !important;
+    top: 14px !important;
+    right: 14px !important;
+    left: auto !important;
+    width: auto !important;
+    height: 42px !important;
+    min-height: 42px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    z-index: 6500 !important;
+  }
+
+  body:has(.ai-chat-page) .mobile-ai-chat-menu-btn,
+  body:has(.ai-chat-shell) .mobile-ai-chat-menu-btn {
+    display: inline-flex !important;
+  }
+
+  /* AI Chat card starts below the small top row and fills the remaining screen. */
+  body:has(.ai-chat-page) .ai-chat-shell,
+  body:has(.ai-chat-shell) .ai-chat-shell {
+    position: fixed !important;
+    top: 62px !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: block !important;
+    overflow: hidden !important;
+  }
+}
+
+@media (max-width: 430px) {
+  .main-area,
+  body.sidebar-is-collapsed .main-area {
+    padding: 68px 12px 16px !important;
+  }
+
+  .mobile-sidebar-open-btn {
+    top: 12px !important;
+    left: 12px !important;
+    width: 40px !important;
+    height: 40px !important;
+    min-width: 40px !important;
+    min-height: 40px !important;
+  }
+
+  body:has(.ai-chat-page) .main-area,
+  body:has(.ai-chat-shell) .main-area,
+  body:has(.ai-chat-page).sidebar-is-collapsed .main-area,
+  body:has(.ai-chat-shell).sidebar-is-collapsed .main-area {
+    padding: 0 !important;
+  }
+
+  body:has(.ai-chat-page) .ai-chat-top-row,
+  body:has(.ai-chat-shell) .ai-chat-top-row,
+  body:has(.ai-chat-page) .ai-chat-top-row-tabs-only,
+  body:has(.ai-chat-shell) .ai-chat-top-row-tabs-only {
+    top: 12px !important;
+    right: 12px !important;
+    height: 40px !important;
+    min-height: 40px !important;
+  }
+
+  body:has(.ai-chat-page) .ai-chat-shell,
+  body:has(.ai-chat-shell) .ai-chat-shell {
+    top: 58px !important;
+  }
+}
+
+/* =========================================================
+   37. FINAL CLEAN MOBILE LEFT SIDEBAR DRAWER FIX
+   Fixes the blurred/blocked drawer when opening the system sidebar.
+   Keep this at the very bottom of styles.css.
+   ========================================================= */
+
+@media (max-width: 1024px) {
+  :root {
+    --jh-mobile-sidebar-width: min(82vw, 310px);
+  }
+
+  /* Left menu button: one clean button only when sidebar is closed */
+  .mobile-sidebar-open-btn {
+    position: fixed !important;
+    top: 14px !important;
+    left: 14px !important;
+    z-index: 8500 !important;
+    width: 42px !important;
+    height: 42px !important;
+    min-width: 42px !important;
+    min-height: 42px !important;
+    padding: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border-radius: 14px !important;
+    background: rgba(255, 253, 248, 0.98) !important;
+    border: 1px solid rgba(234, 216, 183, 0.95) !important;
+    box-shadow: 0 8px 18px rgba(84, 55, 13, 0.12) !important;
+    color: var(--heading) !important;
+    font-size: 21px !important;
+    font-weight: 900 !important;
+    line-height: 1 !important;
+  }
+
+  body.sidebar-mobile-open .mobile-sidebar-open-btn {
+    display: none !important;
+  }
+
+  /* The dark layer should cover ONLY the page area, not the opened sidebar. */
+  .mobile-sidebar-overlay {
+    display: none !important;
+    pointer-events: none !important;
+  }
+
+  body.sidebar-mobile-open .mobile-sidebar-overlay {
+    position: fixed !important;
+    top: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    left: var(--jh-mobile-sidebar-width) !important;
+    z-index: 7900 !important;
+    display: block !important;
+    width: auto !important;
+    height: 100dvh !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: rgba(33, 28, 18, 0.28) !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    pointer-events: auto !important;
+  }
+
+  /* Real sidebar drawer must always sit above the overlay and never be blurred. */
+  .sidebar,
+  .modern-sidebar,
+  body.sidebar-is-collapsed .sidebar,
+  body.sidebar-is-collapsed .modern-sidebar,
+  body.sidebar-mobile-closed .sidebar,
+  body.sidebar-mobile-closed .modern-sidebar,
+  body:not(.sidebar-mobile-open) .sidebar,
+  body:not(.sidebar-mobile-open) .modern-sidebar {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: var(--jh-mobile-sidebar-width) !important;
+    max-width: 310px !important;
+    height: 100dvh !important;
+    min-height: 100dvh !important;
+    max-height: 100dvh !important;
+    margin: 0 !important;
+    padding: 14px !important;
+    overflow: hidden !important;
+    transform: translateX(-106%) !important;
+    transition: transform 0.24s ease !important;
+    z-index: 8000 !important;
+    opacity: 1 !important;
+    filter: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    background: linear-gradient(180deg, #fff7df 0%, #f4d99d 100%) !important;
+    border-right: 1px solid rgba(216, 189, 133, 0.75) !important;
+    border-bottom: 0 !important;
+    box-shadow: 14px 0 44px rgba(42, 31, 18, 0.22) !important;
+  }
+
+  body.sidebar-mobile-open .sidebar,
+  body.sidebar-mobile-open .modern-sidebar,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar,
+  body.sidebar-is-collapsed.sidebar-mobile-open .modern-sidebar {
+    transform: translateX(0) !important;
+    width: var(--jh-mobile-sidebar-width) !important;
+    max-width: 310px !important;
+    z-index: 8000 !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+    filter: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  /* Sidebar content must not inherit desktop collapsed icon-only styles. */
+  body.sidebar-mobile-open .sidebar-inner,
+  body.sidebar-mobile-open .sidebar-main,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-inner,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-main {
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    opacity: 1 !important;
+    filter: none !important;
+    overflow: hidden !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-main,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-main {
+    flex: 1 1 auto !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    padding-right: 4px !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-nav,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-nav {
+    width: 100% !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 8px !important;
+    overflow: visible !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-link,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-link {
+    width: 100% !important;
+    height: auto !important;
+    min-height: 46px !important;
+    padding: 11px 14px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 12px !important;
+    border-radius: 16px !important;
+    white-space: normal !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-brand-text,
+  body.sidebar-mobile-open .sidebar-link-text,
+  body.sidebar-mobile-open .sidebar-section-label,
+  body.sidebar-mobile-open .sidebar-user-info,
+  body.sidebar-mobile-open .sidebar-user-arrow,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-brand-text,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-link-text,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-section-label,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-user-info,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-user-arrow {
+    display: inline-flex !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+    width: auto !important;
+    transform: none !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-user-card,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-user-card {
+    display: block !important;
+    flex-shrink: 0 !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+    margin-top: 12px !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-user-main,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-user-main {
+    width: 100% !important;
+    height: auto !important;
+    min-height: 56px !important;
+    padding: 10px 12px !important;
+    justify-content: flex-start !important;
+    border-radius: 18px !important;
+  }
+
+  /* Only show close button inside the opened sidebar. */
+  body.sidebar-mobile-open .desktop-toggle,
+  body.sidebar-is-collapsed.sidebar-mobile-open .desktop-toggle {
+    display: none !important;
+  }
+
+  body.sidebar-mobile-open .mobile-toggle,
+  body.sidebar-mobile-open .mobile-close-toggle,
+  body.sidebar-is-collapsed.sidebar-mobile-open .mobile-toggle,
+  body.sidebar-is-collapsed.sidebar-mobile-open .mobile-close-toggle {
+    display: inline-flex !important;
+  }
+
+  /* Prevent the AI chat right menu button from floating over the opened left drawer. */
+  body.sidebar-mobile-open .ai-chat-top-row,
+  body.sidebar-mobile-open .mobile-ai-chat-menu-btn {
+    display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+  }
+
+  /* The AI chat right drawer should only exist when its own menu state is open. */
+  body:not(.ai-chat-mobile-menu-open) .mobile-ai-chat-menu,
+  body:not(.ai-chat-mobile-menu-open) .mobile-ai-chat-menu-overlay {
+    display: none !important;
+    pointer-events: none !important;
+  }
+}
+
+@media (max-width: 430px) {
+  .mobile-sidebar-open-btn {
+    top: 12px !important;
+    left: 12px !important;
+    width: 40px !important;
+    height: 40px !important;
+    min-width: 40px !important;
+    min-height: 40px !important;
+  }
+}
+
+/* =========================================================
+   38. FINAL MOBILE SIDEBAR SAME AS DESKTOP SIDEBAR
+   Fixes mobile drawer brand/header and bottom user card so it matches PC.
+   Keep this at the very bottom of styles.css.
+   ========================================================= */
+
+@media (max-width: 1024px) {
+  :root {
+    --jh-mobile-sidebar-width: min(86vw, 310px) !important;
+  }
+
+  /* The opened mobile sidebar should use the same visual structure as desktop. */
+  body.sidebar-mobile-open .sidebar,
+  body.sidebar-mobile-open .modern-sidebar,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar,
+  body.sidebar-is-collapsed.sidebar-mobile-open .modern-sidebar {
+    width: var(--jh-mobile-sidebar-width) !important;
+    max-width: 310px !important;
+    height: 100dvh !important;
+    min-height: 100dvh !important;
+    padding: 18px 16px 14px !important;
+    background: linear-gradient(180deg, #fff7df 0%, #f4d99d 100%) !important;
+    overflow: hidden !important;
+    transform: translateX(0) !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-inner,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-inner {
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+  }
+
+  /* Brand/header: make it match PC style, not compressed into one line. */
+  body.sidebar-mobile-open .modern-sidebar .sidebar-brand,
+  body.sidebar-mobile-open .sidebar-brand,
+  body.sidebar-is-collapsed.sidebar-mobile-open .modern-sidebar .sidebar-brand,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-brand {
+    width: 100% !important;
+    margin: 0 0 22px !important;
+    padding: 0 0 18px !important;
+    border-bottom: 1px solid rgba(111, 71, 8, 0.14) !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-brand-top,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-brand-top {
+    position: relative !important;
+    width: 100% !important;
+    min-height: 58px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 0 !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-logo-wrap,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-logo-wrap {
+    width: 100% !important;
+    min-width: 0 !important;
+    padding-right: 54px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 12px !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-logo,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-logo {
+    width: 50px !important;
+    height: 50px !important;
+    flex: 0 0 50px !important;
+    border-radius: 18px !important;
+    font-size: 16px !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-brand-text,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-brand-text {
+    min-width: 0 !important;
+    width: auto !important;
+    flex: 1 1 auto !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 2px !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+  }
+
+  body.sidebar-mobile-open .modern-sidebar .eyebrow,
+  body.sidebar-is-collapsed.sidebar-mobile-open .modern-sidebar .eyebrow {
+    display: block !important;
+    margin: 0 !important;
+    color: var(--secondary-hover) !important;
+    font-size: 11px !important;
+    line-height: 1.1 !important;
+    font-weight: 900 !important;
+    letter-spacing: 0.12em !important;
+    white-space: nowrap !important;
+  }
+
+  body.sidebar-mobile-open .modern-sidebar .sidebar-title,
+  body.sidebar-is-collapsed.sidebar-mobile-open .modern-sidebar .sidebar-title {
+    display: block !important;
+    margin: 0 !important;
+    color: var(--primary-dark) !important;
+    font-size: 24px !important;
+    line-height: 1.08 !important;
+    font-weight: 900 !important;
+    letter-spacing: -0.05em !important;
+    white-space: nowrap !important;
+  }
+
+  body.sidebar-mobile-open .modern-sidebar .sidebar-subtitle,
+  body.sidebar-is-collapsed.sidebar-mobile-open .modern-sidebar .sidebar-subtitle {
+    display: block !important;
+    margin: 2px 0 0 !important;
+    color: var(--muted) !important;
+    font-size: 12px !important;
+    line-height: 1.15 !important;
+    font-weight: 700 !important;
+    white-space: normal !important;
+  }
+
+  /* Put the close button at the top-right like desktop, without squeezing the title. */
+  body.sidebar-mobile-open .sidebar-brand-top .mobile-toggle,
+  body.sidebar-mobile-open .sidebar-brand-top .mobile-close-toggle,
+  body.sidebar-mobile-open .sidebar-brand-top .sidebar-toggle-btn,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-brand-top .mobile-toggle,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-brand-top .mobile-close-toggle,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-brand-top .sidebar-toggle-btn {
+    position: absolute !important;
+    top: 7px !important;
+    right: 0 !important;
+    width: 40px !important;
+    height: 40px !important;
+    min-width: 40px !important;
+    min-height: 40px !important;
+    padding: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border-radius: 14px !important;
+    background: rgba(255, 253, 248, 0.9) !important;
+    border: 1px solid rgba(234, 216, 183, 0.9) !important;
+    color: var(--primary-dark) !important;
+    box-shadow: 0 8px 18px rgba(84, 55, 13, 0.08) !important;
+    transform: none !important;
+  }
+
+  /* Navigation spacing and text should match PC, not icon-only collapsed layout. */
+  body.sidebar-mobile-open .sidebar-main,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-main {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    padding: 0 4px 0 0 !important;
+  }
+
+  body.sidebar-mobile-open .modern-sidebar .sidebar-nav,
+  body.sidebar-is-collapsed.sidebar-mobile-open .modern-sidebar .sidebar-nav {
+    width: 100% !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 7px !important;
+    overflow: visible !important;
+  }
+
+  body.sidebar-mobile-open .modern-sidebar .sidebar-section-label,
+  body.sidebar-is-collapsed.sidebar-mobile-open .modern-sidebar .sidebar-section-label {
+    display: block !important;
+    margin: 22px 10px 8px !important;
+    color: #9b7d45 !important;
+    font-size: 11px !important;
+    font-weight: 900 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.12em !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+  }
+
+  body.sidebar-mobile-open .modern-sidebar .sidebar-link,
+  body.sidebar-is-collapsed.sidebar-mobile-open .modern-sidebar .sidebar-link {
+    width: 100% !important;
+    height: auto !important;
+    min-height: 48px !important;
+    padding: 12px 14px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 12px !important;
+    border-radius: 16px !important;
+    font-size: 15px !important;
+    font-weight: 800 !important;
+    white-space: nowrap !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-icon,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-icon {
+    width: 24px !important;
+    height: 24px !important;
+    flex: 0 0 24px !important;
+    display: inline-flex !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-link-text,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-link-text {
+    display: inline !important;
+    width: auto !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+    white-space: nowrap !important;
+  }
+
+  body.sidebar-mobile-open .modern-sidebar .sidebar-link.active::before,
+  body.sidebar-is-collapsed.sidebar-mobile-open .modern-sidebar .sidebar-link.active::before {
+    display: none !important;
+  }
+
+  /* Bottom user card: full width and aligned like PC. */
+  body.sidebar-mobile-open .sidebar-user-card,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-user-card {
+    width: 100% !important;
+    flex: 0 0 auto !important;
+    display: block !important;
+    margin: 14px 0 0 !important;
+    padding: 0 !important;
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-user-main,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-user-main {
+    width: 100% !important;
+    height: auto !important;
+    min-height: 58px !important;
+    padding: 10px 12px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 10px !important;
+    border-radius: 18px !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-user-avatar,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-user-avatar {
+    width: 38px !important;
+    height: 38px !important;
+    flex: 0 0 38px !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-user-info,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-user-info {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 3px !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-user-info strong,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-user-info strong {
+    max-width: 130px !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-user-arrow,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-user-arrow {
+    display: inline-flex !important;
+    margin-left: auto !important;
+    opacity: 1 !important;
+    visibility: visible !important;
+  }
+
+  /* Overlay starts after the sidebar so the drawer itself is not blurred. */
+  body.sidebar-mobile-open .mobile-sidebar-overlay {
+    left: var(--jh-mobile-sidebar-width) !important;
+    background: rgba(33, 28, 18, 0.22) !important;
+  }
+}
+
+@media (max-width: 380px) {
+  :root {
+    --jh-mobile-sidebar-width: 292px !important;
+  }
+
+  body.sidebar-mobile-open .sidebar,
+  body.sidebar-mobile-open .modern-sidebar,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar,
+  body.sidebar-is-collapsed.sidebar-mobile-open .modern-sidebar {
+    max-width: 292px !important;
+    padding-left: 14px !important;
+    padding-right: 14px !important;
+  }
+
+  body.sidebar-mobile-open .sidebar-logo,
+  body.sidebar-is-collapsed.sidebar-mobile-open .sidebar-logo {
+    width: 46px !important;
+    height: 46px !important;
+    flex-basis: 46px !important;
+  }
+
+  body.sidebar-mobile-open .modern-sidebar .sidebar-title,
+  body.sidebar-is-collapsed.sidebar-mobile-open .modern-sidebar .sidebar-title {
+    font-size: 22px !important;
+  }
+
+  body.sidebar-mobile-open .modern-sidebar .eyebrow,
+  body.sidebar-is-collapsed.sidebar-mobile-open .modern-sidebar .eyebrow {
+    font-size: 10px !important;
+  }
+}

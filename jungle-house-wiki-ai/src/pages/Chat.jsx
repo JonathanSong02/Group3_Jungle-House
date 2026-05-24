@@ -1302,6 +1302,7 @@ export default function Chat() {
   const initialSessions = getChatSessionsFromStorage();
 
   const [activeTab, setActiveTab] = useState('ask');
+  const [mobileChatMenuOpen, setMobileChatMenuOpen] = useState(false);
   const [chatSessions, setChatSessions] = useState(initialSessions);
   const [activeSessionId, setActiveSessionId] = useState(() =>
     getActiveSessionIdFromStorage(initialSessions)
@@ -1328,6 +1329,42 @@ export default function Chat() {
     sessionId: null,
     sessionTitle: '',
   });
+
+  useEffect(() => {
+    document.body.classList.toggle('ai-chat-mobile-menu-open', mobileChatMenuOpen);
+
+    return () => {
+      document.body.classList.remove('ai-chat-mobile-menu-open');
+    };
+  }, [mobileChatMenuOpen]);
+
+  useEffect(() => {
+    const ensureMobileSidebarStartsClosed = () => {
+      if (typeof window === 'undefined') return;
+
+      if (window.innerWidth <= 1024) {
+        const hasMobileSidebarState =
+          document.body.classList.contains('sidebar-mobile-open') ||
+          document.body.classList.contains('sidebar-mobile-closed');
+
+        if (!hasMobileSidebarState) {
+          document.body.classList.add('sidebar-mobile-closed');
+        }
+      }
+    };
+
+    ensureMobileSidebarStartsClosed();
+    window.addEventListener('resize', ensureMobileSidebarStartsClosed);
+
+    return () => {
+      window.removeEventListener('resize', ensureMobileSidebarStartsClosed);
+    };
+  }, []);
+
+  const handleTabChange = (tabName) => {
+    setActiveTab(tabName);
+    setMobileChatMenuOpen(false);
+  };
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
@@ -1385,6 +1422,7 @@ export default function Chat() {
     setActiveSessionId(sessionId);
     saveActiveSessionId(sessionId);
     setActiveTab('ask');
+    setMobileChatMenuOpen(false);
   };
 
   const handleNewChat = () => {
@@ -1399,6 +1437,7 @@ export default function Chat() {
 
     setQuestion('');
     setActiveTab('ask');
+    setMobileChatMenuOpen(false);
   };
 
   const closeConfirmModal = () => {
@@ -1512,6 +1551,7 @@ export default function Chat() {
   const handleReuseQuestion = (selectedQuestion) => {
     setQuestion(selectedQuestion);
     setActiveTab('ask');
+    setMobileChatMenuOpen(false);
   };
 
   const handleImageSelect = (event) => {
@@ -2045,11 +2085,107 @@ const removeSelectedImage = () => {
     );
   };
 
+  const renderMobileChatDrawer = () => {
+    if (!mobileChatMenuOpen) return null;
+
+    return (
+      <>
+        <button
+          type="button"
+          className="mobile-ai-chat-menu-overlay"
+          aria-label="Close AI chat menu"
+          onClick={() => setMobileChatMenuOpen(false)}
+        />
+
+        <aside className="mobile-ai-chat-menu" aria-label="AI chat mobile menu">
+          <div className="mobile-ai-chat-menu-header">
+            <div>
+              <p className="eyebrow">AI Chat</p>
+              <h3>Chat Menu</h3>
+            </div>
+
+            <button
+              type="button"
+              className="mobile-ai-chat-close-btn"
+              onClick={() => setMobileChatMenuOpen(false)}
+              aria-label="Close AI chat menu"
+            >
+              ×
+            </button>
+          </div>
+
+          <div className="mobile-ai-chat-menu-actions">
+            <button
+              type="button"
+              className={activeTab === 'ask' ? 'primary-btn' : 'secondary-btn'}
+              onClick={() => handleTabChange('ask')}
+            >
+              Ask Question
+            </button>
+
+            <button
+              type="button"
+              className={activeTab === 'history' ? 'primary-btn' : 'secondary-btn'}
+              onClick={() => handleTabChange('history')}
+            >
+              Chat History
+            </button>
+
+            <button
+              type="button"
+              className="secondary-btn mobile-ai-chat-new-btn"
+              onClick={handleNewChat}
+            >
+              + New Chat
+            </button>
+          </div>
+
+          <div className="mobile-ai-chat-recents">
+            <div className="mobile-ai-chat-recents-title">
+              <h4>Recents</h4>
+              <span>{chatSessions.length} chat{chatSessions.length === 1 ? '' : 's'}</span>
+            </div>
+
+            <div className="mobile-ai-chat-recents-list">
+              {chatSessions.map((session) => (
+                <div
+                  key={session.id}
+                  className={`mobile-ai-chat-recent-item ${
+                    session.id === activeSessionId ? 'active' : ''
+                  }`}
+                >
+                  <button
+                    type="button"
+                    className="mobile-ai-chat-recent-title"
+                    onClick={() => handleSelectSession(session.id)}
+                    title={session.title}
+                  >
+                    {session.title}
+                  </button>
+
+                  <button
+                    type="button"
+                    className="mobile-ai-chat-recent-delete"
+                    onClick={() => {
+                      setMobileChatMenuOpen(false);
+                      handleDeleteSession(session.id, session.title);
+                    }}
+                    title="Delete chat"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </aside>
+      </>
+    );
+  };
+
   const renderAskQuestion = () => {
     return (
       <div className="ai-chat-shell">
-        {renderRecentsSidebar()}
-
         <section className="card-like chat-panel ai-chat-panel">
           <div className="ai-chat-header">
             <div>
@@ -2061,7 +2197,7 @@ const removeSelectedImage = () => {
               className="secondary-btn danger-btn"
               onClick={handleClearCurrentChat}
             >
-              Clear Current Chat
+              Clear Chat
             </button>
           </div>
 
@@ -2115,7 +2251,7 @@ const removeSelectedImage = () => {
             <input
               value={question}
               onChange={(event) => setQuestion(event.target.value)}
-              placeholder="Ask a work-related question..."
+              placeholder="Ask product knowledge, SOP, sales, or upload a photo..."
               disabled={loading}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') {
@@ -2125,8 +2261,9 @@ const removeSelectedImage = () => {
               }}
             />
 
-            <label className="chat-image-upload-btn">
-              📷 Camera
+            <label className="chat-image-upload-btn ai-chat-tool-btn">
+              <span>📷</span>
+              <span>Camera</span>
               <input
                 type="file"
                 accept="image/*"
@@ -2137,8 +2274,9 @@ const removeSelectedImage = () => {
               />
             </label>
 
-            <label className="chat-image-upload-btn">
-              📎 File
+            <label className="chat-image-upload-btn ai-chat-tool-btn">
+              <span>📎</span>
+              <span>File</span>
               <input
                 type="file"
                 accept="image/*,.pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -2147,18 +2285,21 @@ const removeSelectedImage = () => {
                 hidden
               />
             </label>
-            <button className="primary-btn" onClick={handleSend} disabled={loading}>
+
+            <button className="primary-btn ai-chat-send-btn" onClick={handleSend} disabled={loading}>
               {loading ? 'Sending...' : 'Send'}
             </button>
           </div>
         </section>
+
+        {renderRecentsSidebar()}
       </div>
     );
   };
 
   const renderChatHistory = () => {
     return (
-      <section className="card-like">
+      <section className="card-like ai-chat-history-page">
         <div className="row-between wrap-gap" style={{ marginBottom: '1rem' }}>
           <div>
             <h3>Chat History</h3>
@@ -2340,16 +2481,12 @@ const removeSelectedImage = () => {
 
   return (
     <div className="ai-chat-page">
-      <div className="ai-chat-top-row">
-        <div className="ai-chat-page-title">
-          <h1>AI Chat</h1>
-        </div>
-
+      <div className="ai-chat-top-row ai-chat-top-row-tabs-only">
         <div className="tab-row ai-chat-tabs">
           <button
             type="button"
             className={activeTab === 'ask' ? 'primary-btn' : 'secondary-btn'}
-            onClick={() => setActiveTab('ask')}
+            onClick={() => handleTabChange('ask')}
           >
             Ask Question
           </button>
@@ -2357,12 +2494,22 @@ const removeSelectedImage = () => {
           <button
             type="button"
             className={activeTab === 'history' ? 'primary-btn' : 'secondary-btn'}
-            onClick={() => setActiveTab('history')}
+            onClick={() => handleTabChange('history')}
           >
             Chat History
           </button>
         </div>
+
+        <button
+          type="button"
+          className="mobile-ai-chat-menu-btn"
+          onClick={() => setMobileChatMenuOpen(true)}
+        >
+          ☰ Menu
+        </button>
       </div>
+
+      {renderMobileChatDrawer()}
 
       {activeTab === 'ask' ? renderAskQuestion() : null}
       {activeTab === 'history' ? renderChatHistory() : null}
