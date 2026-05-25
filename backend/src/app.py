@@ -865,8 +865,128 @@ def standardize_ai_response(result: dict | None) -> dict:
     return result
 
 
-def log_request(question: str, result: dict | None = None, error: str | None = None) -> None:
-    ensure_log_files()
+
+def ensure_ai_chat_log_table():
+    """
+    Create the AI chat analytics table if it does not exist.
+    Analytics will read from this MySQL table instead of local CSV files.
+    """
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS ai_chat_log (
+                log_id INT AUTO_INCREMENT PRIMARY KEY,
+                user_id INT NULL,
+                question TEXT NOT NULL,
+                title VARCHAR(255) NULL,
+                category VARCHAR(100) NULL,
+                article_section VARCHAR(100) NULL,
+                response_type VARCHAR(50) DEFAULT 'text',
+                score DECIMAL(6,4) DEFAULT 0,
+                confidence DECIMAL(6,4) DEFAULT 0,
+                confidence_label VARCHAR(20) NULL,
+                source VARCHAR(100) NULL,
+                fallback TINYINT DEFAULT 0,
+                fallback_message TEXT NULL,
+                escalation_ready TINYINT DEFAULT 0,
+                reply MEDIUMTEXT NULL,
+                error TEXT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+                INDEX idx_ai_chat_log_created_at (created_at),
+                INDEX idx_ai_chat_log_category (category),
+                INDEX idx_ai_chat_log_source (source),
+                INDEX idx_ai_chat_log_fallback (fallback),
+                INDEX idx_ai_chat_log_escalation (escalation_ready)
+            )
+        """)
+
+        conn.commit()
+
+    except Exception as error:
+        print("AI CHAT LOG TABLE CHECK ERROR:", error)
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+def save_ai_chat_log_to_mysql(payload, user_id=None):
+    """
+    Save AI Chat interaction logs into MySQL for the Analytics page.
+    Logging errors should not stop the AI Chat from replying to staff.
+    """
+    conn = None
+    cursor = None
+
+    try:
+        ensure_ai_chat_log_table()
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            INSERT INTO ai_chat_log
+            (
+                user_id,
+                question,
+                title,
+                category,
+                article_section,
+                response_type,
+                score,
+                confidence,
+                confidence_label,
+                source,
+                fallback,
+                fallback_message,
+                escalation_ready,
+                reply,
+                error
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            user_id,
+            payload.get("question") or "",
+            payload.get("title"),
+            payload.get("category"),
+            payload.get("section"),
+            payload.get("type", "text"),
+            float(payload.get("score", 0.0) or 0.0),
+            float(payload.get("confidence", 0.0) or 0.0),
+            payload.get("confidence_label"),
+            payload.get("source"),
+            1 if payload.get("fallback") else 0,
+            payload.get("fallback_message"),
+            1 if payload.get("escalation_ready") else 0,
+            payload.get("reply"),
+            payload.get("error")
+        ))
+
+        conn.commit()
+
+    except Exception as error:
+        print("SAVE AI CHAT LOG MYSQL ERROR:", error)
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+def log_request(question: str, result: dict | None = None, error: str | None = None, user_id=None) -> None:
+    """
+    Standardise every AI Chat result and save it into MySQL for Analytics.
+    This replaces the previous CSV-based analytics logging.
+    """
     timestamp = datetime.now().isoformat(timespec="seconds")
 
     if error:
@@ -889,15 +1009,19 @@ def log_request(question: str, result: dict | None = None, error: str | None = N
         }
     else:
         result = standardize_ai_response(result or {})
+
+        # Keep the real user question.
+        # If result["question"] is empty, fall back to the original question parameter.
+        logged_question = result.get("question") or question
+
         payload = {
             "timestamp": timestamp,
-            "question": question,
-            "title": result.get("title") or result.get("question"),
-            "question": result.get("question"),
+            "question": logged_question,
+            "title": result.get("title") or logged_question,
             "category": result.get("category"),
             "section": result.get("section"),
             "type": result.get("type", "text"),
-            "score": float(result.get("score", 0.0)),
+            "score": float(result.get("score", 0.0) or 0.0),
             "confidence": float(result.get("confidence", result.get("score", 0.0)) or 0.0),
             "confidence_label": result.get("confidence_label"),
             "source": result.get("source", "unknown"),
@@ -909,35 +1033,15 @@ def log_request(question: str, result: dict | None = None, error: str | None = N
         }
 
     print(
-        f"[{timestamp}] CHAT | question={question!r} | "
+        f"[{timestamp}] CHAT | question={payload['question']!r} | "
         f"title={payload['title']!r} | category={payload['category']!r} | "
         f"section={payload['section']!r} | score={payload['score']} | "
         f"source={payload['source']!r} | fallback={payload['fallback']} | "
         f"escalation_ready={payload['escalation_ready']}"
     )
 
-    with open(LOG_JSONL, "a", encoding="utf-8") as file:
-        file.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    save_ai_chat_log_to_mysql(payload, user_id=user_id)
 
-    with open(LOG_CSV, "a", newline="", encoding="utf-8") as file:
-        writer = csv.writer(file)
-        writer.writerow([
-            payload["timestamp"],
-            payload["question"],
-            payload["title"],
-            payload["category"],
-            payload["section"],
-            payload["type"],
-            payload["score"],
-            payload["confidence"],
-            payload["confidence_label"],
-            payload["source"],
-            payload["fallback"],
-            payload["fallback_message"],
-            payload["escalation_ready"],
-            payload["reply"],
-            payload["error"],
-        ])
 
 def call_model_answer(question: str, context: dict | None = None):
     context = normalize_context(context or {})
@@ -2910,40 +3014,61 @@ def chat_test():
 
 @app.route("/api/analytics", methods=["GET"])
 def get_analytics():
-    try:
-        ensure_log_files()
+    conn = None
+    cursor = None
 
+    try:
+        ensure_ai_chat_log_table()
+
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT
+                log_id,
+                user_id,
+                question,
+                title,
+                category,
+                article_section,
+                response_type,
+                score,
+                confidence,
+                confidence_label,
+                source,
+                fallback,
+                fallback_message,
+                escalation_ready,
+                reply,
+                error,
+                DATE_FORMAT(created_at, '%Y-%m-%d %H:%i') AS timestamp
+            FROM ai_chat_log
+            WHERE question IS NOT NULL
+              AND TRIM(question) <> ''
+            ORDER BY created_at ASC, log_id ASC
+        """)
+
+        db_rows = cursor.fetchall() or []
         rows = []
 
-        with open(LOG_CSV, "r", newline="", encoding="utf-8") as file:
-            reader = csv.DictReader(file)
+        for row in db_rows:
+            try:
+                confidence = float(row.get("confidence", 0) or 0)
+            except Exception:
+                confidence = 0.0
 
-            for row in reader:
-                question = str(row.get("question", "")).strip()
-
-                if not question:
-                    continue
-
-                try:
-                    confidence = float(row.get("confidence", 0) or 0)
-                except Exception:
-                    confidence = 0.0
-
-                fallback_value = str(row.get("fallback", "")).lower()
-                escalation_value = str(row.get("escalation_ready", "")).lower()
-
-                rows.append({
-                    "timestamp": row.get("timestamp", ""),
-                    "question": question,
-                    "title": row.get("title", ""),
-                    "category": row.get("category", ""),
-                    "confidence": confidence,
-                    "confidence_label": row.get("confidence_label", ""),
-                    "source": row.get("source", ""),
-                    "fallback": fallback_value in ["true", "1", "yes"],
-                    "escalation_ready": escalation_value in ["true", "1", "yes"],
-                    "reply": row.get("reply", "")
-                })
+            rows.append({
+                "timestamp": row.get("timestamp") or "-",
+                "question": row.get("question") or "",
+                "title": row.get("title") or "",
+                "category": row.get("category") or "-",
+                "confidence": confidence,
+                "confidence_label": row.get("confidence_label") or "",
+                "source": row.get("source") or "-",
+                "fallback": bool(row.get("fallback")),
+                "escalation_ready": bool(row.get("escalation_ready")),
+                "reply": row.get("reply") or ""
+            })
 
         # =========================
         # Question Analytics
@@ -2951,7 +3076,7 @@ def get_analytics():
         question_counter = {}
 
         for row in rows:
-            key = row["question"].lower()
+            key = str(row["question"]).lower().strip()
 
             if key not in question_counter:
                 question_counter[key] = {
@@ -3015,11 +3140,17 @@ def get_analytics():
         }), 200
 
     except Exception as e:
-        print("ANALYTICS ERROR:", e)
+        print("ANALYTICS MYSQL ERROR:", e)
         return jsonify({
-            "message": "Failed to load analytics.",
+            "message": "Failed to load analytics from MySQL.",
             "error": str(e)
         }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 
 def is_broad_topic_question(question):
@@ -3140,7 +3271,11 @@ def chat():
 
                 clear_ai_fail_count(data, question)
                 remember_chat_context(data, result)
-                log_request(question, result=result)
+                log_request(
+                    question,
+                    result=result,
+                    user_id=data.get("user_id") or data.get("userId")
+                )
 
                 result["final_source"] = result.get("source")
                 result["served_by"] = "team_lead_answer"
@@ -3335,7 +3470,11 @@ def chat():
 
                 clear_ai_fail_count(data, question)
                 remember_chat_context(data, result)
-                log_request(question, result=result)
+                log_request(
+                    question,
+                    result=result,
+                    user_id=data.get("user_id") or data.get("userId")
+                )
                 remember_last_ai_answer(data, question, result)
 
                 result["final_source"] = result.get("source")
@@ -3397,7 +3536,11 @@ def chat():
             }
 
         remember_chat_context(data, result)
-        log_request(question, result=result)
+        log_request(
+                    question,
+                    result=result,
+                    user_id=data.get("user_id") or data.get("userId")
+                )
         remember_last_ai_answer(data, question, result)
 
         # =========================
@@ -3501,7 +3644,11 @@ def chat():
 
         question = clean_question(data.get("question", ""))
 
-        log_request(question, error=str(error))
+        log_request(
+            question,
+            error=str(error),
+            user_id=data.get("user_id") or data.get("userId")
+        )
 
         escalation_id = create_escalation(
             question,
