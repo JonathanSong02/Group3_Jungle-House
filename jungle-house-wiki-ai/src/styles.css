@@ -14548,3 +14548,34 @@ body.sidebar-is-collapsed .ai-chat-shell {
     padding: 68px 12px 24px !important;
   }
 }
+
+
+
+/* =========================================================
+   QUIZ AUTO NEXT FEEDBACK
+   Add this at the bottom of styles.css
+   ========================================================= */
+
+.quiz-option {
+  position: relative;
+}
+
+.quiz-option.selected::after {
+  content: 'Selected';
+  margin-left: auto;
+  padding: 5px 10px;
+  background: #fff8e8;
+  color: var(--primary-dark);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .quiz-option.selected::after {
+    padding: 4px 8px;
+    font-size: 11px;
+  }
+}

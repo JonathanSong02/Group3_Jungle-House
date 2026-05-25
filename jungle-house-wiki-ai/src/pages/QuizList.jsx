@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import api from '../services/api';
 
@@ -12,8 +12,21 @@ export default function QuizList() {
   const [loadingQuizzes, setLoadingQuizzes] = useState(true);
   const [loadingQuestions, setLoadingQuestions] = useState(false);
 
+  const autoNextTimerRef = useRef(null);
+
+  const clearAutoNextTimer = () => {
+    if (autoNextTimerRef.current) {
+      clearTimeout(autoNextTimerRef.current);
+      autoNextTimerRef.current = null;
+    }
+  };
+
   useEffect(() => {
     fetchQuizzes();
+
+    return () => {
+      clearAutoNextTimer();
+    };
   }, []);
 
   const fetchQuizzes = async () => {
@@ -110,6 +123,8 @@ export default function QuizList() {
   }, [activeQuiz, selectedAnswers]);
 
   const handleStartQuiz = async (quizId) => {
+    clearAutoNextTimer();
+
     setActiveQuizId(quizId);
     setCurrentQuestionIndex(0);
     setSelectedAnswers({});
@@ -120,25 +135,41 @@ export default function QuizList() {
   };
 
   const handleBeginQuestions = () => {
+    clearAutoNextTimer();
     setShowWelcome(false);
   };
 
   const handleSelectAnswer = (questionId, optionValue) => {
     if (submitted) return;
 
+    clearAutoNextTimer();
+
     setSelectedAnswers((prev) => ({
       ...prev,
       [questionId]: optionValue,
     }));
+
+    if (currentQuestionIndex < totalQuestions - 1) {
+      autoNextTimerRef.current = setTimeout(() => {
+        setCurrentQuestionIndex((prev) =>
+          Math.min(prev + 1, totalQuestions - 1)
+        );
+        autoNextTimerRef.current = null;
+      }, 350);
+    }
   };
 
   const handleNext = () => {
+    clearAutoNextTimer();
+
     if (currentQuestionIndex < totalQuestions - 1) {
       setCurrentQuestionIndex((prev) => prev + 1);
     }
   };
 
   const handlePrevious = () => {
+    clearAutoNextTimer();
+
     if (currentQuestionIndex > 0) {
       setCurrentQuestionIndex((prev) => prev - 1);
     }
@@ -188,6 +219,8 @@ export default function QuizList() {
 
   const handleSubmit = async () => {
     try {
+      clearAutoNextTimer();
+
       const user = getStoredUser();
       const userId = user?.id || user?.user_id || user?.userId || null;
 
@@ -219,6 +252,8 @@ export default function QuizList() {
   };
 
   const handleRetake = () => {
+    clearAutoNextTimer();
+
     setCurrentQuestionIndex(0);
     setSelectedAnswers({});
     setSubmitted(false);
@@ -226,6 +261,8 @@ export default function QuizList() {
   };
 
   const handleBackToList = () => {
+    clearAutoNextTimer();
+
     setActiveQuizId(null);
     setCurrentQuestionIndex(0);
     setSelectedAnswers({});
