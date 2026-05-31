@@ -320,10 +320,14 @@ def build_visual_image_match_result(row, similarity_score):
     })
 
 
-def search_visual_image_match(uploaded_image_url, threshold=0.70):
+def search_visual_image_match(uploaded_image_url, threshold=0.85, min_gap=0.08):
     """
     Compare staff uploaded image with approved image_retrieval images.
-    This allows same object from different angle to match.
+
+    Safer version:
+    - Requires higher similarity score.
+    - Rejects weak matches.
+    - Rejects unclear matches where the best and second-best image are too close.
     """
     if not IMAGE_EMBEDDING_AVAILABLE or not create_image_embedding or not cosine_similarity_from_json:
         print("IMAGE EMBEDDING NOT AVAILABLE:", IMAGE_EMBEDDING_LOAD_ERROR)
@@ -363,8 +367,7 @@ def search_visual_image_match(uploaded_image_url, threshold=0.70):
 
         rows = cursor.fetchall() or []
 
-        best_row = None
-        best_score = 0.0
+        scored_rows = []
 
         for row in rows:
             score = cosine_similarity_from_json(
@@ -372,16 +375,44 @@ def search_visual_image_match(uploaded_image_url, threshold=0.70):
                 row.get("image_embedding")
             )
 
-            if score > best_score:
-                best_score = score
-                best_row = row
+            try:
+                score = float(score or 0.0)
+            except Exception:
+                score = 0.0
+
+            scored_rows.append((score, row))
+
+        scored_rows.sort(key=lambda item: item[0], reverse=True)
+
+        if not scored_rows:
+            return None
+
+        best_score, best_row = scored_rows[0]
+        second_score = scored_rows[1][0] if len(scored_rows) > 1 else 0.0
 
         print("BEST VISUAL IMAGE SCORE:", best_score)
+        print("SECOND VISUAL IMAGE SCORE:", second_score)
 
-        if best_row and best_score >= threshold:
-            return build_visual_image_match_result(best_row, best_score)
+        # Debug top 5 matches
+        for debug_score, debug_row in scored_rows[:5]:
+            print(
+                "VISUAL TOP MATCH:",
+                "image_id=", debug_row.get("image_id"),
+                "score=", round(debug_score, 4),
+                "answer=", str(debug_row.get("answer") or "")[:80]
+            )
 
-        return None
+        # Reject weak match
+        if best_score < threshold:
+            print("VISUAL MATCH REJECTED: below threshold")
+            return None
+
+        # Reject confusing match if best and second are too close
+        if second_score > 0 and (best_score - second_score) < min_gap:
+            print("VISUAL MATCH REJECTED: best match not confident enough")
+            return None
+
+        return build_visual_image_match_result(best_row, best_score)
 
     except Exception as error:
         print("SEARCH VISUAL IMAGE MATCH ERROR:", error)
@@ -3409,7 +3440,7 @@ def chat():
                 if uploaded_chat_image_url:
                     visual_match_result = search_visual_image_match(
                         uploaded_chat_image_url,
-                        threshold=0.70
+                        threshold=0.85
                     )
 
                     if visual_match_result:
