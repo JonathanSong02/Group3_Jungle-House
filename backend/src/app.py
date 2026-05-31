@@ -14,6 +14,7 @@ from db_helper import (
     save_qa_to_db,
     search_similar_question,
     search_similar_questions,
+    search_image_retrieval,
     create_escalation,
     resolve_escalation
 )
@@ -1118,7 +1119,7 @@ def is_valid_answer(result):
     return True
 
 
-def choose_final_result(model_result, retrieval_result, kb_result=None):
+def choose_final_result(model_result, retrieval_result, kb_result=None, image_retrieval_result=None):
     REQUIRED_CONFIDENCE = 1.0
 
     def is_fully_confident(result):
@@ -1155,13 +1156,20 @@ def choose_final_result(model_result, retrieval_result, kb_result=None):
         ):
             return model_result
 
-    # Priority 1: live Knowledge Base article.
+        # Priority 1: live Knowledge Base article.
     if is_fully_confident(kb_result):
         kb_result["score"] = 1.0
         kb_result["confidence"] = 1.0
         return kb_result
 
-    # Priority 2: Manager-approved Team Lead answer.
+    # Priority 2: approved image retrieval.
+    # This includes Knowledge Base image records and Manager-approved escalation image records.
+    if is_fully_confident(image_retrieval_result):
+        image_retrieval_result["score"] = 1.0
+        image_retrieval_result["confidence"] = 1.0
+        return image_retrieval_result
+
+    # Priority 3: Manager-approved Team Lead answer.
     if is_fully_confident(retrieval_result):
         retrieval_result["score"] = 1.0
         retrieval_result["confidence"] = 1.0
@@ -1714,6 +1722,17 @@ def process_question(question, context=None):
     kb_result = search_knowledge_base_articles(question, limit=1)
     kb_options = search_knowledge_base_articles(question, limit=10)
 
+    image_retrieval_result = search_image_retrieval(question, limit=1)
+
+    if image_retrieval_result:
+        image_retrieval_result = normalize_result(image_retrieval_result, "image_retrieval")
+
+    image_retrieval_options = search_image_retrieval(question, limit=10)
+    image_retrieval_options = [
+        normalize_result(item, "image_retrieval")
+        for item in image_retrieval_options
+    ]
+
     retrieval_result = search_similar_question(question)
 
     if retrieval_result:
@@ -1799,6 +1818,14 @@ def process_question(question, context=None):
     for item in kb_options:
         answer_options.extend(build_answer_options(question, None, item))
 
+    # Add approved image retrieval results.
+    answer_options.extend(
+        build_answer_options(question, None, image_retrieval_result)
+    )
+
+    for item in image_retrieval_options:
+        answer_options.extend(build_answer_options(question, None, item))
+
     # Add the best Team Lead/database result.
     answer_options.extend(
         build_answer_options(question, None, retrieval_result)
@@ -1878,7 +1905,12 @@ def process_question(question, context=None):
 
     # Prefer training data / PyTorch model result for normal valid questions.
     # Retrieved Team Lead answers are used mainly when the model cannot answer confidently.
-    final_result = choose_final_result(model_result, retrieval_result, kb_result)  
+    final_result = choose_final_result(
+        model_result,
+        retrieval_result,
+        kb_result,
+        image_retrieval_result
+    )
 
     response_payload = {
         "question": question,
@@ -4436,6 +4468,119 @@ def _save_approved_escalation_to_qa_knowledge(cursor, question, answer, image_ur
         VALUES ({', '.join(placeholders)})
     """, tuple(params))
 
+def _save_approved_escalation_to_image_retrieval(cursor, escalation_id, question, answer, image_url=None, image_type=None):
+    """
+    Save Manager-approved escalation image answer into image_retrieval.
+    This allows AI Chat to reuse approved image answers later.
+    """
+    question = str(question or "").strip()
+    answer = str(answer or "").strip()
+    image_url = str(image_url or "").strip()
+    image_type = str(image_type or "").strip() or None
+
+    if not question or not answer or not image_url:
+        return
+
+    try:
+        columns = _get_table_columns(cursor, "image_retrieval")
+    except Exception as error:
+        print("IMAGE RETRIEVAL TABLE NOT READY:", error)
+        return
+
+    required_columns = {"source_type", "source_id", "question", "answer", "image_url"}
+    if not required_columns.issubset(columns):
+        print("IMAGE RETRIEVAL TABLE MISSING REQUIRED COLUMNS")
+        return
+
+    cursor.execute("""
+        SELECT image_id
+        FROM image_retrieval
+        WHERE source_type = 'approved_escalation'
+        AND source_id = %s
+        LIMIT 1
+    """, (escalation_id,))
+
+    existing = cursor.fetchone()
+
+    image_caption = answer
+    image_keywords = question
+
+    if existing:
+        set_parts = [
+            "question = %s",
+            "answer = %s",
+            "image_url = %s"
+        ]
+        params = [question, answer, image_url]
+
+        if "image_type" in columns:
+            set_parts.append("image_type = %s")
+            params.append(image_type)
+
+        if "image_caption" in columns:
+            set_parts.append("image_caption = %s")
+            params.append(image_caption)
+
+        if "image_keywords" in columns:
+            set_parts.append("image_keywords = %s")
+            params.append(image_keywords)
+
+        if "approval_status" in columns:
+            set_parts.append("approval_status = %s")
+            params.append("approved")
+
+        params.append(escalation_id)
+
+        cursor.execute(f"""
+            UPDATE image_retrieval
+            SET {', '.join(set_parts)}
+            WHERE source_type = 'approved_escalation'
+            AND source_id = %s
+        """, tuple(params))
+
+        return
+
+    insert_columns = [
+        "source_type",
+        "source_id",
+        "question",
+        "answer",
+        "image_url"
+    ]
+    placeholders = ["%s", "%s", "%s", "%s", "%s"]
+    params = [
+        "approved_escalation",
+        escalation_id,
+        question,
+        answer,
+        image_url
+    ]
+
+    if "image_type" in columns:
+        insert_columns.append("image_type")
+        placeholders.append("%s")
+        params.append(image_type)
+
+    if "image_caption" in columns:
+        insert_columns.append("image_caption")
+        placeholders.append("%s")
+        params.append(image_caption)
+
+    if "image_keywords" in columns:
+        insert_columns.append("image_keywords")
+        placeholders.append("%s")
+        params.append(image_keywords)
+
+    if "approval_status" in columns:
+        insert_columns.append("approval_status")
+        placeholders.append("%s")
+        params.append("approved")
+
+    cursor.execute(f"""
+        INSERT INTO image_retrieval ({', '.join(insert_columns)})
+        VALUES ({', '.join(placeholders)})
+    """, tuple(params))
+
 
 @app.route('/api/escalations', methods=['GET'])
 def get_escalations():
@@ -4631,6 +4776,12 @@ def submit_escalation_answer(escalation_id):
             WHERE question = %s
         """, (question,))
 
+        cursor.execute("""
+            DELETE FROM image_retrieval
+            WHERE source_type = 'approved_escalation'
+            AND source_id = %s
+        """, (escalation_id,))
+
         conn.commit()
 
         add_audit_log(
@@ -4744,6 +4895,15 @@ def approve_escalation_answer(escalation_id):
 
         _save_approved_escalation_to_qa_knowledge(
             cursor,
+            question,
+            manual_answer,
+            escalation.get('image_url'),
+            escalation.get('image_type')
+        )
+
+        _save_approved_escalation_to_image_retrieval(
+            cursor,
+            escalation_id,
             question,
             manual_answer,
             escalation.get('image_url'),
@@ -4865,6 +5025,12 @@ def reject_escalation_answer(escalation_id):
             DELETE FROM qa_knowledge
             WHERE question = %s
         """, (question,))
+
+        cursor.execute("""
+            DELETE FROM image_retrieval
+            WHERE source_type = 'approved_escalation'
+            AND source_id = %s
+        """, (escalation_id,))
 
         cursor.execute("""
             UPDATE escalation

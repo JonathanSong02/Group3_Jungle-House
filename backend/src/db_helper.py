@@ -271,6 +271,138 @@ def search_similar_questions(question, team_lead_only=False, limit=5):
         if conn:
             conn.close()
 
+# =========================
+# IMAGE RETRIEVAL HELPERS
+# =========================
+
+def build_image_retrieval_result(row, score=1.0):
+    """
+    Convert one image_retrieval row into the same response format used by AI Chat.
+    This lets Chat.jsx show answer + image without frontend changes.
+    """
+    row = row or {}
+
+    question = row.get("question") or row.get("image_caption") or "Approved image answer"
+    answer = row.get("answer") or row.get("image_caption") or ""
+    image_url = row.get("image_url")
+    image_type = row.get("image_type")
+
+    return {
+        "question": question,
+        "title": question,
+        "category": None,
+        "section": None,
+        "answer": answer,
+        "reply": answer,
+        "type": "text",
+        "source": f"image_retrieval_{row.get('source_type') or 'approved'}",
+        "score": 1.0,
+        "confidence": 1.0,
+        "image_url": image_url,
+        "image_type": image_type,
+        "image_files": (
+            [{"url": image_url, "type": image_type}]
+            if image_url
+            else []
+        ),
+        "attachment_url": image_url,
+        "attachment_type": image_type,
+        "context": {
+            "source_type": row.get("source_type"),
+            "source_id": row.get("source_id"),
+            "image_id": row.get("image_id"),
+        },
+        "fallback": False,
+        "fallback_message": "",
+        "escalation_ready": False,
+        "escalation_required": False,
+    }
+
+
+def search_image_retrieval(question, limit=1):
+    """
+    Search manager-approved / KB image retrieval records.
+
+    Easy version:
+    - It searches by question, answer, image_caption and image_keywords.
+    - This is NOT real different-angle image detection yet.
+    - Real different-angle detection will need image embeddings later.
+    """
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        clean_question = normalize_text(question)
+
+        cursor.execute("""
+            SELECT *
+            FROM image_retrieval
+            WHERE approval_status = 'approved'
+            ORDER BY
+                CASE
+                    WHEN source_type = 'knowledge_base' THEN 1
+                    WHEN source_type = 'approved_escalation' THEN 2
+                    ELSE 3
+                END,
+                created_at DESC
+        """)
+
+        rows = cursor.fetchall() or []
+        matches = []
+
+        for row in rows:
+            searchable_text = " ".join([
+                str(row.get("question") or ""),
+                str(row.get("answer") or ""),
+                str(row.get("image_caption") or ""),
+                str(row.get("image_keywords") or ""),
+            ])
+
+            db_text = normalize_text(searchable_text)
+            db_question = normalize_text(row.get("question"))
+
+            if not db_text:
+                continue
+
+            if clean_question == db_question:
+                score = 1.0
+            else:
+                score = similarity_ratio(clean_question, db_text)
+
+            # Easy matching threshold.
+            # This helps similar questions match approved image answers.
+            if score >= 0.65:
+                result = build_image_retrieval_result(row, score=1.0)
+                result["match_score"] = score
+                matches.append(result)
+
+        matches.sort(
+            key=lambda item: (
+                1 if item.get("context", {}).get("source_type") == "knowledge_base" else 0,
+                item.get("match_score", 0.0),
+                item.get("confidence", 0.0),
+            ),
+            reverse=True
+        )
+
+        if limit == 1:
+            return matches[0] if matches else None
+
+        return matches[:limit]
+
+    except Exception as e:
+        print("SEARCH IMAGE RETRIEVAL ERROR:", e)
+        return None if limit == 1 else []
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
 
 # =========================
 # ESCALATION HELPERS
