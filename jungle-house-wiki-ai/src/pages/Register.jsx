@@ -10,16 +10,17 @@ export default function Register() {
     email: '',
     password: '',
     confirm_password: '',
-    access_key: '',
   });
 
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [showPendingModal, setShowPendingModal] = useState(false);
 
   const handleChange = (event) => {
     const { name, value } = event.target;
+
     setForm((prev) => ({
       ...prev,
       [name]: value,
@@ -49,7 +50,9 @@ export default function Register() {
     }
 
     if (!validatePassword(form.password)) {
-      setError('Password must be at least 8 characters, include a number, and an uppercase letter.');
+      setError(
+        'Password must be at least 8 characters, include a number, and an uppercase letter.'
+      );
       return;
     }
 
@@ -61,26 +64,31 @@ export default function Register() {
         email: form.email.trim().toLowerCase(),
         password: form.password,
         confirm_password: form.confirm_password,
-        access_key: form.access_key.trim(),
 
-        // Client feedback:
-        // New crew members do not choose role during registration.
-        // All registered users go to staff interface by default.
+        // Security flow:
+        // New users register with an approved company email domain first.
+        // Manager / Team Lead will approve or decline the account later.
         role: 'staff',
       };
 
       const response = await api.post('/auth/register', payload);
 
-      setSuccess(response.data.message || 'Registration successful.');
+      setSuccess(
+        response.data.message ||
+          'Registration submitted. Please check your email for the verification link.'
+      );
 
-      setTimeout(() => {
-        navigate('/login');
-      }, 1500);
+      setShowPendingModal(true);
     } catch (err) {
       setError(err.response?.data?.message || 'Registration failed.');
     } finally {
       setLoading(false);
     }
+  };
+
+  const goToLogin = () => {
+    setShowPendingModal(false);
+    navigate('/login');
   };
 
   return (
@@ -90,8 +98,9 @@ export default function Register() {
         <h1>Create Account</h1>
 
         <p className="muted">
-          New crew members need a registration key from the manager. All new accounts
-          will be registered as staff.
+          Register using your approved staff email address. A verification link
+          will be sent to your email first. After verification, your account
+          will be reviewed by a manager or team lead within 24 hours.
         </p>
 
         <form onSubmit={handleSubmit} className="form-stack">
@@ -107,7 +116,7 @@ export default function Register() {
           <input
             type="email"
             name="email"
-            placeholder="Email"
+            placeholder="Staff email address"
             value={form.email}
             onChange={handleChange}
             autoComplete="username"
@@ -167,20 +176,11 @@ export default function Register() {
             />
           </div>
 
-          <input
-            type="text"
-            name="access_key"
-            placeholder="Manager registration key"
-            value={form.access_key}
-            onChange={handleChange}
-            required
-          />
-
           {error ? <p className="error-text">{error}</p> : null}
           {success ? <p style={{ color: '#2f6b3d' }}>{success}</p> : null}
 
           <button className="primary-btn" type="submit" disabled={loading}>
-            {loading ? 'Registering...' : 'Register'}
+            {loading ? 'Submitting...' : 'Register'}
           </button>
 
           <div style={{ marginTop: '1rem', textAlign: 'center' }}>
@@ -190,6 +190,48 @@ export default function Register() {
           </div>
         </form>
       </div>
+
+      {showPendingModal ? (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+            padding: '1rem',
+          }}
+        >
+          <div
+            className="card-like"
+            style={{
+              maxWidth: '480px',
+              width: '100%',
+              textAlign: 'center',
+              padding: '2rem',
+            }}
+          >
+            <p className="eyebrow">Account Submitted</p>
+
+            <h2 style={{ marginBottom: '0.75rem' }}>
+              Check your email first
+            </h2>
+
+            <p className="muted" style={{ marginBottom: '1.5rem' }}>
+              Your account registration has been received. Please click the
+              verification link sent to your registered email. After your email
+              is verified, a manager or team lead will approve or decline your
+              account within 24 hours, and you will be notified by email.
+            </p>
+
+            <button type="button" className="primary-btn" onClick={goToLogin}>
+              Go to Login
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

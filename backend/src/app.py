@@ -1,15 +1,19 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, redirect
 from flask_cors import CORS
 import os
 import time
 from werkzeug.utils import secure_filename
 import mysql.connector
 from werkzeug.security import generate_password_hash, check_password_hash
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 import csv
 import json
 import traceback
+import smtplib
+import secrets
+import hashlib
+from email.message import EmailMessage
 from db_helper import (
     save_qa_to_db,
     search_similar_question,
@@ -676,6 +680,493 @@ def add_audit_log(actor_id=None, actor_name="System", action="", module="", desc
             cursor.close()
         if conn:
             conn.close()
+
+
+
+
+# =========================
+# REGISTRATION APPROVAL HELPERS
+# =========================
+APPROVER_ROLES = {"manager", "admin", "teamlead", "team lead"}
+
+
+# Only approved internal/company email domains can submit registration.
+# Change this value in your .env / Render / Railway environment variables.
+# Example: ALLOWED_REGISTRATION_DOMAINS=junglehouse.com,junglehouse.my
+ALLOWED_REGISTRATION_DOMAINS = [
+    domain.strip().lower().lstrip("@")
+    for domain in os.getenv("ALLOWED_REGISTRATION_DOMAINS", "junglehouse.com").split(",")
+    if domain.strip()
+]
+
+REGISTRATION_REVIEW_HOURS = int(os.getenv("REGISTRATION_REVIEW_HOURS", "24"))
+EMAIL_VERIFICATION_TOKEN_HOURS = int(os.getenv("EMAIL_VERIFICATION_TOKEN_HOURS", "24"))
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173").strip().rstrip("/")
+API_PUBLIC_URL = os.getenv("API_PUBLIC_URL", "").strip().rstrip("/")
+
+
+def get_email_domain(email):
+    email = str(email or "").strip().lower()
+
+    if "@" not in email:
+        return ""
+
+    return email.rsplit("@", 1)[-1]
+
+
+def is_valid_email_format(email):
+    email = str(email or "").strip().lower()
+    return bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email))
+
+
+def is_allowed_registration_email(email):
+    """
+    Cybersecurity rule:
+    only users with approved internal/company email domains can register.
+    The account is still pending until manager/team lead approval.
+    """
+    if not is_valid_email_format(email):
+        return False
+
+    domain = get_email_domain(email)
+    return domain in ALLOWED_REGISTRATION_DOMAINS
+
+
+def allowed_domain_message():
+    if not ALLOWED_REGISTRATION_DOMAINS:
+        return "Please register using an approved staff email address."
+
+    readable_domains = ", ".join([f"@{domain}" for domain in ALLOWED_REGISTRATION_DOMAINS])
+    return f"Please register using an approved staff email domain: {readable_domains}."
+
+
+def send_email_safe(to_email, subject, body):
+    """
+    Optional email notification helper.
+    It will not break the system if SMTP is not configured yet.
+
+    Required environment variables when you want real email sending:
+    SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM_EMAIL
+    """
+    to_email = str(to_email or "").strip()
+
+    smtp_host = os.getenv("SMTP_HOST", "").strip()
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_user = os.getenv("SMTP_USER", "").strip()
+    smtp_password = os.getenv("SMTP_PASSWORD", "").strip()
+    smtp_from = os.getenv("SMTP_FROM_EMAIL", smtp_user).strip()
+    smtp_use_tls = os.getenv("SMTP_USE_TLS", "true").strip().lower() != "false"
+
+    if not to_email or not smtp_host or not smtp_from:
+        print("EMAIL SKIPPED: SMTP is not configured.")
+        return False
+
+    try:
+        message = EmailMessage()
+        message["From"] = smtp_from
+        message["To"] = to_email
+        message["Subject"] = subject
+        message.set_content(body)
+
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as server:
+            if smtp_use_tls:
+                server.starttls()
+
+            if smtp_user and smtp_password:
+                server.login(smtp_user, smtp_password)
+
+            server.send_message(message)
+
+        return True
+
+    except Exception as error:
+        print("SEND EMAIL SAFE ERROR:", error)
+        return False
+
+
+
+
+def ensure_email_verification_table(cursor):
+    """
+    Creates the email verification table automatically if it does not exist.
+    You can also create it using the SQL migration file.
+    """
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS email_verifications (
+            verification_id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            email VARCHAR(255) NOT NULL,
+            token_hash CHAR(64) NOT NULL,
+            expires_at DATETIME NOT NULL,
+            verified_at DATETIME NULL,
+            used_at DATETIME NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_email_verifications_user_id (user_id),
+            INDEX idx_email_verifications_token_hash (token_hash),
+            INDEX idx_email_verifications_email (email),
+            CONSTRAINT fk_email_verifications_user
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+                ON DELETE CASCADE
+        )
+    """)
+
+
+def hash_email_verification_token(token):
+    return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
+
+
+def create_email_verification_token(cursor, user_id, email):
+    ensure_email_verification_table(cursor)
+
+    # Invalidate older unused links for this user so only the newest link is useful.
+    cursor.execute("""
+        UPDATE email_verifications
+        SET used_at = NOW()
+        WHERE user_id = %s
+          AND verified_at IS NULL
+          AND used_at IS NULL
+    """, (user_id,))
+
+    token = secrets.token_urlsafe(32)
+    token_hash = hash_email_verification_token(token)
+    expires_at = datetime.utcnow() + timedelta(hours=EMAIL_VERIFICATION_TOKEN_HOURS)
+
+    cursor.execute("""
+        INSERT INTO email_verifications (user_id, email, token_hash, expires_at)
+        VALUES (%s, %s, %s, %s)
+    """, (user_id, email, token_hash, expires_at))
+
+    return token
+
+
+def get_verification_link(token):
+    base_url = API_PUBLIC_URL
+
+    if not base_url:
+        try:
+            base_url = request.host_url.rstrip("/")
+        except RuntimeError:
+            base_url = "http://localhost:4000"
+
+    return f"{base_url}/api/auth/verify-email?token={token}"
+
+
+def send_email_verification_link(full_name, email, token):
+    verification_link = get_verification_link(token)
+    subject = "Jungle House AI Wiki - Verify your email"
+    body = f"""Hi {full_name},
+
+Thank you for registering for the Jungle House AI Wiki system.
+
+Please verify your email address using this link:
+{verification_link}
+
+This link will expire in {EMAIL_VERIFICATION_TOKEN_HOURS} hours.
+
+After your email is verified, a manager or team lead will review your account registration within {REGISTRATION_REVIEW_HOURS} hours. You will receive another email after your account is approved or declined.
+
+If you did not request this account, please ignore this email.
+
+Thank you,
+Jungle House AI Wiki Team
+"""
+    return send_email_safe(email, subject, body)
+
+
+def is_user_email_verified(cursor, user_id):
+    ensure_email_verification_table(cursor)
+
+    cursor.execute("""
+        SELECT verification_id, verified_at
+        FROM email_verifications
+        WHERE user_id = %s
+          AND verified_at IS NOT NULL
+        ORDER BY verified_at DESC
+        LIMIT 1
+    """, (user_id,))
+
+    row = cursor.fetchone()
+    return bool(row)
+
+
+def get_user_email_verified_at(cursor, user_id):
+    ensure_email_verification_table(cursor)
+
+    cursor.execute("""
+        SELECT verified_at
+        FROM email_verifications
+        WHERE user_id = %s
+          AND verified_at IS NOT NULL
+        ORDER BY verified_at DESC
+        LIMIT 1
+    """, (user_id,))
+
+    row = cursor.fetchone()
+    if not row:
+        return None
+
+    if isinstance(row, dict):
+        return row.get("verified_at")
+
+    return row[0] if row else None
+
+
+def registration_success_redirect(message_key="email_verified"):
+    if FRONTEND_URL:
+        return redirect(f"{FRONTEND_URL}/login?{message_key}=1")
+
+    return jsonify({"message": "Email verified successfully. You may return to the login page."}), 200
+
+def send_registration_received_email(full_name, email):
+    subject = "Jungle House AI Wiki - Registration received"
+    body = f"""Hi {full_name},
+
+Your account registration has been received.
+
+For security reasons, your account is currently pending verification. A manager or team lead will review and approve or decline your registration within {REGISTRATION_REVIEW_HOURS} hours.
+
+You will receive another email after the decision has been made.
+
+Thank you,
+Jungle House AI Wiki Team
+"""
+    return send_email_safe(email, subject, body)
+
+
+def get_table_columns_safe(cursor, table_name):
+    cursor.execute(f"SHOW COLUMNS FROM {table_name}")
+    rows = cursor.fetchall()
+    columns = set()
+
+    for row in rows:
+        if isinstance(row, dict):
+            column_name = row.get("Field")
+        else:
+            column_name = row[0] if row else None
+
+        if column_name:
+            columns.add(str(column_name))
+
+    return columns
+
+
+def is_registration_approver(cursor, actor_id):
+    if not actor_id:
+        return False
+
+    cursor.execute("""
+        SELECT r.role_name, u.status
+        FROM users u
+        JOIN roles r ON u.role_id = r.role_id
+        WHERE u.user_id = %s
+        LIMIT 1
+    """, (actor_id,))
+
+    actor = cursor.fetchone()
+
+    if not actor:
+        return False
+
+    role_name = str(actor.get("role_name", "")).strip().lower()
+    status = str(actor.get("status", "")).strip().lower()
+
+    return role_name in APPROVER_ROLES and status == "active"
+
+
+def create_notification_safe(
+    user_id=None,
+    title="",
+    detail="",
+    notification_type="system",
+    related_id=None,
+    target_role=None,
+    created_by=None
+):
+    """
+    Safe notification insert.
+    It only inserts columns that exist in your notification table.
+    This prevents backend crash if your notification table structure changes.
+    """
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        columns = get_table_columns_safe(cursor, "notification")
+
+        payload = {}
+
+        if "user_id" in columns:
+            payload["user_id"] = user_id
+
+        if "title" in columns:
+            payload["title"] = title
+
+        if "detail" in columns:
+            payload["detail"] = detail
+
+        if "message" in columns:
+            payload["message"] = detail
+
+        if "type" in columns:
+            payload["type"] = notification_type
+
+        if "related_id" in columns:
+            payload["related_id"] = related_id
+
+        if "target_role" in columns:
+            payload["target_role"] = target_role
+
+        if "created_by" in columns:
+            payload["created_by"] = created_by
+
+        if "is_read" in columns:
+            payload["is_read"] = False
+
+        if not payload:
+            return
+
+        insert_columns = list(payload.keys())
+        placeholders = ", ".join(["%s"] * len(insert_columns))
+        column_names = ", ".join(insert_columns)
+        values = [payload[column] for column in insert_columns]
+
+        cursor.execute(f"""
+            INSERT INTO notification ({column_names})
+            VALUES ({placeholders})
+        """, tuple(values))
+
+        conn.commit()
+
+    except Exception as error:
+        print("CREATE NOTIFICATION SAFE ERROR:", error)
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+def notify_registration_approvers(new_user_id, full_name, email):
+    """
+    Notify active managers/admins/team leads that a new user is waiting for approval.
+    """
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT u.user_id
+            FROM users u
+            JOIN roles r ON u.role_id = r.role_id
+            WHERE LOWER(u.status) = 'active'
+              AND LOWER(r.role_name) IN ('manager', 'admin', 'teamlead', 'team lead')
+        """)
+
+        approvers = cursor.fetchall() or []
+
+        for approver in approvers:
+            create_notification_safe(
+                user_id=approver["user_id"],
+                title="New account approval needed",
+                detail=f"{full_name} ({email}) has registered and is waiting for account verification.",
+                notification_type="registration",
+                related_id=new_user_id,
+                created_by=new_user_id
+            )
+
+    except Exception as error:
+        print("NOTIFY REGISTRATION APPROVERS ERROR:", error)
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+def get_user_contact_safe(user_id):
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT full_name, email
+            FROM users
+            WHERE user_id = %s
+            LIMIT 1
+        """, (user_id,))
+
+        return cursor.fetchone()
+
+    except Exception as error:
+        print("GET USER CONTACT SAFE ERROR:", error)
+        return None
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+def notify_registration_decision(user_id, approved=True, reason=""):
+    user_contact = get_user_contact_safe(user_id) or {}
+    full_name = user_contact.get("full_name") or "there"
+    email = user_contact.get("email")
+
+    if approved:
+        title = "Account approved"
+        detail = "Your account has been approved. You can now log in to the Jungle House AI Wiki system."
+        subject = "Jungle House AI Wiki - Account approved"
+        body = f"""Hi {full_name},
+
+Your Jungle House AI Wiki account has been approved.
+
+You can now log in using your registered email address.
+
+Thank you,
+Jungle House AI Wiki Team
+"""
+    else:
+        title = "Account registration declined"
+        detail = "Your account registration was declined."
+
+        if reason:
+            detail += f" Reason: {reason}"
+
+        subject = "Jungle House AI Wiki - Registration declined"
+        body = f"""Hi {full_name},
+
+Your Jungle House AI Wiki account registration was declined.
+
+Reason: {reason or 'No reason was provided.'}
+
+Please contact your manager or team lead if you think this is a mistake.
+
+Thank you,
+Jungle House AI Wiki Team
+"""
+
+    create_notification_safe(
+        user_id=user_id,
+        title=title,
+        detail=detail,
+        notification_type="registration_decision",
+        related_id=user_id
+    )
+
+    if email:
+        send_email_safe(email, subject, body)
 
 
 # =========================
@@ -2228,16 +2719,21 @@ def register():
     full_name = data.get("full_name", "").strip()
     email = data.get("email", "").strip().lower()
 
-    # Client feedback: crew members do not choose role during registration.
-    # Every self-registered account is staff by default.
+    # All self-registered users become staff first.
+    # Manager / Team Lead can approve later.
     role = "staff"
 
     password = data.get("password", "")
     confirm_password = data.get("confirm_password", "")
-    access_key = data.get("access_key", "").strip()
 
-    if not all([full_name, email, password, confirm_password, access_key]):
+    if not all([full_name, email, password, confirm_password]):
         return jsonify({"message": "Please fill in all fields."}), 400
+
+    if not is_valid_email_format(email):
+        return jsonify({"message": "Please enter a valid email address."}), 400
+
+    if not is_allowed_registration_email(email):
+        return jsonify({"message": allowed_domain_message()}), 400
 
     if password != confirm_password:
         return jsonify({"message": "Passwords do not match."}), 400
@@ -2252,6 +2748,8 @@ def register():
         conn = get_db_connection()
         conn.start_transaction()
         cursor = conn.cursor(dictionary=True)
+
+        ensure_email_verification_table(cursor)
 
         cursor.execute("SELECT user_id FROM users WHERE LOWER(email) = %s", (email,))
         existing_user = cursor.fetchone()
@@ -2271,63 +2769,218 @@ def register():
             conn.rollback()
             return jsonify({"message": "Staff role does not exist in database."}), 400
 
-        cursor.execute("""
-            SELECT rk.key_id, rk.is_used, rk.is_active, rk.expires_at, r.role_name
-            FROM registration_keys rk
-            JOIN roles r ON rk.allowed_role_id = r.role_id
-            WHERE rk.key_code = %s
-              AND rk.is_used = FALSE
-              AND rk.is_active = TRUE
-              AND LOWER(r.role_name) = %s
-              AND (rk.expires_at IS NULL OR rk.expires_at > NOW())
-            FOR UPDATE
-        """, (access_key, role))
-        key_row = cursor.fetchone()
-
-        if not key_row:
-            conn.rollback()
-            return jsonify({"message": "Invalid, expired, used, or non-staff registration key."}), 400
-
         password_hash = generate_password_hash(password)
 
+        # Security flow:
+        # 1. User must own the email address by clicking the verification link.
+        # 2. Account remains pending until manager/team lead approval.
         cursor.execute("""
             INSERT INTO users (full_name, email, password_hash, role_id, status)
-            VALUES (%s, %s, %s, %s, 'active')
+            VALUES (%s, %s, %s, %s, 'pending')
         """, (full_name, email, password_hash, role_row["role_id"]))
 
         new_user_id = cursor.lastrowid
-
-        cursor.execute("""
-            UPDATE registration_keys
-            SET is_used = TRUE,
-                used_by = %s,
-                used_at = NOW()
-            WHERE key_id = %s
-        """, (new_user_id, key_row["key_id"]))
+        verification_token = create_email_verification_token(cursor, new_user_id, email)
 
         conn.commit()
 
         add_audit_log(
             actor_id=new_user_id,
             actor_name=full_name,
-            action="Registered account",
+            action="Submitted account registration",
             module="Authentication",
-            description=f"New staff account registered using manager registration key. Email: {email}"
+            description=(
+                f"New staff account is pending email verification and manager approval. "
+                f"Email: {email}. Domain: {get_email_domain(email)}"
+            )
         )
 
-        return jsonify({"message": "Registration successful. You can now log in."}), 201
+        notify_registration_approvers(new_user_id, full_name, email)
+        email_sent = send_email_verification_link(full_name, email, verification_token)
+
+        return jsonify({
+            "message": (
+                "Registration submitted. Please check your email and click the verification link. "
+                f"After email verification, your account will be reviewed by a manager or team lead within {REGISTRATION_REVIEW_HOURS} hours."
+            ),
+            "email_sent": email_sent
+        }), 201
 
     except mysql.connector.Error as err:
         print("REGISTER MYSQL ERROR:", err)
+
         if conn:
             conn.rollback()
+
         return jsonify({"message": f"Database error: {str(err)}"}), 500
 
     except Exception as e:
         print("REGISTER GENERAL ERROR:", e)
+
         if conn:
             conn.rollback()
+
         return jsonify({"message": f"Server error: {str(e)}"}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/auth/verify-email", methods=["GET"])
+def verify_email():
+    token = request.args.get("token", "").strip()
+
+    if not token:
+        return jsonify({"message": "Verification token is required."}), 400
+
+    token_hash = hash_email_verification_token(token)
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        conn.start_transaction()
+        cursor = conn.cursor(dictionary=True)
+
+        ensure_email_verification_table(cursor)
+
+        cursor.execute("""
+            SELECT
+                ev.verification_id,
+                ev.user_id,
+                ev.email,
+                ev.expires_at,
+                ev.verified_at,
+                ev.used_at,
+                u.full_name,
+                u.status
+            FROM email_verifications ev
+            JOIN users u ON ev.user_id = u.user_id
+            WHERE ev.token_hash = %s
+            LIMIT 1
+        """, (token_hash,))
+
+        verification = cursor.fetchone()
+
+        if not verification:
+            conn.rollback()
+            return jsonify({"message": "Invalid verification link."}), 400
+
+        if verification.get("verified_at"):
+            conn.rollback()
+            return registration_success_redirect("emailAlreadyVerified")
+
+        if verification.get("used_at"):
+            conn.rollback()
+            return jsonify({"message": "This verification link has already been used. Please request a new link."}), 400
+
+        expires_at = verification.get("expires_at")
+        if expires_at and datetime.utcnow() > expires_at:
+            conn.rollback()
+            return jsonify({"message": "This verification link has expired. Please request a new verification link."}), 400
+
+        cursor.execute("""
+            UPDATE email_verifications
+            SET verified_at = NOW(),
+                used_at = NOW()
+            WHERE verification_id = %s
+        """, (verification["verification_id"],))
+
+        conn.commit()
+
+        create_notification_safe(
+            user_id=verification["user_id"],
+            title="Email verified",
+            detail="Your email has been verified. Your account is now waiting for manager/team lead approval.",
+            notification_type="email_verification",
+            related_id=verification["user_id"]
+        )
+
+        add_audit_log(
+            actor_id=verification["user_id"],
+            actor_name=verification.get("full_name") or "New User",
+            action="Verified registration email",
+            module="Authentication",
+            description=f"Verified email address: {verification.get('email')}"
+        )
+
+        return registration_success_redirect("emailVerified")
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("VERIFY EMAIL ERROR:", error)
+        return jsonify({"message": "Failed to verify email.", "error": str(error)}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/auth/resend-verification", methods=["POST"])
+def resend_email_verification():
+    data = request.get_json(silent=True) or {}
+    email = str(data.get("email", "")).strip().lower()
+
+    if not email:
+        return jsonify({"message": "Email is required."}), 400
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        conn.start_transaction()
+        cursor = conn.cursor(dictionary=True)
+
+        ensure_email_verification_table(cursor)
+
+        cursor.execute("""
+            SELECT user_id, full_name, email, status
+            FROM users
+            WHERE LOWER(email) = %s
+            LIMIT 1
+        """, (email,))
+
+        user = cursor.fetchone()
+
+        # Generic response prevents attackers from checking whether an email exists.
+        generic_message = "If the email is registered and not verified, a new verification link will be sent."
+
+        if not user:
+            conn.rollback()
+            return jsonify({"message": generic_message}), 200
+
+        if is_user_email_verified(cursor, user["user_id"]):
+            conn.rollback()
+            return jsonify({"message": "This email is already verified. Please wait for manager/team lead approval or try logging in."}), 200
+
+        if str(user.get("status", "")).lower() == "declined":
+            conn.rollback()
+            return jsonify({"message": "This registration has been declined. Please contact your manager or team lead."}), 403
+
+        verification_token = create_email_verification_token(cursor, user["user_id"], user["email"])
+        conn.commit()
+
+        email_sent = send_email_verification_link(user["full_name"], user["email"], verification_token)
+
+        return jsonify({
+            "message": "A new verification link has been sent if SMTP email is configured.",
+            "email_sent": email_sent
+        }), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("RESEND EMAIL VERIFICATION ERROR:", error)
+        return jsonify({"message": "Failed to resend verification link.", "error": str(error)}), 500
 
     finally:
         if cursor:
@@ -2365,7 +3018,22 @@ def login():
                 u.password_hash,
                 u.status,
                 u.created_at,
-                r.role_name
+                r.role_name,
+                CASE
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM email_verifications ev
+                        WHERE ev.user_id = u.user_id
+                          AND ev.verified_at IS NOT NULL
+                    ) THEN TRUE
+                    ELSE FALSE
+                END AS email_verified,
+                (
+                    SELECT MAX(ev2.verified_at)
+                    FROM email_verifications ev2
+                    WHERE ev2.user_id = u.user_id
+                      AND ev2.verified_at IS NOT NULL
+                ) AS email_verified_at
             FROM users u
             JOIN roles r ON u.role_id = r.role_id
             WHERE LOWER(u.email) = %s
@@ -2387,6 +3055,50 @@ def login():
             return jsonify({"message": "Invalid email or password."}), 401
 
         user_status = str(user.get("status", "")).strip().lower()
+        email_verified = is_user_email_verified(cursor, user["user_id"])
+
+        if user_status == "pending" and not email_verified:
+            record_login_history(
+                cursor,
+                user_id=user["user_id"],
+                email=user["email"],
+                full_name=user["full_name"],
+                status="failed"
+            )
+            conn.commit()
+
+            return jsonify({
+                "message": "Please verify your email first. Check your inbox for the Jungle House AI Wiki verification link."
+            }), 403
+
+        if user_status == "pending":
+            record_login_history(
+                cursor,
+                user_id=user["user_id"],
+                email=user["email"],
+                full_name=user["full_name"],
+                status="failed"
+            )
+            conn.commit()
+
+            return jsonify({
+                "message": "Your account is pending verification. A manager or team lead will review your registration within 24 hours. You will be notified through your registered email."
+            }), 403
+
+        if user_status == "declined":
+            record_login_history(
+                cursor,
+                user_id=user["user_id"],
+                email=user["email"],
+                full_name=user["full_name"],
+                status="failed"
+            )
+            conn.commit()
+
+            return jsonify({
+                "message": "Your registration was declined. Please contact the manager if you think this is a mistake."
+            }), 403
+
         if user_status != "active":
             record_login_history(
                 cursor,
@@ -2396,7 +3108,10 @@ def login():
                 status="failed"
             )
             conn.commit()
-            return jsonify({"message": "This account is inactive. Please contact the manager."}), 403
+
+            return jsonify({
+                "message": "This account is inactive. Please contact the manager."
+            }), 403
 
         stored_password = str(user.get("password_hash", "")).strip()
 
@@ -6788,6 +7503,8 @@ def get_admin_users():
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
 
+        ensure_email_verification_table(cursor)
+
         cursor.execute("""
             SELECT
                 u.user_id,
@@ -6795,7 +7512,22 @@ def get_admin_users():
                 u.email,
                 u.status,
                 u.created_at,
-                r.role_name
+                r.role_name,
+                CASE
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM email_verifications ev
+                        WHERE ev.user_id = u.user_id
+                          AND ev.verified_at IS NOT NULL
+                    ) THEN TRUE
+                    ELSE FALSE
+                END AS email_verified,
+                (
+                    SELECT MAX(ev2.verified_at)
+                    FROM email_verifications ev2
+                    WHERE ev2.user_id = u.user_id
+                      AND ev2.verified_at IS NOT NULL
+                ) AS email_verified_at
             FROM users u
             JOIN roles r ON u.role_id = r.role_id
             ORDER BY u.user_id ASC
@@ -6805,6 +7537,8 @@ def get_admin_users():
 
         for user in users:
             user["created_at"] = format_datetime_value(user.get("created_at"))
+            user["email_verified_at"] = format_datetime_value(user.get("email_verified_at"))
+            user["email_verified"] = bool(user.get("email_verified"))
 
         return jsonify(users), 200
 
@@ -6825,7 +7559,13 @@ def get_admin_users():
 @app.route("/api/admin/users/<int:user_id>/role", methods=["PUT"])
 def update_admin_user_role(user_id):
     data = request.get_json() or {}
-    role = data.get("role", "").strip().lower()
+
+    role = str(data.get("role", "")).strip().lower()
+    actor_id = _safe_int_value(
+        data.get("actor_id")
+        or data.get("user_id")
+        or data.get("userId")
+    )
 
     if role not in ["staff", "teamlead"]:
         return jsonify({"message": "Invalid role."}), 400
@@ -6835,7 +7575,36 @@ def update_admin_user_role(user_id):
 
     try:
         conn = get_db_connection()
+        conn.start_transaction()
         cursor = conn.cursor(dictionary=True)
+
+        if actor_id and not is_registration_approver(cursor, actor_id):
+            conn.rollback()
+            return jsonify({
+                "message": "Only manager or team lead can update user roles."
+            }), 403
+
+        cursor.execute("""
+            SELECT
+                u.user_id,
+                r.role_name
+            FROM users u
+            JOIN roles r ON u.role_id = r.role_id
+            WHERE u.user_id = %s
+            LIMIT 1
+        """, (user_id,))
+
+        target_user = cursor.fetchone()
+
+        if not target_user:
+            conn.rollback()
+            return jsonify({"message": "User not found."}), 404
+
+        target_role = str(target_user.get("role_name", "")).strip().lower()
+
+        if target_role in ["manager", "admin"]:
+            conn.rollback()
+            return jsonify({"message": "Manager account is protected."}), 403
 
         cursor.execute("""
             SELECT role_id
@@ -6843,21 +7612,24 @@ def update_admin_user_role(user_id):
             WHERE LOWER(role_name) = %s
             LIMIT 1
         """, (role,))
+
         role_row = cursor.fetchone()
 
         if not role_row:
+            conn.rollback()
             return jsonify({"message": "Role not found."}), 404
 
         cursor.execute("""
             UPDATE users
             SET role_id = %s
             WHERE user_id = %s
-              AND user_id <> 1
         """, (role_row["role_id"], user_id))
 
         conn.commit()
 
         add_audit_log(
+            actor_id=actor_id,
+            actor_name="Manager/Team Lead",
             action="Updated user role",
             module="User Management",
             description=f"User ID {user_id} role changed to {role}."
@@ -6872,6 +7644,7 @@ def update_admin_user_role(user_id):
             conn.rollback()
 
         print("MYSQL ERROR /api/admin/users/role PUT:", error)
+
         return jsonify({
             "message": "Failed to update user role.",
             "error": str(error)
@@ -6883,6 +7656,408 @@ def update_admin_user_role(user_id):
         if conn:
             conn.close()
 
+
+@app.route("/api/admin/users/<int:user_id>/status", methods=["PUT"])
+def update_admin_user_status(user_id):
+    data = request.get_json() or {}
+
+    status = str(data.get("status", "")).strip().lower()
+    actor_id = _safe_int_value(
+        data.get("actor_id")
+        or data.get("user_id")
+        or data.get("userId")
+    )
+
+    if status not in ["active", "inactive"]:
+        return jsonify({"message": "Invalid status."}), 400
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        conn.start_transaction()
+        cursor = conn.cursor(dictionary=True)
+
+        if actor_id and not is_registration_approver(cursor, actor_id):
+            conn.rollback()
+            return jsonify({
+                "message": "Only manager or team lead can update user status."
+            }), 403
+
+        cursor.execute("""
+            SELECT
+                u.user_id,
+                u.status,
+                r.role_name
+            FROM users u
+            JOIN roles r ON u.role_id = r.role_id
+            WHERE u.user_id = %s
+            LIMIT 1
+        """, (user_id,))
+
+        target_user = cursor.fetchone()
+
+        if not target_user:
+            conn.rollback()
+            return jsonify({"message": "User not found."}), 404
+
+        target_role = str(target_user.get("role_name", "")).strip().lower()
+        target_status = str(target_user.get("status", "")).strip().lower()
+
+        if target_role in ["manager", "admin"]:
+            conn.rollback()
+            return jsonify({"message": "Manager account is protected."}), 403
+
+        if target_status == "pending":
+            conn.rollback()
+            return jsonify({
+                "message": "Pending users must be approved or declined first."
+            }), 400
+
+        cursor.execute("""
+            UPDATE users
+            SET status = %s
+            WHERE user_id = %s
+        """, (status, user_id))
+
+        conn.commit()
+
+        add_audit_log(
+            actor_id=actor_id,
+            actor_name="Manager/Team Lead",
+            action="Updated user status",
+            module="User Management",
+            description=f"User ID {user_id} status changed to {status}."
+        )
+
+        return jsonify({
+            "message": f"User status updated to {status}."
+        }), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("MYSQL ERROR /api/admin/users/status PUT:", error)
+
+        return jsonify({
+            "message": "Failed to update user status.",
+            "error": str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+# =========================
+# REGISTRATION APPROVAL ROUTES
+# Manager / Team Lead can approve or decline new accounts
+# =========================
+
+@app.route("/api/admin/registration-requests", methods=["GET"])
+def get_registration_requests():
+    conn = None
+    cursor = None
+
+    try:
+        status = request.args.get("status", "pending").strip().lower()
+        actor_id = _safe_int_value(
+            request.args.get("actor_id")
+            or request.args.get("user_id")
+            or request.args.get("userId")
+        )
+
+        if status not in ["pending", "active", "declined", "inactive", "all"]:
+            status = "pending"
+
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        ensure_email_verification_table(cursor)
+
+        if not actor_id:
+            return jsonify({
+                "message": "Approver user ID is required."
+            }), 400
+
+        if not is_registration_approver(cursor, actor_id):
+            return jsonify({
+                "message": "Only manager or team lead can view registration requests."
+            }), 403
+
+        query = """
+            SELECT
+                u.user_id,
+                u.full_name,
+                u.email,
+                u.status,
+                u.created_at,
+                r.role_name,
+                CASE
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM email_verifications ev
+                        WHERE ev.user_id = u.user_id
+                          AND ev.verified_at IS NOT NULL
+                    ) THEN TRUE
+                    ELSE FALSE
+                END AS email_verified,
+                (
+                    SELECT MAX(ev2.verified_at)
+                    FROM email_verifications ev2
+                    WHERE ev2.user_id = u.user_id
+                      AND ev2.verified_at IS NOT NULL
+                ) AS email_verified_at
+            FROM users u
+            JOIN roles r ON u.role_id = r.role_id
+        """
+
+        params = []
+
+        if status != "all":
+            query += " WHERE LOWER(u.status) = %s"
+            params.append(status)
+
+        query += " ORDER BY u.created_at DESC, u.user_id DESC"
+
+        cursor.execute(query, tuple(params))
+        users = cursor.fetchall()
+
+        for user in users:
+            user["created_at"] = format_datetime_value(user.get("created_at"))
+            user["email_verified_at"] = format_datetime_value(user.get("email_verified_at"))
+            user["email_verified"] = bool(user.get("email_verified"))
+
+        return jsonify(users), 200
+
+    except Exception as error:
+        print("GET REGISTRATION REQUESTS ERROR:", error)
+        return jsonify({
+            "message": "Failed to load registration requests.",
+            "error": str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/admin/registration-requests/<int:user_id>/approve", methods=["PUT"])
+def approve_registration_request(user_id):
+    data = request.get_json(silent=True) or {}
+
+    approved_by = _safe_int_value(
+        data.get("approved_by")
+        or data.get("actor_id")
+        or data.get("user_id")
+        or data.get("userId")
+    )
+
+    new_role = str(data.get("role", "staff")).strip().lower()
+
+    if new_role not in ["staff", "teamlead"]:
+        new_role = "staff"
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        conn.start_transaction()
+        cursor = conn.cursor(dictionary=True)
+
+        if not approved_by:
+            conn.rollback()
+            return jsonify({
+                "message": "Approver user ID is required."
+            }), 400
+
+        if not is_registration_approver(cursor, approved_by):
+            conn.rollback()
+            return jsonify({
+                "message": "Only manager or team lead can approve registrations."
+            }), 403
+
+        cursor.execute("""
+            SELECT
+                u.user_id,
+                u.full_name,
+                u.email,
+                u.status,
+                r.role_name
+            FROM users u
+            JOIN roles r ON u.role_id = r.role_id
+            WHERE u.user_id = %s
+            LIMIT 1
+        """, (user_id,))
+
+        target_user = cursor.fetchone()
+
+        if not target_user:
+            conn.rollback()
+            return jsonify({"message": "Registration request not found."}), 404
+
+        if str(target_user.get("status", "")).lower() != "pending":
+            conn.rollback()
+            return jsonify({
+                "message": "Only pending registration requests can be approved."
+            }), 400
+
+        if not is_user_email_verified(cursor, user_id):
+            conn.rollback()
+            return jsonify({
+                "message": "This user has not verified their email yet. Ask them to click the email verification link before approval."
+            }), 400
+
+        cursor.execute("""
+            SELECT role_id
+            FROM roles
+            WHERE LOWER(role_name) = %s
+            LIMIT 1
+        """, (new_role,))
+
+        role_row = cursor.fetchone()
+
+        if not role_row:
+            conn.rollback()
+            return jsonify({"message": "Selected role does not exist."}), 400
+
+        cursor.execute("""
+            UPDATE users
+            SET status = 'active',
+                role_id = %s
+            WHERE user_id = %s
+        """, (role_row["role_id"], user_id))
+
+        conn.commit()
+
+        notify_registration_decision(user_id, approved=True)
+
+        add_audit_log(
+            actor_id=approved_by,
+            actor_name="Manager/Team Lead",
+            action="Approved account registration",
+            module="User Management",
+            description=f"Approved user ID {user_id} as {new_role}."
+        )
+
+        return jsonify({
+            "message": "Registration approved successfully. The user can now log in."
+        }), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("APPROVE REGISTRATION ERROR:", error)
+
+        return jsonify({
+            "message": "Failed to approve registration.",
+            "error": str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/admin/registration-requests/<int:user_id>/decline", methods=["PUT"])
+def decline_registration_request(user_id):
+    data = request.get_json(silent=True) or {}
+
+    declined_by = _safe_int_value(
+        data.get("declined_by")
+        or data.get("actor_id")
+        or data.get("user_id")
+        or data.get("userId")
+    )
+
+    reason = str(data.get("reason", "")).strip()
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        conn.start_transaction()
+        cursor = conn.cursor(dictionary=True)
+
+        if not declined_by:
+            conn.rollback()
+            return jsonify({
+                "message": "Approver user ID is required."
+            }), 400
+
+        if not is_registration_approver(cursor, declined_by):
+            conn.rollback()
+            return jsonify({
+                "message": "Only manager or team lead can decline registrations."
+            }), 403
+
+        cursor.execute("""
+            SELECT user_id, full_name, email, status
+            FROM users
+            WHERE user_id = %s
+            LIMIT 1
+        """, (user_id,))
+
+        target_user = cursor.fetchone()
+
+        if not target_user:
+            conn.rollback()
+            return jsonify({"message": "Registration request not found."}), 404
+
+        if str(target_user.get("status", "")).lower() != "pending":
+            conn.rollback()
+            return jsonify({
+                "message": "Only pending registration requests can be declined."
+            }), 400
+
+        cursor.execute("""
+            UPDATE users
+            SET status = 'declined'
+            WHERE user_id = %s
+        """, (user_id,))
+
+        conn.commit()
+
+        notify_registration_decision(user_id, approved=False, reason=reason)
+
+        add_audit_log(
+            actor_id=declined_by,
+            actor_name="Manager/Team Lead",
+            action="Declined account registration",
+            module="User Management",
+            description=f"Declined user ID {user_id}. Reason: {reason or 'No reason provided.'}"
+        )
+
+        return jsonify({
+            "message": "Registration declined successfully."
+        }), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("DECLINE REGISTRATION ERROR:", error)
+
+        return jsonify({
+            "message": "Failed to decline registration.",
+            "error": str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 
 # =========================
