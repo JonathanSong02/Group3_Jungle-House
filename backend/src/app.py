@@ -18,6 +18,22 @@ from db_helper import (
     create_escalation,
     resolve_escalation
 )
+
+try:
+    from image_embedding_helper import (
+        create_image_embedding,
+        cosine_similarity_from_json,
+        MODEL_NAME as IMAGE_EMBEDDING_MODEL_NAME
+    )
+    IMAGE_EMBEDDING_AVAILABLE = True
+    IMAGE_EMBEDDING_LOAD_ERROR = None
+except Exception as error:
+    create_image_embedding = None
+    cosine_similarity_from_json = None
+    IMAGE_EMBEDDING_MODEL_NAME = None
+    IMAGE_EMBEDDING_AVAILABLE = False
+    IMAGE_EMBEDDING_LOAD_ERROR = str(error)
+
 # OCR is optional. The system must still run even when pytesseract is not installed.
 try:
     import pytesseract
@@ -243,6 +259,139 @@ def extract_image_search_text(image_url, original_filename, question):
     combined_text = f"{question} {filename_text}".strip()
 
     return combined_text
+
+def get_local_image_path_from_url(image_url):
+    """
+    Convert stored image URL like:
+    /static/uploads/chat/xxx.jpg
+
+    into the real backend file path.
+    """
+    image_url = str(image_url or "").strip()
+
+    if not image_url:
+        return None
+
+    if "/static/" in image_url:
+        image_url = image_url[image_url.index("/static/"):]
+
+    if image_url.startswith("/static/"):
+        relative_path = image_url.replace("/static/", "", 1)
+        return STATIC_DIR / relative_path
+
+    if image_url.startswith("static/"):
+        relative_path = image_url.replace("static/", "", 1)
+        return STATIC_DIR / relative_path
+
+    return None
+
+
+def build_visual_image_match_result(row, similarity_score):
+    answer = row.get("answer") or row.get("image_caption") or ""
+    image_url = row.get("image_url")
+    image_type = row.get("image_type")
+
+    return standardize_ai_response({
+        "reply": answer,
+        "answer": answer,
+        "confidence": round(float(similarity_score), 4),
+        "score": round(float(similarity_score), 4),
+        "source": "visual_image_match",
+        "final_source": "visual_image_match",
+        "served_by": "image_embedding_retrieval",
+        "fallback": False,
+        "escalation_ready": False,
+        "escalation_required": False,
+        "image_url": image_url,
+        "image_type": image_type,
+        "attachment_url": image_url,
+        "attachment_type": image_type,
+        "image_files": (
+            [{"url": image_url, "type": image_type}]
+            if image_url
+            else []
+        ),
+        "context": {
+            "image_id": row.get("image_id"),
+            "source_type": row.get("source_type"),
+            "source_id": row.get("source_id"),
+            "similarity_score": round(float(similarity_score), 4),
+        }
+    })
+
+
+def search_visual_image_match(uploaded_image_url, threshold=0.70):
+    """
+    Compare staff uploaded image with approved image_retrieval images.
+    This allows same object from different angle to match.
+    """
+    if not IMAGE_EMBEDDING_AVAILABLE or not create_image_embedding or not cosine_similarity_from_json:
+        print("IMAGE EMBEDDING NOT AVAILABLE:", IMAGE_EMBEDDING_LOAD_ERROR)
+        return None
+
+    uploaded_image_path = get_local_image_path_from_url(uploaded_image_url)
+
+    if not uploaded_image_path:
+        return None
+
+    uploaded_embedding = create_image_embedding(uploaded_image_path)
+
+    if not uploaded_embedding:
+        return None
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT *
+            FROM image_retrieval
+            WHERE approval_status = 'approved'
+              AND visual_match_enabled = 1
+              AND image_embedding IS NOT NULL
+            ORDER BY
+                CASE
+                    WHEN source_type = 'knowledge_base' THEN 1
+                    WHEN source_type = 'approved_escalation' THEN 2
+                    ELSE 3
+                END,
+                created_at DESC
+        """)
+
+        rows = cursor.fetchall() or []
+
+        best_row = None
+        best_score = 0.0
+
+        for row in rows:
+            score = cosine_similarity_from_json(
+                uploaded_embedding,
+                row.get("image_embedding")
+            )
+
+            if score > best_score:
+                best_score = score
+                best_row = row
+
+        print("BEST VISUAL IMAGE SCORE:", best_score)
+
+        if best_row and best_score >= threshold:
+            return build_visual_image_match_result(best_row, best_score)
+
+        return None
+
+    except Exception as error:
+        print("SEARCH VISUAL IMAGE MATCH ERROR:", error)
+        return None
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 
 @app.route("/static/uploads/articles/<path:filename>", methods=["GET"])
@@ -3258,6 +3407,25 @@ def chat():
                 uploaded_chat_image_url, uploaded_chat_image_type = save_chat_image(uploaded_chat_image)
 
                 if uploaded_chat_image_url:
+                    visual_match_result = search_visual_image_match(
+                        uploaded_chat_image_url,
+                        threshold=0.70
+                    )
+
+                    if visual_match_result:
+                        clear_ai_fail_count(data, question)
+                        remember_chat_context(data, visual_match_result)
+                        log_request(
+                            question,
+                            result=visual_match_result,
+                            user_id=data.get("user_id") or data.get("userId")
+                        )
+
+                        visual_match_result["final_source"] = visual_match_result.get("source")
+                        visual_match_result["served_by"] = "image_embedding_retrieval"
+
+                        return jsonify(visual_match_result), 200
+
                     image_search_text = extract_image_search_text(
                         uploaded_chat_image_url,
                         uploaded_chat_image_filename,
@@ -4505,6 +4673,14 @@ def _save_approved_escalation_to_image_retrieval(cursor, escalation_id, question
     image_caption = answer
     image_keywords = question
 
+    image_embedding = None
+
+    if image_url and IMAGE_EMBEDDING_AVAILABLE and create_image_embedding:
+        local_image_path = get_local_image_path_from_url(image_url)
+
+        if local_image_path:
+            image_embedding = create_image_embedding(local_image_path)
+
     if existing:
         set_parts = [
             "question = %s",
@@ -4528,6 +4704,18 @@ def _save_approved_escalation_to_image_retrieval(cursor, escalation_id, question
         if "approval_status" in columns:
             set_parts.append("approval_status = %s")
             params.append("approved")
+
+        if "image_embedding" in columns:
+            set_parts.append("image_embedding = %s")
+            params.append(image_embedding)
+
+        if "embedding_model" in columns:
+            set_parts.append("embedding_model = %s")
+            params.append(IMAGE_EMBEDDING_MODEL_NAME)
+
+        if "visual_match_enabled" in columns:
+            set_parts.append("visual_match_enabled = %s")
+            params.append(1)
 
         params.append(escalation_id)
 
@@ -4575,6 +4763,21 @@ def _save_approved_escalation_to_image_retrieval(cursor, escalation_id, question
         insert_columns.append("approval_status")
         placeholders.append("%s")
         params.append("approved")
+
+    if "image_embedding" in columns:
+        insert_columns.append("image_embedding")
+        placeholders.append("%s")
+        params.append(image_embedding)
+
+    if "embedding_model" in columns:
+        insert_columns.append("embedding_model")
+        placeholders.append("%s")
+        params.append(IMAGE_EMBEDDING_MODEL_NAME)
+
+    if "visual_match_enabled" in columns:
+        insert_columns.append("visual_match_enabled")
+        placeholders.append("%s")
+        params.append(1)
 
     cursor.execute(f"""
         INSERT INTO image_retrieval ({', '.join(insert_columns)})
