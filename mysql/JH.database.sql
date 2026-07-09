@@ -1,11 +1,11 @@
 #---------aeon roadshow closing------------
-USE jungle_house_ai;
+USE railway;
 
 UPDATE wiki_article
 SET title = 'Aeon Roadshow Closing List'
-WHERE article_id = 3;
+WHERE article_id = 1;
 
-USE jungle_house_ai;
+USE railway;
 
 UPDATE wiki_article
 SET content = '
@@ -67,16 +67,16 @@ Related Question:
 1.	closing
 
 '
-WHERE article_id = 3;
+WHERE article_id = 1;
 
 #-----------------------Aeon Roadshow Opening List----------
-USE jungle_house_ai;
+USE railway;
 
 UPDATE wiki_article
 SET title = 'Aeon Roadshow Opening List'
-WHERE article_id = 29;
+WHERE article_id = 2;
 
-USE jungle_house_ai;
+USE railway;
 
 UPDATE wiki_article
 SET content = '
@@ -153,17 +153,17 @@ Related Question:
 
 
 '
-WHERE article_id = 29;
+WHERE article_id = 2;
 
 
 #----------------Backend Opening Checklist------------
-USE jungle_house_ai;
+USE railway;
 
 UPDATE wiki_article
 SET title = 'Backend Opening Checklist'
-WHERE article_id = 29;
+WHERE article_id = 3;
 
-USE jungle_house_ai;
+USE railway;
 
 UPDATE wiki_article
 SET content = '
@@ -203,16 +203,16 @@ Related Question:
 1.	
 '
 
-WHERE article_id = 29;
+WHERE article_id = 3;
 
 #--------------Closing Spring Warehouse---------
-USE jungle_house_ai;
+USE railway;
 
 UPDATE wiki_article
 SET title = 'Closing Spring Warehouse'
-WHERE article_id = 30;
+WHERE article_id = 4;
 
-USE jungle_house_ai;
+USE railway;
 
 UPDATE wiki_article
 SET content = '
@@ -245,17 +245,17 @@ Related Question:
 
 '
 
-WHERE article_id = 30;
+WHERE article_id = 4;
 
 
 #----------------Kuching Booth Closing dustbin check list--------
-USE jungle_house_ai;
+USE railway;
 
 UPDATE wiki_article
 SET title = 'Kuching Booth Closing dustbin check list'
-WHERE article_id = 35;
+WHERE article_id = 5;
 
-USE jungle_house_ai;
+USE railway;
 
 UPDATE wiki_article
 SET content = '
@@ -277,15 +277,15 @@ Related Question:
 
 '
 
-WHERE article_id = 35;
+WHERE article_id = 5;
 
 
 #----------Opening Notes----------
-USE jungle_house_ai;
+USE railway;
 
 UPDATE wiki_article
 SET title = 'Opening Notes'
-WHERE article_id = 36;
+WHERE article_id = 6;
 
 USE jungle_house_ai;
 
@@ -350,16 +350,16 @@ Related Question:
 
 '
 
-WHERE article_id = 36;
+WHERE article_id = 6;
 
 #-------------Receipt printer preparation for opening---------
-USE jungle_house_ai;
+USE railway;
 
 UPDATE wiki_article
 SET title = 'Receipt printer preparation for opening'
-WHERE article_id = 37;
+WHERE article_id = 7;
 
-USE jungle_house_ai;
+USE railway;
 
 UPDATE wiki_article
 SET content = '
@@ -381,16 +381,16 @@ Related Question:
 
 '
 
-WHERE article_id = 37;
+WHERE article_id = 7;
 
 #-------------Sales Closing Reminders Material------------
-USE jungle_house_ai;
+USE railway;
 
 UPDATE wiki_article
 SET title = 'Sales Closing Reminders Material'
-WHERE article_id = 38;
+WHERE article_id = 8;
 
-USE jungle_house_ai;
+USE railway;
 
 UPDATE wiki_article
 SET content = '
@@ -409,16 +409,16 @@ Related Question:
 1.
 '
 
-WHERE article_id = 38;
+WHERE article_id = 8;
 
 #-------------Shopify POS app closing--------------
-USE jungle_house_ai;
+USE railway;
 
 UPDATE wiki_article
 SET title = 'Shopify POS app Closing'
-WHERE article_id = 39;
+WHERE article_id = 9;
 
-USE jungle_house_ai;
+USE railway;
 
 UPDATE wiki_article
 SET content = '
@@ -454,16 +454,16 @@ Related Question:
 
 '
 
-WHERE article_id = 39;
+WHERE article_id = 9;
 
 #-------------Shopify POS app Opening--------------
-USE jungle_house_ai;
+USE railway;
 
 UPDATE wiki_article
 SET title = 'Shopify POS app Opening'
-WHERE article_id = 40;
+WHERE article_id = 10;
 
-USE jungle_house_ai;
+USE railway;
 
 UPDATE wiki_article
 SET content = '
@@ -486,17 +486,17 @@ Related Question:
 1.
 '
 
-WHERE article_id = 40;
+WHERE article_id = 10;
 
 
 #----------------Spring Roadshow Closing List------------
-USE jungle_house_ai;
+USE railway;
 
 UPDATE wiki_article
 SET title = 'Spring Roadshow Closing List'
-WHERE article_id = 41;
+WHERE article_id = 11;
 
-USE jungle_house_ai;
+USE railway;
 
 UPDATE wiki_article
 SET content = '
@@ -559,16 +559,16 @@ Related Question:
 1.	closing
 '
 
-WHERE article_id = 41;
+WHERE article_id = 11;
 
 #---------------------Spring Roadshow Opening List-----------
-USE jungle_house_ai;
+USE railway;
 
 UPDATE wiki_article
 SET title = 'Spring Roadshow Opening List'
-WHERE article_id = 42;
+WHERE article_id = 12;
 
-USE jungle_house_ai;
+USE railway;
 
 UPDATE wiki_article
 SET content = 'Spring Roadshow Opening List:
@@ -648,16 +648,16 @@ A. Sample
  Related Question:
 1. opening
 '
-WHERE article_id = 42;
+WHERE article_id = 12;
 
 #----------------Win the Heart Gift Guide--------------
-USE jungle_house_ai;
+USE railway;
 
 UPDATE wiki_article
 SET title = 'Win the Heart Gift Guide'
-WHERE article_id = 43;
+WHERE article_id = 13;
 
-USE jungle_house_ai;
+USE railway;
 
 UPDATE wiki_article
 SET content = 'Win the Heart Gift Guide:
@@ -697,15 +697,15 @@ Related Question:
 
 
 '
-WHERE article_id = 43;
+WHERE article_id = 13;
 
 
 #------------------Promotions---------
-USE jungle_house_ai;
+USE railway;
 
 UPDATE wiki_article
 SET title = 'Promotions'
-WHERE article_id = 44;
+WHERE article_id = 14;
 
 UPDATE wiki_article
 SET content = '
@@ -1155,7 +1155,7 @@ Focus Message: Celebrate Merdeka – 2nd Bottle 25% OFF + Free Jungle Juice!
 1. What is the latest promotion?
 
 '
-WHERE article_id = 44;
+WHERE article_id = 14;
 
 #------------------
 
