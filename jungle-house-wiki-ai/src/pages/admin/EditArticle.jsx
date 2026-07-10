@@ -7,6 +7,7 @@ import api from '../../services/api';
 const categories = ['SOP', 'PRODUCT', 'SALES', 'Training', 'Notice'];
 const acceptedFileTypes =
   'image/png,image/jpeg,image/jpg,image/gif,image/webp,image/bmp,image/svg+xml,.pdf,.doc,.docx';
+const API_BASE_URL = 'https://group3jungle-house-production.up.railway.app';
 
 export default function EditArticle() {
   const { id } = useParams();
@@ -71,7 +72,10 @@ export default function EditArticle() {
         'eraser',
       ],
       uploader: {
-        insertImageAsBase64URI: true,
+        url: `${API_BASE_URL}/api/articles/upload-image`,
+        insertImageAsBase64URI: false,
+        filesVariableName: () => 'attachments',
+        withCredentials: false,
       },
     }),
     []

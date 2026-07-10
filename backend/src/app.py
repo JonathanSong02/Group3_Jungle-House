@@ -197,6 +197,33 @@ def save_article_attachments(files):
 
     return saved_files
 
+
+def ensure_wiki_article_content_capacity(cursor):
+    """
+    wiki_article.content was originally created as TEXT (64KB limit).
+    Pasted screenshots inserted as inline HTML can easily exceed that,
+    causing the UPDATE/INSERT to fail. Widen it to MEDIUMTEXT (16MB) once.
+    """
+    try:
+        cursor.execute("""
+            SELECT DATA_TYPE
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'wiki_article'
+              AND COLUMN_NAME = 'content'
+            LIMIT 1
+        """)
+        column_info = cursor.fetchone() or {}
+        current_type = str(column_info.get("DATA_TYPE", "")).lower()
+
+        if current_type in ("mediumtext", "longtext"):
+            return
+
+        cursor.execute("ALTER TABLE wiki_article MODIFY COLUMN content MEDIUMTEXT")
+    except Exception as error:
+        print("ENSURE WIKI ARTICLE CONTENT CAPACITY ERROR:", error)
+
+
 def save_chat_image(file):
     """
     Save an upload from AI Chat or Escalation.
@@ -4703,6 +4730,8 @@ def add_article():
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
 
+        ensure_wiki_article_content_capacity(cursor)
+
         cursor.execute("""
             INSERT INTO wiki_article
             (
@@ -4844,6 +4873,43 @@ def get_article_detail(article_id):
 
 
 # =========================
+# EDITOR IMAGE UPLOAD ROUTE
+# Used by the JoditEditor "uploader" in AddArticle/EditArticle so pasted or
+# dropped images are saved as real files and inserted as a URL, instead of
+# being embedded inline as a giant base64 string (which used to overflow the
+# wiki_article.content column and make the save fail).
+# =========================
+@app.route("/api/articles/upload-image", methods=["POST"])
+def upload_article_editor_image():
+    uploaded_files = request.files.getlist("attachments")
+
+    if not uploaded_files:
+        uploaded_files = list(request.files.values())
+
+    saved_files = save_article_attachments(uploaded_files)
+
+    if not saved_files:
+        return jsonify({
+            "files": [],
+            "path": "",
+            "baseurl": "",
+            "error": 1,
+            "msg": "No valid image file was uploaded."
+        }), 400
+
+    base_url = request.url_root.rstrip("/")
+    file_urls = [f"{base_url}{item['url']}" for item in saved_files]
+
+    return jsonify({
+        "files": file_urls,
+        "path": "",
+        "baseurl": "",
+        "error": 0,
+        "msg": "success"
+    }), 200
+
+
+# =========================
 # Edit Article ROUTES
 # =========================
 @app.route('/api/articles/<int:article_id>', methods=['PUT'])
@@ -4868,6 +4934,8 @@ def edit_article(article_id):
     try:
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
+
+        ensure_wiki_article_content_capacity(cursor)
 
         if saved_files:
             attachment_url = saved_files[0]["url"]
