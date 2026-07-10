@@ -8651,6 +8651,18 @@ body.sidebar-is-collapsed .sidebar-user-menu {
   background: #fffdf8;
 }
 
+.article-rich-content img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 10px;
+  margin: 10px 0;
+}
+
+.article-rich-content table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
 .article-data-table tr:nth-child(even) td {
   background: #fff8ec;
 }

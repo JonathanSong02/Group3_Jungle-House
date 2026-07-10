@@ -331,6 +331,20 @@ export default function ArticleDetail() {
 
     const decodedContent = decodeHtmlEntities(String(content || ""));
 
+    // Articles created/edited with the rich text editor (Jodit) store real
+    // HTML (e.g. "<p><img src=...></p>"), not the legacy plain-text format
+    // with "[IMAGE]" markers. Render that HTML directly instead of falling
+    // through to the line-by-line legacy parser, which just escapes the
+    // tags as visible text.
+    if (/<\/?[a-z][\s\S]*>/i.test(decodedContent)) {
+      return (
+        <div
+          className="article-rich-content"
+          dangerouslySetInnerHTML={{ __html: sanitizeTableHtml(content) }}
+        />
+      );
+    }
+
     const tableRegex = /(<table[\s\S]*?<\/table>)/gi;
     const contentParts = decodedContent.split(tableRegex);
 
