@@ -76,6 +76,17 @@ export default function EditArticle() {
         insertImageAsBase64URI: false,
         filesVariableName: () => 'attachments',
         withCredentials: false,
+        // Backend returns { files, path, baseurl, error, msg } instead of Jodit's
+        // default { success, data: { files, baseurl, isImages, messages } } shape,
+        // so isSuccess/getMessage/process must be told how to read it.
+        isSuccess: (resp) => !resp.error,
+        getMessage: (resp) => resp.msg || 'Upload failed.',
+        process: (resp) => ({
+          files: resp.files || [],
+          path: resp.path || '',
+          baseurl: resp.baseurl || '',
+          isImages: (resp.files || []).map(() => true),
+        }),
       },
     }),
     []
