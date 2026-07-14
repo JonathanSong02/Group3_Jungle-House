@@ -89,7 +89,7 @@ export default function ArticleDetail() {
   //     button (for rich/HTML articles).
   function getLegacyLinkMap() {
     return {
-      "QWERTYUIOP":
+      "QWERTYUIOPhhhhhhhhhhh":
         "1",
       
     };
