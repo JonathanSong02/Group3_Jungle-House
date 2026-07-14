@@ -1217,8 +1217,8 @@ tr:hover td {
 
 .profile-password-stack {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: 1fr;
+  gap: 16px;
 }
 
 .profile-main-grid {
