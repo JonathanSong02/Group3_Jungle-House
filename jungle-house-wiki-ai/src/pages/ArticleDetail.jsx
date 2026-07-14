@@ -79,8 +79,16 @@ export default function ArticleDetail() {
       });
   }, [id]);
 
-  function renderLineWithLinks(line) {
-    const linkMap = {
+  // Legacy exact-title link table. Kept ONLY so older plain-text SOP
+  // articles that already rely on these exact phrases keep working.
+  // New links should NOT be added here — write them straight into the
+  // article content instead, either as:
+  //   - a raw URL (auto-detected), or
+  //   - Markdown-style [Display Text](https://...), or
+  //   - a real <a href="..."> link inserted via the editor's Link toolbar
+  //     button (for rich/HTML articles).
+  function getLegacyLinkMap() {
+    return {
       "Important Notes of Stocktake":
         "https://junglehouse.notion.site/Important-Notes-of-Stocktake-265379015087802c8f57d8b3056d24a8",
       "Jerry Can Stocktake Guide":
@@ -140,75 +148,151 @@ export default function ArticleDetail() {
       "How to Handle Unhappy Customers Like a Pro":
         "https://junglehouse.notion.site/How-to-Handle-Unhappy-Customers-Like-a-Pro-2b737901508780a58078f8968fc429d3",
     };
-
-    let elements = [line];
-
-    Object.keys(linkMap).forEach((text) => {
-      elements = elements.flatMap((part) => {
-        if (typeof part !== "string") return part;
-
-        const split = part.split(text);
-        if (split.length === 1) return part;
-
-        const result = [];
-
-        split.forEach((s, i) => {
-          result.push(s);
-
-          if (i < split.length - 1) {
-            result.push(
-              <a
-                key={`${text}-${i}`}
-                href={linkMap[text]}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="sop-inline-link"
-              >
-                {text}
-              </a>
-            );
-          }
-        });
-
-        return result;
-      });
-    });
-
-    return elements;
   }
 
-  function processGenericUrls(elements) {
-    const urlRegex = /(https?:\/\/[^\s]+)/g;
-    const finalElements = [];
+  // Splits a plain text string into a flat list of tokens:
+  //   { type: "text", value }  or  { type: "link", href, label }
+  //
+  // Recognises, in priority order:
+  //   1. Markdown-style links:  [Display Text](https://...)
+  //   2. Raw URLs:              https://...
+  //   3. Legacy exact-title matches (see getLegacyLinkMap above)
+  //
+  // This is the single source of truth for link detection, used both for
+  // legacy plain-text article content and for auto-linking stray URLs
+  // inside rich HTML article content.
+  function buildLinkTokens(text) {
+    const pattern = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/\S+)/g;
+    const tokens = [];
+    let lastIndex = 0;
+    let match;
 
-    elements.forEach((el, idx) => {
-      if (typeof el !== "string") {
-        finalElements.push(el);
+    while ((match = pattern.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        tokens.push({ type: "text", value: text.slice(lastIndex, match.index) });
+      }
+
+      if (match[1] && match[2]) {
+        tokens.push({ type: "link", href: match[2], label: match[1] });
+      } else if (match[3]) {
+        tokens.push({ type: "link", href: match[3], label: match[3] });
+      }
+
+      lastIndex = pattern.lastIndex;
+    }
+
+    if (lastIndex < text.length) {
+      tokens.push({ type: "text", value: text.slice(lastIndex) });
+    }
+
+    // Backward-compat pass: expand remaining plain text using the legacy
+    // exact-title map so old SOP articles keep their existing links.
+    const legacyLinkMap = getLegacyLinkMap();
+    const expanded = [];
+
+    tokens.forEach((token) => {
+      if (token.type !== "text") {
+        expanded.push(token);
         return;
       }
 
-      const parts = el.split(urlRegex);
+      let parts = [token.value];
 
-      parts.forEach((part, i) => {
-        if (part.match(urlRegex)) {
-          finalElements.push(
-            <a
-              key={`url-${idx}-${i}`}
-              href={part}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="sop-inline-link"
-            >
-              {part}
-            </a>
-          );
+      Object.keys(legacyLinkMap).forEach((label) => {
+        parts = parts.flatMap((part) => {
+          if (typeof part !== "string" || !part.includes(label)) return part;
+
+          const split = part.split(label);
+          const rebuilt = [];
+
+          split.forEach((chunk, i) => {
+            if (chunk) rebuilt.push(chunk);
+
+            if (i < split.length - 1) {
+              rebuilt.push({ type: "link", href: legacyLinkMap[label], label });
+            }
+          });
+
+          return rebuilt;
+        });
+      });
+
+      parts.forEach((part) => {
+        if (typeof part === "string") {
+          if (part) expanded.push({ type: "text", value: part });
         } else {
-          finalElements.push(part);
+          expanded.push(part);
         }
       });
     });
 
-    return finalElements;
+    return expanded;
+  }
+
+  // Renders a plain text line as React nodes, turning any detected link
+  // tokens into clickable <a> elements.
+  function renderLinkedText(line, keyPrefix) {
+    return buildLinkTokens(line).map((token, index) =>
+      token.type === "link" ? (
+        <a
+          key={`${keyPrefix}-link-${index}`}
+          href={token.href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="sop-inline-link"
+        >
+          {token.label}
+        </a>
+      ) : (
+        token.value
+      )
+    );
+  }
+
+  // Walks a parsed HTML fragment and turns any raw URL / markdown-style
+  // link found in plain text nodes into a real <a> element. Text that is
+  // already inside an <a> tag (e.g. links inserted via the editor's Link
+  // toolbar button) is left untouched.
+  function autoLinkPlainText(root) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const textNodes = [];
+    let currentNode;
+
+    while ((currentNode = walker.nextNode())) {
+      if (currentNode.parentElement && currentNode.parentElement.closest("a")) {
+        continue;
+      }
+
+      if (currentNode.nodeValue && currentNode.nodeValue.trim()) {
+        textNodes.push(currentNode);
+      }
+    }
+
+    textNodes.forEach((textNode) => {
+      const tokens = buildLinkTokens(textNode.nodeValue);
+
+      if (tokens.length === 1 && tokens[0].type === "text") {
+        return;
+      }
+
+      const fragment = document.createDocumentFragment();
+
+      tokens.forEach((token) => {
+        if (token.type === "link") {
+          const anchor = document.createElement("a");
+          anchor.href = token.href;
+          anchor.target = "_blank";
+          anchor.rel = "noopener noreferrer";
+          anchor.className = "sop-inline-link";
+          anchor.textContent = token.label;
+          fragment.appendChild(anchor);
+        } else if (token.value) {
+          fragment.appendChild(document.createTextNode(token.value));
+        }
+      });
+
+      textNode.replaceWith(fragment);
+    });
   }
 
   const decodeHtmlEntities = (value) => {
@@ -255,6 +339,8 @@ export default function ArticleDetail() {
       table.classList.add("article-data-table");
     });
 
+    autoLinkPlainText(wrapper);
+
     return wrapper.innerHTML;
   };
 
@@ -288,7 +374,7 @@ export default function ArticleDetail() {
         );
       }
 
-      const formattedLine = processGenericUrls(renderLineWithLinks(line));
+      const formattedLine = renderLinkedText(line, index);
 
       if (trimmedLine.endsWith(":") && trimmedLine.length < 50) {
         return (
