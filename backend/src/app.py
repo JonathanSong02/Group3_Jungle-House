@@ -866,14 +866,27 @@ def create_email_verification_token(cursor, user_id, email):
     return token
 
 
-def get_verification_link(token):
-    base_url = API_PUBLIC_URL
+def get_public_request_base_url():
+    """
+    Railway terminates TLS at its edge and forwards requests to Flask over
+    plain HTTP, so request.host_url/url_root normally resolve to http://
+    even though the public site is always served over https. Loading an
+    http:// resource (e.g. an <img src>) from the https:// frontend gets
+    silently blocked by the browser as mixed content, so force https here.
+    """
+    try:
+        base_url = request.host_url.rstrip("/")
+    except RuntimeError:
+        return "http://localhost:4000"
 
-    if not base_url:
-        try:
-            base_url = request.host_url.rstrip("/")
-        except RuntimeError:
-            base_url = "http://localhost:4000"
+    if base_url.startswith("http://"):
+        base_url = "https://" + base_url[len("http://"):]
+
+    return base_url
+
+
+def get_verification_link(token):
+    base_url = API_PUBLIC_URL or get_public_request_base_url()
 
     return f"{base_url}/api/auth/verify-email?token={token}"
 
@@ -4897,7 +4910,7 @@ def upload_article_editor_image():
             "msg": "No valid image file was uploaded."
         }), 400
 
-    base_url = request.url_root.rstrip("/")
+    base_url = get_public_request_base_url()
     file_urls = [f"{base_url}{item['url']}" for item in saved_files]
 
     return jsonify({
