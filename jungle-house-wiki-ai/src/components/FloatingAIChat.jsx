@@ -59,12 +59,15 @@ export default function FloatingAIChat() {
         data.message ||
         'No usable answer returned from backend.';
 
+      const options = Array.isArray(data.options) ? data.options : [];
+
       setMessages((prev) => [
         ...prev,
         {
           id: Date.now() + 1,
           sender: 'ai',
           text: replyText,
+          options,
         },
       ]);
     } catch (requestError) {
@@ -73,6 +76,23 @@ export default function FloatingAIChat() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSelectOption = (option) => {
+    const optionText =
+      option.answer ||
+      option.reply ||
+      `Please ask about ${option.title || option.label || 'this topic'} for more details.`;
+
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: Date.now(),
+        sender: 'ai',
+        text: optionText,
+        options: [],
+      },
+    ]);
   };
 
   return (
@@ -103,11 +123,27 @@ export default function FloatingAIChat() {
             )}
 
             {messages.map((message) => (
-              <div
-                key={message.id}
-                className={`floating-ai-bubble ${message.sender === 'user' ? 'user' : 'ai'}`}
-              >
-                {message.text}
+              <div key={message.id}>
+                <div
+                  className={`floating-ai-bubble ${message.sender === 'user' ? 'user' : 'ai'}`}
+                >
+                  {message.text}
+                </div>
+
+                {Array.isArray(message.options) && message.options.length > 0 && (
+                  <div className="floating-ai-options">
+                    {message.options.map((option, index) => (
+                      <button
+                        type="button"
+                        key={`${message.id}-option-${index}`}
+                        className="floating-ai-option-btn"
+                        onClick={() => handleSelectOption(option)}
+                      >
+                        {option.label || option.title || `Option ${index + 1}`}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
 
