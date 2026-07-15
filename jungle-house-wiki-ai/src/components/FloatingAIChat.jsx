@@ -4,6 +4,44 @@ import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import './FloatingAIChat.css';
 
+// Backend answers sometimes embed raw "Image: /static/..." path lines as
+// plain text. The full /chat page renders those as real <img> tags, but
+// this lightweight widget is text-only, so strip them instead of showing
+// the raw path (which reads as broken/garbled to the user).
+function stripImageLines(text) {
+  return String(text || '')
+    .split('\n')
+    .filter((line) => !/^\s*Image:\s*\S+/i.test(line))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+// When the backend returns a structured step-by-step SOP (data.steps), build
+// a clean "Step N: ..." list ourselves instead of showing the raw
+// reply/answer blob, which duplicates the title/intro text and mixes in the
+// same "Image: ..." noise.
+function buildFloatingChatText(data, fallbackText = 'No usable answer returned from backend.') {
+  const hasSteps = Array.isArray(data?.steps) && data.steps.length > 0;
+
+  if (hasSteps) {
+    const title = data.title || data.label || '';
+    const stepsText = data.steps
+      .map((step) => {
+        const stepNumber = step.step_number || step.step || '';
+        const content = String(step.content || step.answer || '').trim();
+        return `Step ${stepNumber}: ${content}`;
+      })
+      .join('\n');
+
+    return title ? `${title}\n\n${stepsText}` : stepsText;
+  }
+
+  const rawText = data?.reply || data?.answer || data?.message || fallbackText;
+
+  return stripImageLines(rawText);
+}
+
 export default function FloatingAIChat() {
   const location = useLocation();
   const { user } = useAuth();
@@ -53,12 +91,7 @@ export default function FloatingAIChat() {
 
       const data = response.data || {};
 
-      const replyText =
-        data.reply ||
-        data.answer ||
-        data.message ||
-        'No usable answer returned from backend.';
-
+      const replyText = buildFloatingChatText(data);
       const options = Array.isArray(data.options) ? data.options : [];
 
       setMessages((prev) => [
@@ -79,10 +112,10 @@ export default function FloatingAIChat() {
   };
 
   const handleSelectOption = (option) => {
-    const optionText =
-      option.answer ||
-      option.reply ||
-      `Please ask about ${option.title || option.label || 'this topic'} for more details.`;
+    const optionText = buildFloatingChatText(
+      option,
+      `Please ask about ${option.title || option.label || 'this topic'} for more details.`
+    );
 
     setMessages((prev) => [
       ...prev,
