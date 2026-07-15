@@ -86,6 +86,46 @@ function sanitizeChatHtml(html) {
   return wrapper.innerHTML;
 }
 
+const FLOATING_AI_POSITION_KEY = 'jh_floating_ai_position';
+const DRAG_THRESHOLD_PX = 4;
+const VIEWPORT_MARGIN_PX = 8;
+
+function getStoredPosition() {
+  try {
+    const saved = localStorage.getItem(FLOATING_AI_POSITION_KEY);
+
+    if (!saved) return null;
+
+    const parsed = JSON.parse(saved);
+
+    if (typeof parsed?.right === 'number' && typeof parsed?.bottom === 'number') {
+      return parsed;
+    }
+  } catch (error) {
+    console.error('Unable to read floating AI chat position:', error);
+  }
+
+  return null;
+}
+
+function saveStoredPosition(position) {
+  try {
+    localStorage.setItem(FLOATING_AI_POSITION_KEY, JSON.stringify(position));
+  } catch (error) {
+    console.error('Unable to save floating AI chat position:', error);
+  }
+}
+
+function clampPosition(position, width, height) {
+  const maxRight = Math.max(window.innerWidth - width - VIEWPORT_MARGIN_PX, VIEWPORT_MARGIN_PX);
+  const maxBottom = Math.max(window.innerHeight - height - VIEWPORT_MARGIN_PX, VIEWPORT_MARGIN_PX);
+
+  return {
+    right: Math.min(Math.max(position.right, VIEWPORT_MARGIN_PX), maxRight),
+    bottom: Math.min(Math.max(position.bottom, VIEWPORT_MARGIN_PX), maxBottom),
+  };
+}
+
 export default function FloatingAIChat() {
   const location = useLocation();
   const { user } = useAuth();
@@ -96,11 +136,118 @@ export default function FloatingAIChat() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  const [dragPosition, setDragPosition] = useState(() => getStoredPosition());
+  const [isDragging, setIsDragging] = useState(false);
+
   const messagesEndRef = useRef(null);
+  const containerRef = useRef(null);
+  const dragStateRef = useRef({ dragging: false, startX: 0, startY: 0, originRight: 24, originBottom: 24, moved: false });
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading, open]);
+
+  // Re-clamp a saved/dragged position whenever the viewport size changes
+  // (e.g. rotating a phone) so the button can never end up off-screen.
+  useEffect(() => {
+    const clampToViewport = () => {
+      setDragPosition((prev) => {
+        if (!prev) return prev;
+
+        const container = containerRef.current;
+        const width = container?.offsetWidth || 64;
+        const height = container?.offsetHeight || 64;
+
+        return clampPosition(prev, width, height);
+      });
+    };
+
+    clampToViewport();
+    window.addEventListener('resize', clampToViewport);
+
+    return () => window.removeEventListener('resize', clampToViewport);
+  }, []);
+
+  const handleButtonPointerDown = (event) => {
+    const container = containerRef.current;
+
+    if (!container) return;
+
+    const rect = container.getBoundingClientRect();
+
+    dragStateRef.current = {
+      dragging: true,
+      startX: event.clientX,
+      startY: event.clientY,
+      originRight: window.innerWidth - rect.right,
+      originBottom: window.innerHeight - rect.bottom,
+      moved: false,
+    };
+
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Pointer capture isn't critical -- dragging still works without it.
+    }
+  };
+
+  const handleButtonPointerMove = (event) => {
+    const dragState = dragStateRef.current;
+
+    if (!dragState.dragging) return;
+
+    const deltaX = event.clientX - dragState.startX;
+    const deltaY = event.clientY - dragState.startY;
+
+    if (!dragState.moved && (Math.abs(deltaX) > DRAG_THRESHOLD_PX || Math.abs(deltaY) > DRAG_THRESHOLD_PX)) {
+      dragState.moved = true;
+      setIsDragging(true);
+    }
+
+    if (!dragState.moved) return;
+
+    const container = containerRef.current;
+    const width = container?.offsetWidth || 64;
+    const height = container?.offsetHeight || 64;
+
+    // Moving the pointer right/down should shrink the right/bottom offset.
+    const nextPosition = clampPosition(
+      {
+        right: dragState.originRight - deltaX,
+        bottom: dragState.originBottom - deltaY,
+      },
+      width,
+      height
+    );
+
+    setDragPosition(nextPosition);
+  };
+
+  const handleButtonPointerUp = (event) => {
+    const dragState = dragStateRef.current;
+
+    if (!dragState.dragging) return;
+
+    dragState.dragging = false;
+    setIsDragging(false);
+
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    } catch {
+      // Ignore -- capture may already have been released by the browser.
+    }
+
+    if (dragState.moved) {
+      setDragPosition((current) => {
+        if (current) saveStoredPosition(current);
+        return current;
+      });
+      return;
+    }
+
+    // No real movement happened, so treat this as a normal tap/click.
+    setOpen((prev) => !prev);
+  };
 
   // The full AI Chat page already gives the complete experience, so avoid
   // showing a redundant shortcut button on top of it.
@@ -181,7 +328,11 @@ export default function FloatingAIChat() {
   };
 
   return (
-    <div className="floating-ai-chat">
+    <div
+      ref={containerRef}
+      className="floating-ai-chat"
+      style={dragPosition ? { right: dragPosition.right, bottom: dragPosition.bottom } : undefined}
+    >
       {open && (
         <div className="floating-ai-panel">
           <div className="floating-ai-header">
@@ -268,8 +419,11 @@ export default function FloatingAIChat() {
 
       <button
         type="button"
-        className="floating-ai-button"
-        onClick={() => setOpen((prev) => !prev)}
+        className={`floating-ai-button${isDragging ? ' dragging' : ''}`}
+        onPointerDown={handleButtonPointerDown}
+        onPointerMove={handleButtonPointerMove}
+        onPointerUp={handleButtonPointerUp}
+        onPointerCancel={handleButtonPointerUp}
         aria-label={open ? 'Close AI chat' : 'Open AI chat'}
       >
         AI

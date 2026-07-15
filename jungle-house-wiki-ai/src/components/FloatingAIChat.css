@@ -20,9 +20,17 @@
   font-weight: 700;
   font-size: 15px;
   letter-spacing: 0.02em;
-  cursor: pointer;
+  cursor: grab;
   box-shadow: 0 10px 24px rgba(122, 92, 0, 0.28);
   transition: transform 0.15s ease, box-shadow 0.15s ease;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.floating-ai-button.dragging {
+  cursor: grabbing;
+  transition: none;
 }
 
 .floating-ai-button:hover {
