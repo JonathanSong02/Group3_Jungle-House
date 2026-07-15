@@ -21,6 +21,18 @@ const emptyQuestionForm = {
   points: 1,
 };
 
+const aiSourceCategories = ['All', 'SOP', 'PRODUCT', 'SALES', 'Training', 'Notice'];
+
+const emptyAiForm = {
+  title: '',
+  sourceCategory: 'All',
+  questionCount: 5,
+  difficulty: 'intermediate',
+  status: 'active',
+};
+
+const optionLetters = ['A', 'B', 'C', 'D'];
+
 export default function QuizManagement() {
   const { user } = useAuth();
 
@@ -37,6 +49,12 @@ export default function QuizManagement() {
   const [loading, setLoading] = useState(true);
   const [questionLoading, setQuestionLoading] = useState(false);
   const [message, setMessage] = useState('');
+
+  const [aiForm, setAiForm] = useState(emptyAiForm);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiSaving, setAiSaving] = useState(false);
+  const [aiError, setAiError] = useState('');
+  const [aiPreview, setAiPreview] = useState(null);
 
   const [successModal, setSuccessModal] = useState({
     show: false,
@@ -355,6 +373,119 @@ export default function QuizManagement() {
     }
   };
 
+  const handleAiFormChange = (event) => {
+    const { name, value } = event.target;
+
+    setAiForm((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
+  };
+
+  const generateAiQuiz = async (event) => {
+    event.preventDefault();
+
+    setAiError('');
+    setAiPreview(null);
+
+    try {
+      setAiLoading(true);
+
+      const response = await api.post('/admin/quizzes/ai-generate', {
+        title: aiForm.title.trim() || 'AI Generated Quiz',
+        sourceCategory: aiForm.sourceCategory,
+        questionCount: Number(aiForm.questionCount) || 5,
+        difficulty: aiForm.difficulty,
+        status: aiForm.status,
+      });
+
+      setAiPreview(response.data?.quiz || null);
+    } catch (error) {
+      console.error('AI generate quiz error:', error.response?.data || error);
+      setAiError(
+        error.response?.data?.message ||
+          'AI quiz generation failed. Please try again later or create quiz manually.'
+      );
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const removeAiPreviewQuestion = (index) => {
+    setAiPreview((prev) => {
+      if (!prev) return prev;
+
+      return {
+        ...prev,
+        questions: prev.questions.filter((_, i) => i !== index),
+      };
+    });
+  };
+
+  const cancelAiPreview = () => {
+    setAiPreview(null);
+    setAiError('');
+  };
+
+  const saveAiGeneratedQuiz = async () => {
+    if (!aiPreview || aiPreview.questions.length === 0) {
+      setAiError('There are no questions left to save.');
+      return;
+    }
+
+    try {
+      setAiSaving(true);
+      setAiError('');
+
+      const quizResponse = await api.post('/admin/quizzes', {
+        title: aiPreview.title,
+        description: aiPreview.description,
+        category: aiPreview.category,
+        status: aiPreview.status,
+        created_by: user?.id || user?.user_id || null,
+      });
+
+      const newQuizId = quizResponse.data?.quiz_id;
+
+      for (const question of aiPreview.questions) {
+        await api.post(`/admin/quizzes/${newQuizId}/questions`, {
+          question_text: question.question,
+          option_a: question.options[0],
+          option_b: question.options[1],
+          option_c: question.options[2],
+          option_d: question.options[3],
+          correct_option: optionLetters[question.correctAnswerIndex] || 'A',
+          explanation: question.explanation,
+          points: 1,
+        });
+      }
+
+      showSuccessModal(
+        'AI Quiz Saved Successfully',
+        'The AI generated quiz has been saved and now appears in Manage Quizzes.'
+      );
+
+      setAiPreview(null);
+      setAiForm(emptyAiForm);
+
+      if (newQuizId) {
+        setSelectedQuizId(newQuizId);
+      }
+
+      setActiveTab('manage');
+      fetchQuizzes();
+    } catch (error) {
+      console.error('Save AI generated quiz error:', error.response?.data || error);
+      setAiError(
+        error.response?.data?.error ||
+          error.response?.data?.message ||
+          'Failed to save the AI generated quiz.'
+      );
+    } finally {
+      setAiSaving(false);
+    }
+  };
+
   return (
     <div>
       <PageHeader
@@ -384,6 +515,14 @@ export default function QuizManagement() {
             onClick={() => setActiveTab('manage')}
           >
             Manage Quizzes
+          </button>
+
+          <button
+            type="button"
+            className={`quiz-tab-btn ${activeTab === 'ai-generate' ? 'active' : ''}`}
+            onClick={() => setActiveTab('ai-generate')}
+          >
+            Auto Generate Quiz
           </button>
         </div>
       </section>
@@ -453,6 +592,174 @@ export default function QuizManagement() {
               {editingQuizId ? 'Update Quiz' : 'Create Quiz'}
             </button>
           </form>
+        </section>
+      )}
+
+      {activeTab === 'ai-generate' && (
+        <section className="card-like top-gap">
+          <div>
+            <h3>Auto Generate Quiz</h3>
+            <p className="muted">
+              Automatically build multiple-choice questions from the latest
+              published Knowledge Base / SOP articles. Review the preview
+              before saving.
+            </p>
+          </div>
+
+          <form className="form-grid top-gap" onSubmit={generateAiQuiz}>
+            <label className="full-width">
+              Quiz Title
+              <input
+                name="title"
+                value={aiForm.title}
+                onChange={handleAiFormChange}
+                placeholder="Example: Opening SOP Quiz"
+              />
+            </label>
+
+            <label>
+              Category / Source Content
+              <select
+                name="sourceCategory"
+                value={aiForm.sourceCategory}
+                onChange={handleAiFormChange}
+              >
+                {aiSourceCategories.map((category) => (
+                  <option key={category} value={category}>
+                    {category === 'All' ? 'All latest verified articles' : category}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              Number of Questions
+              <select
+                name="questionCount"
+                value={aiForm.questionCount}
+                onChange={handleAiFormChange}
+              >
+                <option value={5}>5</option>
+                <option value={10}>10</option>
+                <option value={15}>15</option>
+                <option value={20}>20</option>
+              </select>
+            </label>
+
+            <label>
+              Difficulty
+              <select
+                name="difficulty"
+                value={aiForm.difficulty}
+                onChange={handleAiFormChange}
+              >
+                <option value="basic">Basic</option>
+                <option value="intermediate">Intermediate</option>
+                <option value="advanced">Advanced</option>
+              </select>
+            </label>
+
+            <label>
+              Status
+              <select
+                name="status"
+                value={aiForm.status}
+                onChange={handleAiFormChange}
+              >
+                <option value="inactive">Draft</option>
+                <option value="active">Active</option>
+              </select>
+            </label>
+
+            <div className="full-width">
+              <button className="primary-btn" type="submit" disabled={aiLoading}>
+                {aiLoading ? 'Generating quiz from latest Knowledge Base...' : 'Generate Quiz'}
+              </button>
+            </div>
+          </form>
+
+          {aiError && <p className="error-text top-gap-sm">{aiError}</p>}
+
+          {aiPreview && (
+            <div className="top-gap">
+              <div className="row-between wrap-gap">
+                <div>
+                  <h3>Preview: {aiPreview.title}</h3>
+                  <p className="muted">
+                    {aiPreview.questions.length} question(s) generated from{' '}
+                    {aiPreview.category}. Remove any question you don't want,
+                    then save.
+                  </p>
+                </div>
+
+                <div className="button-group wrap-gap">
+                  <button
+                    type="button"
+                    className="primary-btn"
+                    onClick={saveAiGeneratedQuiz}
+                    disabled={aiSaving || aiPreview.questions.length === 0}
+                  >
+                    {aiSaving ? 'Saving...' : 'Save Quiz'}
+                  </button>
+
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                    onClick={cancelAiPreview}
+                    disabled={aiSaving}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+
+              <div className="stack-gap top-gap">
+                {aiPreview.questions.map((question, index) => (
+                  <article key={`${question.question}-${index}`} className="card-like">
+                    <div className="row-between wrap-gap">
+                      <div>
+                        <p className="eyebrow">
+                          Question {index + 1} | Source: {question.sourceTitle}
+                        </p>
+                        <h3>{question.question}</h3>
+                      </div>
+
+                      <button
+                        type="button"
+                        className="danger-btn"
+                        onClick={() => removeAiPreviewQuestion(index)}
+                        disabled={aiSaving}
+                      >
+                        Remove
+                      </button>
+                    </div>
+
+                    <div className="cards-grid top-gap-sm">
+                      {question.options.map((option, optionIndex) => (
+                        <p
+                          key={optionIndex}
+                          className={
+                            optionIndex === question.correctAnswerIndex
+                              ? 'success-text'
+                              : 'muted'
+                          }
+                        >
+                          {optionLetters[optionIndex]}. {option}
+                          {optionIndex === question.correctAnswerIndex ? ' (Correct)' : ''}
+                        </p>
+                      ))}
+                    </div>
+
+                    {question.explanation && (
+                      <p className="muted top-gap">
+                        Explanation: {question.explanation}
+                      </p>
+                    )}
+                  </article>
+                ))}
+              </div>
+            </div>
+          )}
         </section>
       )}
 

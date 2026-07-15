@@ -7571,7 +7571,214 @@ def delete_admin_quiz_question(question_id):
         if conn:
             conn.close()
 
-            
+
+# =========================
+# AI GENERATED QUIZ (template-based, no external AI provider)
+#
+# This project has no live generative-AI/LLM integration (AI Chat only
+# matches/retrieves existing stored answers). Rather than fake it, this
+# builds multiple-choice questions directly out of the numbered SOP steps
+# already stored in wiki_article.content, picking distractor options from
+# other steps depending on the requested difficulty. It only ever returns
+# a preview -- saving reuses the existing manual quiz create routes below.
+# =========================
+def build_ai_quiz_questions(category_filter, question_count, difficulty):
+    import random as random_module
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        query = """
+            SELECT article_id, title, content, category
+            FROM wiki_article
+            WHERE COALESCE(is_deleted, 0) = 0
+        """
+        params = ()
+
+        if category_filter and str(category_filter).strip().lower() != "all":
+            query += " AND category = %s"
+            params = (category_filter,)
+
+        cursor.execute(query, params)
+        articles = cursor.fetchall() or []
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+    def clean_step_text(text):
+        text = re.sub(r"\s+", " ", str(text or "")).strip()
+
+        if len(text) > 180:
+            text = text[:177].rstrip() + "..."
+
+        return text
+
+    article_step_groups = []
+
+    for article in articles:
+        steps = parse_article_steps(article.get("content"))
+        clean_steps = []
+
+        for step in steps:
+            text = clean_step_text(step.get("answer") or step.get("content"))
+
+            if text:
+                clean_steps.append({
+                    "title": article.get("title"),
+                    "step": step.get("step"),
+                    "text": text,
+                })
+
+        # Need at least 2 steps in an article so it can supply its own
+        # "same article" distractor option.
+        if len(clean_steps) >= 2:
+            article_step_groups.append(clean_steps)
+
+    all_steps_flat = [step for group in article_step_groups for step in group]
+    distinct_texts = {step["text"] for step in all_steps_flat}
+
+    if not article_step_groups or len(distinct_texts) < 4:
+        return []
+
+    shuffled_groups = list(article_step_groups)
+    random_module.shuffle(shuffled_groups)
+
+    generated = []
+    used_correct_texts = set()
+
+    for group in shuffled_groups:
+        if len(generated) >= question_count:
+            break
+
+        candidates = [step for step in group if step["text"] not in used_correct_texts]
+
+        if not candidates:
+            continue
+
+        correct_step = random_module.choice(candidates)
+        used_correct_texts.add(correct_step["text"])
+
+        same_article_pool = [
+            step["text"] for step in group
+            if step["text"] != correct_step["text"]
+        ]
+        other_article_pool = [
+            step["text"] for step in all_steps_flat
+            if step["title"] != correct_step["title"] and step["text"] != correct_step["text"]
+        ]
+
+        random_module.shuffle(same_article_pool)
+        random_module.shuffle(other_article_pool)
+
+        if difficulty == "basic":
+            # Easier: distractors mostly from the SAME article (more
+            # obviously related, easier to eliminate by context).
+            distractor_source = same_article_pool + other_article_pool
+        elif difficulty == "advanced":
+            # Harder: distractors mostly from OTHER articles (less
+            # contextual overlap, harder to tell apart at a glance).
+            distractor_source = other_article_pool + same_article_pool
+        else:
+            # intermediate: one distractor from the same article, rest mixed.
+            distractor_source = same_article_pool[:1] + other_article_pool + same_article_pool[1:]
+
+        distractors = []
+        seen_texts = {correct_step["text"]}
+
+        for text in distractor_source:
+            if text in seen_texts:
+                continue
+
+            seen_texts.add(text)
+            distractors.append(text)
+
+            if len(distractors) == 3:
+                break
+
+        if len(distractors) < 3:
+            continue
+
+        options = [correct_step["text"]] + distractors
+        random_module.shuffle(options)
+        correct_index = options.index(correct_step["text"])
+
+        generated.append({
+            "question": f'In the "{correct_step["title"]}" SOP, what is Step {correct_step["step"]}?',
+            "options": options,
+            "correctAnswerIndex": correct_index,
+            "explanation": f'This is Step {correct_step["step"]} from the "{correct_step["title"]}" SOP.',
+            "sourceTitle": correct_step["title"],
+        })
+
+    return generated
+
+
+@app.route("/api/admin/quizzes/ai-generate", methods=["POST"])
+def ai_generate_quiz():
+    data = request.get_json() or {}
+
+    title = data.get("title", "").strip() or "AI Generated Quiz"
+    source_category = str(data.get("sourceCategory") or data.get("category") or "All").strip()
+    status = str(data.get("status", "active")).strip().lower()
+    difficulty = str(data.get("difficulty", "intermediate")).strip().lower()
+
+    if status not in ("active", "inactive"):
+        status = "active"
+
+    if difficulty not in ("basic", "intermediate", "advanced"):
+        difficulty = "intermediate"
+
+    try:
+        question_count = int(data.get("questionCount", 5))
+    except Exception:
+        question_count = 5
+
+    question_count = max(1, min(question_count, 20))
+
+    try:
+        questions = build_ai_quiz_questions(source_category, question_count, difficulty)
+    except Exception as error:
+        print("AI GENERATE QUIZ ERROR:", error)
+        return jsonify({
+            "message": "AI quiz generation failed. Please try again later or create quiz manually."
+        }), 500
+
+    # Validate generated output before it ever reaches the frontend.
+    questions = [
+        q for q in questions
+        if q.get("question")
+        and isinstance(q.get("options"), list)
+        and len(q["options"]) == 4
+        and all(str(option).strip() for option in q["options"])
+        and q.get("correctAnswerIndex") in (0, 1, 2, 3)
+        and str(q.get("explanation") or "").strip()
+    ]
+
+    if not questions:
+        return jsonify({
+            "message": "Not enough verified content to generate quiz. Please add or verify more articles first."
+        }), 400
+
+    category_label = source_category if source_category.lower() != "all" else "Training"
+
+    return jsonify({
+        "success": True,
+        "quiz": {
+            "title": title,
+            "description": f"AI generated quiz based on the latest verified {category_label} content.",
+            "category": category_label,
+            "status": status,
+            "questions": questions,
+        }
+    }), 200
+
+
 # =========================
 # USER MANAGEMENT ROUTES
 # =========================
