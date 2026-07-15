@@ -138,6 +138,50 @@
   filter: brightness(1.05);
 }
 
+.floating-ai-html-content {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.floating-ai-html-content img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 10px;
+  margin: 6px 0;
+  display: block;
+}
+
+.floating-ai-html-content h1,
+.floating-ai-html-content h2,
+.floating-ai-html-content h3 {
+  font-size: 14.5px;
+  margin: 10px 0 6px;
+  color: var(--primary-dark, #6f4708);
+}
+
+.floating-ai-html-content p {
+  margin: 6px 0;
+}
+
+.floating-ai-html-content ul,
+.floating-ai-html-content ol {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+
+.floating-ai-html-content table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  margin: 8px 0;
+}
+
+.floating-ai-html-content table td,
+.floating-ai-html-content table th {
+  border: 1px solid var(--border, #e5d2a8);
+  padding: 6px 8px;
+}
+
 .floating-ai-thinking {
   font-style: italic;
   opacity: 0.8;

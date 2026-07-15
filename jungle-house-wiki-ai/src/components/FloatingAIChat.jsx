@@ -42,6 +42,50 @@ function buildFloatingChatText(data, fallbackText = 'No usable answer returned f
   return stripImageLines(rawText);
 }
 
+// Some Knowledge Base articles are authored in the rich HTML editor (real
+// <h1>/<ul>/<img> tags with absolute image URLs already baked in), rather
+// than the legacy plain-text "[IMAGE]"/numbered-step format. Detect that so
+// it can be rendered as real HTML instead of showing literal escaped tags.
+const HTML_CONTENT_PATTERN = /<\/?[a-z][\s\S]*>/i;
+
+function isHtmlContent(text) {
+  return HTML_CONTENT_PATTERN.test(String(text || ''));
+}
+
+// Same sanitize-before-render approach already used in ArticleDetail.jsx:
+// strip dangerous tags/attributes before handing the HTML to
+// dangerouslySetInnerHTML.
+function sanitizeChatHtml(html) {
+  if (typeof document === 'undefined') return String(html || '');
+
+  const parser = new DOMParser();
+  const parsedDocument = parser.parseFromString(`<div>${String(html || '')}</div>`, 'text/html');
+  const wrapper = parsedDocument.body.firstChild;
+
+  if (!wrapper) return '';
+
+  wrapper
+    .querySelectorAll('script, iframe, object, embed, form, input, button')
+    .forEach((element) => element.remove());
+
+  wrapper.querySelectorAll('*').forEach((element) => {
+    Array.from(element.attributes).forEach((attribute) => {
+      const attributeName = attribute.name.toLowerCase();
+      const attributeValue = attribute.value.toLowerCase();
+
+      if (
+        attributeName.startsWith('on') ||
+        attributeName === 'style' ||
+        attributeValue.includes('javascript:')
+      ) {
+        element.removeAttribute(attribute.name);
+      }
+    });
+  });
+
+  return wrapper.innerHTML;
+}
+
 export default function FloatingAIChat() {
   const location = useLocation();
   const { user } = useAuth();
@@ -168,7 +212,14 @@ export default function FloatingAIChat() {
                 <div
                   className={`floating-ai-bubble ${message.sender === 'user' ? 'user' : 'ai'}`}
                 >
-                  {message.text}
+                  {message.sender === 'ai' && isHtmlContent(message.text) ? (
+                    <div
+                      className="floating-ai-html-content"
+                      dangerouslySetInnerHTML={{ __html: sanitizeChatHtml(message.text) }}
+                    />
+                  ) : (
+                    message.text
+                  )}
                 </div>
 
                 {Array.isArray(message.options) && message.options.length > 0 && (
