@@ -90,9 +90,17 @@ export default function FloatingAIChat() {
       });
 
       const data = response.data || {};
-
-      const replyText = buildFloatingChatText(data);
       const options = Array.isArray(data.options) ? data.options : [];
+
+      // The backend wraps every short "keyword" question in a "please
+      // select one" prompt, even when it only found a single confident
+      // match. With just one option there's no real choice to make, so
+      // skip the extra click and show the SOP steps immediately.
+      const shouldAutoSelect = options.length === 1;
+
+      const replyText = shouldAutoSelect
+        ? buildFloatingChatText(options[0])
+        : buildFloatingChatText(data);
 
       setMessages((prev) => [
         ...prev,
@@ -100,7 +108,7 @@ export default function FloatingAIChat() {
           id: Date.now() + 1,
           sender: 'ai',
           text: replyText,
-          options,
+          options: shouldAutoSelect ? [] : options,
         },
       ]);
     } catch (requestError) {
