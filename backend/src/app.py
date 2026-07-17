@@ -4951,6 +4951,16 @@ def edit_article(article_id):
 
         ensure_wiki_article_content_capacity(cursor)
 
+        cursor.execute("""
+            SELECT attachment_url, image_files, content
+            FROM wiki_article
+            WHERE article_id = %s
+            LIMIT 1
+        """, (article_id,))
+
+        old_article = cursor.fetchone() or {}
+        old_filenames = extract_article_upload_filenames(old_article)
+
         if saved_files:
             attachment_url = saved_files[0]["url"]
             attachment_type = saved_files[0]["type"]
@@ -4978,6 +4988,12 @@ def edit_article(article_id):
                 image_files,
                 article_id
             ))
+
+            new_filenames = extract_article_upload_filenames({
+                "attachment_url": attachment_url,
+                "image_files": image_files,
+                "content": content,
+            })
         else:
             cursor.execute("""
                 UPDATE wiki_article
@@ -4996,7 +5012,21 @@ def edit_article(article_id):
                 article_id
             ))
 
+            # attachment_url/image_files were not touched, so they're
+            # still referenced -- only compare against the new content.
+            new_filenames = extract_article_upload_filenames({
+                "attachment_url": old_article.get("attachment_url"),
+                "image_files": old_article.get("image_files"),
+                "content": content,
+            })
+
         conn.commit()
+
+        # Any file that was referenced before this edit but no longer
+        # appears anywhere in the saved article (e.g. an image pasted by
+        # mistake and then removed inside the editor) is now orphaned on
+        # the volume -- clean it up instead of leaving it there forever.
+        delete_upload_filenames(old_filenames - new_filenames)
 
         add_audit_log(
             action="Edited article",
@@ -5179,8 +5209,8 @@ def extract_article_upload_filenames(article_row):
     return filenames
 
 
-def delete_article_upload_files(article_row):
-    for filename in extract_article_upload_filenames(article_row):
+def delete_upload_filenames(filenames):
+    for filename in filenames:
         try:
             file_path = UPLOAD_FOLDER / filename
 
@@ -5188,6 +5218,10 @@ def delete_article_upload_files(article_row):
                 file_path.unlink()
         except Exception as error:
             print("DELETE ARTICLE FILE ERROR:", filename, error)
+
+
+def delete_article_upload_files(article_row):
+    delete_upload_filenames(extract_article_upload_filenames(article_row))
 
 
 # =========================
