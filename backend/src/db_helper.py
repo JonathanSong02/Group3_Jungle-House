@@ -408,7 +408,56 @@ def search_image_retrieval(question, limit=1):
 # ESCALATION HELPERS
 # =========================
 
+def has_recent_similar_escalation(question, image_url=None, minutes=15):
+    """
+    Avoid creating duplicate escalation tickets when the same staff member
+    submits the same question/image again within a short window (double
+    click, retry after a slow network, etc).
+    """
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        clean_q = normalize_text(question)
+
+        cursor.execute("""
+            SELECT escalation_id, question, image_url, created_at
+            FROM escalation
+            WHERE status = 'pending'
+              AND created_at >= (NOW() - INTERVAL %s MINUTE)
+            ORDER BY created_at DESC
+            LIMIT 50
+        """, (minutes,))
+
+        for row in cursor.fetchall() or []:
+            same_question = normalize_text(row.get("question")) == clean_q
+            same_image = image_url and row.get("image_url") == image_url
+
+            if same_question and (not image_url or same_image):
+                return row.get("escalation_id")
+
+        return None
+
+    except Exception as error:
+        print("CHECK DUPLICATE ESCALATION ERROR:", error)
+        return None
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
 def create_escalation(question, ai_result, asked_by=None, image_url=None, image_type=None):
+    existing_escalation_id = has_recent_similar_escalation(question, image_url)
+
+    if existing_escalation_id:
+        return existing_escalation_id
+
     conn = None
     cursor = None
 

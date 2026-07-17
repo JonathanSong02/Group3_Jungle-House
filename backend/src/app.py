@@ -21,12 +21,14 @@ from db_helper import (
     search_similar_questions,
     search_image_retrieval,
     create_escalation,
-    resolve_escalation
+    resolve_escalation,
+    similarity_ratio as db_similarity_ratio,
 )
 
 try:
     from image_embedding_helper import (
         create_image_embedding,
+        create_text_embedding,
         cosine_similarity_from_json,
         MODEL_NAME as IMAGE_EMBEDDING_MODEL_NAME
     )
@@ -34,6 +36,7 @@ try:
     IMAGE_EMBEDDING_LOAD_ERROR = None
 except Exception as error:
     create_image_embedding = None
+    create_text_embedding = None
     cosine_similarity_from_json = None
     IMAGE_EMBEDDING_MODEL_NAME = None
     IMAGE_EMBEDDING_AVAILABLE = False
@@ -352,14 +355,168 @@ def build_visual_image_match_result(row, similarity_score):
     })
 
 
-def search_visual_image_match(uploaded_image_url, threshold=0.85, min_gap=0.08):
-    """
-    Compare staff uploaded image with approved image_retrieval images.
+# =========================
+# MULTI-STAGE IMAGE + QUESTION RETRIEVAL
+# =========================
+#
+# Root cause of the old strict matching: it only compared the uploaded photo
+# against other stored photos with a single hard threshold (0.85) and a
+# confusability gap check. A different angle/background/lighting/colour of
+# the SAME item drops raw image-to-image cosine similarity well below 0.85,
+# so the whole image signal was discarded and the system fell back to
+# filename-only text search -- the AI never got a chance to reason about
+# "this looks like a dustbin" vs "this looks nothing like a dustbin".
+#
+# CLIP (the model already loaded in image_embedding_helper.py) puts images
+# AND text in the same embedding space, so the fix below also compares the
+# uploaded photo directly against each Knowledge Base image's caption /
+# keywords / answer text. That is what lets a different-coloured, different
+# angle dustbin still match "dustbin" without any hard-coded object rules --
+# no new hard-coded keyword list, no manual labelling required.
 
-    Safer version:
-    - Requires higher similarity score.
-    - Rejects weak matches.
-    - Rejects unclear matches where the best and second-best image are too close.
+# In-memory caches (per Flask worker process). These are best-effort speed
+# optimisations, not a source of truth -- losing them on restart is fine.
+IMAGE_TEXT_EMBEDDING_CACHE = {}   # image_id -> (text_hash, text_embedding_json)
+UPLOADED_IMAGE_EMBEDDING_CACHE = {}  # file_hash -> (timestamp, embedding_json)
+UPLOADED_IMAGE_CACHE_MAX = 200
+UPLOADED_IMAGE_CACHE_TTL_SECONDS = 600
+
+HIGH_CONFIDENCE_THRESHOLD = 0.78
+HIGH_CONFIDENCE_MIN_GAP = 0.04
+MEDIUM_CONFIDENCE_THRESHOLD = 0.45
+MAX_RELATED_OPTIONS = 3
+
+
+def _row_searchable_text(row):
+    return " ".join([
+        str(row.get("image_caption") or ""),
+        str(row.get("image_keywords") or ""),
+        str(row.get("question") or ""),
+        str(row.get("answer") or ""),
+    ]).strip()
+
+
+def _hash_text(text):
+    return hashlib.md5(str(text or "").encode("utf-8", errors="ignore")).hexdigest()
+
+
+def _get_row_text_embedding(row):
+    """
+    Text embeddings for existing Knowledge Base images are computed once and
+    reused. They are only regenerated when the underlying caption/keywords/
+    answer text actually changes (tracked by a content hash), so normal chat
+    traffic never re-triggers the AI provider for unchanged KB content.
+    """
+    if not create_text_embedding:
+        return None
+
+    image_id = row.get("image_id")
+    text = _row_searchable_text(row)
+
+    if not text:
+        return None
+
+    text_hash = _hash_text(text)
+    cached = IMAGE_TEXT_EMBEDDING_CACHE.get(image_id)
+
+    if cached and cached[0] == text_hash:
+        return cached[1]
+
+    embedding = create_text_embedding(text)
+
+    if embedding:
+        IMAGE_TEXT_EMBEDDING_CACHE[image_id] = (text_hash, embedding)
+
+    return embedding
+
+
+def _get_uploaded_image_embedding(uploaded_image_path):
+    """
+    Duplicate-submission protection: hashing the uploaded file bytes and
+    reusing a recent embedding avoids re-calling the AI provider when a
+    staff member re-sends the same photo (slow network retry, accidental
+    double tap, etc).
+    """
+    try:
+        file_bytes = Path(uploaded_image_path).read_bytes()
+    except Exception as error:
+        print("READ UPLOADED IMAGE ERROR:", error)
+        return None, None
+
+    file_hash = hashlib.md5(file_bytes).hexdigest()
+    now = time.time()
+
+    cached = UPLOADED_IMAGE_EMBEDDING_CACHE.get(file_hash)
+    if cached and (now - cached[0]) < UPLOADED_IMAGE_CACHE_TTL_SECONDS:
+        return cached[1], file_hash
+
+    embedding = create_image_embedding(uploaded_image_path)
+
+    if embedding:
+        if len(UPLOADED_IMAGE_EMBEDDING_CACHE) >= UPLOADED_IMAGE_CACHE_MAX:
+            oldest_key = min(
+                UPLOADED_IMAGE_EMBEDDING_CACHE,
+                key=lambda key: UPLOADED_IMAGE_EMBEDDING_CACHE[key][0]
+            )
+            UPLOADED_IMAGE_EMBEDDING_CACHE.pop(oldest_key, None)
+
+        UPLOADED_IMAGE_EMBEDDING_CACHE[file_hash] = (now, embedding)
+
+    return embedding, file_hash
+
+
+def build_related_image_option(row, combined_score, match_reason):
+    answer = row.get("answer") or row.get("image_caption") or ""
+    title = row.get("question") or row.get("image_caption") or "Related item"
+    image_url = row.get("image_url")
+    image_type = row.get("image_type")
+
+    return {
+        "label": title,
+        "title": title,
+        "category": None,
+        "source": f"image_retrieval_{row.get('source_type') or 'approved'}",
+        "answer": answer,
+        "reply": answer,
+        "confidence": round(float(combined_score), 4),
+        "match_reason": match_reason,
+        "confidence_label": get_confidence_label(combined_score),
+        "image_url": image_url,
+        "image_type": image_type,
+        "attachment_url": image_url,
+        "attachment_type": image_type,
+        "image_files": (
+            [{"url": image_url, "type": image_type}]
+            if image_url
+            else []
+        ),
+    }
+
+
+def search_visual_image_match(uploaded_image_url, question="", threshold=HIGH_CONFIDENCE_THRESHOLD, min_gap=HIGH_CONFIDENCE_MIN_GAP):
+    """
+    Multi-stage image + question retrieval against approved image_retrieval
+    records.
+
+    Stage 1: encode the uploaded photo with CLIP.
+    Stage 2: score every candidate using THREE signals combined --
+             (a) image-to-image similarity when a stored photo exists,
+             (b) image-to-text similarity against that record's own
+                 caption/keywords/answer (this is what generalises across
+                 angle, colour, size and lighting -- CLIP recognises the
+                 object itself, not just the pixels), and
+             (c) how well the record's text matches the staff member's
+                 written question (so image understanding and question
+                 intent are combined, not searched separately).
+    Stage 3/4: rank and tier into HIGH (answer directly), MEDIUM (return the
+               best related options instead of failing), or LOW (let the
+               caller fall back to the existing text-based KB/SOP search).
+
+    Returns:
+      - a single answer dict (backward compatible "direct answer") on HIGH confidence
+      - a dict with type "multiple_choice" and up to 3 options on MEDIUM confidence
+      - None on LOW confidence / no usable signal, so the caller keeps using
+        the existing text fallback and escalation flow unchanged.
     """
     if not IMAGE_EMBEDDING_AVAILABLE or not create_image_embedding or not cosine_similarity_from_json:
         print("IMAGE EMBEDDING NOT AVAILABLE:", IMAGE_EMBEDDING_LOAD_ERROR)
@@ -370,7 +527,7 @@ def search_visual_image_match(uploaded_image_url, threshold=0.85, min_gap=0.08):
     if not uploaded_image_path:
         return None
 
-    uploaded_embedding = create_image_embedding(uploaded_image_path)
+    uploaded_embedding, _file_hash = _get_uploaded_image_embedding(uploaded_image_path)
 
     if not uploaded_embedding:
         return None
@@ -387,7 +544,6 @@ def search_visual_image_match(uploaded_image_url, threshold=0.85, min_gap=0.08):
             FROM image_retrieval
             WHERE approval_status = 'approved'
               AND visual_match_enabled = 1
-              AND image_embedding IS NOT NULL
             ORDER BY
                 CASE
                     WHEN source_type = 'knowledge_base' THEN 1
@@ -395,56 +551,122 @@ def search_visual_image_match(uploaded_image_url, threshold=0.85, min_gap=0.08):
                     ELSE 3
                 END,
                 created_at DESC
+            LIMIT 200
         """)
 
         rows = cursor.fetchall() or []
-
         scored_rows = []
 
         for row in rows:
-            score = cosine_similarity_from_json(
-                uploaded_embedding,
-                row.get("image_embedding")
-            )
+            image_sim = 0.0
+            has_image_sim = False
 
+            if row.get("image_embedding"):
+                try:
+                    image_sim = float(cosine_similarity_from_json(
+                        uploaded_embedding,
+                        row.get("image_embedding")
+                    ) or 0.0)
+                    has_image_sim = True
+                except Exception:
+                    image_sim = 0.0
+
+            text_sim = 0.0
             try:
-                score = float(score or 0.0)
+                row_text_embedding = _get_row_text_embedding(row)
+                if row_text_embedding:
+                    text_sim = float(cosine_similarity_from_json(
+                        uploaded_embedding,
+                        row_text_embedding
+                    ) or 0.0)
             except Exception:
-                score = 0.0
+                text_sim = 0.0
 
-            scored_rows.append((score, row))
+            keyword_sim = db_similarity_ratio(question, _row_searchable_text(row)) if question else 0.0
+
+            if has_image_sim:
+                combined = (0.55 * image_sim) + (0.30 * text_sim) + (0.15 * keyword_sim)
+                dominant = "visual similarity to a known photo" if image_sim >= text_sim else "matches the item description"
+            else:
+                combined = (0.65 * text_sim) + (0.35 * keyword_sim)
+                dominant = "matches the item description" if text_sim >= keyword_sim else "matches your question"
+
+            scored_rows.append((combined, row, dominant))
 
         scored_rows.sort(key=lambda item: item[0], reverse=True)
 
         if not scored_rows:
             return None
 
-        best_score, best_row = scored_rows[0]
+        best_score, best_row, _best_reason = scored_rows[0]
         second_score = scored_rows[1][0] if len(scored_rows) > 1 else 0.0
 
-        print("BEST VISUAL IMAGE SCORE:", best_score)
-        print("SECOND VISUAL IMAGE SCORE:", second_score)
+        print("BEST IMAGE MATCH SCORE:", round(best_score, 4))
 
-        # Debug top 5 matches
-        for debug_score, debug_row in scored_rows[:5]:
+        for debug_score, debug_row, debug_reason in scored_rows[:5]:
             print(
-                "VISUAL TOP MATCH:",
+                "IMAGE MATCH CANDIDATE:",
                 "image_id=", debug_row.get("image_id"),
                 "score=", round(debug_score, 4),
+                "reason=", debug_reason,
                 "answer=", str(debug_row.get("answer") or "")[:80]
             )
 
-        # Reject weak match
-        if best_score < threshold:
-            print("VISUAL MATCH REJECTED: below threshold")
-            return None
+        # HIGH confidence: answer directly, same as the previous behaviour.
+        if best_score >= threshold and (second_score == 0.0 or (best_score - second_score) >= min_gap):
+            return build_visual_image_match_result(best_row, best_score)
 
-        # Reject confusing match if best and second are too close
-        if second_score > 0 and (best_score - second_score) < min_gap:
-            print("VISUAL MATCH REJECTED: best match not confident enough")
-            return None
+        # MEDIUM confidence: do not fail -- offer the best related options
+        # instead of forcing the user back to a plain text search.
+        if best_score >= MEDIUM_CONFIDENCE_THRESHOLD:
+            seen_titles = set()
+            options = []
 
-        return build_visual_image_match_result(best_row, best_score)
+            for score, row, reason in scored_rows:
+                if score < MEDIUM_CONFIDENCE_THRESHOLD:
+                    break
+
+                title_key = str(row.get("question") or row.get("image_caption") or "").lower().strip()
+
+                if not title_key or title_key in seen_titles:
+                    continue
+
+                seen_titles.add(title_key)
+                options.append(build_related_image_option(row, score, reason))
+
+                if len(options) >= MAX_RELATED_OPTIONS:
+                    break
+
+            if not options:
+                return None
+
+            return standardize_ai_response({
+                "type": "multiple_choice",
+                "reply": (
+                    "I'm not fully certain of the exact item, but here are the most "
+                    "relevant instructions I found for what this looks like:"
+                ),
+                "answer": (
+                    "I'm not fully certain of the exact item, but here are the most "
+                    "relevant instructions I found for what this looks like:"
+                ),
+                "score": best_score,
+                "confidence": best_score,
+                "confidence_label": get_confidence_label(best_score),
+                "source": "visual_image_match_related",
+                "final_source": "visual_image_match_related",
+                "served_by": "image_embedding_retrieval",
+                "fallback": False,
+                "escalation_ready": False,
+                "escalation_required": False,
+                "options": options,
+                "context": {
+                    "match_tier": "medium",
+                },
+            })
+
+        print("VISUAL MATCH REJECTED: below related-item threshold")
+        return None
 
     except Exception as error:
         print("SEARCH VISUAL IMAGE MATCH ERROR:", error)
@@ -4196,7 +4418,7 @@ def chat():
                 if uploaded_chat_image_url:
                     visual_match_result = search_visual_image_match(
                         uploaded_chat_image_url,
-                        threshold=0.85
+                        question=question
                     )
 
                     if visual_match_result:

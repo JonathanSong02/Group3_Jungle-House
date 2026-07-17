@@ -41,6 +41,29 @@ def create_image_embedding(image_path):
         return None
 
 
+def create_text_embedding(text):
+    """
+    Encode text into the same CLIP embedding space used for images.
+    This lets an uploaded photo be compared directly against KB captions,
+    titles, keywords and answers (not just other stored photos), which is
+    what makes category-level / different-angle matching possible.
+    """
+    try:
+        text = str(text or "").strip()
+
+        if not text:
+            return None
+
+        model = get_image_model()
+        embedding = model.encode(text, normalize_embeddings=True)
+
+        return json.dumps([float(value) for value in embedding.tolist()])
+
+    except Exception as error:
+        print("TEXT EMBEDDING ERROR:", error)
+        return None
+
+
 def cosine_similarity_from_json(a_json, b_json):
     try:
         if not a_json or not b_json:
