@@ -5141,6 +5141,56 @@ def restore_article(article_id):
 
 
 # =========================
+def extract_article_upload_filenames(article_row):
+    """
+    Collect every uploads/articles/<filename> referenced by this article --
+    attachment_url, the image_files JSON column, and any <img src="..."> baked
+    directly into the rich-text content -- so permanent delete can also
+    remove the actual files from the volume instead of leaving them orphaned
+    on disk forever.
+    """
+    filenames = set()
+
+    def add_from_url(url):
+        match = re.search(r"/static/uploads/articles/([^\s\"'?]+)", str(url or ""))
+
+        if match:
+            filenames.add(match.group(1))
+
+    add_from_url(article_row.get("attachment_url"))
+
+    image_files_raw = article_row.get("image_files")
+
+    if image_files_raw:
+        try:
+            parsed = json.loads(image_files_raw) if isinstance(image_files_raw, str) else image_files_raw
+
+            if isinstance(parsed, list):
+                for item in parsed:
+                    add_from_url(item.get("url") if isinstance(item, dict) else item)
+        except Exception:
+            pass
+
+    content = article_row.get("content") or ""
+
+    for match in re.finditer(r"/static/uploads/articles/([^\s\"'?]+)", content):
+        filenames.add(match.group(1))
+
+    return filenames
+
+
+def delete_article_upload_files(article_row):
+    for filename in extract_article_upload_filenames(article_row):
+        try:
+            file_path = UPLOAD_FOLDER / filename
+
+            if file_path.exists() and file_path.is_file():
+                file_path.unlink()
+        except Exception as error:
+            print("DELETE ARTICLE FILE ERROR:", filename, error)
+
+
+# =========================
 # BULK PERMANENT DELETE ARTICLE ROUTE
 # Delete selected articles permanently from Retrieve Bin only
 # =========================
@@ -5180,7 +5230,7 @@ def bulk_permanent_delete_articles():
 
         # 1. Only delete articles that are already inside Retrieve Bin.
         cursor.execute(f"""
-            SELECT article_id
+            SELECT article_id, attachment_url, image_files, content
             FROM wiki_article
             WHERE article_id IN ({placeholders})
             AND COALESCE(is_deleted, 0) = 1
@@ -5220,6 +5270,9 @@ def bulk_permanent_delete_articles():
         deleted_count = cursor.rowcount
 
         conn.commit()
+
+        for row in trash_rows:
+            delete_article_upload_files(row)
 
         add_audit_log(
             actor_id=deleted_by,
@@ -5278,7 +5331,7 @@ def permanent_delete_article(article_id):
 
         # 1. Check article exists in Retrieve Bin
         cursor.execute("""
-            SELECT article_id
+            SELECT article_id, attachment_url, image_files, content
             FROM wiki_article
             WHERE article_id = %s
             AND is_deleted = TRUE
@@ -5306,6 +5359,8 @@ def permanent_delete_article(article_id):
         """, (article_id,))
 
         conn.commit()
+
+        delete_article_upload_files(article)
 
         add_audit_log(
             action="Permanently deleted article",
