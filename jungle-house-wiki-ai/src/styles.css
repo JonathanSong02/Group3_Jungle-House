@@ -9154,6 +9154,124 @@ body.sidebar-is-collapsed .modern-sidebar .sidebar-link.active .sidebar-icon {
 }
 
 /* =========================================================
+   ARTICLE DETAIL - ATTACHMENTS + SAME-PAGE FILE PREVIEW
+   ========================================================= */
+
+.attachment-view-btn {
+  min-height: 38px;
+  padding: 8px 12px !important;
+  border-radius: 12px !important;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.article-attachment-file-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.article-attachment-file-item {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(255, 253, 248, 0.92);
+  overflow: hidden;
+}
+
+.article-attachment-file-link {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--heading);
+}
+
+.article-attachment-file-link:hover {
+  background: #fff8ea;
+}
+
+.article-attachment-file-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.article-attachment-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.article-attachment-file-caret {
+  color: var(--muted);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.article-file-preview {
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+  border-top: 1px solid var(--border);
+  padding: 14px;
+  background: #fffdf8;
+}
+
+.article-file-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.article-file-preview-frame {
+  width: 100%;
+  min-height: 60vh;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.article-file-download-card {
+  padding: 16px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 14px;
+  background: #fff8e8;
+  text-align: center;
+}
+
+.article-file-download-card p {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+@media (max-width: 640px) {
+  .article-file-preview-frame {
+    min-height: 55vh;
+  }
+
+  .article-attachment-file-name {
+    white-space: normal;
+  }
+}
+
+/* =========================================================
    AI CHAT IMAGE UPLOAD
    Staff can upload image in AI Chat
    ========================================================= */

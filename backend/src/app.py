@@ -196,7 +196,8 @@ def save_article_attachments(files):
 
         saved_files.append({
             "url": f"/static/uploads/articles/{unique_filename}",
-            "type": file.content_type
+            "type": file.content_type,
+            "name": filename
         })
 
     return saved_files
@@ -5164,6 +5165,13 @@ def edit_article(article_id):
     uploaded_files = request.files.getlist("attachments")
     saved_files = save_article_attachments(uploaded_files)
 
+    # Files the client wants to KEEP from what was already attached to this
+    # article (JSON array of {url, type, name}). The client is expected to
+    # always send this (even as "[]") so removals are explicit; if it's
+    # missing entirely (older client), fall back to keeping everything that
+    # was already there so we never silently drop existing attachments.
+    existing_attachments_raw = request.form.get("existing_attachments")
+
     conn = None
     cursor = None
 
@@ -5174,7 +5182,7 @@ def edit_article(article_id):
         ensure_wiki_article_content_capacity(cursor)
 
         cursor.execute("""
-            SELECT attachment_url, image_files, content
+            SELECT attachment_url, attachment_type, image_files, content
             FROM wiki_article
             WHERE article_id = %s
             LIMIT 1
@@ -5183,71 +5191,77 @@ def edit_article(article_id):
         old_article = cursor.fetchone() or {}
         old_filenames = extract_article_upload_filenames(old_article)
 
-        if saved_files:
-            attachment_url = saved_files[0]["url"]
-            attachment_type = saved_files[0]["type"]
-            image_files = json.dumps(saved_files)
-
-            cursor.execute("""
-                UPDATE wiki_article
-                SET title = %s,
-                    content = %s,
-                    category = %s,
-                    link = %s,
-                    sub_category = %s,
-                    attachment_url = %s,
-                    attachment_type = %s,
-                    image_files = %s
-                WHERE article_id = %s
-            """, (
-                title,
-                content,
-                category,
-                link,
-                sub_category,
-                attachment_url,
-                attachment_type,
-                image_files,
-                article_id
-            ))
-
-            new_filenames = extract_article_upload_filenames({
-                "attachment_url": attachment_url,
-                "image_files": image_files,
-                "content": content,
-            })
+        if existing_attachments_raw is not None:
+            try:
+                kept_attachments = json.loads(existing_attachments_raw)
+                if not isinstance(kept_attachments, list):
+                    kept_attachments = []
+            except Exception:
+                kept_attachments = []
         else:
-            cursor.execute("""
-                UPDATE wiki_article
-                SET title = %s,
-                    content = %s,
-                    category = %s,
-                    link = %s,
-                    sub_category = %s
-                WHERE article_id = %s
-            """, (
-                title,
-                content,
-                category,
-                link,
-                sub_category,
-                article_id
-            ))
+            kept_attachments = []
+            old_image_files_raw = old_article.get("image_files")
+            if old_image_files_raw:
+                try:
+                    parsed_old = (
+                        json.loads(old_image_files_raw)
+                        if isinstance(old_image_files_raw, str)
+                        else old_image_files_raw
+                    )
+                    if isinstance(parsed_old, list):
+                        kept_attachments = parsed_old
+                except Exception:
+                    kept_attachments = []
+            elif old_article.get("attachment_url"):
+                kept_attachments = [{
+                    "url": old_article.get("attachment_url"),
+                    "type": old_article.get("attachment_type"),
+                }]
 
-            # attachment_url/image_files were not touched, so they're
-            # still referenced -- only compare against the new content.
-            new_filenames = extract_article_upload_filenames({
-                "attachment_url": old_article.get("attachment_url"),
-                "image_files": old_article.get("image_files"),
-                "content": content,
-            })
+        final_files = [
+            item for item in kept_attachments if isinstance(item, dict) and item.get("url")
+        ] + saved_files
+
+        attachment_url = final_files[0]["url"] if final_files else None
+        attachment_type = final_files[0]["type"] if final_files else None
+        image_files = json.dumps(final_files) if final_files else None
+
+        cursor.execute("""
+            UPDATE wiki_article
+            SET title = %s,
+                content = %s,
+                category = %s,
+                link = %s,
+                sub_category = %s,
+                attachment_url = %s,
+                attachment_type = %s,
+                image_files = %s
+            WHERE article_id = %s
+        """, (
+            title,
+            content,
+            category,
+            link,
+            sub_category,
+            attachment_url,
+            attachment_type,
+            image_files,
+            article_id
+        ))
+
+        new_filenames = extract_article_upload_filenames({
+            "attachment_url": attachment_url,
+            "image_files": image_files,
+            "content": content,
+        })
 
         conn.commit()
 
         # Any file that was referenced before this edit but no longer
-        # appears anywhere in the saved article (e.g. an image pasted by
-        # mistake and then removed inside the editor) is now orphaned on
-        # the volume -- clean it up instead of leaving it there forever.
+        # appears anywhere in the saved article (e.g. removed by the user,
+        # or an image pasted by mistake and then removed inside the editor)
+        # is now orphaned on the volume -- clean it up instead of leaving
+        # it there forever.
         delete_upload_filenames(old_filenames - new_filenames)
 
         add_audit_log(
@@ -5258,7 +5272,7 @@ def edit_article(article_id):
 
         return jsonify({
             'message': 'Article updated successfully.',
-            'image_files': saved_files
+            'image_files': final_files
         }), 200
 
     except Exception as error:

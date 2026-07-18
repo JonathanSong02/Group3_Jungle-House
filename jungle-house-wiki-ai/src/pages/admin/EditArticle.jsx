@@ -24,7 +24,6 @@ export default function EditArticle() {
   });
 
   const [attachments, setAttachments] = useState([]);
-  const [currentAttachment, setCurrentAttachment] = useState('');
   const [currentAttachments, setCurrentAttachments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -109,8 +108,6 @@ export default function EditArticle() {
           content: article.content || '',
         });
 
-        setCurrentAttachment(article.attachment_url || '');
-
         let parsedAttachments = [];
 
         if (Array.isArray(article.image_files)) {
@@ -122,6 +119,19 @@ export default function EditArticle() {
             console.error('Parse image_files error:', error);
             parsedAttachments = [];
           }
+        }
+
+        // The legacy single attachment_url column mirrors image_files[0],
+        // but fall back to it if image_files is empty so old articles that
+        // predate multi-file support still show their attached file here.
+        if (
+          parsedAttachments.length === 0 &&
+          article.attachment_url
+        ) {
+          parsedAttachments = [{
+            url: article.attachment_url,
+            type: article.attachment_type,
+          }];
         }
 
         setCurrentAttachments(parsedAttachments);
@@ -167,9 +177,28 @@ export default function EditArticle() {
     );
   };
 
+  const removeCurrentAttachment = (indexToRemove) => {
+    setCurrentAttachments((prev) =>
+      prev.filter((_, index) => index !== indexToRemove)
+    );
+  };
+
   const getAttachmentFileName = (file) => {
+    if (file?.name) return file.name;
     const fileUrl = file?.url || file?.file_url || file?.path || file;
-    return String(fileUrl || '').split('/').pop() || 'Attachment file';
+    const rawName = String(fileUrl || '').split('/').pop() || 'Attachment file';
+    // Stored filenames are prefixed with a millisecond timestamp
+    // (e.g. "1731999999999_Opening SOP.pdf") to keep them unique on disk.
+    return rawName.replace(/^\d+_/, '');
+  };
+
+  const getFileUrl = (file) => {
+    const fileUrl = file?.url || file?.file_url || file?.path || file;
+    if (!fileUrl) return '';
+    if (fileUrl.startsWith('http://') || fileUrl.startsWith('https://')) {
+      return fileUrl;
+    }
+    return `${API_BASE_URL}${fileUrl.startsWith('/') ? '' : '/'}${fileUrl}`;
   };
 
   const formatFileSize = (bytes) => {
@@ -207,6 +236,7 @@ export default function EditArticle() {
       formData.append('sub_category', form.sub_category.trim());
       formData.append('link', form.link.trim());
       formData.append('content', form.content.trim());
+      formData.append('existing_attachments', JSON.stringify(currentAttachments));
 
       attachments.forEach((file) => {
         formData.append('attachments', file);
@@ -321,9 +351,9 @@ export default function EditArticle() {
                 onChange={handleFileChange}
               />
 
-              {currentAttachments.length > 0 && attachments.length === 0 && (
+              {currentAttachments.length > 0 && (
                 <div className="attachment-group">
-                  <p className="attachment-group-title">Current attachments</p>
+                  <p className="attachment-group-title">Existing files</p>
 
                   <div className="attachment-list">
                     {currentAttachments.map((file, index) => {
@@ -342,35 +372,29 @@ export default function EditArticle() {
                             <strong>{fileName}</strong>
                             <span>Existing article file</span>
                           </div>
+
+                          <a
+                            className="secondary-btn attachment-view-btn"
+                            href={getFileUrl(file)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            View
+                          </a>
+
+                          <button
+                            type="button"
+                            className="attachment-remove-btn"
+                            onClick={() => removeCurrentAttachment(index)}
+                          >
+                            Remove
+                          </button>
                         </div>
                       );
                     })}
                   </div>
                 </div>
               )}
-
-              {currentAttachments.length === 0 &&
-                currentAttachment &&
-                attachments.length === 0 && (
-                  <div className="attachment-group">
-                    <p className="attachment-group-title">Current attachment</p>
-
-                    <div className="attachment-list">
-                      <div className="attachment-card current">
-                        <span className="attachment-icon">
-                          {isImageFile(currentAttachment) ? 'IMG' : 'FILE'}
-                        </span>
-
-                        <div className="attachment-info">
-                          <strong>
-                            {getAttachmentFileName(currentAttachment)}
-                          </strong>
-                          <span>Existing article file</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
 
               {attachments.length > 0 && (
                 <div className="attachment-group">
@@ -416,15 +440,13 @@ export default function EditArticle() {
                 </div>
               )}
 
-              {attachments.length === 0 &&
-                currentAttachments.length === 0 &&
-                !currentAttachment && (
-                  <div className="empty-attachment-box">
-                    No file selected yet. Click{' '}
-                    <strong>+ Add Image / File</strong> to attach one or more
-                    files.
-                  </div>
-                )}
+              {attachments.length === 0 && currentAttachments.length === 0 && (
+                <div className="empty-attachment-box">
+                  No file selected yet. Click{' '}
+                  <strong>+ Add Image / File</strong> to attach one or more
+                  files.
+                </div>
+              )}
             </div>
 
             <label className="full-width">

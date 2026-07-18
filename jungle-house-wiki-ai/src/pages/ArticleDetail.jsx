@@ -10,6 +10,7 @@ export default function ArticleDetail() {
   const [article, setArticle] = useState(null);
   const [links, setLinks] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [openAttachmentIndex, setOpenAttachmentIndex] = useState(null);
 
   function getFileUrl(url) {
     if (!url) return "";
@@ -39,8 +40,59 @@ export default function ArticleDetail() {
     );
   }
 
+  function isPdfFile(url, type) {
+    if (type && type.includes("pdf")) return true;
+    return String(url || "").toLowerCase().endsWith(".pdf");
+  }
+
+  function getAttachmentFileName(file) {
+    if (file?.name) return file.name;
+
+    const rawName = String(file?.url || "").split("/").pop() || "Attached file";
+    // Stored filenames are prefixed with a millisecond timestamp
+    // (e.g. "1731999999999_Opening SOP.pdf") to keep them unique on disk.
+    return rawName.replace(/^\d+_/, "");
+  }
+
+  // Builds the combined, de-duplicated list of every file attached to this
+  // article. image_files (JSON array) holds every uploaded file; the legacy
+  // attachment_url/attachment_type columns just mirror the first entry, but
+  // older articles created before multi-file support only ever populated
+  // those two columns, so fall back to them when image_files is empty.
+  function getAttachments(currentArticle) {
+    if (!currentArticle) return [];
+
+    let files = [];
+    const rawImageFiles = currentArticle.image_files;
+
+    if (Array.isArray(rawImageFiles)) {
+      files = rawImageFiles;
+    } else if (rawImageFiles) {
+      try {
+        const parsed = JSON.parse(rawImageFiles);
+        if (Array.isArray(parsed)) files = parsed;
+      } catch (error) {
+        console.error("Parse image_files error:", error);
+      }
+    }
+
+    if (files.length === 0 && currentArticle.attachment_url) {
+      files = [{
+        url: currentArticle.attachment_url,
+        type: currentArticle.attachment_type,
+      }];
+    }
+
+    return files.filter((file) => file && file.url);
+  }
+
+  function toggleAttachmentPreview(index) {
+    setOpenAttachmentIndex((prev) => (prev === index ? null : index));
+  }
+
   useEffect(() => {
     setLoading(true);
+    setOpenAttachmentIndex(null);
 
     fetch(`${API_BASE_URL}/api/articles/${id}`)
       .then((res) => {
@@ -420,11 +472,7 @@ export default function ArticleDetail() {
     );
   }
 
-  const attachmentUrl = getFileUrl(article.attachment_url);
-  const attachmentIsImage = isImageFile(
-    article.attachment_url,
-    article.attachment_type
-  );
+  const attachments = getAttachments(article);
 
   return (
     <div>
@@ -454,36 +502,92 @@ export default function ArticleDetail() {
       <div className="card-like article-container">
         <div className="article-content">{renderContent(article.content)}</div>
 
-        {article.attachment_url && (
+        {attachments.length > 0 && (
           <div className="article-attachment-section">
-            <h3>Attached File</h3>
+            <h3>Attachments</h3>
 
-            {attachmentIsImage ? (
-              <div className="sop-image-wrapper">
-                <img
-                  src={attachmentUrl}
-                  alt="Article attachment"
-                  className="sop-image"
-                  loading="lazy"
-                  onError={(e) => {
-                    console.error(
-                      "Attachment image failed to load:",
-                      attachmentUrl
-                    );
-                    e.currentTarget.style.display = "none";
-                  }}
-                />
-              </div>
-            ) : (
-              <a
-                href={attachmentUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-link"
-              >
-                View attached file
-              </a>
-            )}
+            <ul className="article-attachment-file-list">
+              {attachments.map((file, index) => {
+                const fileUrl = getFileUrl(file.url);
+                const fileName = getAttachmentFileName(file);
+                const isImage = isImageFile(file.url, file.type);
+                const isPdf = isPdfFile(file.url, file.type);
+                const isOpen = openAttachmentIndex === index;
+
+                return (
+                  <li key={`${file.url}-${index}`} className="article-attachment-file-item">
+                    <button
+                      type="button"
+                      className="article-attachment-file-link"
+                      onClick={() => toggleAttachmentPreview(index)}
+                      aria-expanded={isOpen}
+                    >
+                      <span className="article-attachment-file-icon">
+                        {isImage ? "🖼" : "📄"}
+                      </span>
+                      <span className="article-attachment-file-name">{fileName}</span>
+                      <span className="article-attachment-file-caret">
+                        {isOpen ? "▲" : "▼"}
+                      </span>
+                    </button>
+
+                    {isOpen && (
+                      <div className="article-file-preview">
+                        <div className="article-file-preview-header">
+                          <span>{fileName}</span>
+                          <button
+                            type="button"
+                            className="text-link"
+                            onClick={() => setOpenAttachmentIndex(null)}
+                          >
+                            Minimise file preview
+                          </button>
+                        </div>
+
+                        {isImage && (
+                          <div className="sop-image-wrapper">
+                            <img
+                              src={fileUrl}
+                              alt={fileName}
+                              className="sop-image"
+                              loading="lazy"
+                              onError={(e) => {
+                                console.error("Attachment image failed to load:", fileUrl);
+                                e.currentTarget.style.display = "none";
+                              }}
+                            />
+                          </div>
+                        )}
+
+                        {!isImage && isPdf && (
+                          <iframe
+                            src={fileUrl}
+                            title={fileName}
+                            className="article-file-preview-frame"
+                          />
+                        )}
+
+                        {!isImage && !isPdf && (
+                          <div className="article-file-download-card">
+                            <p>
+                              This file type can&apos;t be previewed here.
+                            </p>
+                            <a
+                              href={fileUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="secondary-btn"
+                            >
+                              Open / Download
+                            </a>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
           </div>
         )}
 
