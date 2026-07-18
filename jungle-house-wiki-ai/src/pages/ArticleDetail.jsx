@@ -194,7 +194,14 @@ export default function ArticleDetail() {
 
     container.addEventListener("click", handleClick);
     return () => container.removeEventListener("click", handleClick);
-  }, [article]);
+    // `loading` is included alongside `article`: the fetch effect below sets
+    // `article` before it finishes fetching article-links and clearing
+    // `loading`, so there are two separate renders. On the first, `article`
+    // is set but the content <div> (and contentRef) doesn't exist yet
+    // because `loading` is still true. On the second, the div finally
+    // mounts, but `article` itself didn't change again -- without `loading`
+    // here, this effect would never re-run to bind the listener to it.
+  }, [article, loading]);
 
   useEffect(() => {
     setLoading(true);
