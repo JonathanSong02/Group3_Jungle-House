@@ -151,7 +151,12 @@ export default function AddArticle() {
       return `<p><img src="${url}" alt="${escapeHtml(name)}" /></p>`;
     }
 
-    return `<p><a href="${url}" class="article-inline-file" target="_blank" rel="noopener noreferrer" data-file-name="${escapeHtml(name)}">📄 ${escapeHtml(name)} <span class="article-inline-file-caret">▾</span></a></p>`;
+    // href is deliberately "#", not the real file URL: some browser
+    // extensions (e.g. Adobe Acrobat) auto-intercept navigation to links
+    // that look like PDF URLs before our own click handler gets a chance
+    // to run. The real URL lives in data-file-url and is only ever read
+    // by our own JS, so there's nothing for an extension to hijack.
+    return `<p><a href="#" class="article-inline-file" data-file-url="${url}" data-file-name="${escapeHtml(name)}">📄 ${escapeHtml(name)} <span class="article-inline-file-caret">▾</span></a></p>`;
   };
 
   // Places the given HTML at the editor's current cursor position so staff

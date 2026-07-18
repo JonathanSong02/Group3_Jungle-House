@@ -123,7 +123,13 @@ export default function ArticleDetail() {
 
       anchor.classList.add("is-open");
 
-      const url = anchor.getAttribute("href") || "";
+      // New inline links store the real file URL in data-file-url (see
+      // AddArticle/EditArticle) so browser extensions that auto-hijack
+      // clicks on real PDF/file hrefs have nothing to grab onto. Articles
+      // saved before that change still have the real URL on href, so fall
+      // back to it for those.
+      const rawHref = anchor.getAttribute("href") || "";
+      const url = anchor.dataset.fileUrl || (rawHref !== "#" ? rawHref : "");
       const name = anchor.dataset.fileName || url.split("/").pop() || "Attached file";
       const lowerUrl = url.toLowerCase();
       const isImage = /\.(png|jpe?g|gif|webp)$/.test(lowerUrl);
