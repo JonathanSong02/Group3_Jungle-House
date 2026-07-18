@@ -93,102 +93,101 @@ export default function ArticleDetail() {
 
   // Files can be inserted anywhere inside the rich-text content (see
   // AddArticle/EditArticle's "Insert into Content" button), rendered as
-  // <a class="article-inline-file"> anchors. Since content is rendered via
-  // dangerouslySetInnerHTML, React can't attach click handlers to those
-  // anchors directly -- wire them up with plain DOM listeners instead, and
-  // toggle a preview panel injected right after the link's own paragraph.
+  // <a class="article-inline-file"> anchors. Content is rendered via
+  // dangerouslySetInnerHTML, so React can't attach click handlers to those
+  // anchors directly, and binding a listener per-anchor is fragile -- if the
+  // container's innerHTML is ever regenerated the specific anchor nodes get
+  // replaced and any listener bound directly to them goes with it. Delegate
+  // from the stable container instead, resolving the actual anchor per click.
   useEffect(() => {
     const container = contentRef.current;
     if (!container) return undefined;
 
-    const anchors = Array.from(
-      container.querySelectorAll("a.article-inline-file")
-    );
+    const handleClick = (event) => {
+      const anchor = event.target.closest("a.article-inline-file");
+      if (!anchor || !container.contains(anchor)) return;
 
-    const handlers = anchors.map((anchor) => {
-      const handleClick = (event) => {
-        event.preventDefault();
+      event.preventDefault();
 
-        const host = anchor.closest("p, div, li") || anchor;
-        const existingPreview = host.nextElementSibling;
+      const host = anchor.closest("p, div, li") || anchor;
+      const existingPreview = host.nextElementSibling;
 
-        if (
-          existingPreview &&
-          existingPreview.classList.contains("article-inline-file-preview")
-        ) {
-          existingPreview.remove();
-          return;
-        }
+      if (
+        existingPreview &&
+        existingPreview.classList.contains("article-inline-file-preview")
+      ) {
+        existingPreview.remove();
+        anchor.classList.remove("is-open");
+        return;
+      }
 
-        const url = anchor.getAttribute("href") || "";
-        const name = anchor.dataset.fileName || url.split("/").pop() || "Attached file";
-        const lowerUrl = url.toLowerCase();
-        const isImage = /\.(png|jpe?g|gif|webp)$/.test(lowerUrl);
-        const isPdf = lowerUrl.endsWith(".pdf");
+      anchor.classList.add("is-open");
 
-        const preview = document.createElement("div");
-        preview.className = "article-file-preview article-inline-file-preview";
+      const url = anchor.getAttribute("href") || "";
+      const name = anchor.dataset.fileName || url.split("/").pop() || "Attached file";
+      const lowerUrl = url.toLowerCase();
+      const isImage = /\.(png|jpe?g|gif|webp)$/.test(lowerUrl);
+      const isPdf = lowerUrl.endsWith(".pdf");
 
-        const header = document.createElement("div");
-        header.className = "article-file-preview-header";
+      const preview = document.createElement("div");
+      preview.className = "article-file-preview article-inline-file-preview";
 
-        const label = document.createElement("span");
-        label.textContent = name;
-        header.appendChild(label);
+      const header = document.createElement("div");
+      header.className = "article-file-preview-header";
 
-        const closeBtn = document.createElement("button");
-        closeBtn.type = "button";
-        closeBtn.className = "text-link";
-        closeBtn.textContent = "Minimise file preview";
-        closeBtn.addEventListener("click", () => preview.remove());
-        header.appendChild(closeBtn);
+      const label = document.createElement("span");
+      label.textContent = name;
+      header.appendChild(label);
 
-        preview.appendChild(header);
+      const closeBtn = document.createElement("button");
+      closeBtn.type = "button";
+      closeBtn.className = "text-link";
+      closeBtn.textContent = "Minimise file preview";
+      closeBtn.addEventListener("click", () => {
+        preview.remove();
+        anchor.classList.remove("is-open");
+      });
+      header.appendChild(closeBtn);
 
-        if (isImage) {
-          const img = document.createElement("img");
-          img.src = url;
-          img.alt = name;
-          img.className = "sop-image";
-          img.loading = "lazy";
-          preview.appendChild(img);
-        } else if (isPdf) {
-          const iframe = document.createElement("iframe");
-          iframe.src = url;
-          iframe.title = name;
-          iframe.className = "article-file-preview-frame";
-          preview.appendChild(iframe);
-        } else {
-          const card = document.createElement("div");
-          card.className = "article-file-download-card";
+      preview.appendChild(header);
 
-          const message = document.createElement("p");
-          message.textContent = "This file type can't be previewed here.";
-          card.appendChild(message);
+      if (isImage) {
+        const img = document.createElement("img");
+        img.src = url;
+        img.alt = name;
+        img.className = "sop-image";
+        img.loading = "lazy";
+        preview.appendChild(img);
+      } else if (isPdf) {
+        const iframe = document.createElement("iframe");
+        iframe.src = url;
+        iframe.title = name;
+        iframe.className = "article-file-preview-frame";
+        preview.appendChild(iframe);
+      } else {
+        const card = document.createElement("div");
+        card.className = "article-file-download-card";
 
-          const openLink = document.createElement("a");
-          openLink.href = url;
-          openLink.target = "_blank";
-          openLink.rel = "noopener noreferrer";
-          openLink.className = "secondary-btn";
-          openLink.textContent = "Open / Download";
-          card.appendChild(openLink);
+        const message = document.createElement("p");
+        message.textContent = "This file type can't be previewed here.";
+        card.appendChild(message);
 
-          preview.appendChild(card);
-        }
+        const openLink = document.createElement("a");
+        openLink.href = url;
+        openLink.target = "_blank";
+        openLink.rel = "noopener noreferrer";
+        openLink.className = "secondary-btn";
+        openLink.textContent = "Open / Download";
+        card.appendChild(openLink);
 
-        host.insertAdjacentElement("afterend", preview);
-      };
+        preview.appendChild(card);
+      }
 
-      anchor.addEventListener("click", handleClick);
-      return { anchor, handleClick };
-    });
-
-    return () => {
-      handlers.forEach(({ anchor, handleClick }) =>
-        anchor.removeEventListener("click", handleClick)
-      );
+      host.insertAdjacentElement("afterend", preview);
     };
+
+    container.addEventListener("click", handleClick);
+    return () => container.removeEventListener("click", handleClick);
   }, [article]);
 
   useEffect(() => {

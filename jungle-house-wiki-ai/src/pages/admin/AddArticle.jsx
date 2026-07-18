@@ -151,7 +151,7 @@ export default function AddArticle() {
       return `<p><img src="${url}" alt="${escapeHtml(name)}" /></p>`;
     }
 
-    return `<p><a href="${url}" class="article-inline-file" target="_blank" rel="noopener noreferrer" data-file-name="${escapeHtml(name)}">📄 ${escapeHtml(name)}</a></p>`;
+    return `<p><a href="${url}" class="article-inline-file" target="_blank" rel="noopener noreferrer" data-file-name="${escapeHtml(name)}">📄 ${escapeHtml(name)} <span class="article-inline-file-caret">▾</span></a></p>`;
   };
 
   // Places the given HTML at the editor's current cursor position so staff
