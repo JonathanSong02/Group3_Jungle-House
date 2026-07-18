@@ -26,6 +26,7 @@ export default function AddArticle() {
   const [attachments, setAttachments] = useState([]);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
+  const [insertingIndex, setInsertingIndex] = useState(null);
 
   const editorConfig = useMemo(
     () => ({
@@ -137,6 +138,74 @@ export default function AddArticle() {
 
   const isImageFile = (fileName = '') =>
     /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(fileName);
+
+  const escapeHtml = (value = '') =>
+    String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+
+  const buildInlineFileHtml = (url, name, isImage) => {
+    if (isImage) {
+      return `<p><img src="${url}" alt="${escapeHtml(name)}" /></p>`;
+    }
+
+    return `<p><a href="${url}" class="article-inline-file" target="_blank" rel="noopener noreferrer" data-file-name="${escapeHtml(name)}">📄 ${escapeHtml(name)}</a></p>`;
+  };
+
+  // Places the given HTML at the editor's current cursor position so staff
+  // can position an attached file anywhere inside the article body, instead
+  // of it always landing in the fixed "Attachments" list at the bottom.
+  const insertHtmlIntoContent = (html) => {
+    const editor = editorRef.current;
+
+    if (editor?.selection?.insertHTML) {
+      editor.selection.insertHTML(html);
+      setForm((prev) => ({ ...prev, content: editor.value ?? prev.content }));
+    } else {
+      setForm((prev) => ({ ...prev, content: `${prev.content}${html}` }));
+    }
+  };
+
+  // Uploads a not-yet-saved selected file immediately (same endpoint the
+  // rich-text editor's own image button uses) and drops the returned HTML
+  // into the content at the cursor, then removes it from the pending
+  // "Selected files" list since it's now saved and referenced from content.
+  const insertAttachmentIntoContent = async (index) => {
+    const file = attachments[index];
+    if (!file) return;
+
+    try {
+      setInsertingIndex(index);
+      setMessage('');
+
+      const uploadData = new FormData();
+      uploadData.append('attachments', file);
+
+      const response = await api.post('/articles/upload-image', uploadData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+
+      const fileUrl = response.data?.files?.[0];
+
+      if (!fileUrl || response.data?.error) {
+        throw new Error(response.data?.msg || 'Failed to upload file.');
+      }
+
+      insertHtmlIntoContent(
+        buildInlineFileHtml(fileUrl, file.name, isImageFile(file.name))
+      );
+      removeAttachment(index);
+    } catch (error) {
+      console.error('Insert attachment into content error:', error);
+      setMessage(
+        error.response?.data?.msg || error.message || 'Failed to insert file into content.'
+      );
+    } finally {
+      setInsertingIndex(null);
+    }
+  };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -298,6 +367,15 @@ export default function AddArticle() {
 
                         <button
                           type="button"
+                          className="secondary-btn attachment-view-btn"
+                          disabled={insertingIndex === index}
+                          onClick={() => insertAttachmentIntoContent(index)}
+                        >
+                          {insertingIndex === index ? 'Inserting...' : 'Insert into Content'}
+                        </button>
+
+                        <button
+                          type="button"
                           className="attachment-remove-btn"
                           onClick={() => removeAttachment(index)}
                         >
@@ -306,6 +384,12 @@ export default function AddArticle() {
                       </div>
                     ))}
                   </div>
+
+                  <p className="attachment-hint">
+                    Tip: use <strong>Insert into Content</strong> to place a file
+                    exactly where you want it in the article body. Files left
+                    here will show in the general Attachments list instead.
+                  </p>
                 </div>
               )}
 

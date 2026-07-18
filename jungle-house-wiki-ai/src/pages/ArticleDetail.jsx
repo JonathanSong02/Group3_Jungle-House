@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
 
@@ -11,6 +11,7 @@ export default function ArticleDetail() {
   const [links, setLinks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [openAttachmentIndex, setOpenAttachmentIndex] = useState(null);
+  const contentRef = useRef(null);
 
   function getFileUrl(url) {
     if (!url) return "";
@@ -89,6 +90,106 @@ export default function ArticleDetail() {
   function toggleAttachmentPreview(index) {
     setOpenAttachmentIndex((prev) => (prev === index ? null : index));
   }
+
+  // Files can be inserted anywhere inside the rich-text content (see
+  // AddArticle/EditArticle's "Insert into Content" button), rendered as
+  // <a class="article-inline-file"> anchors. Since content is rendered via
+  // dangerouslySetInnerHTML, React can't attach click handlers to those
+  // anchors directly -- wire them up with plain DOM listeners instead, and
+  // toggle a preview panel injected right after the link's own paragraph.
+  useEffect(() => {
+    const container = contentRef.current;
+    if (!container) return undefined;
+
+    const anchors = Array.from(
+      container.querySelectorAll("a.article-inline-file")
+    );
+
+    const handlers = anchors.map((anchor) => {
+      const handleClick = (event) => {
+        event.preventDefault();
+
+        const host = anchor.closest("p, div, li") || anchor;
+        const existingPreview = host.nextElementSibling;
+
+        if (
+          existingPreview &&
+          existingPreview.classList.contains("article-inline-file-preview")
+        ) {
+          existingPreview.remove();
+          return;
+        }
+
+        const url = anchor.getAttribute("href") || "";
+        const name = anchor.dataset.fileName || url.split("/").pop() || "Attached file";
+        const lowerUrl = url.toLowerCase();
+        const isImage = /\.(png|jpe?g|gif|webp)$/.test(lowerUrl);
+        const isPdf = lowerUrl.endsWith(".pdf");
+
+        const preview = document.createElement("div");
+        preview.className = "article-file-preview article-inline-file-preview";
+
+        const header = document.createElement("div");
+        header.className = "article-file-preview-header";
+
+        const label = document.createElement("span");
+        label.textContent = name;
+        header.appendChild(label);
+
+        const closeBtn = document.createElement("button");
+        closeBtn.type = "button";
+        closeBtn.className = "text-link";
+        closeBtn.textContent = "Minimise file preview";
+        closeBtn.addEventListener("click", () => preview.remove());
+        header.appendChild(closeBtn);
+
+        preview.appendChild(header);
+
+        if (isImage) {
+          const img = document.createElement("img");
+          img.src = url;
+          img.alt = name;
+          img.className = "sop-image";
+          img.loading = "lazy";
+          preview.appendChild(img);
+        } else if (isPdf) {
+          const iframe = document.createElement("iframe");
+          iframe.src = url;
+          iframe.title = name;
+          iframe.className = "article-file-preview-frame";
+          preview.appendChild(iframe);
+        } else {
+          const card = document.createElement("div");
+          card.className = "article-file-download-card";
+
+          const message = document.createElement("p");
+          message.textContent = "This file type can't be previewed here.";
+          card.appendChild(message);
+
+          const openLink = document.createElement("a");
+          openLink.href = url;
+          openLink.target = "_blank";
+          openLink.rel = "noopener noreferrer";
+          openLink.className = "secondary-btn";
+          openLink.textContent = "Open / Download";
+          card.appendChild(openLink);
+
+          preview.appendChild(card);
+        }
+
+        host.insertAdjacentElement("afterend", preview);
+      };
+
+      anchor.addEventListener("click", handleClick);
+      return { anchor, handleClick };
+    });
+
+    return () => {
+      handlers.forEach(({ anchor, handleClick }) =>
+        anchor.removeEventListener("click", handleClick)
+      );
+    };
+  }, [article]);
 
   useEffect(() => {
     setLoading(true);
@@ -500,7 +601,9 @@ export default function ArticleDetail() {
       />
 
       <div className="card-like article-container">
-        <div className="article-content">{renderContent(article.content)}</div>
+        <div className="article-content" ref={contentRef}>
+          {renderContent(article.content)}
+        </div>
 
         {attachments.length > 0 && (
           <div className="article-attachment-section">
