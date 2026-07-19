@@ -10,13 +10,14 @@ export default function Register() {
     email: '',
     password: '',
     confirm_password: '',
+    registration_key: '',
   });
 
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [showPendingModal, setShowPendingModal] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
 
   const handleChange = (event) => {
     const { name, value } = event.target;
@@ -64,21 +65,20 @@ export default function Register() {
         email: form.email.trim().toLowerCase(),
         password: form.password,
         confirm_password: form.confirm_password,
+        registration_key: form.registration_key.trim(),
 
-        // Security flow:
-        // New users register with an approved company email domain first.
-        // Manager / Team Lead will approve or decline the account later.
+        // A valid registration key (given out by a manager) is the trust
+        // boundary now, so every self-registered account is staff.
         role: 'staff',
       };
 
       const response = await api.post('/auth/register', payload);
 
       setSuccess(
-        response.data.message ||
-          'Registration submitted. Please check your email for the verification link.'
+        response.data.message || 'Registration successful. You can now log in.'
       );
 
-      setShowPendingModal(true);
+      setShowSuccessModal(true);
     } catch (err) {
       setError(err.response?.data?.message || 'Registration failed.');
     } finally {
@@ -87,7 +87,7 @@ export default function Register() {
   };
 
   const goToLogin = () => {
-    setShowPendingModal(false);
+    setShowSuccessModal(false);
     navigate('/login');
   };
 
@@ -98,9 +98,8 @@ export default function Register() {
         <h1>Create Account</h1>
 
         <p className="muted">
-          Register using your approved staff email address. A verification link
-          will be sent to your email first. After verification, your account
-          will be reviewed by a manager or team lead within 24 hours.
+          Enter the registration key given to you by your manager. Any email
+          address can be used.
         </p>
 
         <form onSubmit={handleSubmit} className="form-stack">
@@ -116,7 +115,7 @@ export default function Register() {
           <input
             type="email"
             name="email"
-            placeholder="Staff email address"
+            placeholder="Email address"
             value={form.email}
             onChange={handleChange}
             autoComplete="username"
@@ -176,6 +175,15 @@ export default function Register() {
             />
           </div>
 
+          <input
+            type="text"
+            name="registration_key"
+            placeholder="Enter registration key"
+            value={form.registration_key}
+            onChange={handleChange}
+            required
+          />
+
           {error ? <p className="error-text">{error}</p> : null}
           {success ? <p style={{ color: '#2f6b3d' }}>{success}</p> : null}
 
@@ -191,7 +199,7 @@ export default function Register() {
         </form>
       </div>
 
-      {showPendingModal ? (
+      {showSuccessModal ? (
         <div
           style={{
             position: 'fixed',
@@ -213,17 +221,15 @@ export default function Register() {
               padding: '2rem',
             }}
           >
-            <p className="eyebrow">Account Submitted</p>
+            <p className="eyebrow">Account Created</p>
 
             <h2 style={{ marginBottom: '0.75rem' }}>
-              Check your email first
+              Registration successful
             </h2>
 
             <p className="muted" style={{ marginBottom: '1.5rem' }}>
-              Your account registration has been received. Please click the
-              verification link sent to your registered email. After your email
-              is verified, a manager or team lead will approve or decline your
-              account within 24 hours, and you will be notified by email.
+              Your account has been created and is ready to use. You can log
+              in now with your email and password.
             </p>
 
             <button type="button" className="primary-btn" onClick={goToLogin}>

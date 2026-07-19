@@ -1237,6 +1237,72 @@ def is_registration_approver(cursor, actor_id):
     return role_name in APPROVER_ROLES and status == "active"
 
 
+# =========================
+# REGISTRATION KEY HELPERS
+#
+# Replaces the old company-email-domain gate: anyone can register with any
+# email as long as they have a valid, unused registration key. Keys are
+# single-use forever -- deactivating the account that used a key must never
+# free it up again, so a key only ever moves unused -> used (or -> revoked).
+# =========================
+def is_registration_key_manager(cursor, actor_id):
+    if not actor_id:
+        return False
+
+    cursor.execute("""
+        SELECT r.role_name, u.status
+        FROM users u
+        JOIN roles r ON u.role_id = r.role_id
+        WHERE u.user_id = %s
+        LIMIT 1
+    """, (actor_id,))
+
+    actor = cursor.fetchone()
+
+    if not actor:
+        return False
+
+    role_name = str(actor.get("role_name", "")).strip().lower()
+    status = str(actor.get("status", "")).strip().lower()
+
+    return role_name == "manager" and status == "active"
+
+
+def ensure_registration_keys_table(cursor):
+    # Named staff_registration_keys (not registration_keys) on purpose --
+    # a table called registration_keys already exists in this database from
+    # an older/unrelated system (different schema, 42 real rows already in
+    # it) that nothing in this app currently references. Using a distinct
+    # name avoids any risk of colliding with that legacy data.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS staff_registration_keys (
+            key_id INT AUTO_INCREMENT PRIMARY KEY,
+            key_code VARCHAR(10) NOT NULL UNIQUE,
+            status ENUM('unused', 'used', 'revoked') NOT NULL DEFAULT 'unused',
+            created_by_user_id INT NULL,
+            used_by_user_id INT NULL,
+            used_by_email VARCHAR(255) NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            used_at DATETIME NULL,
+            revoked_at DATETIME NULL,
+            INDEX idx_staff_registration_keys_status (status),
+            CONSTRAINT fk_staff_registration_keys_created_by
+                FOREIGN KEY (created_by_user_id) REFERENCES users(user_id)
+                ON DELETE SET NULL,
+            CONSTRAINT fk_staff_registration_keys_used_by
+                FOREIGN KEY (used_by_user_id) REFERENCES users(user_id)
+                ON DELETE SET NULL
+        )
+    """)
+
+
+def generate_registration_key_code():
+    import string
+
+    alphabet = string.ascii_lowercase + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(10))
+
+
 def create_notification_safe(
     user_id=None,
     title="",
@@ -2982,9 +3048,10 @@ def register():
 
     full_name = data.get("full_name", "").strip()
     email = data.get("email", "").strip().lower()
+    registration_key = str(data.get("registration_key", "")).strip().lower()
 
-    # All self-registered users become staff first.
-    # Manager / Team Lead can approve later.
+    # A valid registration key is now the trust boundary, replacing the old
+    # company-email-domain restriction -- any email can register.
     role = "staff"
 
     password = data.get("password", "")
@@ -2996,8 +3063,8 @@ def register():
     if not is_valid_email_format(email):
         return jsonify({"message": "Please enter a valid email address."}), 400
 
-    if not is_allowed_registration_email(email):
-        return jsonify({"message": allowed_domain_message()}), 400
+    if not registration_key:
+        return jsonify({"message": "Registration key is required."}), 400
 
     if password != confirm_password:
         return jsonify({"message": "Passwords do not match."}), 400
@@ -3013,7 +3080,7 @@ def register():
         conn.start_transaction()
         cursor = conn.cursor(dictionary=True)
 
-        ensure_email_verification_table(cursor)
+        ensure_registration_keys_table(cursor)
 
         cursor.execute("SELECT user_id FROM users WHERE LOWER(email) = %s", (email,))
         existing_user = cursor.fetchone()
@@ -3021,6 +3088,29 @@ def register():
         if existing_user:
             conn.rollback()
             return jsonify({"message": "Email is already registered."}), 409
+
+        # Lock the key row so two simultaneous registrations can never both
+        # succeed with the same key.
+        cursor.execute("""
+            SELECT key_id, status
+            FROM staff_registration_keys
+            WHERE key_code = %s
+            LIMIT 1
+            FOR UPDATE
+        """, (registration_key,))
+        key_row = cursor.fetchone()
+
+        if not key_row:
+            conn.rollback()
+            return jsonify({"message": "Invalid registration key."}), 400
+
+        if key_row["status"] == "used":
+            conn.rollback()
+            return jsonify({"message": "This registration key has already been used."}), 400
+
+        if key_row["status"] == "revoked":
+            conn.rollback()
+            return jsonify({"message": "This registration key has been revoked."}), 400
 
         cursor.execute("""
             SELECT role_id, role_name
@@ -3036,38 +3126,61 @@ def register():
         password_hash = generate_password_hash(password)
 
         # Security flow:
-        # 1. User must own the email address by clicking the verification link.
-        # 2. Account remains pending until manager/team lead approval.
+        # The registration key is the trust boundary (a manager already
+        # decided to hand it out), so the account goes active immediately --
+        # no email domain check and no separate pending-approval step.
         cursor.execute("""
             INSERT INTO users (full_name, email, password_hash, role_id, status)
-            VALUES (%s, %s, %s, %s, 'pending')
+            VALUES (%s, %s, %s, %s, 'active')
         """, (full_name, email, password_hash, role_row["role_id"]))
 
         new_user_id = cursor.lastrowid
-        verification_token = create_email_verification_token(cursor, new_user_id, email)
+
+        # Mark the key used inside the same transaction. The extra
+        # "AND status = 'unused'" guards against a race even though the
+        # earlier SELECT ... FOR UPDATE already locked the row -- a used key
+        # must never become available again, even after the account that
+        # used it is later deactivated.
+        cursor.execute("""
+            UPDATE staff_registration_keys
+            SET status = 'used',
+                used_by_user_id = %s,
+                used_by_email = %s,
+                used_at = NOW()
+            WHERE key_id = %s
+              AND status = 'unused'
+        """, (new_user_id, email, key_row["key_id"]))
+
+        if cursor.rowcount != 1:
+            conn.rollback()
+            return jsonify({"message": "This registration key has already been used."}), 400
 
         conn.commit()
 
         add_audit_log(
             actor_id=new_user_id,
             actor_name=full_name,
-            action="Submitted account registration",
+            action="Registered with registration key",
             module="Authentication",
-            description=(
-                f"New staff account is pending email verification and manager approval. "
-                f"Email: {email}. Domain: {get_email_domain(email)}"
-            )
+            description=f"New staff account created and activated using a registration key. Email: {email}"
         )
 
-        notify_registration_approvers(new_user_id, full_name, email)
-        email_sent = send_email_verification_link(full_name, email, verification_token)
+        send_email_safe(
+            email,
+            "Jungle House AI Wiki - Registration successful",
+            f"""Hi {full_name},
+
+Your Jungle House AI Wiki account has been created successfully using a registration key.
+
+You can now log in using your registered email address.
+
+Thank you,
+Jungle House AI Wiki Team
+"""
+        )
 
         return jsonify({
-            "message": (
-                "Registration submitted. Please check your email and click the verification link. "
-                f"After email verification, your account will be reviewed by a manager or team lead within {REGISTRATION_REVIEW_HOURS} hours."
-            ),
-            "email_sent": email_sent
+            "message": "Registration successful. You can now log in."
         }), 201
 
     except mysql.connector.Error as err:
@@ -3245,6 +3358,130 @@ def resend_email_verification():
 
         print("RESEND EMAIL VERIFICATION ERROR:", error)
         return jsonify({"message": "Failed to resend verification link.", "error": str(error)}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+# =========================
+# REGISTRATION KEY ROUTES
+# =========================
+@app.route("/api/registration-keys/generate", methods=["POST"])
+def generate_registration_key():
+    data = request.get_json(silent=True) or {}
+    actor_id = data.get("created_by") or data.get("user_id")
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        ensure_registration_keys_table(cursor)
+
+        if not is_registration_key_manager(cursor, actor_id):
+            return jsonify({
+                "message": "Only managers can generate registration keys."
+            }), 403
+
+        # Extremely unlikely to collide (36^10 possibilities), but retry a
+        # few times just in case instead of trusting luck.
+        key_code = None
+
+        for _ in range(5):
+            candidate = generate_registration_key_code()
+
+            cursor.execute(
+                "SELECT key_id FROM staff_registration_keys WHERE key_code = %s LIMIT 1",
+                (candidate,)
+            )
+
+            if not cursor.fetchone():
+                key_code = candidate
+                break
+
+        if not key_code:
+            return jsonify({
+                "message": "Failed to generate registration key."
+            }), 500
+
+        cursor.execute("""
+            INSERT INTO staff_registration_keys (key_code, status, created_by_user_id)
+            VALUES (%s, 'unused', %s)
+        """, (key_code, actor_id))
+
+        conn.commit()
+
+        add_audit_log(
+            actor_id=actor_id,
+            action="Generated registration key",
+            module="User Management",
+            description=f"Registration key generated: {key_code}"
+        )
+
+        return jsonify({
+            "message": "Registration key generated successfully.",
+            "key_code": key_code
+        }), 201
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("GENERATE REGISTRATION KEY ERROR:", error)
+
+        return jsonify({
+            "message": "Failed to generate registration key.",
+            "error": str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/registration-keys", methods=["GET"])
+def list_registration_keys():
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        ensure_registration_keys_table(cursor)
+
+        cursor.execute("""
+            SELECT
+                rk.key_id,
+                rk.key_code,
+                rk.status,
+                rk.used_by_email,
+                rk.created_at,
+                rk.used_at,
+                creator.full_name AS created_by_name
+            FROM staff_registration_keys rk
+            LEFT JOIN users creator ON rk.created_by_user_id = creator.user_id
+            ORDER BY rk.created_at DESC
+        """)
+
+        keys = cursor.fetchall()
+
+        return jsonify(keys), 200
+
+    except Exception as error:
+        print("LIST REGISTRATION KEYS ERROR:", error)
+
+        return jsonify({
+            "message": "Failed to load registration keys.",
+            "error": str(error)
+        }), 500
 
     finally:
         if cursor:

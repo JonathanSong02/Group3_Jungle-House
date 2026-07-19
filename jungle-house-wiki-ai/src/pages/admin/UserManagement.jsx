@@ -2,12 +2,21 @@ import { useEffect, useState } from 'react';
 import PageHeader from '../../components/PageHeader';
 import StatusBadge from '../../components/StatusBadge';
 import api from '../../services/api';
+import { useAuth } from '../../context/AuthContext';
 
 export default function UserManagement() {
+  const { user } = useAuth();
+
   const [users, setUsers] = useState([]);
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(true);
   const [actionLoadingId, setActionLoadingId] = useState(null);
+
+  const [registrationKeys, setRegistrationKeys] = useState([]);
+  const [keysLoading, setKeysLoading] = useState(true);
+  const [generatingKey, setGeneratingKey] = useState(false);
+  const [keyMessage, setKeyMessage] = useState('');
+  const [copiedKeyCode, setCopiedKeyCode] = useState('');
 
   const fetchUsers = async () => {
     try {
@@ -25,6 +34,59 @@ export default function UserManagement() {
   useEffect(() => {
     fetchUsers();
   }, []);
+
+  const fetchRegistrationKeys = async () => {
+    try {
+      setKeysLoading(true);
+      const response = await api.get('/registration-keys');
+      setRegistrationKeys(Array.isArray(response.data) ? response.data : []);
+    } catch (error) {
+      console.error('Fetch registration keys error:', error);
+      setKeyMessage('Failed to load registration keys.');
+    } finally {
+      setKeysLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchRegistrationKeys();
+  }, []);
+
+  const generateRegistrationKey = async () => {
+    try {
+      setGeneratingKey(true);
+      setKeyMessage('');
+
+      const response = await api.post('/registration-keys/generate', {
+        created_by: user?.id || user?.user_id || null,
+      });
+
+      setKeyMessage(response.data?.message || 'Registration key generated successfully.');
+      fetchRegistrationKeys();
+    } catch (error) {
+      console.error('Generate registration key error:', error);
+      setKeyMessage(
+        error.response?.data?.message || 'Failed to generate registration key.'
+      );
+    } finally {
+      setGeneratingKey(false);
+    }
+  };
+
+  const copyRegistrationKey = async (keyCode) => {
+    try {
+      await navigator.clipboard.writeText(keyCode);
+      setCopiedKeyCode(keyCode);
+      setKeyMessage('Registration key copied.');
+
+      setTimeout(() => {
+        setCopiedKeyCode((prev) => (prev === keyCode ? '' : prev));
+      }, 2000);
+    } catch (error) {
+      console.error('Copy registration key error:', error);
+      setKeyMessage('Unable to copy registration key.');
+    }
+  };
 
   const updateUserStatus = async (userId, currentStatus) => {
     const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
@@ -281,6 +343,81 @@ export default function UserManagement() {
           )}
         </div>
       )}
+
+      <section className="card-like top-gap">
+        <div className="row-between wrap-gap">
+          <div>
+            <h3>Registration Key Management</h3>
+            <p className="muted">
+              Generate a one-time key and share it with staff so they can
+              register with any email address.
+            </p>
+          </div>
+
+          <button
+            className="primary-btn"
+            type="button"
+            disabled={generatingKey}
+            onClick={generateRegistrationKey}
+          >
+            {generatingKey ? 'Generating...' : 'Generate New Key'}
+          </button>
+        </div>
+
+        {keyMessage && (
+          <p className="muted top-gap-sm">{keyMessage}</p>
+        )}
+
+        {keysLoading ? (
+          <p className="muted top-gap">Loading registration keys...</p>
+        ) : registrationKeys.length === 0 ? (
+          <p className="muted top-gap">No registration keys generated yet.</p>
+        ) : (
+          <div className="table-card top-gap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Key</th>
+                  <th>Status</th>
+                  <th>Created By</th>
+                  <th>Used By</th>
+                  <th>Created At</th>
+                  <th>Used At</th>
+                  <th></th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {registrationKeys.map((key) => (
+                  <tr key={key.key_id}>
+                    <td>
+                      <code>{key.key_code}</code>
+                    </td>
+                    <td>
+                      <span className="role-pill">{key.status}</span>
+                    </td>
+                    <td>{key.created_by_name || '-'}</td>
+                    <td>{key.used_by_email || '-'}</td>
+                    <td>{key.created_at || '-'}</td>
+                    <td>{key.used_at || '-'}</td>
+                    <td>
+                      {key.status === 'unused' && (
+                        <button
+                          type="button"
+                          className="secondary-btn"
+                          onClick={() => copyRegistrationKey(key.key_code)}
+                        >
+                          {copiedKeyCode === key.key_code ? 'Copied' : 'Copy'}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
     </div>
   );
 }
