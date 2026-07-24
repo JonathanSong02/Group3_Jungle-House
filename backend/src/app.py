@@ -8526,6 +8526,149 @@ def build_ai_quiz_questions(category_filter, question_count, difficulty):
     return generated
 
 
+def build_ai_quiz_source_text(category_filter, max_chars=6000):
+    """
+    Collect the latest verified article content into one text blob to feed
+    a real AI provider as context. Capped by character count so it stays a
+    reasonable prompt size regardless of how large the Knowledge Base gets.
+    """
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        query = """
+            SELECT title, content
+            FROM wiki_article
+            WHERE COALESCE(is_deleted, 0) = 0
+        """
+        params = ()
+
+        if category_filter and str(category_filter).strip().lower() != "all":
+            query += " AND category = %s"
+            params = (category_filter,)
+
+        query += " ORDER BY created_at DESC"
+
+        cursor.execute(query, params)
+        articles = cursor.fetchall() or []
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+    def clean_text(text):
+        text = re.sub(r"<[^>]+>", " ", str(text or ""))
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
+
+    chunks = []
+    total_len = 0
+
+    for article in articles:
+        title = article.get("title") or ""
+        body = clean_text(article.get("content"))
+        entry = f"### {title}\n{body}\n"
+
+        if total_len + len(entry) > max_chars:
+            remaining = max_chars - total_len
+
+            if remaining > 200:
+                chunks.append(entry[:remaining])
+
+            break
+
+        chunks.append(entry)
+        total_len += len(entry)
+
+    return "\n".join(chunks)
+
+
+def build_ai_quiz_questions_via_provider(category_filter, question_count, difficulty):
+    """
+    Same output shape as build_ai_quiz_questions(), but genuinely written by
+    whichever AI provider the manager configured in AI Model Settings.
+    Returns None (not an empty list) if there's no usable source content, so
+    the caller can tell "nothing to work with" apart from "AI returned zero
+    valid questions".
+    """
+    source_text = build_ai_quiz_source_text(category_filter)
+
+    if not source_text.strip():
+        return None
+
+    prompt = f"""You are generating training quiz questions for Jungle House staff.
+
+Use only the provided source content. Do not invent information outside the source.
+Generate practical staff training questions at {difficulty} difficulty.
+
+Return ONLY valid JSON. No markdown. No explanation outside JSON.
+Return a JSON array of up to {question_count} question objects (fewer only if
+the source content truly does not support more distinct questions). Each
+object must have exactly these fields:
+- "question": string
+- "options": array of exactly 4 strings
+- "correctAnswerIndex": integer, 0, 1, 2 or 3
+- "explanation": string
+- "sourceTitle": string (the article title this question is based on)
+
+Source content:
+{source_text}
+"""
+
+    raw_reply = ai_provider_service.generate_ai_reply(prompt)
+
+    json_text = raw_reply.strip()
+    json_text = re.sub(r"^```(?:json)?\s*", "", json_text)
+    json_text = re.sub(r"\s*```$", "", json_text)
+
+    parsed = json.loads(json_text)
+
+    if isinstance(parsed, dict) and isinstance(parsed.get("questions"), list):
+        parsed = parsed["questions"]
+
+    if not isinstance(parsed, list):
+        raise ValueError("AI did not return a JSON array of questions.")
+
+    questions = []
+
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+
+        options = item.get("options")
+
+        if not isinstance(options, list) or len(options) != 4:
+            continue
+
+        if not all(str(option).strip() for option in options):
+            continue
+
+        correct_index = item.get("correctAnswerIndex")
+
+        if correct_index not in (0, 1, 2, 3):
+            continue
+
+        question_text = str(item.get("question") or "").strip()
+        explanation = str(item.get("explanation") or "").strip()
+
+        if not question_text or not explanation:
+            continue
+
+        questions.append({
+            "question": question_text,
+            "options": [str(option).strip() for option in options],
+            "correctAnswerIndex": correct_index,
+            "explanation": explanation,
+            "sourceTitle": str(item.get("sourceTitle") or "").strip(),
+        })
+
+    return questions[:question_count]
+
+
 @app.route("/api/admin/quizzes/ai-generate", methods=["POST"])
 def ai_generate_quiz():
     data = request.get_json() or {}
@@ -8548,13 +8691,37 @@ def ai_generate_quiz():
 
     question_count = max(1, min(question_count, 20))
 
-    try:
-        questions = build_ai_quiz_questions(source_category, question_count, difficulty)
-    except Exception as error:
-        print("AI GENERATE QUIZ ERROR:", error)
-        return jsonify({
-            "message": "AI quiz generation failed. Please try again later or create quiz manually."
-        }), 500
+    generation_method = "template"
+    questions = []
+
+    # Prefer a real AI provider if the manager has configured one in AI
+    # Model Settings. Any failure here (not configured, bad key, provider
+    # outage, malformed AI output) falls back to the template generator
+    # instead of failing the whole request -- quiz generation must keep
+    # working either way.
+    if AI_PROVIDER_SERVICE_AVAILABLE:
+        try:
+            provider_questions = build_ai_quiz_questions_via_provider(
+                source_category, question_count, difficulty
+            )
+
+            if provider_questions:
+                questions = provider_questions
+                generation_method = "ai_provider"
+        except ai_provider_service.AIProviderNotConfiguredError:
+            pass
+        except Exception as error:
+            print("AI PROVIDER QUIZ GENERATION FAILED, FALLING BACK TO TEMPLATE:", error)
+
+    if not questions:
+        try:
+            questions = build_ai_quiz_questions(source_category, question_count, difficulty)
+            generation_method = "template"
+        except Exception as error:
+            print("AI GENERATE QUIZ ERROR:", error)
+            return jsonify({
+                "message": "AI quiz generation failed. Please try again later or create quiz manually."
+            }), 500
 
     # Validate generated output before it ever reaches the frontend.
     questions = [
@@ -8574,14 +8741,21 @@ def ai_generate_quiz():
 
     category_label = source_category if source_category.lower() != "all" else "Training"
 
+    description = (
+        f"AI generated quiz based on the latest verified {category_label} content."
+        if generation_method == "ai_provider"
+        else f"Quiz generated from the latest verified {category_label} content."
+    )
+
     return jsonify({
         "success": True,
         "quiz": {
             "title": title,
-            "description": f"AI generated quiz based on the latest verified {category_label} content.",
+            "description": description,
             "category": category_label,
             "status": status,
             "questions": questions,
+            "generationMethod": generation_method,
         }
     }), 200
 
