@@ -3048,6 +3048,8 @@ def health():
         "engine_available": MODEL_AVAILABLE,
         "engine_import_error": MODEL_LOAD_ERROR,
         "model_error": PREDICT_MODEL_ERROR,
+        "ai_provider_service_available": AI_PROVIDER_SERVICE_AVAILABLE,
+        "ai_provider_service_load_error": AI_PROVIDER_SERVICE_LOAD_ERROR,
     })
 
 
