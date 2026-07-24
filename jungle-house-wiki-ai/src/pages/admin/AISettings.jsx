@@ -7,7 +7,10 @@ const PROVIDER_OPTIONS = [
   {
     value: 'gemini',
     label: 'Gemini',
-    models: ['gemini-1.5-flash', 'gemini-2.0-flash'],
+    // gemini-1.5-flash has been retired by Google, and gemini-2.0-flash
+    // currently has a 0 RPM free-tier allowance -- gemini-2.5-flash and
+    // its lite variant are the ones that actually have free-tier quota.
+    models: ['gemini-2.5-flash', 'gemini-2.5-flash-lite'],
   },
   {
     value: 'openai',
@@ -35,7 +38,7 @@ export default function AISettings() {
 
   const [form, setForm] = useState({
     provider: 'gemini',
-    model_name: 'gemini-1.5-flash',
+    model_name: 'gemini-2.5-flash',
     api_key: '',
   });
 
