@@ -4870,6 +4870,132 @@ def test_ai_settings():
 
 
 # =========================
+# AI CHAT + REAL AI PROVIDER FALLBACK
+#
+# The existing rule-based matcher (predict_intent.py / calculate_article_
+# match_score) is intentionally strict -- it only auto-answers when it is
+# fully confident, and escalates everything else to a Team Lead. This adds
+# a real AI provider as an extra step that runs ONLY at the exact point
+# where the rule-based system was already about to escalate, grounded in
+# the actual Knowledge Base content. If the strict matcher already found a
+# confident answer, none of this runs -- zero change to already-working
+# behavior.
+# =========================
+def build_ai_chat_context(question, limit=5, max_chars=6000):
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute("""
+            SELECT article_id, title, content, category, sub_category
+            FROM wiki_article
+            WHERE COALESCE(is_deleted, 0) = 0
+        """)
+        articles = cursor.fetchall() or []
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+    scored_articles = []
+
+    for article in articles:
+        score = calculate_article_match_score(question, article)
+
+        if score > 0:
+            scored_articles.append((score, article))
+
+    scored_articles.sort(key=lambda item: item[0], reverse=True)
+    top_articles = [article for _, article in scored_articles[:limit]]
+
+    def clean_text(text):
+        text = re.sub(r"<[^>]+>", " ", str(text or ""))
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
+
+    chunks = []
+    total_len = 0
+
+    for article in top_articles:
+        title = article.get("title") or ""
+        body = clean_text(article.get("content"))
+        entry = f"### {title}\n{body}\n"
+
+        if total_len + len(entry) > max_chars:
+            remaining = max_chars - total_len
+
+            if remaining > 200:
+                chunks.append(entry[:remaining])
+
+            break
+
+        chunks.append(entry)
+        total_len += len(entry)
+
+    return "\n".join(chunks)
+
+
+def answer_question_with_ai_provider(question):
+    """
+    Returns {"answer": str, "sourceTitle": str} if the AI provider found a
+    grounded answer in the Knowledge Base, or None if it couldn't (in
+    which case the caller should fall through to the normal escalation
+    flow -- this function never forces an answer that isn't grounded).
+    """
+    context_text = build_ai_chat_context(question)
+
+    if not context_text.strip():
+        return None
+
+    prompt = f"""You are Jungle House's internal AI Wiki Assistant.
+
+Answer the staff question using ONLY the provided Knowledge Base context
+below. Do not invent company rules or information that isn't in the
+context.
+
+If the answer is not clearly found in the context, respond with ONLY this
+exact JSON and nothing else:
+{{"answered": false}}
+
+If you can answer from the context, respond with ONLY valid JSON in this
+exact shape (no markdown, no text outside the JSON):
+{{"answered": true, "answer": "...", "sourceTitle": "..."}}
+
+Keep the answer simple and practical for staff.
+
+Staff question: {question}
+
+Knowledge Base context:
+{context_text}
+"""
+
+    raw_reply = ai_provider_service.generate_ai_reply(prompt)
+
+    json_text = raw_reply.strip()
+    json_text = re.sub(r"^```(?:json)?\s*", "", json_text)
+    json_text = re.sub(r"\s*```$", "", json_text)
+
+    parsed = json.loads(json_text)
+
+    if not isinstance(parsed, dict) or not parsed.get("answered"):
+        return None
+
+    answer_text = str(parsed.get("answer") or "").strip()
+
+    if not answer_text:
+        return None
+
+    return {
+        "answer": answer_text,
+        "sourceTitle": str(parsed.get("sourceTitle") or "").strip(),
+    }
+
+
+# =========================
 # AI CHAT ROUTES
 # =========================
 @app.route("/chat", methods=["POST"])
@@ -5291,6 +5417,35 @@ def chat():
         elif result.get("confidence", result.get("score", 0)) < LOW_CONFIDENCE_THRESHOLD:
             should_escalate = True
 
+        # Before actually escalating, give a real AI provider (if the
+        # manager has configured one) one chance to answer, grounded only
+        # in the real Knowledge Base content. Any failure here (not
+        # configured, bad AI output, provider outage) falls straight
+        # through to the normal escalation flow below -- this can only
+        # ever prevent an escalation, never cause one that wasn't already
+        # about to happen.
+        if should_escalate and AI_PROVIDER_SERVICE_AVAILABLE:
+            try:
+                ai_answer = answer_question_with_ai_provider(question)
+            except ai_provider_service.AIProviderNotConfiguredError:
+                ai_answer = None
+            except Exception as error:
+                print("AI CHAT PROVIDER FALLBACK ERROR:", error)
+                ai_answer = None
+
+            if ai_answer:
+                result["reply"] = ai_answer["answer"]
+                result["answer"] = ai_answer["answer"]
+                result["message"] = ai_answer["answer"]
+                result["title"] = ai_answer["sourceTitle"] or result.get("title")
+                result["source"] = "ai_provider_answer"
+                result["fallback"] = False
+                result["fallback_message"] = ""
+                result["escalation_ready"] = False
+                result["escalation_required"] = False
+                should_escalate = False
+                clear_ai_fail_count(data, question)
+
         if should_escalate:
             escalation_id = create_escalation(
             question,
@@ -5321,6 +5476,7 @@ def chat():
         if (
             result.get("confidence", 0) >= 0.7
             and not result.get("fallback")
+            and result.get("source") != "ai_provider_answer"
             and not is_nonsense(question)
             and not is_nonsense(result.get("answer", ""))
         ):
