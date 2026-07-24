@@ -169,9 +169,16 @@ def update_active_provider_test_status(cursor, success):
 def _call_gemini(prompt, model_name, api_key, timeout):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
 
+    # Newer Gemini API keys must be sent as the x-goog-api-key header --
+    # the older ?key= query-parameter method returns a bare 404 instead of
+    # a clear auth error for these keys, which is what made this so hard
+    # to diagnose.
     response = requests.post(
         url,
-        params={"key": api_key},
+        headers={
+            "x-goog-api-key": api_key,
+            "Content-Type": "application/json",
+        },
         json={"contents": [{"parts": [{"text": prompt}]}]},
         timeout=timeout,
     )
