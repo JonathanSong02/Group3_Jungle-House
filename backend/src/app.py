@@ -4777,8 +4777,7 @@ def save_ai_settings():
 
         return jsonify({
             "success": False,
-            "message": "Failed to save AI settings.",
-            "error": str(error)
+            "message": "Failed to save AI settings."
         }), 500
 
     finally:

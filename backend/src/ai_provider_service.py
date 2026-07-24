@@ -88,12 +88,15 @@ def decrypt_api_key(encrypted_key):
 
 
 def mask_api_key(raw_key):
+    # Always a fixed, short length (12 chars) regardless of the real key's
+    # length -- real provider keys can be 50+ characters, and this hint is
+    # stored in a VARCHAR(20) column, so it must never scale with input size.
     raw_key = str(raw_key or "")
 
     if len(raw_key) <= 4:
         return "*" * len(raw_key)
 
-    return ("*" * (len(raw_key) - 4)) + raw_key[-4:]
+    return ("*" * 8) + raw_key[-4:]
 
 
 # =========================
