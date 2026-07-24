@@ -31,3 +31,4 @@ python-dotenv
 Pillow
 sentence-transformers
 cryptography
+requests
