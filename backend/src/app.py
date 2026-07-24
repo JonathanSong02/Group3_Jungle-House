@@ -25,6 +25,19 @@ from db_helper import (
     similarity_ratio as db_similarity_ratio,
 )
 
+# AI provider settings (Gemini/OpenAI/DeepSeek/Claude) are optional --
+# the app must still run even if the cryptography dependency isn't
+# installed yet (e.g. right after this feature is deployed but before the
+# next full dependency install finishes).
+try:
+    import ai_provider_service
+    AI_PROVIDER_SERVICE_AVAILABLE = True
+    AI_PROVIDER_SERVICE_LOAD_ERROR = None
+except Exception as error:
+    ai_provider_service = None
+    AI_PROVIDER_SERVICE_AVAILABLE = False
+    AI_PROVIDER_SERVICE_LOAD_ERROR = str(error)
+
 try:
     from image_embedding_helper import (
         create_image_embedding,
@@ -1246,6 +1259,29 @@ def is_registration_approver(cursor, actor_id):
 # free it up again, so a key only ever moves unused -> used (or -> revoked).
 # =========================
 def is_registration_key_manager(cursor, actor_id):
+    if not actor_id:
+        return False
+
+    cursor.execute("""
+        SELECT r.role_name, u.status
+        FROM users u
+        JOIN roles r ON u.role_id = r.role_id
+        WHERE u.user_id = %s
+        LIMIT 1
+    """, (actor_id,))
+
+    actor = cursor.fetchone()
+
+    if not actor:
+        return False
+
+    role_name = str(actor.get("role_name", "")).strip().lower()
+    status = str(actor.get("status", "")).strip().lower()
+
+    return role_name == "manager" and status == "active"
+
+
+def is_ai_settings_manager(cursor, actor_id):
     if not actor_id:
         return False
 
@@ -4623,6 +4659,213 @@ def is_broad_topic_question(question):
         return True
 
     return False
+
+# =========================
+# AI MODEL / PROVIDER SETTINGS ROUTES
+#
+# Lets a manager choose a real AI provider (Gemini/OpenAI/DeepSeek/Claude)
+# and paste an API key once. The key is encrypted before it's stored, and
+# is NEVER sent back to the frontend -- only a masked hint. Any feature
+# (quiz generation, future AI chat upgrades, etc.) can then call
+# ai_provider_service.generate_ai_reply(prompt) without needing to know
+# which provider is actually configured.
+# =========================
+@app.route("/api/ai-settings", methods=["GET"])
+def get_ai_settings():
+    if not AI_PROVIDER_SERVICE_AVAILABLE:
+        return jsonify({
+            "success": False,
+            "message": "AI provider service is not available on this server."
+        }), 500
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = ai_provider_service.get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        ai_provider_service.ensure_ai_provider_configs_table(cursor)
+        config = ai_provider_service.get_ai_provider_public_config(cursor)
+
+        return jsonify({"success": True, "config": config}), 200
+
+    except Exception as error:
+        print("GET AI SETTINGS ERROR:", error)
+
+        return jsonify({
+            "success": False,
+            "message": "Failed to load AI settings."
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/ai-settings", methods=["POST"])
+def save_ai_settings():
+    if not AI_PROVIDER_SERVICE_AVAILABLE:
+        return jsonify({
+            "success": False,
+            "message": "AI provider service is not available on this server."
+        }), 500
+
+    data = request.get_json(silent=True) or {}
+
+    actor_id = data.get("updated_by") or data.get("user_id")
+    provider = str(data.get("provider", "")).strip().lower()
+    model_name = str(data.get("model_name", "")).strip()
+    api_key = str(data.get("api_key", "")).strip()
+
+    if provider not in ai_provider_service.SUPPORTED_PROVIDERS:
+        return jsonify({"success": False, "message": "Unsupported AI provider."}), 400
+
+    if not model_name:
+        return jsonify({"success": False, "message": "Model name is required."}), 400
+
+    if not api_key:
+        return jsonify({"success": False, "message": "API key is required."}), 400
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = ai_provider_service.get_db_connection()
+        conn.start_transaction()
+        cursor = conn.cursor(dictionary=True)
+
+        ai_provider_service.ensure_ai_provider_configs_table(cursor)
+
+        if not is_ai_settings_manager(cursor, actor_id):
+            conn.rollback()
+            return jsonify({
+                "success": False,
+                "message": "Only managers can update AI settings."
+            }), 403
+
+        ai_provider_service.save_ai_provider_config(
+            cursor, provider, model_name, api_key, actor_id
+        )
+
+        conn.commit()
+
+        add_audit_log(
+            actor_id=actor_id,
+            action="Updated AI provider settings",
+            module="AI Settings",
+            description=f"Active AI provider set to {provider} ({model_name})."
+        )
+
+        config = ai_provider_service.get_ai_provider_public_config(cursor)
+
+        return jsonify({
+            "success": True,
+            "message": "AI settings saved successfully.",
+            "config": config
+        }), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("SAVE AI SETTINGS ERROR:", error)
+
+        return jsonify({
+            "success": False,
+            "message": "Failed to save AI settings."
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/ai-settings/test", methods=["POST"])
+def test_ai_settings():
+    if not AI_PROVIDER_SERVICE_AVAILABLE:
+        return jsonify({
+            "success": False,
+            "message": "AI provider service is not available on this server."
+        }), 500
+
+    data = request.get_json(silent=True) or {}
+
+    actor_id = data.get("user_id")
+    provider = str(data.get("provider", "")).strip().lower()
+    model_name = str(data.get("model_name", "")).strip()
+    api_key = str(data.get("api_key", "")).strip()
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = ai_provider_service.get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        ai_provider_service.ensure_ai_provider_configs_table(cursor)
+
+        if not is_ai_settings_manager(cursor, actor_id):
+            return jsonify({
+                "success": False,
+                "message": "Only managers can test AI settings."
+            }), 403
+
+        # If the manager hasn't typed a provider/key in the form yet, fall
+        # back to testing whatever is already saved.
+        testing_saved_config = not provider or not api_key
+
+        if testing_saved_config:
+            existing = ai_provider_service.get_active_ai_provider_config(cursor)
+
+            if not existing:
+                return jsonify({
+                    "success": False,
+                    "message": "No AI provider is configured yet."
+                }), 400
+
+            provider = existing["provider"]
+            model_name = existing["model_name"]
+            api_key = ai_provider_service.decrypt_api_key(existing["encrypted_api_key"])
+
+        try:
+            ai_provider_service.call_ai_provider(
+                "Reply with only: OK", provider, model_name, api_key
+            )
+            success = True
+            message = "AI provider connected successfully."
+        except Exception as call_error:
+            print("AI PROVIDER TEST CALL ERROR:", call_error)
+            success = False
+            message = "AI provider connection failed. Please check your API key."
+
+        if testing_saved_config:
+            ai_provider_service.update_active_provider_test_status(cursor, success)
+            conn.commit()
+
+        return jsonify({"success": success, "message": message}), (200 if success else 400)
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("TEST AI SETTINGS ERROR:", error)
+
+        return jsonify({
+            "success": False,
+            "message": "AI provider connection failed. Please check your API key."
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
 
 # =========================
 # AI CHAT ROUTES

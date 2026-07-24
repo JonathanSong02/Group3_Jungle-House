@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
-const SHOW_AI_SETTINGS = false;
+const SHOW_AI_SETTINGS = true;
 
 function linkClass({ isActive }) {
   return isActive ? 'sidebar-link active' : 'sidebar-link';
@@ -385,7 +385,7 @@ export default function Sidebar() {
                   {SHOW_AI_SETTINGS && isManager && (
                     <NavLink className={linkClass} to="/admin/ai-settings" onClick={closeMobileAfterClick}>
                       <SidebarIcon name="settings" />
-                      <span className="sidebar-link-text">AI Settings</span>
+                      <span className="sidebar-link-text">AI Model Settings</span>
                     </NavLink>
                   )}
 
