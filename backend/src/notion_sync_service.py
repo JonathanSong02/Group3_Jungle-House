@@ -258,6 +258,67 @@ def extract_notion_page_title(page):
     return "Untitled"
 
 
+def notion_property_to_text(prop):
+    prop_type = prop.get("type")
+
+    if prop_type == "title":
+        return "".join(p.get("plain_text", "") for p in prop.get("title", []))
+    if prop_type == "rich_text":
+        return "".join(p.get("plain_text", "") for p in prop.get("rich_text", []))
+    if prop_type == "select":
+        return (prop.get("select") or {}).get("name", "") or ""
+    if prop_type == "status":
+        return (prop.get("status") or {}).get("name", "") or ""
+    if prop_type == "multi_select":
+        return ", ".join(o.get("name", "") for o in prop.get("multi_select", []))
+    if prop_type == "people":
+        return ", ".join(p.get("name", "") for p in prop.get("people", []))
+    if prop_type == "date":
+        date_obj = prop.get("date") or {}
+        return date_obj.get("start", "") or ""
+    if prop_type == "checkbox":
+        return "Yes" if prop.get("checkbox") else "No"
+    if prop_type == "number":
+        return str(prop.get("number")) if prop.get("number") is not None else ""
+    if prop_type == "url":
+        return prop.get("url", "") or ""
+    if prop_type == "email":
+        return prop.get("email", "") or ""
+
+    return ""
+
+
+def notion_child_database_to_html(token, database_id):
+    """
+    A "child_database" block is a full embedded Notion database (with its
+    own rows/columns), completely different from a simple "table" block.
+    Renders each row as a table row, using the first row's property names
+    as column headers.
+    """
+    try:
+        pages = list_notion_pages(token, database_id)
+    except Exception as error:
+        print("NOTION CHILD DATABASE FETCH ERROR:", error)
+        return ""
+
+    if not pages:
+        return ""
+
+    column_names = list(pages[0].get("properties", {}).keys())
+    header_html = "".join(f"<th>{name}</th>" for name in column_names)
+
+    row_html_parts = []
+    for page in pages:
+        properties = page.get("properties", {})
+        cells = "".join(
+            f"<td>{notion_property_to_text(properties.get(name, {}))}</td>"
+            for name in column_names
+        )
+        row_html_parts.append(f"<tr>{cells}</tr>")
+
+    return f"<table><thead><tr>{header_html}</tr></thead><tbody>{''.join(row_html_parts)}</tbody></table>"
+
+
 def fetch_notion_block_children(token, block_id):
     results = []
     start_cursor = None
@@ -308,6 +369,12 @@ def notion_rich_text_to_html(rich_text_array):
 
         link = span.get("href")
         if link:
+            # Links to another page *within the same Notion workspace*
+            # (mentions) come back as a bare relative path like
+            # "/21ca360a...", which is meaningless outside Notion's own
+            # app -- turn it into a real, clickable Notion URL instead.
+            if link.startswith("/"):
+                link = f"https://www.notion.so{link}"
             text = f'<a href="{link}" target="_blank" rel="noopener noreferrer">{text}</a>'
 
         html_parts.append(text)
@@ -446,6 +513,12 @@ def notion_blocks_to_html(token, blocks, upload_folder, depth=0):
                         )
                         row_html.append(f"<tr>{cell_html}</tr>")
                     html_parts.append(f"<table>{''.join(row_html)}</table>")
+
+            elif block_type == "child_database":
+                title = data.get("title") or "Database"
+                table_html = notion_child_database_to_html(token, block["id"])
+                if table_html:
+                    html_parts.append(f"<h3>{title}</h3>{table_html}")
 
             else:
                 # Unsupported block type -- degrade gracefully instead of
