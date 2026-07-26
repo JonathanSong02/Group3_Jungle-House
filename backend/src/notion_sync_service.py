@@ -4,10 +4,31 @@ import json
 import time
 import mysql.connector
 import requests
+from flask import request as flask_request
 
 # Reuse the exact same encryption approach already built and proven for AI
 # provider keys, instead of inventing a second encryption scheme.
 import ai_provider_service
+
+
+def get_public_base_url():
+    """
+    Same fix as the earlier mixed-content bug: Railway terminates TLS at
+    its edge, so request.host_url resolves to http:// even though the site
+    is always served over https. The frontend and backend are on
+    completely different domains (Vercel / Railway), so any image URL we
+    bake into article content MUST be absolute -- a relative path only
+    ever resolves against whichever domain is currently loaded.
+    """
+    try:
+        base_url = flask_request.host_url.rstrip("/")
+    except RuntimeError:
+        return "http://localhost:4000"
+
+    if base_url.startswith("http://"):
+        base_url = "https://" + base_url[len("http://"):]
+
+    return base_url
 
 
 NOTION_API_BASE = "https://api.notion.com/v1"
@@ -324,7 +345,7 @@ def download_and_host_notion_file(url, upload_folder):
         with open(file_path, "wb") as f:
             f.write(response.content)
 
-        return f"/static/uploads/articles/{unique_filename}"
+        return f"{get_public_base_url()}/static/uploads/articles/{unique_filename}"
     except Exception as error:
         print("NOTION FILE DOWNLOAD ERROR:", error)
         return None
