@@ -389,6 +389,13 @@ export default function Sidebar() {
                     </NavLink>
                   )}
 
+                  {isManager && (
+                    <NavLink className={linkClass} to="/admin/notion-sync" onClick={closeMobileAfterClick}>
+                      <SidebarIcon name="settings" />
+                      <span className="sidebar-link-text">Notion Sync</span>
+                    </NavLink>
+                  )}
+
                   <NavLink className={linkClass} to="/admin/analytics" onClick={closeMobileAfterClick}>
                     <SidebarIcon name="analytics" />
                     <span className="sidebar-link-text">Analytics</span>

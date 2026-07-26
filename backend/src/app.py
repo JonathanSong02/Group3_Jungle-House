@@ -39,6 +39,15 @@ except Exception as error:
     AI_PROVIDER_SERVICE_LOAD_ERROR = str(error)
 
 try:
+    import notion_sync_service
+    NOTION_SYNC_SERVICE_AVAILABLE = True
+    NOTION_SYNC_SERVICE_LOAD_ERROR = None
+except Exception as error:
+    notion_sync_service = None
+    NOTION_SYNC_SERVICE_AVAILABLE = False
+    NOTION_SYNC_SERVICE_LOAD_ERROR = str(error)
+
+try:
     from image_embedding_helper import (
         create_image_embedding,
         create_text_embedding,
@@ -4861,6 +4870,254 @@ def test_ai_settings():
             "success": False,
             "message": "AI provider connection failed. Please check your API key."
         }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+# =========================
+# NOTION SYNC ROUTES
+#
+# Reuses the exact same encryption service already built for AI provider
+# keys (ai_provider_service.encrypt_api_key/decrypt_api_key/mask_api_key)
+# instead of a second encryption scheme, and the same manager-only access
+# check pattern used everywhere else in this file.
+# =========================
+@app.route("/api/notion-sync/config", methods=["GET"])
+def get_notion_sync_config():
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = notion_sync_service.get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        notion_sync_service.ensure_notion_sync_tables(cursor)
+        config = notion_sync_service.get_notion_public_config(cursor)
+
+        return jsonify({"success": True, "config": config}), 200
+
+    except Exception as error:
+        print("GET NOTION SYNC CONFIG ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to load Notion sync settings."}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/notion-sync/config", methods=["POST"])
+def save_notion_sync_config():
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
+
+    data = request.get_json(silent=True) or {}
+
+    actor_id = data.get("updated_by") or data.get("user_id")
+    raw_token = str(data.get("token", "")).strip()
+    raw_source = str(data.get("source", "")).strip()
+
+    if not raw_token:
+        return jsonify({"success": False, "message": "Notion integration token is required."}), 400
+
+    if not raw_source:
+        return jsonify({"success": False, "message": "Notion page/database URL or ID is required."}), 400
+
+    source_id = notion_sync_service.extract_notion_id(raw_source)
+
+    if not source_id:
+        return jsonify({"success": False, "message": "Could not read a valid Notion ID from that URL/ID."}), 400
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = notion_sync_service.get_db_connection()
+        conn.start_transaction()
+        cursor = conn.cursor(dictionary=True)
+
+        notion_sync_service.ensure_notion_sync_tables(cursor)
+
+        if not is_ai_settings_manager(cursor, actor_id):
+            conn.rollback()
+            return jsonify({"success": False, "message": "Only managers can update Notion sync settings."}), 403
+
+        notion_sync_service.save_notion_config(cursor, raw_token, source_id, raw_source, actor_id)
+        conn.commit()
+
+        add_audit_log(
+            actor_id=actor_id,
+            action="Updated Notion sync settings",
+            module="Notion Sync",
+            description=f"Notion source set to {source_id}."
+        )
+
+        config = notion_sync_service.get_notion_public_config(cursor)
+
+        return jsonify({"success": True, "message": "Notion sync settings saved successfully.", "config": config}), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("SAVE NOTION SYNC CONFIG ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to save Notion sync settings."}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/notion-sync/test", methods=["POST"])
+def test_notion_sync():
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
+
+    data = request.get_json(silent=True) or {}
+
+    actor_id = data.get("user_id")
+    raw_token = str(data.get("token", "")).strip()
+    raw_source = str(data.get("source", "")).strip()
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = notion_sync_service.get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        notion_sync_service.ensure_notion_sync_tables(cursor)
+
+        if not is_ai_settings_manager(cursor, actor_id):
+            return jsonify({"success": False, "message": "Only managers can test Notion sync."}), 403
+
+        if not raw_token or not raw_source:
+            existing = notion_sync_service.get_active_notion_config(cursor)
+
+            if not existing:
+                return jsonify({"success": False, "message": "No Notion sync source is configured yet."}), 400
+
+            raw_token = ai_provider_service.decrypt_api_key(existing["encrypted_notion_token"])
+            source_id = existing["source_id"]
+        else:
+            source_id = notion_sync_service.extract_notion_id(raw_source)
+
+            if not source_id:
+                return jsonify({"success": False, "message": "Could not read a valid Notion ID from that URL/ID."}), 400
+
+        try:
+            pages = notion_sync_service.list_notion_pages(raw_token, source_id)
+            return jsonify({
+                "success": True,
+                "message": f"Notion connected successfully. Found {len(pages)} page(s)."
+            }), 200
+        except Exception as call_error:
+            print("NOTION TEST CALL ERROR:", call_error)
+            return jsonify({
+                "success": False,
+                "message": "Notion connection failed. Please make sure the page/database is shared with your integration, and the token is correct."
+            }), 400
+
+    except Exception as error:
+        print("TEST NOTION SYNC ERROR:", error)
+        return jsonify({"success": False, "message": "Notion connection failed."}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/notion-sync/run", methods=["POST"])
+def run_notion_sync():
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
+
+    data = request.get_json(silent=True) or {}
+    actor_id = data.get("user_id")
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = notion_sync_service.get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        notion_sync_service.ensure_notion_sync_tables(cursor)
+
+        if not is_ai_settings_manager(cursor, actor_id):
+            return jsonify({"success": False, "message": "Only managers can run Notion sync."}), 403
+
+        config = notion_sync_service.get_active_notion_config(cursor)
+
+        if not config:
+            return jsonify({"success": False, "message": "No Notion sync source is configured yet."}), 400
+
+        raw_token = ai_provider_service.decrypt_api_key(config["encrypted_notion_token"])
+
+    except Exception as error:
+        print("RUN NOTION SYNC SETUP ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to start Notion sync."}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+    result = notion_sync_service.sync_notion_source(
+        raw_token, config["source_id"], actor_id, UPLOAD_FOLDER
+    )
+
+    add_audit_log(
+        actor_id=actor_id,
+        action="Ran Notion sync",
+        module="Notion Sync",
+        description=f"Imported {result['imported']}, updated {result['updated']}, skipped {result['skipped']}, failed {result['failed']}."
+    )
+
+    return jsonify({"success": result["status"] == "completed", **result}), 200
+
+
+@app.route("/api/notion-sync/jobs", methods=["GET"])
+def get_notion_sync_jobs():
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = notion_sync_service.get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        notion_sync_service.ensure_notion_sync_tables(cursor)
+
+        cursor.execute("""
+            SELECT id, status, imported_count, updated_count, skipped_count,
+                   failed_count, error_message, started_at, completed_at
+            FROM notion_sync_jobs
+            ORDER BY id DESC
+            LIMIT 20
+        """)
+        jobs = cursor.fetchall()
+
+        return jsonify({"success": True, "jobs": jobs}), 200
+
+    except Exception as error:
+        print("GET NOTION SYNC JOBS ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to load Notion sync history."}), 500
 
     finally:
         if cursor:

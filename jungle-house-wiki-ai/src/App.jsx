@@ -25,6 +25,7 @@ import ContentManagement from './pages/admin/ContentManagement';
 import ReviewManagement from './pages/admin/ReviewManagement';
 import UserManagement from './pages/admin/UserManagement';
 import AISettings from './pages/admin/AISettings';
+import NotionSync from './pages/admin/NotionSync';
 import Analytics from './pages/admin/Analytics';
 import SecurityMonitoring from './pages/admin/SecurityMonitoring';
 
@@ -211,6 +212,15 @@ export default function App() {
           element={
             <RoleRoute allowedRoles={['manager']}>
               <AISettings />
+            </RoleRoute>
+          }
+        />
+
+        <Route
+          path="admin/notion-sync"
+          element={
+            <RoleRoute allowedRoles={['manager']}>
+              <NotionSync />
             </RoleRoute>
           }
         />
