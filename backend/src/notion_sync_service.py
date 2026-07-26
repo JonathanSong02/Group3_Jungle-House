@@ -520,6 +520,23 @@ def notion_blocks_to_html(token, blocks, upload_folder, depth=0):
                 if table_html:
                     html_parts.append(f"<h3>{title}</h3>{table_html}")
 
+            elif block_type in ("video", "embed", "bookmark", "link_preview"):
+                # These blocks are how a pasted YouTube/Vimeo/Google Drive/
+                # website link shows up in Notion. The frontend strips
+                # <iframe> tags for security, so we can't embed a player --
+                # render a plain clickable link instead, same as file/pdf.
+                link_url = (
+                    data.get("url")
+                    or data.get("external", {}).get("url")
+                    or data.get("file", {}).get("url")
+                )
+                caption = notion_rich_text_to_html(data.get("caption"))
+                if link_url:
+                    label = caption.strip() if caption and caption.strip() else link_url
+                    html_parts.append(
+                        f'<p><a href="{link_url}" target="_blank" rel="noopener noreferrer">{label}</a></p>'
+                    )
+
             else:
                 # Unsupported block type -- degrade gracefully instead of
                 # failing the whole import. Grab whatever plain text is
