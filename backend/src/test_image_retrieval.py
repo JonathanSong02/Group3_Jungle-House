@@ -160,6 +160,31 @@ def test_build_image_irrelevant_response_does_not_escalate():
     assert "does not look related" in result["answer"]
 
 
+def test_build_image_only_clarification_mentions_detected_object_and_does_not_escalate():
+    vision_result = {"detectedObjects": ["an iPad"], "imageSummary": "An iPad on a table."}
+    result = app_module.build_image_only_clarification_response(vision_result)
+
+    assert result["escalation_required"] is False
+    assert result["escalation_ready"] is False
+    assert "an iPad" in result["answer"]
+    assert "what would you like to know" in result["answer"].lower()
+
+
+def test_build_image_only_clarification_handles_no_vision_result():
+    result = app_module.build_image_only_clarification_response(None)
+
+    assert result["escalation_required"] is False
+    assert "uploaded an image" in result["answer"].lower()
+
+
+def test_build_image_only_clarification_includes_kb_hint_when_available():
+    vision_result = {"detectedObjects": ["a dustbin"]}
+    kb_hint = {"title": "Dustbin Cleaning SOP"}
+    result = app_module.build_image_only_clarification_response(vision_result, kb_hint)
+
+    assert "Dustbin Cleaning SOP" in result["answer"]
+
+
 def test_analyze_uploaded_image_with_vision_falls_back_when_not_configured():
     fake_service = MagicMock()
     fake_service.AIProviderNotConfiguredError = type("AIProviderNotConfiguredError", (Exception,), {})

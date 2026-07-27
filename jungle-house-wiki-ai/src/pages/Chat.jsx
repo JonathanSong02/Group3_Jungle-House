@@ -520,14 +520,60 @@ function ChatImage({ imageUrl, alt, onImageClick }) {
   );
 }
 
+// An article's image_files list can legitimately contain a mixed
+// attachment (e.g. a PDF form alongside step screenshots). Rendering a PDF
+// as an <img> always fails and shows a confusing "Image could not load" --
+// treat it as a document link instead, which is what it actually is.
+function isLikelyImageUrl(url) {
+  const value = String(url || '').trim();
+
+  if (!value) return false;
+  if (value.startsWith('blob:') || value.startsWith('data:image')) return true;
+
+  return /\.(png|jpe?g|gif|webp|bmp|svg|heic|heif)(\?.*)?$/i.test(value);
+}
+
+function DocumentLink({ fileUrl }) {
+  const finalUrl = buildImageUrl(fileUrl);
+
+  if (!finalUrl) return null;
+
+  const fileName = decodeURIComponent(String(fileUrl).split('/').pop() || 'Attachment');
+
+  return (
+    <a
+      href={encodeURI(finalUrl)}
+      target="_blank"
+      rel="noreferrer"
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '8px',
+        padding: '10px 14px',
+        borderRadius: '12px',
+        border: '1px solid #e5d2a8',
+        backgroundColor: '#fff8e1',
+        color: '#7a5c00',
+        fontWeight: 600,
+        fontSize: '13px',
+        textDecoration: 'none',
+        maxWidth: '260px',
+        overflowWrap: 'anywhere',
+      }}
+    >
+      📎 {fileName}
+    </a>
+  );
+}
+
 function renderImages(imageUrls, labelPrefix = 'Image', onImageClick = null) {
   if (!Array.isArray(imageUrls) || imageUrls.length === 0) return null;
 
-  const uniqueImageUrls = [
+  const uniqueUrls = [
     ...new Set(imageUrls.flatMap((item) => parseImageFiles(item)).filter(Boolean)),
   ];
 
-  if (uniqueImageUrls.length === 0) return null;
+  if (uniqueUrls.length === 0) return null;
 
   return (
     <div
@@ -541,14 +587,18 @@ function renderImages(imageUrls, labelPrefix = 'Image', onImageClick = null) {
         alignItems: 'flex-start',
       }}
     >
-      {uniqueImageUrls.map((imageUrl, imageIndex) => (
-        <ChatImage
-          key={`${buildImageUrl(imageUrl)}-${imageIndex}`}
-          imageUrl={imageUrl}
-          alt={`${labelPrefix} ${imageIndex + 1}`}
-          onImageClick={onImageClick}
-        />
-      ))}
+      {uniqueUrls.map((url, index) =>
+        isLikelyImageUrl(url) ? (
+          <ChatImage
+            key={`${buildImageUrl(url)}-${index}`}
+            imageUrl={url}
+            alt={`${labelPrefix} ${index + 1}`}
+            onImageClick={onImageClick}
+          />
+        ) : (
+          <DocumentLink key={`${buildImageUrl(url)}-${index}`} fileUrl={url} />
+        )
+      )}
     </div>
   );
 }
@@ -678,7 +728,76 @@ function renderTextWithClickableLinks(text, fallbackLink = '') {
   });
 }
 
+// Notion-imported / rich-editor articles come back as real HTML
+// (<h1>/<ul>/<img> etc, plus Notion's own "<!-- notionvc: ... -->" markers)
+// rather than the legacy plain-text "[IMAGE]"/numbered-step format. Without
+// this check, that HTML was being split line-by-line and printed as literal
+// text -- the raw tags, comments, and an unusable "arrangement" the user
+// reported. FloatingAIChat.jsx already does this same detect-and-sanitize
+// step; Chat.jsx just never had it.
+const HTML_CONTENT_PATTERN = /<\/?[a-z][\s\S]*>/i;
+
+function isHtmlContent(text) {
+  return HTML_CONTENT_PATTERN.test(String(text || ''));
+}
+
+function sanitizeChatHtml(html) {
+  if (typeof document === 'undefined') return String(html || '');
+
+  const parser = new DOMParser();
+  const parsedDocument = parser.parseFromString(`<div>${String(html || '')}</div>`, 'text/html');
+  const wrapper = parsedDocument.body.firstChild;
+
+  if (!wrapper) return '';
+
+  wrapper
+    .querySelectorAll('script, iframe, object, embed, form, input, button')
+    .forEach((element) => element.remove());
+
+  // Notion sync sometimes loses the actual image URL and leaves an empty
+  // src behind -- that renders as a permanently broken image icon, so drop
+  // those tags entirely instead of showing an error for something the user
+  // can't act on.
+  wrapper.querySelectorAll('img').forEach((element) => {
+    if (!element.getAttribute('src')) {
+      element.remove();
+    }
+  });
+
+  wrapper.querySelectorAll('*').forEach((element) => {
+    Array.from(element.attributes).forEach((attribute) => {
+      const attributeName = attribute.name.toLowerCase();
+      const attributeValue = attribute.value.toLowerCase();
+
+      if (
+        attributeName.startsWith('on') ||
+        attributeName === 'style' ||
+        attributeValue.includes('javascript:')
+      ) {
+        element.removeAttribute(attribute.name);
+      }
+    });
+  });
+
+  return wrapper.innerHTML;
+}
+
 function renderRichKnowledgeContent(text, fallbackLink = '') {
+  // Real HTML (Notion-imported / rich-editor content) must be sanitized
+  // and rendered as-is, BEFORE removeImagePathsFromText runs -- that
+  // function does raw-string stripping of anything that looks like an
+  // image URL, which would corrupt a `src="https://....jpg"` attribute
+  // sitting inside real markup.
+  if (isHtmlContent(text)) {
+    return (
+      <div
+        className="chat-html-content"
+        style={{ width: '100%', overflowX: 'auto' }}
+        dangerouslySetInnerHTML={{ __html: sanitizeChatHtml(text) }}
+      />
+    );
+  }
+
   const cleanText = removeImagePathsFromText(text || '');
 
   if (!cleanText) return null;

@@ -878,6 +878,50 @@ def build_image_irrelevant_response(vision_result):
     })
 
 
+def build_image_only_clarification_response(vision_result, kb_hint=None):
+    """
+    Case B (image uploaded with no real question): identify the object and
+    ask what the user wants to know instead of forcing the request through
+    the strict KB/escalation pipeline, which only ever finds a 100%-exact
+    text match and would otherwise escalate every plain "here's a photo"
+    upload -- exactly the bug this fixes.
+    """
+    detected = list((vision_result or {}).get("detectedObjects") or [])
+    object_phrase = detected[0] if detected else None
+
+    if object_phrase:
+        message = (
+            f"This looks like {object_phrase}. What would you like to know about it? "
+            "For example, you can ask where it's stored, how to use it, or its opening/closing steps."
+        )
+    else:
+        message = (
+            "I can see you uploaded an image, but I need a bit more detail. "
+            "What would you like to know about it?"
+        )
+
+    if kb_hint and kb_hint.get("title"):
+        message += f" I also found a related guide: \"{kb_hint['title']}\" -- ask me about it directly for the full steps."
+
+    return standardize_ai_response({
+        "type": "text",
+        "reply": message,
+        "answer": message,
+        "score": 0.0,
+        "confidence": 0.0,
+        "source": "image_only_clarification",
+        "final_source": "image_only_clarification",
+        "served_by": "vision_relevance_check",
+        "fallback": False,
+        "escalation_ready": False,
+        "escalation_required": False,
+        "context": {
+            "image_summary": (vision_result or {}).get("imageSummary", ""),
+            "detected_objects": detected,
+        },
+    })
+
+
 def build_vision_augmented_question(question, vision_result):
     """
     Combine the detected object(s) with the staff member's own question so
@@ -5505,26 +5549,27 @@ def chat():
 
                         return jsonify(visual_match_result), 200
 
-                    # CLIP couldn't already answer confidently. Only spend a
-                    # real Gemini Vision call when the staff member actually
-                    # typed a question -- an image with no question at all
-                    # is the cheap/free path (falls straight through to the
-                    # existing filename-based text search below), which is
-                    # the main cost-control lever for the vision API.
+                    # CLIP couldn't already answer confidently. Case B
+                    # (image with no real question) still needs object
+                    # detection to work -- so vision now always runs here,
+                    # not just when a question was typed. Duplicate-image
+                    # caching (GEMINI_VISION_CACHE) is the cost-control
+                    # lever instead of skipping the call outright.
+                    had_real_question = bool(question and len(question.strip()) >= 3)
+
                     vision_result = None
                     used_vision = False
 
-                    if question and len(question.strip()) >= 3:
-                        local_image_path = get_local_image_path_from_url(uploaded_chat_image_url)
+                    local_image_path = get_local_image_path_from_url(uploaded_chat_image_url)
 
-                        if local_image_path:
-                            try:
-                                file_hash = hashlib.md5(Path(local_image_path).read_bytes()).hexdigest()
-                            except Exception:
-                                file_hash = None
+                    if local_image_path:
+                        try:
+                            file_hash = hashlib.md5(Path(local_image_path).read_bytes()).hexdigest()
+                        except Exception:
+                            file_hash = None
 
-                            vision_result = analyze_uploaded_image_with_vision(local_image_path, file_hash)
-                            used_vision = vision_result is not None
+                        vision_result = analyze_uploaded_image_with_vision(local_image_path, file_hash)
+                        used_vision = vision_result is not None
 
                     if used_vision and not vision_result.get("isWorkRelated") and vision_result.get("confidence", 0) >= 0.55:
                         rejection_result = build_image_irrelevant_response(vision_result)
@@ -5539,6 +5584,31 @@ def chat():
                         rejection_result["served_by"] = "vision_relevance_check"
 
                         return jsonify(rejection_result), 200
+
+                    # Case B: image uploaded, no real question typed. Identify
+                    # the object and ask what they want to know instead of
+                    # letting a bare image fall into the strict KB/escalation
+                    # pipeline (which only escalates every plain photo, since
+                    # it never finds an exact text match for "").
+                    if not had_real_question and (not used_vision or vision_result.get("isWorkRelated")):
+                        kb_hint = None
+                        detected_terms = " ".join((vision_result or {}).get("detectedObjects") or [])
+
+                        if detected_terms:
+                            kb_hint = search_knowledge_base_articles(detected_terms, limit=1)
+
+                        clarification_result = build_image_only_clarification_response(vision_result, kb_hint)
+
+                        log_request(
+                            question,
+                            result=clarification_result,
+                            user_id=data.get("user_id") or data.get("userId")
+                        )
+
+                        clarification_result["final_source"] = clarification_result.get("source")
+                        clarification_result["served_by"] = "vision_relevance_check"
+
+                        return jsonify(clarification_result), 200
 
                     if used_vision and vision_result.get("isWorkRelated"):
                         question = build_vision_augmented_question(question, vision_result)
