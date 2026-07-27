@@ -1,5 +1,5 @@
 # Trigger redeploy to verify the persistent uploads volume survives a restart.
-from flask import Flask, request, jsonify, send_from_directory, redirect
+from flask import Flask, request, jsonify, send_from_directory, redirect, g
 from flask_cors import CORS
 import os
 import time
@@ -172,6 +172,36 @@ def handle_file_too_large(_error):
         "escalation_ready": False,
         "escalation_required": False,
     }), 413
+
+
+@app.after_request
+def attach_uploaded_chat_image_url(response):
+    """
+    /chat has several early-return paths (direct visual match, related
+    options, irrelevant-image rejection, normal KB/SOP fallback). Every one
+    of them should tell the frontend the PERMANENT saved URL of whatever
+    photo the user just uploaded, so the "You uploaded..." chat bubble can
+    be re-saved pointing at that instead of a browser blob: URL (which
+    breaks the moment it's revoked/the page reloads). Doing it here once,
+    keyed off flask.g, is simpler and less error-prone than editing every
+    return statement in chat() by hand.
+    """
+    uploaded_image_url = getattr(g, "uploaded_chat_image_url", None)
+
+    if not uploaded_image_url or not response.is_json:
+        return response
+
+    try:
+        payload = response.get_json()
+
+        if isinstance(payload, dict):
+            payload.setdefault("uploaded_image_url", uploaded_image_url)
+            payload.setdefault("uploaded_image_type", getattr(g, "uploaded_chat_image_type", None))
+            response.set_data(json.dumps(payload))
+    except Exception as error:
+        print("ATTACH UPLOADED IMAGE URL ERROR:", error)
+
+    return response
 
 
 CORS(
@@ -5445,6 +5475,15 @@ def chat():
 
             if uploaded_chat_image:
                 uploaded_chat_image_url, uploaded_chat_image_type = save_chat_image(uploaded_chat_image)
+
+                # Stashed on g so the after_request hook below can attach the
+                # permanent saved URL to whichever response path this request
+                # ends up taking (direct match / related options / rejection
+                # / normal KB fallback) without having to touch every single
+                # return statement in this route.
+                if uploaded_chat_image_url:
+                    g.uploaded_chat_image_url = uploaded_chat_image_url
+                    g.uploaded_chat_image_type = uploaded_chat_image_type
 
                 if uploaded_chat_image_url:
                     visual_match_result = search_visual_image_match(

@@ -1554,15 +1554,9 @@ export default function Chat() {
     setMobileChatMenuOpen(false);
   };
 
-  const handleImageSelect = (event) => {
-    const file = event.target.files?.[0];
-
-    if (!file) return;
-
-    if (!isAllowedUploadFile(file)) {
-      alert('Please upload a supported file only. Supported: image, PDF, DOC, DOCX.');
-      event.target.value = '';
-      return;
+  const applySelectedFile = (file) => {
+    if (!file || !isAllowedUploadFile(file)) {
+      return false;
     }
 
     if (selectedImagePreview) {
@@ -1577,7 +1571,40 @@ export default function Chat() {
       setSelectedImagePreview('');
     }
 
+    return true;
+  };
+
+  const handleImageSelect = (event) => {
+    const file = event.target.files?.[0];
+
+    if (!file) return;
+
+    if (!applySelectedFile(file)) {
+      alert('Please upload a supported file only. Supported: image, PDF, DOC, DOCX.');
+    }
+
     event.target.value = '';
+  };
+
+  // Lets a crew member paste a screenshot or an image copied from WhatsApp
+  // etc. directly into the question box instead of having to save it as a
+  // file first. Only intercepts the paste when the clipboard actually
+  // contains an image -- plain text pastes into the input are untouched.
+  const handleQuestionPaste = (event) => {
+    const items = event.clipboardData?.items;
+
+    if (!items || items.length === 0) return;
+
+    const imageItem = Array.from(items).find((item) => item.type?.startsWith('image/'));
+
+    if (!imageItem) return;
+
+    const file = imageItem.getAsFile();
+
+    if (!file) return;
+
+    event.preventDefault();
+    applySelectedFile(file);
   };
 
 const removeSelectedImage = () => {
@@ -1666,7 +1693,24 @@ const removeSelectedImage = () => {
       }
 
       const aiMessage = buildAiMessage(data);
-      const messagesAfterAiResponse = [...messagesAfterUserQuestion, aiMessage];
+
+      // The bubble we just saved above is still pointing at a blob: URL,
+      // which only exists in this browser tab and gets revoked below --
+      // it would show "Image could not load" on the very next refresh.
+      // Swap it for the permanent backend-saved URL the server just
+      // echoed back (see the /chat after_request hook on the backend)
+      // before this gets persisted to localStorage.
+      const permanentImageUrl = data?.uploaded_image_url;
+
+      const finalUserMessage = permanentImageUrl
+        ? { ...userMessage, image_files: [permanentImageUrl] }
+        : userMessage;
+
+      const finalMessagesAfterUserQuestion = permanentImageUrl
+        ? [...messages, finalUserMessage]
+        : messagesAfterUserQuestion;
+
+      const messagesAfterAiResponse = [...finalMessagesAfterUserQuestion, aiMessage];
 
       console.log('Backend data:', data);
       console.log('AI message:', aiMessage);
@@ -2251,7 +2295,8 @@ const removeSelectedImage = () => {
             <input
               value={question}
               onChange={(event) => setQuestion(event.target.value)}
-              placeholder="Ask product knowledge, SOP, sales, or upload a photo..."
+              onPaste={handleQuestionPaste}
+              placeholder="Ask product knowledge, SOP, sales, or paste/upload a photo..."
               disabled={loading}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') {
