@@ -391,21 +391,33 @@ export default function QuizManagement() {
     try {
       setAiLoading(true);
 
-      const response = await api.post('/admin/quizzes/ai-generate', {
-        title: aiForm.title.trim() || 'AI Generated Quiz',
-        sourceCategory: aiForm.sourceCategory,
-        questionCount: Number(aiForm.questionCount) || 5,
-        difficulty: aiForm.difficulty,
-        status: aiForm.status,
-      });
+      // A real AI provider call (Knowledge Base retrieval + an external LLM
+      // request) can comfortably take longer than the shared API client's
+      // default timeout, so this specific call gets a longer one of its own
+      // -- this does not change the shared axios instance or its baseURL.
+      const response = await api.post(
+        '/admin/quizzes/ai-generate',
+        {
+          title: aiForm.title.trim() || 'AI Generated Quiz',
+          sourceCategory: aiForm.sourceCategory,
+          questionCount: Number(aiForm.questionCount) || 5,
+          difficulty: aiForm.difficulty,
+          status: aiForm.status,
+        },
+        { timeout: 45000 }
+      );
 
       setAiPreview(response.data?.quiz || null);
     } catch (error) {
       console.error('AI generate quiz error:', error.response?.data || error);
-      setAiError(
-        error.response?.data?.message ||
-          'AI quiz generation failed. Please try again later or create quiz manually.'
-      );
+
+      let fallbackMessage = 'Quiz generation failed. Please try again.';
+
+      if (error.code === 'ECONNABORTED' || !error.response) {
+        fallbackMessage = 'AI provider request failed. Please try again, or create the quiz manually.';
+      }
+
+      setAiError(error.response?.data?.message || fallbackMessage);
     } finally {
       setAiLoading(false);
     }
@@ -673,7 +685,7 @@ export default function QuizManagement() {
 
             <div className="full-width">
               <button className="primary-btn" type="submit" disabled={aiLoading}>
-                {aiLoading ? 'Generating quiz from latest Knowledge Base...' : 'Generate Quiz'}
+                {aiLoading ? 'Generating quiz from the latest Knowledge Base...' : 'Generate Quiz'}
               </button>
             </div>
           </form>

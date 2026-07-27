@@ -377,6 +377,8 @@ def generate_ai_reply(prompt, timeout=30):
 
         api_key = decrypt_api_key(config["encrypted_api_key"])
 
+        print(f"AI PROVIDER: using provider='{config['provider']}' model='{config['model_name']}'")
+
         return call_ai_provider(
             prompt,
             config["provider"],

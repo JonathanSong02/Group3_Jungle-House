@@ -9286,6 +9286,11 @@ def build_ai_quiz_source_text(category_filter, max_chars=6000):
         if conn:
             conn.close()
 
+    print(
+        f"AI QUIZ: knowledge base records found for category='{category_filter}': "
+        f"{len(articles)}"
+    )
+
     def clean_text(text):
         text = re.sub(r"<[^>]+>", " ", str(text or ""))
         text = re.sub(r"\s+", " ", text).strip()
@@ -9324,9 +9329,23 @@ def build_ai_quiz_questions_via_provider(category_filter, question_count, diffic
     source_text = build_ai_quiz_source_text(category_filter)
 
     if not source_text.strip():
+        print(
+            "AI QUIZ: no eligible knowledge base content found for category "
+            f"'{category_filter}'; skipping AI provider call."
+        )
         return None
 
-    prompt = f"""You are generating training quiz questions for Jungle House staff.
+    def build_prompt(strict_retry=False):
+        strict_note = ""
+
+        if strict_retry:
+            strict_note = (
+                "\nYour previous reply could not be parsed as JSON. Reply again "
+                "with ONLY the raw JSON array -- no markdown, no code fences, "
+                "no text before or after it.\n"
+            )
+
+        return f"""You are generating training quiz questions for Jungle House staff.
 
 Use only the provided source content. Do not invent information outside the source.
 Generate practical staff training questions at {difficulty} difficulty.
@@ -9340,63 +9359,87 @@ object must have exactly these fields:
 - "correctAnswerIndex": integer, 0, 1, 2 or 3
 - "explanation": string
 - "sourceTitle": string (the article title this question is based on)
-
+{strict_note}
 Source content:
 {source_text}
 """
 
-    raw_reply = ai_provider_service.generate_ai_reply(prompt)
+    def parse_questions(raw_reply):
+        json_text = raw_reply.strip()
+        json_text = re.sub(r"^```(?:json)?\s*", "", json_text)
+        json_text = re.sub(r"\s*```$", "", json_text)
 
-    json_text = raw_reply.strip()
-    json_text = re.sub(r"^```(?:json)?\s*", "", json_text)
-    json_text = re.sub(r"\s*```$", "", json_text)
+        parsed = json.loads(json_text)
 
-    parsed = json.loads(json_text)
+        if isinstance(parsed, dict) and isinstance(parsed.get("questions"), list):
+            parsed = parsed["questions"]
 
-    if isinstance(parsed, dict) and isinstance(parsed.get("questions"), list):
-        parsed = parsed["questions"]
+        if not isinstance(parsed, list):
+            raise ValueError("AI did not return a JSON array of questions.")
 
-    if not isinstance(parsed, list):
-        raise ValueError("AI did not return a JSON array of questions.")
+        result = []
 
-    questions = []
+        for item in parsed:
+            if not isinstance(item, dict):
+                continue
 
-    for item in parsed:
-        if not isinstance(item, dict):
-            continue
+            options = item.get("options")
 
-        options = item.get("options")
+            if not isinstance(options, list) or len(options) != 4:
+                continue
 
-        if not isinstance(options, list) or len(options) != 4:
-            continue
+            if not all(str(option).strip() for option in options):
+                continue
 
-        if not all(str(option).strip() for option in options):
-            continue
+            correct_index = item.get("correctAnswerIndex")
 
-        correct_index = item.get("correctAnswerIndex")
+            if correct_index not in (0, 1, 2, 3):
+                continue
 
-        if correct_index not in (0, 1, 2, 3):
-            continue
+            question_text = str(item.get("question") or "").strip()
+            explanation = str(item.get("explanation") or "").strip()
 
-        question_text = str(item.get("question") or "").strip()
-        explanation = str(item.get("explanation") or "").strip()
+            if not question_text or not explanation:
+                continue
 
-        if not question_text or not explanation:
-            continue
+            result.append({
+                "question": question_text,
+                "options": [str(option).strip() for option in options],
+                "correctAnswerIndex": correct_index,
+                "explanation": explanation,
+                "sourceTitle": str(item.get("sourceTitle") or "").strip(),
+            })
 
-        questions.append({
-            "question": question_text,
-            "options": [str(option).strip() for option in options],
-            "correctAnswerIndex": correct_index,
-            "explanation": explanation,
-            "sourceTitle": str(item.get("sourceTitle") or "").strip(),
-        })
+        return result
+
+    # The provider call itself (network/auth/HTTP errors) is allowed to raise
+    # straight out of this function -- that is a real provider failure, not a
+    # JSON formatting problem, and the caller classifies it accordingly.
+    raw_reply = ai_provider_service.generate_ai_reply(build_prompt())
+    print(f"AI QUIZ: provider response received ({len(raw_reply or '')} chars).")
+
+    try:
+        questions = parse_questions(raw_reply)
+        print(f"AI QUIZ: JSON validation passed on first attempt, {len(questions)} usable question(s).")
+    except Exception as error:
+        print(f"AI QUIZ: JSON validation failed on first attempt ({error}); retrying with a stricter prompt.")
+
+        raw_retry_reply = ai_provider_service.generate_ai_reply(build_prompt(strict_retry=True))
+        print(f"AI QUIZ: provider retry response received ({len(raw_retry_reply or '')} chars).")
+
+        questions = parse_questions(raw_retry_reply)
+        print(f"AI QUIZ: JSON validation passed on retry, {len(questions)} usable question(s).")
+
+    if not questions:
+        raise ValueError("AI returned zero valid questions after validation.")
 
     return questions[:question_count]
 
 
 @app.route("/api/admin/quizzes/ai-generate", methods=["POST"])
 def ai_generate_quiz():
+    print("AI QUIZ: /api/admin/quizzes/ai-generate route reached.")
+
     data = request.get_json() or {}
 
     title = data.get("title", "").strip() or "AI Generated Quiz"
@@ -9419,13 +9462,16 @@ def ai_generate_quiz():
 
     generation_method = "template"
     questions = []
+    ai_failure_reason = None
 
     # Prefer a real AI provider if the manager has configured one in AI
-    # Model Settings. Any failure here (not configured, bad key, provider
-    # outage, malformed AI output) falls back to the template generator
-    # instead of failing the whole request -- quiz generation must keep
-    # working either way.
-    if AI_PROVIDER_SERVICE_AVAILABLE:
+    # Model Settings. Track *why* the AI path didn't produce questions so
+    # the eventual error message (if the template fallback also comes up
+    # empty) tells the truth instead of always blaming "not enough content".
+    if not AI_PROVIDER_SERVICE_AVAILABLE:
+        ai_failure_reason = "service_unavailable"
+        print("AI QUIZ: ai_provider_service module failed to import; using template fallback only.")
+    else:
         try:
             provider_questions = build_ai_quiz_questions_via_provider(
                 source_category, question_count, difficulty
@@ -9434,20 +9480,26 @@ def ai_generate_quiz():
             if provider_questions:
                 questions = provider_questions
                 generation_method = "ai_provider"
+            else:
+                ai_failure_reason = "no_content"
         except ai_provider_service.AIProviderNotConfiguredError:
-            pass
+            ai_failure_reason = "not_configured"
+            print("AI QUIZ: no active AI provider configured in AI Model Settings.")
+        except ValueError as error:
+            ai_failure_reason = "invalid_format"
+            print("AI QUIZ: provider returned an invalid quiz format:", error)
         except Exception as error:
-            print("AI PROVIDER QUIZ GENERATION FAILED, FALLING BACK TO TEMPLATE:", error)
+            ai_failure_reason = "provider_failed"
+            print("AI QUIZ: AI provider request failed, falling back to template:", error)
 
     if not questions:
         try:
             questions = build_ai_quiz_questions(source_category, question_count, difficulty)
-            generation_method = "template"
+
+            if questions:
+                generation_method = "template"
         except Exception as error:
-            print("AI GENERATE QUIZ ERROR:", error)
-            return jsonify({
-                "message": "AI quiz generation failed. Please try again later or create quiz manually."
-            }), 500
+            print("AI QUIZ: template fallback generation error:", error)
 
     # Validate generated output before it ever reaches the frontend.
     questions = [
@@ -9461,9 +9513,20 @@ def ai_generate_quiz():
     ]
 
     if not questions:
-        return jsonify({
-            "message": "Not enough verified content to generate quiz. Please add or verify more articles first."
-        }), 400
+        if ai_failure_reason == "not_configured":
+            message = "AI model is not configured. Please configure it in AI Model Settings."
+        elif ai_failure_reason == "invalid_format":
+            message = "The AI returned an invalid quiz format. Please try again."
+        elif ai_failure_reason == "provider_failed":
+            message = "AI provider request failed. Please try again, or create the quiz manually."
+        elif ai_failure_reason == "service_unavailable":
+            message = "AI provider service is not available on this server. Please contact an administrator."
+        else:
+            message = "No verified Knowledge Base content is available for quiz generation."
+
+        print(f"AI QUIZ: generation failed, reason='{ai_failure_reason}'.")
+
+        return jsonify({"message": message}), 400
 
     category_label = source_category if source_category.lower() != "all" else "Training"
 
@@ -9472,6 +9535,8 @@ def ai_generate_quiz():
         if generation_method == "ai_provider"
         else f"Quiz generated from the latest verified {category_label} content."
     )
+
+    print(f"AI QUIZ: generation succeeded via '{generation_method}', {len(questions)} question(s).")
 
     return jsonify({
         "success": True,
