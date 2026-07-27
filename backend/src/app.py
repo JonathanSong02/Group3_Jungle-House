@@ -14,6 +14,7 @@ import traceback
 import smtplib
 import secrets
 import hashlib
+import requests
 from email.message import EmailMessage
 from db_helper import (
     save_qa_to_db,
@@ -4849,6 +4850,26 @@ def test_ai_settings():
             )
             success = True
             message = "AI provider connected successfully."
+        except requests.exceptions.Timeout:
+            print("AI PROVIDER TEST CALL ERROR: timed out waiting for", provider)
+            success = False
+            message = (
+                f"Connection to {provider} timed out. The provider may be slow "
+                "or unreachable right now -- this is not an API key or billing "
+                "problem. Please try again in a moment."
+            )
+        except requests.exceptions.HTTPError as call_error:
+            status_code = call_error.response.status_code if call_error.response is not None else None
+            print("AI PROVIDER TEST CALL ERROR:", status_code, call_error)
+            if status_code == 429:
+                message = "AI provider rejected the request: rate limit or quota exceeded (HTTP 429)."
+            elif status_code in (401, 403):
+                message = f"AI provider rejected the API key (HTTP {status_code}). Please check the key is correct and active."
+            elif status_code == 404:
+                message = f"AI provider could not find model \"{model_name}\" (HTTP 404). Please check the model name is correct and still supported."
+            else:
+                message = f"AI provider returned an error (HTTP {status_code})."
+            success = False
         except Exception as call_error:
             print("AI PROVIDER TEST CALL ERROR:", call_error)
             success = False
