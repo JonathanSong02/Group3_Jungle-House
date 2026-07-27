@@ -2073,9 +2073,16 @@ const removeSelectedImage = () => {
                   {renderRichKnowledgeContent(message.answer, message.link || message.article_link)}
                 </p>
 
-                {renderImages(textImages, 'Answer image', setPreviewImage)}
+                {/* Real HTML content (Notion-imported articles) already embeds
+                    its own <img> tags in the right place next to each step --
+                    rendering the same URLs again as a flat gallery here is
+                    what was scrambling all the step photos together at the
+                    bottom instead of keeping them next to their own step. */}
+                {!isHtmlContent(message.answer) &&
+                  renderImages(textImages, 'Answer image', setPreviewImage)}
               </div>
             ) : (
+              !isHtmlContent(message.text) &&
               renderImages(textImages, 'Message image', setPreviewImage)
             )}
 
@@ -2118,11 +2125,12 @@ const removeSelectedImage = () => {
                         )}
                       </p>
 
-                      {renderImages(
-                        stepImages,
-                        `Step ${step.step_number || index + 1} image`,
-                        setPreviewImage
-                      )}
+                      {!isHtmlContent(step.content || step.answer || step.reply) &&
+                        renderImages(
+                          stepImages,
+                          `Step ${step.step_number || index + 1} image`,
+                          setPreviewImage
+                        )}
                     </div>
                   );
                 })}
@@ -2148,7 +2156,8 @@ const removeSelectedImage = () => {
               </p>
             ) : null}
 
-            {renderImages(textImages, 'Article image', setPreviewImage)}
+            {!isHtmlContent(message.reply) &&
+              renderImages(textImages, 'Article image', setPreviewImage)}
 
             {message.steps?.map((step, index) => {
               const stepImages = getStepImages(step);
@@ -2187,11 +2196,12 @@ const removeSelectedImage = () => {
                     )}
                   </p>
 
-                  {renderImages(
-                    stepImages,
-                    `Step ${step.step_number || index + 1} image`,
-                    setPreviewImage
-                  )}
+                  {!isHtmlContent(step.content || step.answer || step.reply) &&
+                    renderImages(
+                      stepImages,
+                      `Step ${step.step_number || index + 1} image`,
+                      setPreviewImage
+                    )}
                 </div>
               );
             })}
