@@ -156,6 +156,25 @@ AI_LAST_ANSWER_MEMORY = {}
 
 app = Flask(__name__, static_folder=None)
 
+# Reject oversized uploads before they hit disk/AI providers (cost control +
+# Requirement 13 "file too large" handling). 8MB covers a normal phone photo
+# with headroom; anything bigger is almost certainly a mistake.
+app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024
+
+
+@app.errorhandler(413)
+def handle_file_too_large(_error):
+    return jsonify({
+        "reply": "This file is too large. Please upload an image under 8MB.",
+        "answer": "This file is too large. Please upload an image under 8MB.",
+        "success": False,
+        "source": "upload_too_large",
+        "fallback": True,
+        "escalation_ready": False,
+        "escalation_required": False,
+    }), 413
+
+
 CORS(
     app,
     resources={r"/*": {"origins": [
@@ -615,19 +634,19 @@ def search_visual_image_match(uploaded_image_url, question="", threshold=HIGH_CO
                 combined = (0.65 * text_sim) + (0.35 * keyword_sim)
                 dominant = "matches the item description" if text_sim >= keyword_sim else "matches your question"
 
-            scored_rows.append((combined, row, dominant))
+            scored_rows.append((combined, row, dominant, image_sim if has_image_sim else 0.0))
 
         scored_rows.sort(key=lambda item: item[0], reverse=True)
 
         if not scored_rows:
             return None
 
-        best_score, best_row, _best_reason = scored_rows[0]
+        best_score, best_row, _best_reason, best_image_sim = scored_rows[0]
         second_score = scored_rows[1][0] if len(scored_rows) > 1 else 0.0
 
-        print("BEST IMAGE MATCH SCORE:", round(best_score, 4))
+        print("BEST IMAGE MATCH SCORE:", round(best_score, 4), "raw image_sim:", round(best_image_sim, 4))
 
-        for debug_score, debug_row, debug_reason in scored_rows[:5]:
+        for debug_score, debug_row, debug_reason, debug_image_sim in scored_rows[:5]:
             print(
                 "IMAGE MATCH CANDIDATE:",
                 "image_id=", debug_row.get("image_id"),
@@ -637,8 +656,17 @@ def search_visual_image_match(uploaded_image_url, question="", threshold=HIGH_CO
             )
 
         # HIGH confidence: answer directly, same as the previous behaviour.
-        if best_score >= threshold and (second_score == 0.0 or (best_score - second_score) >= min_gap):
-            return build_visual_image_match_result(best_row, best_score)
+        # A near-duplicate photo (raw image-to-image similarity alone, the
+        # original 0.85 rule) always qualifies on its own -- it shouldn't
+        # need a strong text/keyword signal too, since the photo itself is
+        # already near-conclusive. Otherwise the blended score has to clear
+        # the bar, which is what lets a strong combination of a decent photo
+        # match + matching description + matching question also count.
+        is_near_duplicate_photo = best_image_sim >= threshold
+        is_high_confidence_blend = best_score >= threshold
+
+        if (is_near_duplicate_photo or is_high_confidence_blend) and (second_score == 0.0 or (best_score - second_score) >= min_gap):
+            return build_visual_image_match_result(best_row, max(best_score, best_image_sim if is_near_duplicate_photo else 0.0))
 
         # MEDIUM confidence: do not fail -- offer the best related options
         # instead of forcing the user back to a plain text search.
@@ -646,7 +674,7 @@ def search_visual_image_match(uploaded_image_url, question="", threshold=HIGH_CO
             seen_titles = set()
             options = []
 
-            for score, row, reason in scored_rows:
+            for score, row, reason, _row_image_sim in scored_rows:
                 if score < MEDIUM_CONFIDENCE_THRESHOLD:
                     break
 
@@ -701,6 +729,143 @@ def search_visual_image_match(uploaded_image_url, question="", threshold=HIGH_CO
             cursor.close()
         if conn:
             conn.close()
+
+
+# =========================
+# GEMINI VISION RELEVANCE CHECK
+#
+# The CLIP pipeline above only "knows" what it has already seen in the
+# Knowledge Base, so it can't reliably tell a selfie/meme/blank photo apart
+# from a genuinely new work item it just doesn't have a KB photo for yet.
+# This step is a second opinion, only spent when CLIP couldn't already
+# answer confidently, so normal high-confidence matches never touch it and
+# never cost an API call.
+# =========================
+VISION_RELEVANCE_PROMPT = """You are an image understanding assistant for Jungle House internal staff training system.
+
+Your job is to identify whether the uploaded image is related to Jungle House work, products, equipment, stocktake, SOP, opening, closing, POS, display, cabinet, storage, customer service, or internal operations.
+
+Return ONLY valid JSON. No markdown, no code fences, no extra text.
+
+Fields:
+- isWorkRelated: boolean
+- confidence: number between 0 and 1
+- detectedObjects: array of strings
+- possibleAliases: array of strings
+- imageSummary: string
+- irrelevantReason: string or null
+
+Important:
+- Detect objects even if shown from front, back, side, tilted, close-up, far away, or a different angle.
+- If the image is random, personal, unclear, a meme, a selfie, food unrelated to work, or otherwise not related to work, set isWorkRelated to false.
+- Do not answer the user's question here.
+- Only describe the image and whether it is work-related."""
+
+GEMINI_VISION_CACHE = {}  # file_hash -> (timestamp, result_dict or None)
+GEMINI_VISION_CACHE_MAX = 200
+GEMINI_VISION_CACHE_TTL_SECONDS = 600
+
+
+def _parse_vision_json_reply(raw_text):
+    text = str(raw_text or "").strip()
+
+    # Gemini sometimes wraps JSON in ```json ... ``` even when told not to.
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*", "", text).strip()
+        text = text.rsplit("```", 1)[0].strip()
+
+    parsed = json.loads(text)
+
+    return {
+        "isWorkRelated": bool(parsed.get("isWorkRelated", False)),
+        "confidence": float(parsed.get("confidence", 0.0) or 0.0),
+        "detectedObjects": [str(item) for item in (parsed.get("detectedObjects") or [])][:10],
+        "possibleAliases": [str(item) for item in (parsed.get("possibleAliases") or [])][:10],
+        "imageSummary": str(parsed.get("imageSummary") or ""),
+        "irrelevantReason": parsed.get("irrelevantReason"),
+    }
+
+
+def analyze_uploaded_image_with_vision(image_path, file_hash=None):
+    """
+    Ask the manager-configured Gemini model what the uploaded photo shows
+    and whether it's work-related. Returns None (never raises) whenever
+    vision isn't usable for any reason -- not configured, wrong provider,
+    network/timeout error, bad JSON back -- so callers always have a clean
+    "fall back to the existing text/CLIP pipeline" path.
+    """
+    if not AI_PROVIDER_SERVICE_AVAILABLE or not ai_provider_service:
+        return None
+
+    if file_hash:
+        cached = GEMINI_VISION_CACHE.get(file_hash)
+        if cached and (time.time() - cached[0]) < GEMINI_VISION_CACHE_TTL_SECONDS:
+            return cached[1]
+
+    try:
+        raw_reply = ai_provider_service.generate_ai_vision_reply(
+            VISION_RELEVANCE_PROMPT, image_path, timeout=20
+        )
+        result = _parse_vision_json_reply(raw_reply)
+    except ai_provider_service.AIProviderNotConfiguredError:
+        result = None
+    except ai_provider_service.AIProviderVisionUnsupportedError:
+        result = None
+    except Exception as error:
+        print("GEMINI VISION ERROR:", error)
+        result = None
+
+    if file_hash:
+        if len(GEMINI_VISION_CACHE) >= GEMINI_VISION_CACHE_MAX:
+            oldest_key = min(GEMINI_VISION_CACHE, key=lambda key: GEMINI_VISION_CACHE[key][0])
+            GEMINI_VISION_CACHE.pop(oldest_key, None)
+
+        GEMINI_VISION_CACHE[file_hash] = (time.time(), result)
+
+    return result
+
+
+def build_image_irrelevant_response(vision_result):
+    reason = (vision_result or {}).get("irrelevantReason") or ""
+    message = "This image does not look related to Jungle House work or Knowledge Base. Please upload a relevant work image or ask a clear work-related question."
+
+    return standardize_ai_response({
+        "type": "text",
+        "reply": message,
+        "answer": message,
+        "score": 0.0,
+        "confidence": 0.0,
+        "source": "vision_irrelevant_image",
+        "final_source": "vision_irrelevant_image",
+        "served_by": "vision_relevance_check",
+        "fallback": False,
+        "escalation_ready": False,
+        "escalation_required": False,
+        "context": {
+            "rejected": True,
+            "irrelevant_reason": reason,
+            "image_summary": (vision_result or {}).get("imageSummary", ""),
+        },
+    })
+
+
+def build_vision_augmented_question(question, vision_result):
+    """
+    Combine the detected object(s) with the staff member's own question so
+    the existing KB/SOP text search (unchanged) receives both signals
+    together, per "question meaning first, image second" -- the image only
+    fills in what "this"/"it" refers to.
+    """
+    detected = list((vision_result or {}).get("detectedObjects") or [])
+    aliases = list((vision_result or {}).get("possibleAliases") or [])
+
+    object_terms = " ".join(dict.fromkeys(detected + aliases))
+    question = str(question or "").strip()
+
+    if object_terms and question:
+        return f"{question} {object_terms}".strip()
+
+    return object_terms or question
 
 
 @app.route("/static/uploads/articles/<path:filename>", methods=["GET"])
@@ -5322,16 +5487,55 @@ def chat():
 
                         return jsonify(visual_match_result), 200
 
-                    image_search_text = extract_image_search_text(
-                        uploaded_chat_image_url,
-                        uploaded_chat_image_filename,
-                        question
-                    )
+                    # CLIP couldn't already answer confidently. Only spend a
+                    # real Gemini Vision call when the staff member actually
+                    # typed a question -- an image with no question at all
+                    # is the cheap/free path (falls straight through to the
+                    # existing filename-based text search below), which is
+                    # the main cost-control lever for the vision API.
+                    vision_result = None
+                    used_vision = False
 
-                    print("UPLOADED IMAGE FILENAME:", uploaded_chat_image_filename)
-                    print("IMAGE SEARCH TEXT:", image_search_text)
+                    if question and len(question.strip()) >= 3:
+                        local_image_path = get_local_image_path_from_url(uploaded_chat_image_url)
 
-                    question = image_search_text or question
+                        if local_image_path:
+                            try:
+                                file_hash = hashlib.md5(Path(local_image_path).read_bytes()).hexdigest()
+                            except Exception:
+                                file_hash = None
+
+                            vision_result = analyze_uploaded_image_with_vision(local_image_path, file_hash)
+                            used_vision = vision_result is not None
+
+                    if used_vision and not vision_result.get("isWorkRelated") and vision_result.get("confidence", 0) >= 0.55:
+                        rejection_result = build_image_irrelevant_response(vision_result)
+
+                        log_request(
+                            question,
+                            result=rejection_result,
+                            user_id=data.get("user_id") or data.get("userId")
+                        )
+
+                        rejection_result["final_source"] = rejection_result.get("source")
+                        rejection_result["served_by"] = "vision_relevance_check"
+
+                        return jsonify(rejection_result), 200
+
+                    if used_vision and vision_result.get("isWorkRelated"):
+                        question = build_vision_augmented_question(question, vision_result)
+                        print("VISION-AUGMENTED SEARCH QUESTION:", question)
+                    else:
+                        image_search_text = extract_image_search_text(
+                            uploaded_chat_image_url,
+                            uploaded_chat_image_filename,
+                            question
+                        )
+
+                        print("UPLOADED IMAGE FILENAME:", uploaded_chat_image_filename)
+                        print("IMAGE SEARCH TEXT:", image_search_text)
+
+                        question = image_search_text or question
 
         else:
             data = request.get_json(silent=True) or {}

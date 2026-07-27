@@ -191,6 +191,60 @@ def _call_gemini(prompt, model_name, api_key, timeout):
     return data["candidates"][0]["content"]["parts"][0]["text"]
 
 
+_IMAGE_MIME_TYPES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".heic": "image/heic",
+    ".heif": "image/heif",
+}
+
+
+def _guess_image_mime_type(image_path):
+    suffix = os.path.splitext(str(image_path))[1].lower()
+    return _IMAGE_MIME_TYPES.get(suffix, "image/jpeg")
+
+
+def _call_gemini_vision(prompt, image_path, model_name, api_key, timeout):
+    """
+    Same endpoint as _call_gemini, but with an inline image part added
+    alongside the text prompt so Gemini can reason about the photo, not
+    just the words. Only Gemini is wired for vision right now -- the
+    caller falls back to the CLIP-only pipeline for every other provider.
+    """
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
+
+    with open(image_path, "rb") as file:
+        image_bytes = file.read()
+
+    encoded_image = base64.b64encode(image_bytes).decode("utf-8")
+    mime_type = _guess_image_mime_type(image_path)
+
+    response = requests.post(
+        url,
+        headers={
+            "x-goog-api-key": api_key,
+            "Content-Type": "application/json",
+        },
+        json={
+            "contents": [{
+                "parts": [
+                    {"text": prompt},
+                    {"inline_data": {"mime_type": mime_type, "data": encoded_image}},
+                ]
+            }],
+            "generationConfig": {"temperature": 0.1},
+        },
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    data = response.json()
+
+    return data["candidates"][0]["content"]["parts"][0]["text"]
+
+
 def _call_openai_compatible(prompt, model_name, api_key, timeout, base_url):
     response = requests.post(
         base_url,
@@ -254,6 +308,50 @@ def call_ai_provider(prompt, provider, model_name, api_key, timeout=45):
 
 class AIProviderNotConfiguredError(Exception):
     pass
+
+
+class AIProviderVisionUnsupportedError(Exception):
+    pass
+
+
+def generate_ai_vision_reply(prompt, image_path, timeout=45):
+    """
+    Same contract as generate_ai_reply(), but sends an image alongside the
+    prompt. Only the "gemini" provider supports vision here -- if the
+    manager has configured a different provider, this raises
+    AIProviderVisionUnsupportedError so the caller can cleanly fall back to
+    the CLIP-only image pipeline instead of crashing the request.
+    """
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        ensure_ai_provider_configs_table(cursor)
+        config = get_active_ai_provider_config(cursor)
+
+        if not config:
+            raise AIProviderNotConfiguredError(
+                "AI model is not configured yet. Please ask a manager to set it up in AI Model Settings."
+            )
+
+        if config["provider"] != "gemini":
+            raise AIProviderVisionUnsupportedError(
+                f"Image understanding is not supported for provider '{config['provider']}' yet."
+            )
+
+        api_key = decrypt_api_key(config["encrypted_api_key"])
+
+        return _call_gemini_vision(
+            prompt, image_path, config["model_name"], api_key, timeout=timeout
+        )
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 
 def generate_ai_reply(prompt, timeout=45):
