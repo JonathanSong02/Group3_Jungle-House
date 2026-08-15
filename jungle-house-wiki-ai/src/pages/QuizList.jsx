@@ -209,7 +209,7 @@ export default function QuizList() {
         if (parsed?.id || parsed?.user_id || parsed?.userId) {
           return parsed;
         }
-      } catch (error) {
+      } catch {
         // Ignore non-JSON localStorage values.
       }
     }

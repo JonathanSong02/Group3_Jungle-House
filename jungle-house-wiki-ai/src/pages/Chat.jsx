@@ -323,7 +323,7 @@ function splitImageString(value) {
       if (Array.isArray(parsed)) {
         return parsed.flatMap((item) => parseImageFiles(item)).filter(Boolean);
       }
-    } catch (error) {
+    } catch {
       // Continue to delimiter splitting below.
     }
   }
@@ -364,7 +364,7 @@ function parseImageFiles(value) {
         const single = normalizeImageItem(parsed);
         return single ? [single] : [];
       }
-    } catch (error) {
+    } catch {
       return splitImageString(cleanValue);
     }
   }
@@ -1954,11 +1954,6 @@ const removeSelectedImage = () => {
         if (!hasUsefulOptionAnswer && !hasUsefulOptionSteps) {
           return null;
         }
-        const optionImages = [
-          ...extractImagePathsFromText(option.reply),
-          ...extractImagePathsFromText(option.answer),
-        ];
-
         return (
           <button
             type="button"
@@ -2036,7 +2031,6 @@ const removeSelectedImage = () => {
             View answer →
           </p>
 
-            {false && renderImages(optionImages, `Option ${optionIndex + 1} image`)}
           </button>
         );
       })}
