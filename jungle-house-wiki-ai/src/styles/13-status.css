@@ -1,0 +1,43 @@
+/* =========================================================
+   15. STATUS + CHECKBOX
+   ========================================================= */
+
+.status-badge {
+  padding: 6px 12px;
+}
+
+.status-badge.pending,
+.status-badge.reviewing {
+  background: var(--warning-bg);
+  color: var(--warning-text);
+  border: 1px solid var(--warning-border);
+}
+
+.status-badge.resolved,
+.status-badge.approved,
+.status-badge.active,
+.status-badge.success {
+  background: var(--success-bg);
+  color: var(--success-text);
+  border: 1px solid var(--success-border);
+}
+
+.status-badge.rejected,
+.status-badge.failed,
+.status-badge.inactive {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  border: 1px solid var(--danger-border);
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.checkbox-row input {
+  width: auto;
+  min-height: auto;
+}
+

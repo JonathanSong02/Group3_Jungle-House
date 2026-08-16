@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -28,7 +28,7 @@ export default function Messages() {
   const [sending, setSending] = useState(false);
   const [messageText, setMessageText] = useState('');
 
-  const fetchData = async () => {
+const fetchData = useCallback(async () => {
     if (!currentUserId) {
       setLoading(false);
       setMessageText('Unable to load messages because user ID is missing.');
@@ -52,11 +52,11 @@ export default function Messages() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [currentUserId]);
 
   useEffect(() => {
     fetchData();
-  }, [currentUserId]);
+  }, [fetchData]);
 
   const receiverOptions = useMemo(() => {
     return users.filter((item) => Number(item.user_id) !== Number(currentUserId));

@@ -1,0 +1,386 @@
+/* =========================================================
+   ADD / EDIT ARTICLE MULTIPLE ATTACHMENT UI
+   Paste at the bottom of styles.css
+   ========================================================= */
+
+.article-attachment-panel {
+  padding: 18px;
+  background: linear-gradient(180deg, #fffdf8, #fff7e8);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+}
+
+.article-attachment-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 14px;
+}
+
+.article-attachment-top h3 {
+  margin: 0 0 6px;
+  color: var(--primary-dark);
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.article-attachment-top p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.attachment-add-btn {
+  min-width: 170px;
+  min-height: 46px;
+  border-radius: 16px !important;
+  white-space: nowrap;
+}
+
+.hidden-file-input {
+  display: none !important;
+}
+
+.attachment-group {
+  margin-top: 16px;
+}
+
+.attachment-group-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.attachment-group-title {
+  margin: 0;
+  color: var(--primary-dark);
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.attachment-clear-btn {
+  min-height: 36px;
+  padding: 7px 12px !important;
+  border-radius: 12px !important;
+  font-size: 13px;
+}
+
+.attachment-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.attachment-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: rgba(255, 253, 248, 0.92);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow-sm);
+}
+
+.attachment-card.current {
+  background: #fff8ea;
+}
+
+.attachment-icon {
+  width: 46px;
+  height: 46px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff0c9;
+  color: var(--primary-dark);
+  border: 1px solid #efd28f;
+  border-radius: 14px;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.attachment-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.attachment-info strong {
+  color: var(--heading);
+  font-size: 14px;
+  font-weight: 900;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-info span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.attachment-remove-btn {
+  min-height: 38px;
+  padding: 8px 12px !important;
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  border: 1px solid var(--danger-border);
+  border-radius: 12px !important;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.attachment-remove-btn:hover {
+  background: #fbd8d0;
+  transform: none;
+}
+
+.empty-attachment-box {
+  margin-top: 14px;
+  padding: 16px;
+  background: #fff8e8;
+  border: 1px dashed var(--border-strong);
+  border-radius: 16px;
+  color: var(--muted);
+  font-size: 14px;
+  text-align: center;
+}
+
+.empty-attachment-box strong {
+  color: var(--primary-dark);
+}
+
+.attachment-hint {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.attachment-hint strong {
+  color: var(--primary-dark);
+}
+
+@media (max-width: 640px) {
+  .article-attachment-top {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .attachment-add-btn,
+  .attachment-clear-btn,
+  .attachment-remove-btn {
+    width: 100%;
+  }
+
+  .attachment-group-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .attachment-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .attachment-icon {
+    width: 100%;
+  }
+
+  .attachment-info strong {
+    white-space: normal;
+  }
+}
+
+
+.hidden-file-input {
+  display: none !important;
+}
+
+.add-another-file-btn {
+  width: fit-content;
+  min-height: 44px;
+  padding: 8px 0 !important;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: #c01818 !important;
+  font-size: 18px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.add-another-file-btn:hover {
+  background: transparent !important;
+  color: #9f1010 !important;
+  transform: none !important;
+  text-decoration: underline;
+}
+
+.add-file-plus {
+  color: #c01818;
+  font-size: 28px;
+  font-weight: 300;
+  line-height: 1;
+}
+
+/* =========================================================
+   ARTICLE DETAIL - ATTACHMENTS + SAME-PAGE FILE PREVIEW
+   ========================================================= */
+
+.attachment-view-btn {
+  min-height: 38px;
+  padding: 8px 12px !important;
+  border-radius: 12px !important;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+/* File links inserted at a cursor position inside the rich-text content
+   itself (see AddArticle/EditArticle "Insert into Content"). */
+.article-rich-content a.article-inline-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  margin: 4px 0;
+  background: rgba(255, 253, 248, 0.92);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  color: var(--heading);
+  font-weight: 700;
+  font-size: 14px;
+  text-decoration: none;
+}
+
+.article-rich-content a.article-inline-file:hover {
+  background: #fff8ea;
+}
+
+.article-inline-file-caret {
+  display: inline-block;
+  font-size: 11px;
+  color: var(--muted);
+  transition: transform 0.15s ease;
+}
+
+.article-rich-content a.article-inline-file.is-open .article-inline-file-caret {
+  transform: rotate(180deg);
+}
+
+.article-attachment-file-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.article-attachment-file-item {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(255, 253, 248, 0.92);
+  overflow: hidden;
+}
+
+.article-attachment-file-link {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--heading);
+}
+
+.article-attachment-file-link:hover {
+  background: #fff8ea;
+}
+
+.article-attachment-file-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.article-attachment-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.article-attachment-file-caret {
+  color: var(--muted);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.article-file-preview {
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+  border-top: 1px solid var(--border);
+  padding: 14px;
+  background: #fffdf8;
+}
+
+.article-file-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.article-file-preview-frame {
+  width: 100%;
+  min-height: 60vh;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.article-file-download-card {
+  padding: 16px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 14px;
+  background: #fff8e8;
+  text-align: center;
+}
+
+.article-file-download-card p {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+@media (max-width: 640px) {
+  .article-file-preview-frame {
+    min-height: 55vh;
+  }
+
+  .article-attachment-file-name {
+    white-space: normal;
+  }
+}
+

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import PageHeader from '../../components/PageHeader';
 import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
@@ -98,7 +98,7 @@ export default function QuizManagement() {
     });
   };
 
-  const fetchQuizzes = async () => {
+  const fetchQuizzes = useCallback(async () => {
     try {
       setLoading(true);
 
@@ -107,9 +107,9 @@ export default function QuizManagement() {
 
       setQuizzes(data);
 
-      if (!selectedQuizId && data.length > 0) {
-        setSelectedQuizId(data[0].quiz_id);
-      }
+      setSelectedQuizId((currentId) =>
+        currentId || (data.length > 0 ? data[0].quiz_id : null)
+      );
     } catch (error) {
       console.error('Fetch admin quizzes error:', error.response?.data || error);
       setMessage(
@@ -120,7 +120,7 @@ export default function QuizManagement() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   const fetchQuestions = async (quizId) => {
     if (!quizId) {
@@ -149,7 +149,7 @@ export default function QuizManagement() {
 
   useEffect(() => {
     fetchQuizzes();
-  }, []);
+  }, [fetchQuizzes]);
 
   useEffect(() => {
     if (selectedQuizId && activeTab === 'manage') {

@@ -1,0 +1,61 @@
+/* =========================================================
+   01. THEME TOKENS
+   Honey-themed professional design system
+   ========================================================= */
+
+:root {
+  font-family: 'Manrope', Arial, sans-serif;
+
+  /* Base */
+  --bg: #fbf4e6;
+  --bg-soft: #fffaf1;
+  --surface: #fffdf8;
+  --surface-2: #fff6e4;
+  --surface-3: #f8ead0;
+
+  /* Honey brand palette */
+  --primary: #c88918;
+  --primary-hover: #a86f10;
+  --primary-dark: #6f4708;
+  --primary-soft: #f7ddb0;
+  --primary-glow: rgba(200, 137, 24, 0.18);
+
+  /* Natural support palette */
+  --secondary: #6f8f63;
+  --secondary-hover: #5f7c55;
+  --secondary-soft: #e9f1e4;
+
+  /* Text */
+  --text: #342414;
+  --heading: #2a1b0d;
+  --muted: #75634d;
+  --muted-2: #9b896e;
+  --white: #ffffff;
+
+  /* Lines and shadows */
+  --border: #ead8b7;
+  --border-strong: #d8bd85;
+  --shadow-sm: 0 4px 12px rgba(84, 55, 13, 0.06);
+  --shadow-md: 0 10px 28px rgba(84, 55, 13, 0.10);
+  --shadow-lg: 0 22px 60px rgba(84, 55, 13, 0.16);
+
+  /* Status */
+  --danger-bg: #fde9e4;
+  --danger-text: #9d3527;
+  --danger-border: #f1b5a8;
+
+  --success-bg: #e8f4e5;
+  --success-text: #2f6d3a;
+  --success-border: #b9d9b4;
+
+  --warning-bg: #fff1cf;
+  --warning-text: #8a5b06;
+  --warning-border: #ebca80;
+
+  /* Radius */
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-xl: 26px;
+}
+

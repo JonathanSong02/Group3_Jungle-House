@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
@@ -11,7 +11,7 @@ export default function Notifications() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const fetchNotifications = async () => {
+  const fetchNotifications = useCallback(async () => {
     if (!user?.id) {
       setLoading(false);
       return;
@@ -29,11 +29,11 @@ export default function Notifications() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user?.id]);
 
   useEffect(() => {
     fetchNotifications();
-  }, [user?.id]);
+  }, [fetchNotifications]);
 
   const unreadCount = useMemo(() => {
     return items.filter((item) => !item.isRead).length;

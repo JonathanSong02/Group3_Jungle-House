@@ -9,9 +9,10 @@ export default function ArticleDetail() {
   const navigate = useNavigate();
   const [article, setArticle] = useState(null);
   const [links, setLinks] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loadedArticleId, setLoadedArticleId] = useState(null);
   const [openAttachmentIndex, setOpenAttachmentIndex] = useState(null);
   const contentRef = useRef(null);
+  const loading = loadedArticleId !== id;
 
   function getFileUrl(url) {
     if (!url) return "";
@@ -204,44 +205,57 @@ export default function ArticleDetail() {
   }, [article, loading]);
 
   useEffect(() => {
-    setLoading(true);
-    setOpenAttachmentIndex(null);
+    const controller = new AbortController();
 
-    fetch(`${API_BASE_URL}/api/articles/${id}`)
-      .then((res) => {
-        if (!res.ok) {
+    const loadArticle = async () => {
+      try {
+        const articleResponse = await fetch(
+          `${API_BASE_URL}/api/articles/${id}`,
+          { signal: controller.signal }
+        );
+
+        if (!articleResponse.ok) {
           throw new Error("Article not found");
         }
-        return res.json();
-      })
-      .then((articleData) => {
+
+        const articleData = await articleResponse.json();
+
+        if (controller.signal.aborted) return;
+
         console.log("Article detail data:", articleData);
+        setOpenAttachmentIndex(null);
+        setArticle(articleData?.article_id ? articleData : null);
 
-        if (articleData && articleData.article_id) {
-          setArticle(articleData);
-        } else {
-          setArticle(null);
-        }
+        const linksResponse = await fetch(
+          `${API_BASE_URL}/api/article-links/${id}`,
+          { signal: controller.signal }
+        );
 
-        return fetch(`${API_BASE_URL}/api/article-links/${id}`);
-      })
-      .then((res) => {
-        if (!res.ok) {
-          return [];
-        }
-        return res.json();
-      })
-      .then((linksData) => {
+        if (controller.signal.aborted) return;
+
+        const linksData = linksResponse.ok
+          ? await linksResponse.json()
+          : [];
+
+        if (controller.signal.aborted) return;
+
         setLinks(Array.isArray(linksData) ? linksData : []);
-      })
-      .catch((err) => {
+      } catch (err) {
+        if (err.name === "AbortError") return;
+
         console.error("Failed to load article detail:", err);
         setArticle(null);
         setLinks([]);
-      })
-      .finally(() => {
-        setLoading(false);
-      });
+      } finally {
+        if (!controller.signal.aborted) {
+          setLoadedArticleId(id);
+        }
+      }
+    };
+
+    loadArticle();
+
+    return () => controller.abort();
   }, [id]);
 
   // Legacy exact-title link table. Kept ONLY so older plain-text SOP
