@@ -3,10 +3,8 @@
 @import './styles/01-theme.css';
 @import './styles/02-base.css';
 @import './styles/03-layout.css';
-@import './styles/04-sidebar-base.css';
 @import './styles/05-shared-components.css';
 @import './styles/06-login.css';
-@import './styles/07-admin-dashboard.css';
 @import './styles/08-chat-base.css';
 @import './styles/09-quiz.css';
 @import './styles/10-profile.css';
@@ -19,20 +17,20 @@
 @import './styles/17-confirm-modal.css';
 @import './styles/18-responsive-base.css';
 @import './styles/19-topbar.css';
-@import './styles/20-sidebar-enhancements.css';
+
 @import './styles/21-ai-chat-overrides-v1.css';
-@import './styles/22-sidebar-layout-overrides.css';
 @import './styles/23-ai-chat-overrides-v2.css';
-@import './styles/24-sidebar-final.css';
 @import './styles/25-ai-chat-mobile-v1.css';
+
 @import './styles/26-article-table.css';
-@import './styles/27-sidebar-icons.css';
 @import './styles/28-article-attachments.css';
 @import './styles/29-chat-image-upload.css';
 @import './styles/30-rich-text-editor.css';
-@import './styles/31-admin-dashboard-fix.css';
 @import './styles/32-ai-chat-client-layout.css';
 @import './styles/33-ai-chat-mobile-final.css';
 @import './styles/34-quiz-feedback.css';
 @import './styles/35-knowledge-base.css';
-@import './styles/36-dashboard.css';
+
+/* New redesigned UI */
+@import './styles/sidebar.css';
+@import './styles/dashboard.css';
