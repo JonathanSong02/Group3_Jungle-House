@@ -1,0 +1,49 @@
+/* =========================================================
+   09. ADMIN DASHBOARD
+   ========================================================= */
+
+.admin-hero-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 22px;
+  padding: 28px;
+  background:
+    linear-gradient(135deg, rgba(255, 253, 248, 0.98), rgba(255, 231, 177, 0.96)),
+    var(--surface);
+}
+
+.admin-hero-card h2 {
+  margin-bottom: 8px;
+  color: var(--primary-dark);
+}
+
+.admin-hero-card p:last-child {
+  margin-bottom: 0;
+}
+
+.admin-dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 18px;
+}
+
+.admin-action-card {
+  min-height: 175px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  text-decoration: none;
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.admin-action-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--primary);
+  box-shadow: var(--shadow-md);
+}
+
+.admin-action-card h3 {
+  color: var(--primary-dark);
+}
+
