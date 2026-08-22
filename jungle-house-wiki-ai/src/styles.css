@@ -22,8 +22,6 @@
 @import './styles/23-ai-chat-overrides-v2.css';
 @import './styles/25-ai-chat-mobile-v1.css';
 
-@import './styles/26-article-table.css';
-@import './styles/28-article-attachments.css';
 @import './styles/29-chat-image-upload.css';
 @import './styles/30-rich-text-editor.css';
 @import './styles/32-ai-chat-client-layout.css';
@@ -34,3 +32,5 @@
 /* New redesigned UI */
 @import './styles/sidebar.css';
 @import './styles/dashboard.css';
+@import "./styles/ArticleDetail.css";
+@import './styles/KnowledgeBase.css';
