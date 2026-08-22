@@ -2,6 +2,7 @@ import { useMemo, useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
 import api from '../services/api';
+import '../styles/KnowledgeBase.css';
 
 const defaultCategoryOrder = ['SOP', 'PRODUCT', 'SALES', 'FAQ', 'UNCATEGORIZED'];
 
@@ -241,6 +242,7 @@ export default function KnowledgeBase() {
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Search article title or content"
+            aria-label="Search knowledge articles"
           />
         </label>
 
@@ -264,14 +266,17 @@ export default function KnowledgeBase() {
       </div>
 
       {loading ? (
-        <div className="card-like kb-state-card">
-          <p className="muted">Loading knowledge base...</p>
+        <div className="kb-state-card" aria-live="polite">
+          <span className="kb-loading-spinner" aria-hidden="true" />
+          <strong>Loading knowledge base</strong>
+          <p>Preparing approved Jungle House articles...</p>
         </div>
       ) : null}
 
       {error ? (
-        <div className="card-like kb-state-card danger-soft">
-          <p className="error-text">{error}</p>
+        <div className="kb-state-card kb-state-error" role="alert">
+          <strong>Unable to load knowledge base</strong>
+          <p>{error}</p>
         </div>
       ) : null}
 
@@ -299,9 +304,10 @@ export default function KnowledgeBase() {
           </div>
 
           {filteredArticles.length === 0 ? (
-            <div className="card-like kb-state-card">
+            <div className="kb-state-card">
+              <span className="kb-empty-icon" aria-hidden="true">⌕</span>
               <h3>No articles found</h3>
-              <p className="muted">
+              <p>
                 Try using a shorter keyword or choose another category.
               </p>
             </div>
