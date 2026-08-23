@@ -6,7 +6,6 @@
 @import './styles/05-shared-components.css';
 @import './styles/06-login.css';
 @import './styles/08-chat-base.css';
-@import './styles/09-quiz.css';
 @import './styles/10-profile.css';
 @import './styles/11-content-management.css';
 @import './styles/12-notifications.css';
@@ -26,7 +25,6 @@
 @import './styles/30-rich-text-editor.css';
 @import './styles/32-ai-chat-client-layout.css';
 @import './styles/33-ai-chat-mobile-final.css';
-@import './styles/34-quiz-feedback.css';
 @import './styles/35-knowledge-base.css';
 
 /* New redesigned UI */
@@ -34,3 +32,4 @@
 @import './styles/dashboard.css';
 @import "./styles/ArticleDetail.css";
 @import './styles/KnowledgeBase.css';
+@import './styles/Quiz.css';
