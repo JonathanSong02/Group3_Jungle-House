@@ -687,6 +687,7 @@ body.sidebar-is-collapsed .sidebar-user-menu {
   body.sidebar-is-collapsed .main-area {
     width: 100%;
     margin-left: 0;
+    padding-top: 72px;
   }
 
   .mobile-sidebar-open-btn {

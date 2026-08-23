@@ -5,7 +5,7 @@
 @import './styles/03-layout.css';
 @import './styles/05-shared-components.css';
 @import './styles/06-login.css';
-@import './styles/08-chat-base.css';
+
 @import './styles/10-profile.css';
 @import './styles/11-content-management.css';
 @import './styles/12-notifications.css';
@@ -17,16 +17,14 @@
 @import './styles/18-responsive-base.css';
 @import './styles/19-topbar.css';
 
-@import './styles/21-ai-chat-overrides-v1.css';
-@import './styles/23-ai-chat-overrides-v2.css';
-@import './styles/25-ai-chat-mobile-v1.css';
+
 
 @import './styles/26-article-table.css';
 @import './styles/28-article-attachments.css';
-@import './styles/29-chat-image-upload.css';
+
 @import './styles/30-rich-text-editor.css';
-@import './styles/32-ai-chat-client-layout.css';
-@import './styles/33-ai-chat-mobile-final.css';
+
+
 @import './styles/35-knowledge-base.css';
 
 /* New redesigned UI */
@@ -34,3 +32,5 @@
 @import './styles/dashboard.css';
 @import "./styles/ArticleDetail.css";
 @import './styles/KnowledgeBase.css';
+@import './styles/Quiz.css';
+@import './styles/Chat.css';
