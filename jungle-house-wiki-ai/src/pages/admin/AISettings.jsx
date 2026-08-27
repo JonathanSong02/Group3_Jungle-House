@@ -128,6 +128,14 @@ export default function AISettings() {
         success: Boolean(response.data?.success),
         message: response.data?.message || 'Test completed.',
       });
+
+      // Testing the already-saved config (no new key typed) updates its
+      // test_status in the database, but this page's "Current Active AI
+      // Provider" card was only loaded once on page open -- refetch so it
+      // reflects the result instead of permanently showing "Not tested".
+      if (!form.api_key.trim()) {
+        fetchSettings();
+      }
     } catch (error) {
       console.error('Test AI connection error:', error);
       setTestResult({
@@ -136,6 +144,10 @@ export default function AISettings() {
           error.response?.data?.message ||
           'AI provider connection failed. Please check your API key.',
       });
+
+      if (!form.api_key.trim()) {
+        fetchSettings();
+      }
     } finally {
       setTesting(false);
     }
