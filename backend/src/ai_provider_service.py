@@ -282,7 +282,7 @@ def _call_anthropic(prompt, model_name, api_key, timeout):
     return data["content"][0]["text"]
 
 
-def call_ai_provider(prompt, provider, model_name, api_key, timeout=45):
+def call_ai_provider(prompt, provider, model_name, api_key, timeout=60):
     provider = str(provider or "").strip().lower()
 
     if provider == "gemini":
@@ -354,7 +354,7 @@ def generate_ai_vision_reply(prompt, image_path, timeout=45):
             conn.close()
 
 
-def generate_ai_reply(prompt, timeout=45):
+def generate_ai_reply(prompt, timeout=60):
     """
     High-level helper for any feature (AI Chat, AI Generated Quiz, future
     tools) that just wants text back from whichever provider the manager
