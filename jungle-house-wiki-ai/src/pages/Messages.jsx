@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import '../styles/Messages.css';
 
 export default function Messages() {
   const { user } = useAuth();
@@ -252,7 +253,7 @@ const fetchData = useCallback(async () => {
   };
 
   return (
-    <div>
+    <div className="messages-page">
       <PageHeader
         title="Messages"
         subtitle="Communicate with managers, team leads, and staff directly inside the system."
