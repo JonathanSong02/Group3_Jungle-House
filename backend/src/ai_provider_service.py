@@ -325,6 +325,9 @@ def generate_ai_vision_reply(prompt, image_path, timeout=45):
     conn = None
     cursor = None
 
+    # Only the DB lookup needs a connection -- fetch the config and close
+    # it *before* the (potentially slow, up to `timeout` seconds) external
+    # vision call, instead of holding it open and idle the whole time.
     try:
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
@@ -343,15 +346,14 @@ def generate_ai_vision_reply(prompt, image_path, timeout=45):
             )
 
         api_key = decrypt_api_key(config["encrypted_api_key"])
-
-        return _call_gemini_vision(
-            prompt, image_path, config["model_name"], api_key, timeout=timeout
-        )
+        model_name = config["model_name"]
     finally:
         if cursor:
             cursor.close()
         if conn:
             conn.close()
+
+    return _call_gemini_vision(prompt, image_path, model_name, api_key, timeout=timeout)
 
 
 def generate_ai_reply(prompt, timeout=90):
@@ -363,6 +365,11 @@ def generate_ai_reply(prompt, timeout=90):
     conn = None
     cursor = None
 
+    # Same principle as generate_ai_vision_reply(): fetch the config and
+    # close the DB connection *before* the external call, which can take
+    # up to `timeout` seconds (currently 90s) -- a connection left open
+    # and idle that long risks going stale, which previously surfaced as
+    # a confusing second (database) error masking the real provider error.
     try:
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
@@ -376,18 +383,14 @@ def generate_ai_reply(prompt, timeout=90):
             )
 
         api_key = decrypt_api_key(config["encrypted_api_key"])
-
-        print(f"AI PROVIDER: using provider='{config['provider']}' model='{config['model_name']}'")
-
-        return call_ai_provider(
-            prompt,
-            config["provider"],
-            config["model_name"],
-            api_key,
-            timeout=timeout,
-        )
+        provider = config["provider"]
+        model_name = config["model_name"]
     finally:
         if cursor:
             cursor.close()
         if conn:
             conn.close()
+
+    print(f"AI PROVIDER: using provider='{provider}' model='{model_name}'")
+
+    return call_ai_provider(prompt, provider, model_name, api_key, timeout=timeout)

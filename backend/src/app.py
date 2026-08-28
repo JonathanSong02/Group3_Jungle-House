@@ -5053,6 +5053,13 @@ def test_ai_settings():
     conn = None
     cursor = None
 
+    # Step 1: open the DB only long enough to check permissions and load
+    # whichever config we're about to test, then close it immediately.
+    # The actual provider call below can take up to ~90s (a slow/hanging
+    # external API) -- holding a MySQL connection open and idle for that
+    # whole time risks it going stale, which previously caused a confusing
+    # second failure (a DB error) to mask the real, already-classified
+    # provider error (timeout/429/404/etc.) with a generic message instead.
     try:
         conn = ai_provider_service.get_db_connection()
         cursor = conn.cursor(dictionary=True)
@@ -5082,52 +5089,12 @@ def test_ai_settings():
             model_name = existing["model_name"]
             api_key = ai_provider_service.decrypt_api_key(existing["encrypted_api_key"])
 
-        try:
-            ai_provider_service.call_ai_provider(
-                "Reply with only: OK", provider, model_name, api_key
-            )
-            success = True
-            message = "AI provider connected successfully."
-        except requests.exceptions.Timeout:
-            print("AI PROVIDER TEST CALL ERROR: timed out waiting for", provider)
-            success = False
-            message = (
-                f"Connection to {provider} timed out. The provider may be slow "
-                "or unreachable right now -- this is not an API key or billing "
-                "problem. Please try again in a moment."
-            )
-        except requests.exceptions.HTTPError as call_error:
-            status_code = call_error.response.status_code if call_error.response is not None else None
-            print("AI PROVIDER TEST CALL ERROR:", status_code, call_error)
-            if status_code == 429:
-                message = "AI provider rejected the request: rate limit or quota exceeded (HTTP 429)."
-            elif status_code in (401, 403):
-                message = f"AI provider rejected the API key (HTTP {status_code}). Please check the key is correct and active."
-            elif status_code == 404:
-                message = f"AI provider could not find model \"{model_name}\" (HTTP 404). Please check the model name is correct and still supported."
-            else:
-                message = f"AI provider returned an error (HTTP {status_code})."
-            success = False
-        except Exception as call_error:
-            print("AI PROVIDER TEST CALL ERROR:", call_error)
-            success = False
-            message = "AI provider connection failed. Please check your API key."
-
-        if testing_saved_config:
-            ai_provider_service.update_active_provider_test_status(cursor, success)
-            conn.commit()
-
-        return jsonify({"success": success, "message": message}), (200 if success else 400)
-
     except Exception as error:
-        if conn:
-            conn.rollback()
-
         print("TEST AI SETTINGS ERROR:", error)
 
         return jsonify({
             "success": False,
-            "message": "AI provider connection failed. Please check your API key."
+            "message": "Failed to load AI settings for testing."
         }), 500
 
     finally:
@@ -5135,6 +5102,61 @@ def test_ai_settings():
             cursor.close()
         if conn:
             conn.close()
+
+    # Step 2: the actual (potentially slow) external call, with no DB
+    # connection held open in the background.
+    try:
+        ai_provider_service.call_ai_provider(
+            "Reply with only: OK", provider, model_name, api_key
+        )
+        success = True
+        message = "AI provider connected successfully."
+    except requests.exceptions.Timeout:
+        print("AI PROVIDER TEST CALL ERROR: timed out waiting for", provider)
+        success = False
+        message = (
+            f"Connection to {provider} timed out. The provider may be slow "
+            "or unreachable right now -- this is not an API key or billing "
+            "problem. Please try again in a moment."
+        )
+    except requests.exceptions.HTTPError as call_error:
+        status_code = call_error.response.status_code if call_error.response is not None else None
+        print("AI PROVIDER TEST CALL ERROR:", status_code, call_error)
+        if status_code == 429:
+            message = "AI provider rejected the request: rate limit or quota exceeded (HTTP 429)."
+        elif status_code in (401, 403):
+            message = f"AI provider rejected the API key (HTTP {status_code}). Please check the key is correct and active."
+        elif status_code == 404:
+            message = f"AI provider could not find model \"{model_name}\" (HTTP 404). Please check the model name is correct and still supported."
+        else:
+            message = f"AI provider returned an error (HTTP {status_code})."
+        success = False
+    except Exception as call_error:
+        print("AI PROVIDER TEST CALL ERROR:", call_error)
+        success = False
+        message = "AI provider connection failed. Please check your API key."
+
+    # Step 3: a fresh, short-lived DB connection just to record the result.
+    # If this part fails, the manager still sees the real test result above
+    # -- only the "last tested" record-keeping is affected.
+    if testing_saved_config:
+        write_conn = None
+        write_cursor = None
+
+        try:
+            write_conn = ai_provider_service.get_db_connection()
+            write_cursor = write_conn.cursor(dictionary=True)
+            ai_provider_service.update_active_provider_test_status(write_cursor, success)
+            write_conn.commit()
+        except Exception as error:
+            print("TEST AI SETTINGS: failed to record test status:", error)
+        finally:
+            if write_cursor:
+                write_cursor.close()
+            if write_conn:
+                write_conn.close()
+
+    return jsonify({"success": success, "message": message}), (200 if success else 400)
 
 
 # =========================
