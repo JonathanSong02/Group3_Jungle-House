@@ -2032,7 +2032,6 @@ def is_escalation_result(result: dict | None) -> bool:
     answer = str(result.get("answer", "")).lower()
 
     if source in {
-        "irrelevant_question",
         "low_confidence_or_model_unavailable",
         "prediction_error",
         "engine_unavailable",
@@ -5968,7 +5967,6 @@ def chat():
             "repeated_unclear_question",
             "repeated_system_problem",
             "escalate_after_two_unclear_attempts",
-            "irrelevant_question",
             "fallback",
             "unknown",
             "prediction_error",
@@ -6003,6 +6001,14 @@ def chat():
             should_escalate = True
 
         elif source in clarification_sources:
+            should_escalate = False
+
+        elif source == "irrelevant_question":
+            # Off-topic/spam (jokes, memes, "weather", etc.) is deliberately
+            # never escalated, no matter how low its confidence score is --
+            # only genuine work questions the KB can't answer should reach
+            # a team lead. Without this, the low-confidence catch-all below
+            # would escalate it anyway.
             should_escalate = False
 
         elif result.get("confidence", result.get("score", 0)) < LOW_CONFIDENCE_THRESHOLD:

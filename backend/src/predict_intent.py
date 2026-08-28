@@ -2473,14 +2473,18 @@ def get_model_answer(question: str, context: Optional[dict] = None) -> dict:
     # 5. Irrelevant question
     # -----------------------------
     if is_irrelevant_question(question):
-        message = "This question is not related to the SOP or knowledge system. Please check with your team lead."
+        # Not a real work question (jokes, memes, off-topic chatter) --
+        # reject it politely without creating an escalation ticket. Only
+        # genuine work questions the KB can't answer should ever reach a
+        # team lead.
+        message = "This looks unrelated to SOPs or work topics, so I won't send it to a team lead. Try asking about a kiosk, product, or procedure instead."
         return build_response(
             reply=message,
             answer=message,
             score=0.25,
             source="irrelevant_question",
             fallback=True,
-            escalation_ready=True,
+            escalation_ready=False,
             context={"unclear_count": unclear_count},
         )
 
