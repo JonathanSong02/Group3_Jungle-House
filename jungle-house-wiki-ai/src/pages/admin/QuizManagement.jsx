@@ -395,7 +395,7 @@ export default function QuizManagement() {
       // request) can comfortably take longer than the shared API client's
       // default timeout, so this specific call gets a longer one of its own
       // -- this does not change the shared axios instance or its baseURL.
-      // Kept comfortably above the backend's own ~60s provider timeout so
+      // Kept comfortably above the backend's own ~90s provider timeout so
       // the frontend doesn't give up before the backend has a chance to
       // finish or fall back to the template generator -- otherwise larger
       // question counts (which take Gemini longer to generate) race the
@@ -409,7 +409,7 @@ export default function QuizManagement() {
           difficulty: aiForm.difficulty,
           status: aiForm.status,
         },
-        { timeout: 90000 }
+        { timeout: 150000 }
       );
 
       setAiPreview(response.data?.quiz || null);
