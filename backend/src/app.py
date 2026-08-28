@@ -5002,6 +5002,12 @@ def save_ai_settings():
 
         conn.commit()
 
+        # The write above already succeeded and is permanent -- nothing
+        # past this point should be able to turn it into a reported
+        # "failed to save". add_audit_log() already swallows its own
+        # errors, but the config read-back could still theoretically fail
+        # (stale cursor, etc.), so it gets its own safety net instead of
+        # sharing the outer except block.
         add_audit_log(
             actor_id=actor_id,
             action="Updated AI provider settings",
@@ -5009,7 +5015,11 @@ def save_ai_settings():
             description=f"Active AI provider set to {provider} ({model_name})."
         )
 
-        config = ai_provider_service.get_ai_provider_public_config(cursor)
+        try:
+            config = ai_provider_service.get_ai_provider_public_config(cursor)
+        except Exception as read_back_error:
+            print("AI SETTINGS SAVED BUT READ-BACK FAILED:", read_back_error)
+            config = None
 
         return jsonify({
             "success": True,
