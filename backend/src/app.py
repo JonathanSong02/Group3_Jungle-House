@@ -5497,13 +5497,21 @@ def build_ai_chat_context(question, limit=5, max_chars=6000):
     return "\n".join(chunks), candidate_articles
 
 
-def answer_question_with_ai_provider(question):
+def answer_question_with_ai_provider(question, timeout=25):
     """
     Returns {"answer": str, "sourceTitle": str, "article_id": int|None} if
     the AI provider found a grounded answer in the Knowledge Base, or None
     if it couldn't (in which case the caller should fall through to the
     normal escalation flow -- this function never forces an answer that
     isn't grounded).
+
+    Uses a shorter timeout (25s) than generate_ai_reply()'s own 90s
+    default on purpose: this runs inline while a staff member is actively
+    waiting for a live chat reply, so it's better to give up sooner and
+    escalate than to leave them staring at a spinner for a minute and a
+    half every time the provider is having a slow moment. Quiz generation
+    (a manager clicking a button, not a live conversation) keeps the
+    longer default since waiting there is far less disruptive.
     """
     context_text, candidate_articles = build_ai_chat_context(question)
 
@@ -5535,7 +5543,7 @@ Knowledge Base context:
 {context_text}
 """
 
-    raw_reply = ai_provider_service.generate_ai_reply(prompt)
+    raw_reply = ai_provider_service.generate_ai_reply(prompt, timeout=timeout)
 
     json_text = raw_reply.strip()
     json_text = re.sub(r"^```(?:json)?\s*", "", json_text)
