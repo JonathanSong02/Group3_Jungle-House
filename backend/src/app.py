@@ -3783,7 +3783,6 @@ def list_registration_keys():
 @app.route("/api/auth/login", methods=["POST"])
 def login():
     data = request.get_json() or {}
-    print("LOGIN ROUTE HIT:", data)
 
     email = data.get("email", "").strip().lower()
     password = data.get("password", "")
@@ -3828,8 +3827,6 @@ def login():
             LIMIT 1
         """, (email,))
         user = cursor.fetchone()
-
-        print("LOGIN USER FOUND:", user)
 
         if not user:
             record_login_history(
