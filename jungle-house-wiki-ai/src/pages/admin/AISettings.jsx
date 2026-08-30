@@ -117,12 +117,22 @@ export default function AISettings() {
       setMessage('');
       setTestResult(null);
 
-      const response = await api.post('/ai-settings/test', {
-        user_id: actorId,
-        provider: form.provider,
-        model_name: form.model_name.trim(),
-        api_key: form.api_key.trim(),
-      });
+      // The backend's own wait for the AI provider can take up to ~90s
+      // (a slow/hanging provider, not just a fast reject), so this call
+      // needs a longer timeout than the shared API client's 10s default --
+      // otherwise the browser gives up and shows a generic "check your API
+      // key" message before the backend's real, specific error/success can
+      // ever come back.
+      const response = await api.post(
+        '/ai-settings/test',
+        {
+          user_id: actorId,
+          provider: form.provider,
+          model_name: form.model_name.trim(),
+          api_key: form.api_key.trim(),
+        },
+        { timeout: 150000 }
+      );
 
       setTestResult({
         success: Boolean(response.data?.success),
