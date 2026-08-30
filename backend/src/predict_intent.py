@@ -1073,6 +1073,14 @@ NEGATIVE_SWITCH_PHRASES = [
 
 IRRELEVANT_ONLY_PHRASES = [
     "babi", "fuck", "movie", "relationship", "weather",
+    # Casual chit-chat / non-work small talk -- multi-word phrases only,
+    # to avoid accidentally matching a real work question that happens to
+    # share a single common word.
+    "tell me a joke", "tell a joke", "make me laugh",
+    "sing me a song", "sing a song", "tell me a story",
+    "tell me a riddle", "how are you", "who are you",
+    "what is your name", "what's your name", "how old are you",
+    "i love you", "marry me", "what's up",
 ]
 
 
