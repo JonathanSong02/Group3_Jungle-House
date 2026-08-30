@@ -2911,6 +2911,7 @@ def build_article_ai_result(article, question, score):
         "confidence": score,
         "confidence_label": get_confidence_label(score),
         "source": "wiki_article_database",
+        "article_id": article.get("article_id"),
         "context": {
             "source_type": "knowledge_base",
             "article_id": article.get("article_id"),
@@ -5484,17 +5485,27 @@ def build_ai_chat_context(question, limit=5, max_chars=6000):
         chunks.append(entry)
         total_len += len(entry)
 
-    return "\n".join(chunks)
+    # Returned alongside the text blob so the caller can resolve whichever
+    # article title the AI says it used back to a real article_id -- the
+    # AI itself never sees or invents IDs, it only ever names a title from
+    # what's already in the prompt above.
+    candidate_articles = [
+        {"article_id": article.get("article_id"), "title": article.get("title") or ""}
+        for article in top_articles
+    ]
+
+    return "\n".join(chunks), candidate_articles
 
 
 def answer_question_with_ai_provider(question):
     """
-    Returns {"answer": str, "sourceTitle": str} if the AI provider found a
-    grounded answer in the Knowledge Base, or None if it couldn't (in
-    which case the caller should fall through to the normal escalation
-    flow -- this function never forces an answer that isn't grounded).
+    Returns {"answer": str, "sourceTitle": str, "article_id": int|None} if
+    the AI provider found a grounded answer in the Knowledge Base, or None
+    if it couldn't (in which case the caller should fall through to the
+    normal escalation flow -- this function never forces an answer that
+    isn't grounded).
     """
-    context_text = build_ai_chat_context(question)
+    context_text, candidate_articles = build_ai_chat_context(question)
 
     if not context_text.strip():
         return None
@@ -5513,7 +5524,10 @@ If you can answer from the context, respond with ONLY valid JSON in this
 exact shape (no markdown, no text outside the JSON):
 {{"answered": true, "answer": "...", "sourceTitle": "..."}}
 
-Keep the answer simple and practical for staff.
+Keep the answer SHORT and direct -- one or two sentences maximum, stating
+only the specific fact/step asked for. Do not add extra explanation,
+preamble, or restate the question. "sourceTitle" must be copied exactly
+from one of the "###" headings in the context below.
 
 Staff question: {question}
 
@@ -5537,9 +5551,23 @@ Knowledge Base context:
     if not answer_text:
         return None
 
+    source_title = str(parsed.get("sourceTitle") or "").strip()
+
+    # Resolve the AI's claimed source title back to a real article_id by
+    # matching against the candidates actually given to it -- the AI never
+    # sees or makes up IDs itself, so a case-insensitive title match is the
+    # only way to attach a clickable link safely. No match -> no link,
+    # rather than guessing wrong.
+    article_id = None
+    for candidate in candidate_articles:
+        if candidate["title"].strip().lower() == source_title.lower():
+            article_id = candidate["article_id"]
+            break
+
     return {
         "answer": answer_text,
-        "sourceTitle": str(parsed.get("sourceTitle") or "").strip(),
+        "sourceTitle": source_title,
+        "article_id": article_id,
     }
 
 
@@ -6074,6 +6102,11 @@ def chat():
                 result["escalation_required"] = False
                 should_escalate = False
                 clear_ai_fail_count(data, question)
+
+                if ai_answer.get("article_id"):
+                    result["article_id"] = ai_answer["article_id"]
+                    result.setdefault("context", {})
+                    result["context"]["article_id"] = ai_answer["article_id"]
 
         if should_escalate:
             escalation_id = create_escalation(

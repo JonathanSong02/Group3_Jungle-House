@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 
 const starterMessages = [
   {
@@ -943,16 +944,35 @@ function renderResponseMeta(message) {
       ) : null}
 
       {hasSource ? (
-        <span
-          style={{
-            padding: '4px 8px',
-            borderRadius: '999px',
-            backgroundColor: '#f8f9fa',
-            border: '1px solid #dee2e6',
-          }}
-        >
-          Source: {message.source}
-        </span>
+        message.article_id ? (
+          <Link
+            to={`/knowledge/${message.article_id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              padding: '4px 8px',
+              borderRadius: '999px',
+              backgroundColor: '#eef6ff',
+              border: '1px solid #b6d7ff',
+              color: '#1a5fb4',
+              textDecoration: 'none',
+              fontWeight: 600,
+            }}
+          >
+            Source: {message.title || 'View article'} ↗
+          </Link>
+        ) : (
+          <span
+            style={{
+              padding: '4px 8px',
+              borderRadius: '999px',
+              backgroundColor: '#f8f9fa',
+              border: '1px solid #dee2e6',
+            }}
+          >
+            Source: {message.source}
+          </span>
+        )
       ) : null}
 
       {hasFallback ? (
@@ -1065,6 +1085,7 @@ function buildAiMessage(data) {
       type: 'sop',
       reply: data.reply || '',
       title: data.title || 'SOP Response',
+      article_id: data.article_id || backendContext.article_id || null,
       category: data.category || backendContext.category || '',
       purpose: data.purpose || '',
       section: data.section || backendContext.section || '',
@@ -1104,6 +1125,7 @@ function buildAiMessage(data) {
       'No usable answer returned from backend.',
     answer: data.answer || data.reply || '',
     title: data.title || backendContext.title || '',
+    article_id: data.article_id || backendContext.article_id || null,
     category: data.category || backendContext.category || '',
     section: data.section || backendContext.section || '',
     notes: data.notes || [],
