@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import '../styles/Chat.css';
+
 
 const starterMessages = [
   {
@@ -921,6 +923,7 @@ function renderResponseMeta(message) {
 
   return (
     <div
+      className="ai-chat-response-meta"
       style={{
         display: 'flex',
         flexWrap: 'wrap',
@@ -1925,7 +1928,7 @@ const removeSelectedImage = () => {
         key={message.id}
         className={`message-bubble ${message.sender === 'user' ? 'user' : 'ai'}`}
       >
-        <strong>{message.sender === 'user' ? 'You' : 'AI'}</strong>
+        <strong className="ai-chat-sender-label">{message.sender === 'user' ? 'You' : 'AI'}</strong>
         {renderResponseMeta(message)}
         {renderKnowledgeLink(message.link || message.article_link)}
 
@@ -2231,7 +2234,7 @@ const removeSelectedImage = () => {
     return (
       <aside className="chat-recents-panel">
         <div className="chat-recents-header">
-          <h3>Recents</h3>
+          <h3>Conversations</h3>
 
           <button
             type="button"
@@ -2671,8 +2674,14 @@ const removeSelectedImage = () => {
 
   return (
     <div className="ai-chat-page">
-      <div className="ai-chat-top-row ai-chat-top-row-tabs-only">
-        <div className="tab-row ai-chat-tabs">
+      <div className="ai-chat-top-row">
+        <div className="ai-chat-page-heading">
+          <span className="ai-chat-page-kicker">Knowledge assistant</span>
+          <h1>AI Chat</h1>
+          <p>Ask about Jungle House SOPs, products, training, and daily operations.</p>
+        </div>
+
+        <div className="tab-row ai-chat-tabs" aria-label="AI chat sections">
           <button
             type="button"
             className={activeTab === 'ask' ? 'primary-btn' : 'secondary-btn'}
@@ -2694,6 +2703,7 @@ const removeSelectedImage = () => {
           type="button"
           className="mobile-ai-chat-menu-btn"
           onClick={() => setMobileChatMenuOpen(true)}
+          aria-label="Open AI chat menu"
         >
           ☰ Menu
         </button>

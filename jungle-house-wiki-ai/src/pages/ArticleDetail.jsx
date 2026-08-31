@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
+import "../styles/ArticleDetail.css";
 
 const API_BASE_URL = "https://group3jungle-house-production.up.railway.app";
 
@@ -585,16 +586,26 @@ export default function ArticleDetail() {
 
   if (loading) {
     return (
-      <div className="page-container">
-        <p>Loading article...</p>
+      <div className="article-detail-page">
+        <div className="article-detail-state" aria-live="polite">
+          <span className="article-detail-state-spinner" aria-hidden="true" />
+          <strong>Loading article</strong>
+          <p>Please wait while the knowledge article is being prepared.</p>
+        </div>
       </div>
     );
   }
 
   if (!article) {
     return (
-      <div className="page-container">
-        <p>Article not found.</p>
+      <div className="article-detail-page">
+        <div className="article-detail-state article-detail-state-error" role="alert">
+          <strong>Article not found</strong>
+          <p>The requested knowledge article could not be loaded.</p>
+          <button type="button" className="secondary-btn" onClick={() => navigate(-1)}>
+            Back to Knowledge Base
+          </button>
+        </div>
       </div>
     );
   }
@@ -602,17 +613,11 @@ export default function ArticleDetail() {
   const attachments = getAttachments(article);
 
   return (
-    <div>
+    <div className="article-detail-page">
       <button
-        className="back-btn text-link"
+        type="button"
+        className="back-btn article-detail-back"
         onClick={() => navigate(-1)}
-        style={{
-          marginBottom: "16px",
-          cursor: "pointer",
-          background: "none",
-          border: "none",
-          padding: 0,
-        }}
       >
         &larr; Back to Knowledge Base
       </button>

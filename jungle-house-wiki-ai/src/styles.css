@@ -1,36 +1,34 @@
 @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
 
-@import './styles/01-theme.css';
-@import './styles/02-base.css';
-@import './styles/03-layout.css';
-@import './styles/05-shared-components.css';
-@import './styles/06-login.css';
-@import './styles/08-chat-base.css';
-@import './styles/09-quiz.css';
-@import './styles/10-profile.css';
-@import './styles/11-content-management.css';
-@import './styles/12-notifications.css';
-@import './styles/13-status.css';
-@import './styles/14-modals-escalations.css';
-@import './styles/15-messages.css';
-@import './styles/16-retrieve-bin.css';
-@import './styles/17-confirm-modal.css';
-@import './styles/18-responsive-base.css';
-@import './styles/19-topbar.css';
+/* =========================================================
+   GLOBAL / SHARED
+   ========================================================= */
+@import './styles/global.css';
 
-@import './styles/21-ai-chat-overrides-v1.css';
-@import './styles/23-ai-chat-overrides-v2.css';
-@import './styles/25-ai-chat-mobile-v1.css';
+/* =========================================================
+   OTHER PAGE GROUPS
+   ========================================================= */
+@import './styles/Account.css';
+@import './styles/ContentManagement.css';
+@import './styles/EscalationModals.css';
 
-@import './styles/26-article-table.css';
-@import './styles/28-article-attachments.css';
-@import './styles/29-chat-image-upload.css';
-@import './styles/30-rich-text-editor.css';
-@import './styles/32-ai-chat-client-layout.css';
-@import './styles/33-ai-chat-mobile-final.css';
-@import './styles/34-quiz-feedback.css';
-@import './styles/35-knowledge-base.css';
-
-/* New redesigned UI */
+/* =========================================================
+   NEW REDESIGNED UI
+   Keep these separate because each filename clearly matches
+   the page/component that uses it.
+   ========================================================= */
 @import './styles/sidebar.css';
 @import './styles/dashboard.css';
+@import './styles/ArticleDetail.css';
+@import './styles/KnowledgeBase.css';
+@import './styles/Quiz.css';
+@import './styles/Chat.css';
+@import './styles/Messages.css';
+@import './styles/Notifications.css';
+
+/*
+   Admin Dashboard:
+   Keep using your redesigned AdminDashboard.css from:
+   src/pages/admin/styles/AdminDashboard.css
+   Do not restore old 07-admin-dashboard.css / 31-admin-dashboard-fix.css.
+*/

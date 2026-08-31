@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import api from '../services/api';
+import '../styles/Quiz.css';
 
 export default function QuizList() {
   const [quizItems, setQuizItems] = useState([]);
@@ -273,47 +274,79 @@ export default function QuizList() {
   const answeredCount = Object.keys(selectedAnswers).length;
 
   return (
-    <div>
+    <div className="quiz-page">
       <PageHeader
         title="Quiz / Training"
         subtitle="Support onboarding with basic quizzes and learning reinforcement."
       />
 
       {!activeQuiz ? (
-        <div className="cards-grid">
+        <div className="cards-grid quiz-list-grid">
           {loadingQuizzes ? (
-            <p>Loading quizzes...</p>
+            <div className="quiz-state-card" aria-live="polite">
+              <span className="quiz-loading-spinner" aria-hidden="true" />
+              <strong>Loading training quizzes</strong>
+              <p>Preparing the available learning activities...</p>
+            </div>
           ) : quizItems.length === 0 ? (
-            <p>No quiz found.</p>
+            <div className="quiz-state-card">
+              <span className="quiz-state-icon" aria-hidden="true">?</span>
+              <strong>No quizzes available</strong>
+              <p>Training quizzes will appear here when they are published.</p>
+            </div>
           ) : (
             quizItems.map((quiz) => (
               <article key={quiz.id} className="card-like quiz-card">
                 <div className="quiz-card-top">
-                  <h3>{quiz.title}</h3>
+                  <div className="quiz-card-heading">
+                    <span className="quiz-card-icon" aria-hidden="true">✓</span>
+                    <div>
+                      <span className="quiz-card-kicker">
+                        {quiz.category || 'Training'}
+                      </span>
+                      <h3>{quiz.title}</h3>
+                    </div>
+                  </div>
+
                   <span className="status-badge pending">Training Quiz</span>
                 </div>
 
-                <p className="muted">
-                  Questions: {quiz.questionCount ?? 0}
-                </p>
-                <p className="muted">Last score: {quiz.lastScore ?? 0}%</p>
+                {quiz.description ? (
+                  <p className="quiz-card-description">{quiz.description}</p>
+                ) : (
+                  <p className="quiz-card-description">
+                    Complete this quiz to reinforce your Jungle House knowledge.
+                  </p>
+                )}
+
+                <div className="quiz-card-meta">
+                  <span>
+                    <strong>{quiz.questionCount ?? 0}</strong>
+                    Questions
+                  </span>
+                  <span>
+                    <strong>{quiz.lastScore ?? 0}%</strong>
+                    Last score
+                  </span>
+                </div>
 
                 <button
-                  className="primary-btn"
+                  className="primary-btn quiz-card-action"
                   onClick={() => handleStartQuiz(quiz.id)}
                 >
                   Attempt Quiz
+                  <span aria-hidden="true">→</span>
                 </button>
               </article>
             ))
           )}
         </div>
       ) : (
-        <div className="stack-gap">
-          <div className="card-like">
+        <div className="stack-gap quiz-session">
+          <div className="card-like quiz-session-header">
             <div className="row-between wrap-gap">
               <div>
-                <h2 style={{ marginBottom: '8px' }}>{activeQuiz.title}</h2>
+                <h2 className="quiz-session-title">{activeQuiz.title}</h2>
                 {!showWelcome ? (
                   <p className="muted" style={{ marginBottom: 0 }}>
                     Question {currentQuestionIndex + 1} of {totalQuestions}
@@ -393,7 +426,7 @@ export default function QuizList() {
             </div>
           ) : !submitted ? (
             <>
-              <div className="card-like">
+              <div className="card-like quiz-progress-card">
                 <div className="quiz-progress-row">
                   <div className="quiz-progress-bar">
                     <div
@@ -414,7 +447,10 @@ export default function QuizList() {
 
               {currentQuestion ? (
                 <div className="card-like quiz-question-card">
-                  <p className="eyebrow">Question</p>
+                  <div className="quiz-question-label">
+                    <span>Question {currentQuestionIndex + 1}</span>
+                    <small>{totalQuestions} total</small>
+                  </div>
                   <h3 className="quiz-question-title">{currentQuestion.question}</h3>
 
                   <div className="quiz-options">
@@ -475,19 +511,29 @@ export default function QuizList() {
                   </div>
                 </div>
               ) : (
-                <div className="card-like">
-                  <p>No questions found for this quiz.</p>
+                <div className="quiz-state-card">
+                  <span className="quiz-state-icon" aria-hidden="true">!</span>
+                  <strong>No questions found</strong>
+                  <p>This quiz does not contain any questions yet.</p>
                 </div>
               )}
             </>
           ) : (
             <div className="card-like quiz-result-card">
-              <p className="eyebrow">Quiz Result</p>
-              <h2 style={{ marginBottom: '10px' }}>{score}%</h2>
-              <p className="muted">
-                You answered {correctCount} out of{' '}
-                {totalQuestions} questions correctly.
-              </p>
+              <div className="quiz-result-summary">
+                <span className="quiz-result-kicker">Quiz Result</span>
+                <div className="quiz-result-score">{score}%</div>
+                <strong>
+                  {score >= 80
+                    ? 'Great work'
+                    : score >= 60
+                      ? 'Good progress'
+                      : 'Keep practising'}
+                </strong>
+                <p>
+                  You answered {correctCount} out of {totalQuestions} questions correctly.
+                </p>
+              </div>
 
               <div className="stack-gap top-gap">
                 {questions.map((question, index) => {

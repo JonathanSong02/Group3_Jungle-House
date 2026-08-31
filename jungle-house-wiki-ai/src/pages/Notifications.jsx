@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
+import '../styles/Notifications.css';
 
 export default function Notifications() {
   const { user } = useAuth();
@@ -69,7 +70,7 @@ export default function Notifications() {
   };
 
   return (
-    <div>
+    <div className="notifications-page">
       <PageHeader
         title="Notifications"
         subtitle="System alerts for escalations, reviews, reminders, and announcements."
