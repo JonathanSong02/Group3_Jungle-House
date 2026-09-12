@@ -3219,17 +3219,20 @@ def search_knowledge_base_articles(question, limit=1):
     return scored_results[:limit]
 
 
-def search_related_knowledge_base_articles(question, limit=3, min_score=0.34):
+def search_related_knowledge_base_articles(question, limit=3, min_score=0.3):
     """
     Level-2 retrieval: articles that are topically related but do not clear
     the strict 100%-confidence bar used by search_knowledge_base_articles().
     Used to show clickable "related knowledge" cards before escalating,
     instead of jumping straight from "not confident" to a team lead ticket.
 
-    min_score=0.34 is a tunable heuristic (roughly: at least a third of the
-    question's meaningful tokens appear somewhere in the article's
-    title/category/subcategory/content) chosen to avoid surfacing dozens of
-    low-quality/noisy matches.
+    Scored by calculate_related_relevance_score(), which requires at least 2
+    overlapping meaningful tokens (min_overlap) between the question and the
+    article's title/category/subcategory/content, capped against a max
+    effective question length of 6 tokens. min_score=0.3 is set just below
+    the 2-overlap/6-effective-length floor (0.333) so that minimum case is
+    not rejected, while still avoiding single-coincidental-word "related"
+    matches (guarded separately by min_overlap).
     """
     conn = None
     cursor = None
@@ -3265,14 +3268,60 @@ def search_related_knowledge_base_articles(question, limit=3, min_score=0.34):
 
     scored_results = []
     for article in articles:
-        score = calculate_article_match_score(question, article)
+        score = calculate_related_relevance_score(question, article)
 
-        if min_score <= score < 1.0:
+        if score >= min_score:
             scored_results.append(build_article_ai_result(article, question, score))
 
     scored_results = sorted(scored_results, key=lambda item: item.get("score", 0.0), reverse=True)
 
     return scored_results[:limit]
+
+
+def calculate_related_relevance_score(question, article, min_overlap=2):
+    """
+    Relatedness scoring for the Level-2 "related knowledge" tier only.
+
+    calculate_article_match_score() divides overlap by the FULL question
+    token count, which works for the strict 100%-confidence tier but badly
+    under-scores image+text questions: build_vision_augmented_question()
+    appends several generic vision-detected words ("hand", "text", "sleeve",
+    "notice", "loyalty", "incentive"...) that never appear in any article,
+    inflating the denominator without ever contributing to the numerator.
+    A real match (e.g. "bottle", "return") then gets diluted down near zero
+    just because the combined question+image search text is long.
+
+    This caps the effective denominator so long augmented queries aren't
+    unfairly penalized, while requiring a minimum absolute overlap count so
+    a single coincidental word match on a long question still doesn't count
+    as "related".
+    """
+    question_text = clean_question(question).lower()
+    q_tokens = tokenize_for_knowledge_match(question_text)
+
+    title = str(article.get("title") or "").lower()
+    category = str(article.get("category") or "").lower()
+    sub_category = str(article.get("sub_category") or "").lower()
+    content = str(article.get("content") or "").lower()
+
+    all_tokens = (
+        tokenize_for_knowledge_match(title)
+        | tokenize_for_knowledge_match(category)
+        | tokenize_for_knowledge_match(sub_category)
+        | tokenize_for_knowledge_match(content)
+    )
+
+    if not q_tokens or not all_tokens:
+        return 0.0
+
+    overlap_count = len(q_tokens & all_tokens)
+
+    if overlap_count < min(min_overlap, len(q_tokens)):
+        return 0.0
+
+    effective_len = min(len(q_tokens), 6)
+
+    return round(min(overlap_count / effective_len, 0.99), 4)
 
 def process_question(question, context=None):
     question = clean_question(question)
