@@ -3583,6 +3583,7 @@ def home():
 
 
 @app.route("/health", methods=["GET"])
+@app.route("/api/health", methods=["GET"])
 def health():
     return jsonify({
         "status": "ok",
