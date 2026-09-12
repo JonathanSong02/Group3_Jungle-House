@@ -253,18 +253,24 @@ def attach_uploaded_chat_image_url(response):
     return response
 
 
+# Browser origins allowed to call the Railway API.  Keep the deployed
+# frontend in the list and also honour FRONTEND_URL so production can be
+# changed from Railway Variables without editing Python again.
+_cors_origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "https://ai-powered-wiki-training-assistant.vercel.app",
+]
+_configured_frontend_origin = os.getenv("FRONTEND_URL", "").strip().rstrip("/")
+if _configured_frontend_origin and _configured_frontend_origin not in _cors_origins:
+    _cors_origins.append(_configured_frontend_origin)
+
 CORS(
     app,
-    resources={r"/*": {"origins": [
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "https://ai-powered-wiki-training-assistant.vercel.app",
-        "https://ai-powered-wiki-training-assistant-l68o9pdok.vercel.app",
-        "https://ai-powered-wiki-training-assistant-l68o9pdok.vercel.app"
-    ]}},
+    resources={r"/*": {"origins": _cors_origins}},
     supports_credentials=True,
     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization"]
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 # =========================
@@ -11718,4 +11724,12 @@ def serve_static(filename):
 # =========================
 if __name__ == "__main__":
     verify_manager_account()
-    app.run(host="127.0.0.1", port=5000, debug=True, use_reloader=False)
+
+    # Railway exposes the container through its assigned PORT.  Binding only
+    # to 127.0.0.1 makes the service unreachable from Vercel and results in
+    # Axios "Network Error".  0.0.0.0 is required for a public container.
+    host = os.getenv("HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", "5000"))
+    debug = os.getenv("FLASK_DEBUG", "false").strip().lower() == "true"
+
+    app.run(host=host, port=port, debug=debug, use_reloader=False)

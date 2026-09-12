@@ -5,6 +5,26 @@ import api from '../services/api';
 
 const AuthContext = createContext(null);
 
+function toAuthError(error, fallbackMessage) {
+  const responseData = error?.response?.data || {};
+  const networkError = Boolean(error?.request) && !error?.response;
+
+  const message =
+    responseData?.message ||
+    (networkError
+      ? 'Unable to reach the authentication server.'
+      : error?.message || fallbackMessage);
+
+  const authError = new Error(message);
+  authError.code = responseData?.code || error?.code || null;
+  authError.data = responseData;
+  authError.status = error?.response?.status || null;
+  authError.networkError = networkError;
+  authError.originalError = error;
+
+  return authError;
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
     try {
@@ -34,21 +54,18 @@ export function AuthProvider({ children }) {
         password,
       });
 
-      const loggedInUser = response.data.user;
+      const loggedInUser = response.data?.user;
 
       if (!loggedInUser) {
         throw new Error('Invalid login response.');
       }
 
       saveUserToStorage(loggedInUser);
-
       return loggedInUser;
     } catch (error) {
-      throw new Error(
-        error.response?.data?.message ||
-          error.message ||
-          'Login failed.'
-      );
+      // Keep the backend status/code/payload. Login.jsx needs these values to
+      // distinguish pending approval from "registration key required".
+      throw toAuthError(error, 'Login failed.');
     }
   };
 
@@ -70,14 +87,9 @@ export function AuthProvider({ children }) {
       }
 
       saveUserToStorage(refreshedUser);
-
       return refreshedUser;
     } catch (error) {
-      throw new Error(
-        error.response?.data?.message ||
-          error.message ||
-          'Unable to refresh user data.'
-      );
+      throw toAuthError(error, 'Unable to refresh user data.');
     }
   };
 
