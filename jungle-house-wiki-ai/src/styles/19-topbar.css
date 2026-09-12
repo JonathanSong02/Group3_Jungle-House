@@ -1,0 +1,185 @@
+/* =========================================================
+   20. MODERN DASHBOARD TOPBAR
+   Slim header layout similar to dashboard UI example
+   Works with Topbar.jsx className="topbar dashboard-topbar"
+   ========================================================= */
+
+.dashboard-topbar {
+  min-height: 72px;
+  margin-bottom: 24px;
+  padding: 0 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+
+  background: rgba(255, 253, 248, 0.94);
+  border: 1px solid rgba(234, 216, 183, 0.9);
+  border-radius: 22px;
+  box-shadow: 0 10px 30px rgba(84, 55, 13, 0.08);
+  backdrop-filter: blur(12px);
+}
+
+.topbar-left,
+.topbar-right {
+  display: flex;
+  align-items: center;
+}
+
+.topbar-left {
+  gap: 14px;
+}
+
+.topbar-right {
+  gap: 12px;
+  margin-left: auto;
+}
+
+.topbar-menu-btn {
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  background: transparent;
+  color: var(--primary-dark);
+  border: 1px solid transparent;
+  border-radius: 14px;
+  font-size: 20px;
+  box-shadow: none;
+}
+
+.topbar-menu-btn:hover {
+  background: #fff6e6;
+  border-color: var(--border);
+  transform: none;
+}
+
+.topbar-user-avatar {
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  background: linear-gradient(180deg, #f3b544, var(--primary));
+  color: #ffffff;
+  border-radius: 999px;
+  font-size: 16px;
+  font-weight: 800;
+  box-shadow: 0 8px 18px rgba(200, 137, 24, 0.22);
+}
+
+.topbar-user-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.topbar-user-name {
+  color: var(--heading);
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.2;
+  text-transform: capitalize;
+}
+
+.topbar-user-role {
+  width: fit-content;
+  padding: 3px 9px;
+
+  background: #fff0c9;
+  color: var(--primary-dark);
+  border: 1px solid #efd28f;
+  border-radius: 999px;
+
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.2;
+  text-transform: capitalize;
+}
+
+.topbar-logout-btn {
+  min-width: 86px;
+  min-height: 40px;
+  padding: 9px 16px;
+
+  background: #fff6e6;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: none;
+
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.topbar-logout-btn:hover {
+  background: #ffefcc;
+  border-color: var(--border-strong);
+  transform: none;
+}
+
+/* Sidebar is visible on desktop, so hide menu icon there */
+@media (min-width: 1025px) {
+  .topbar-menu-btn {
+    display: none;
+  }
+
+  .dashboard-topbar {
+    justify-content: flex-end;
+  }
+}
+
+@media (max-width: 640px) {
+  .dashboard-topbar {
+    min-height: 62px;
+    margin-bottom: 18px;
+    padding: 0 14px;
+    flex-direction: row;
+    align-items: center;
+    border-radius: 18px;
+  }
+
+  .topbar-right {
+    gap: 9px;
+  }
+
+  .topbar-user-avatar {
+    width: 36px;
+    height: 36px;
+    font-size: 14px;
+  }
+
+  .topbar-user-name {
+    max-width: 92px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+  }
+
+  .topbar-user-role {
+    padding: 2px 7px;
+    font-size: 9px;
+  }
+
+  .topbar-logout-btn {
+    width: auto;
+    min-width: 72px;
+    min-height: 36px;
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+
+  .topbar-menu-btn {
+    width: 36px;
+    height: 36px;
+    font-size: 18px;
+  }
+}
+
