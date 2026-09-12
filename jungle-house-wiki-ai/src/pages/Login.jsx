@@ -15,16 +15,21 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [registrationCancelled, setRegistrationCancelled] = useState(false);
 
-  const { updateUser } = useAuth();
+  // IMPORTANT: normal login goes through the existing AuthContext.login()
+  // just like the project did before the registration-key feature was added.
+  const { login, updateUser } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const requestedPath = location.state?.from?.pathname || '';
 
   const destinationFor = (loggedInUser) => {
     if (requestedPath) return requestedPath;
-    return String(loggedInUser?.role || '').toLowerCase() === 'manager'
-      ? '/admin/dashboard'
-      : '/dashboard';
+
+    const role = String(loggedInUser?.role || '')
+      .toLowerCase()
+      .replace(/[\s_-]/g, '');
+
+    return role === 'manager' ? '/admin/dashboard' : '/dashboard';
   };
 
   const handleChange = (event) => {
@@ -46,36 +51,50 @@ export default function Login() {
     };
 
     try {
-      const response = await api.post('/auth/login', credentials);
-      const loggedInUser = response.data?.user;
-      if (loggedInUser) updateUser(loggedInUser);
+      // Preserve the original, already-working project login path.
+      const loggedInUser = await login(credentials);
       navigate(destinationFor(loggedInUser), { replace: true });
-    } catch (requestError) {
-      const data = requestError.response?.data || {};
+    } catch (authError) {
+      const data = authError?.data || {};
+      const code = authError?.code || data?.code;
 
-      if (data.code === 'REGISTRATION_KEY_REQUIRED') {
+      if (code === 'REGISTRATION_KEY_REQUIRED') {
         setStage('activation');
         setAttemptsRemaining(data.attempts_remaining ?? 3);
-        setInfo(data.message || 'Enter the one-time registration key sent to your email.');
+        setInfo(
+          data.message ||
+            'Your account was approved. Enter the one-time registration key sent to your email.'
+        );
         return;
       }
 
-      if (data.code === 'ACCOUNT_PENDING_APPROVAL') {
+      if (code === 'ACCOUNT_PENDING_APPROVAL') {
         setInfo(data.message || 'Your registration is still awaiting approval.');
         return;
       }
 
-      if (data.code === 'ACCOUNT_DECLINED') {
-        setError(data.message || 'This registration is no longer active. Please register again if required.');
+      if (code === 'ACCOUNT_DECLINED') {
+        setError(
+          data.message ||
+            'This registration is no longer active. Please register again if required.'
+        );
         return;
       }
 
-      if (data.code === 'ACCOUNT_INACTIVE') {
-        setError(data.message || 'This account is inactive. Please contact a Manager or Team Leader.');
+      if (code === 'ACCOUNT_INACTIVE') {
+        setError(
+          data.message ||
+            'This account is inactive. Please contact a Manager or Team Leader.'
+        );
         return;
       }
 
-      setError(data.message || 'Unable to login. Please check your credentials.');
+      if (authError?.networkError) {
+        setError('Unable to reach the authentication server. Please try again.');
+        return;
+      }
+
+      setError(authError?.message || 'Invalid email or password.');
     } finally {
       setLoading(false);
     }
@@ -94,7 +113,12 @@ export default function Login() {
       });
 
       const activatedUser = response.data?.user;
-      if (activatedUser) updateUser(activatedUser);
+
+      if (!activatedUser) {
+        throw new Error('Account was activated, but user details were not returned.');
+      }
+
+      updateUser(activatedUser);
       navigate(destinationFor(activatedUser), { replace: true });
     } catch (requestError) {
       const data = requestError.response?.data || {};
@@ -105,11 +129,14 @@ export default function Login() {
 
       if (data.code === 'ACTIVATION_KEY_LOCKED') {
         setRegistrationCancelled(true);
-        setError(data.message || 'Registration cancelled after 3 incorrect key attempts. Please register again.');
+        setError(
+          data.message ||
+            'Registration cancelled after 3 incorrect key attempts. Please register again.'
+        );
         return;
       }
 
-      setError(data.message || 'Unable to verify the registration key.');
+      setError(data.message || requestError.message || 'Unable to verify the registration key.');
     } finally {
       setLoading(false);
     }
@@ -207,7 +234,9 @@ export default function Login() {
           <form onSubmit={handleActivationSubmit} className="form-stack">
             <div className="card-like" style={{ padding: '12px' }}>
               <strong>{form.email.trim().toLowerCase()}</strong>
-              <p className="muted" style={{ marginBottom: 0 }}>Approved account • activation required</p>
+              <p className="muted" style={{ marginBottom: 0 }}>
+                Approved account • activation required
+              </p>
             </div>
 
             <label>
@@ -241,12 +270,21 @@ export default function Login() {
                 <button className="primary-btn" type="submit" disabled={loading}>
                   {loading ? 'Verifying...' : 'Verify Key & Enter System'}
                 </button>
-                <button className="secondary-btn" type="button" disabled={loading} onClick={resendActivationKey}>
+                <button
+                  className="secondary-btn"
+                  type="button"
+                  disabled={loading}
+                  onClick={resendActivationKey}
+                >
                   Resend Key to Email
                 </button>
               </>
             ) : (
-              <Link to="/register" className="primary-btn" style={{ textAlign: 'center', textDecoration: 'none' }}>
+              <Link
+                to="/register"
+                className="primary-btn"
+                style={{ textAlign: 'center', textDecoration: 'none' }}
+              >
                 Register Again
               </Link>
             )}
