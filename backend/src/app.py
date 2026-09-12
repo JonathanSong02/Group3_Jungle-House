@@ -1261,7 +1261,6 @@ ALLOWED_REGISTRATION_DOMAINS = [
 ]
 
 REGISTRATION_REVIEW_HOURS = int(os.getenv("REGISTRATION_REVIEW_HOURS", "24"))
-EMAIL_VERIFICATION_TOKEN_HOURS = int(os.getenv("EMAIL_VERIFICATION_TOKEN_HOURS", "24"))
 PASSWORD_RESET_TOKEN_MINUTES = int(os.getenv("PASSWORD_RESET_TOKEN_MINUTES", "30"))
 PASSWORD_RESET_COOLDOWN_SECONDS = int(os.getenv("PASSWORD_RESET_COOLDOWN_SECONDS", "60"))
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173").strip().rstrip("/")
@@ -1372,58 +1371,6 @@ def send_email_safe(to_email, subject, body):
 
 
 
-def ensure_email_verification_table(cursor):
-    """
-    Creates the email verification table automatically if it does not exist.
-    You can also create it using the SQL migration file.
-    """
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS email_verifications (
-            verification_id INT AUTO_INCREMENT PRIMARY KEY,
-            user_id INT NOT NULL,
-            email VARCHAR(255) NOT NULL,
-            token_hash CHAR(64) NOT NULL,
-            expires_at DATETIME NOT NULL,
-            verified_at DATETIME NULL,
-            used_at DATETIME NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            INDEX idx_email_verifications_user_id (user_id),
-            INDEX idx_email_verifications_token_hash (token_hash),
-            INDEX idx_email_verifications_email (email),
-            CONSTRAINT fk_email_verifications_user
-                FOREIGN KEY (user_id) REFERENCES users(user_id)
-                ON DELETE CASCADE
-        )
-    """)
-
-
-def hash_email_verification_token(token):
-    return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
-
-
-def create_email_verification_token(cursor, user_id, email):
-    ensure_email_verification_table(cursor)
-
-    # Invalidate older unused links for this user so only the newest link is useful.
-    cursor.execute("""
-        UPDATE email_verifications
-        SET used_at = NOW()
-        WHERE user_id = %s
-          AND verified_at IS NULL
-          AND used_at IS NULL
-    """, (user_id,))
-
-    token = secrets.token_urlsafe(32)
-    token_hash = hash_email_verification_token(token)
-    expires_at = datetime.utcnow() + timedelta(hours=EMAIL_VERIFICATION_TOKEN_HOURS)
-
-    cursor.execute("""
-        INSERT INTO email_verifications (user_id, email, token_hash, expires_at)
-        VALUES (%s, %s, %s, %s)
-    """, (user_id, email, token_hash, expires_at))
-
-    return token
-
 
 def get_public_request_base_url():
     """
@@ -1444,77 +1391,6 @@ def get_public_request_base_url():
     return base_url
 
 
-def get_verification_link(token):
-    base_url = API_PUBLIC_URL or get_public_request_base_url()
-
-    return f"{base_url}/api/auth/verify-email?token={token}"
-
-
-def send_email_verification_link(full_name, email, token):
-    verification_link = get_verification_link(token)
-    subject = "Jungle House AI Wiki - Verify your email"
-    body = f"""Hi {full_name},
-
-Thank you for registering for the Jungle House AI Wiki system.
-
-Please verify your email address using this link:
-{verification_link}
-
-This link will expire in {EMAIL_VERIFICATION_TOKEN_HOURS} hours.
-
-After your email is verified, a manager or team lead will review your account registration within {REGISTRATION_REVIEW_HOURS} hours. You will receive another email after your account is approved or declined.
-
-If you did not request this account, please ignore this email.
-
-Thank you,
-Jungle House AI Wiki Team
-"""
-    return send_email_safe(email, subject, body)
-
-
-def is_user_email_verified(cursor, user_id):
-    ensure_email_verification_table(cursor)
-
-    cursor.execute("""
-        SELECT verification_id, verified_at
-        FROM email_verifications
-        WHERE user_id = %s
-          AND verified_at IS NOT NULL
-        ORDER BY verified_at DESC
-        LIMIT 1
-    """, (user_id,))
-
-    row = cursor.fetchone()
-    return bool(row)
-
-
-def get_user_email_verified_at(cursor, user_id):
-    ensure_email_verification_table(cursor)
-
-    cursor.execute("""
-        SELECT verified_at
-        FROM email_verifications
-        WHERE user_id = %s
-          AND verified_at IS NOT NULL
-        ORDER BY verified_at DESC
-        LIMIT 1
-    """, (user_id,))
-
-    row = cursor.fetchone()
-    if not row:
-        return None
-
-    if isinstance(row, dict):
-        return row.get("verified_at")
-
-    return row[0] if row else None
-
-
-def registration_success_redirect(message_key="email_verified"):
-    if FRONTEND_URL:
-        return redirect(f"{FRONTEND_URL}/login?{message_key}=1")
-
-    return jsonify({"message": "Email verified successfully. You may return to the login page."}), 200
 
 def send_registration_received_email(full_name, email):
     """Send the automatic acknowledgement immediately after registration."""
@@ -1769,9 +1645,9 @@ def ensure_registration_keys_table(cursor):
     """
     Keep the existing staff_registration_keys table and upgrade it in-place.
 
-    New invitation keys are bound to one email address. Existing legacy keys
-    are preserved; if assigned_email is NULL they remain usable once for
-    backward compatibility until a manager revokes them or they are consumed.
+    New activation keys are bound to one email address. Existing legacy keys
+    are preserved in the database only for historical compatibility; unassigned
+    legacy keys are excluded from the final approval/activation workflow.
     """
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS staff_registration_keys (
@@ -1800,7 +1676,7 @@ def ensure_registration_keys_table(cursor):
     """)
 
     # CREATE TABLE IF NOT EXISTS does not add columns to an existing table,
-    # so safely add only the new invitation fields when they are missing.
+    # so safely add only the new activation-key fields when they are missing.
     columns = get_table_columns_safe(cursor, "staff_registration_keys")
 
     migrations = {
@@ -2110,7 +1986,7 @@ def wipe_pending_registration(cursor, user_id, email):
     # exist in the current Railway schema.
     cleanup_rules = [
         ("password_reset_tokens", [("user_id", user_id)]),
-        ("email_verifications", [("user_id", user_id)]),
+        ("email_verifications", [("user_id", user_id)]),  # legacy-table cleanup only
         ("login_history", [("user_id", user_id)]),
         ("audit_log", [("actor_id", user_id)]),
         ("notification", [("user_id", user_id), ("created_by", user_id)]),
@@ -3860,29 +3736,54 @@ def register():
 
         conn.commit()
 
-        # No separate email-verification link is required in the revised flow.
-        # Email ownership is proven later because the one-time activation key
-        # is delivered only to the registered mailbox.
-        notify_registration_approvers(user_id, full_name, email)
+        # Final registration flow: there is NO extra mailbox-link step.
+        # A registration is considered successfully submitted only when the
+        # automatic "Registration received" email is accepted by SMTP. This
+        # prevents a ghost pending account from remaining when email delivery
+        # fails during registration.
         email_sent = send_registration_received_email(full_name, email)
+
+        if not email_sent:
+            try:
+                conn.start_transaction()
+                wipe_pending_registration(cursor, user_id, email)
+                conn.commit()
+            except Exception as cleanup_error:
+                conn.rollback()
+                print("REGISTER EMAIL FAILURE CLEANUP ERROR:", cleanup_error)
+
+            return jsonify({
+                "code": "REGISTRATION_EMAIL_FAILED",
+                "message": (
+                    "Registration could not be completed because the system email "
+                    "could not be delivered. No pending account was kept. Please "
+                    "try again after the email service is available."
+                ),
+                "account_status": "not_created",
+                "email_sent": False,
+            }), 503
+
+        # Only notify approvers after the user has successfully received the
+        # registration acknowledgement through the configured system mailbox.
+        notify_registration_approvers(user_id, full_name, email)
 
         add_audit_log(
             actor_id=user_id,
             actor_name=full_name,
             action="Restarted account registration" if registration_restarted else "Submitted account registration",
             module="Authentication",
-            description=f"Pending staff registration submitted for {email}."
+            description=f"Pending staff registration submitted for {email}; acknowledgement email sent."
         )
 
         return jsonify({
             "message": (
-                "Registration submitted successfully. Your account is pending "
-                f"Manager / Team Leader review, normally within {REGISTRATION_REVIEW_HOURS} hours. "
-                "You will receive another email after the decision is made."
+                "Registration submitted successfully. A confirmation email has been sent. "
+                "Your account is pending Manager / Team Leader review, normally within "
+                f"{REGISTRATION_REVIEW_HOURS} hours."
             ),
             "account_status": "pending",
             "review_within_hours": REGISTRATION_REVIEW_HOURS,
-            "email_sent": bool(email_sent),
+            "email_sent": True,
             "registration_restarted": registration_restarted,
         }), 201
 
@@ -4168,191 +4069,10 @@ def reset_password():
             conn.close()
 
 
-@app.route("/api/auth/verify-email", methods=["GET"])
-def verify_email():
-    token = request.args.get("token", "").strip()
-
-    if not token:
-        return jsonify({"message": "Verification token is required."}), 400
-
-    token_hash = hash_email_verification_token(token)
-    conn = None
-    cursor = None
-
-    try:
-        conn = get_db_connection()
-        conn.start_transaction()
-        cursor = conn.cursor(dictionary=True)
-
-        ensure_email_verification_table(cursor)
-
-        cursor.execute("""
-            SELECT
-                ev.verification_id,
-                ev.user_id,
-                ev.email,
-                ev.expires_at,
-                ev.verified_at,
-                ev.used_at,
-                u.full_name,
-                u.status
-            FROM email_verifications ev
-            JOIN users u ON ev.user_id = u.user_id
-            WHERE ev.token_hash = %s
-            LIMIT 1
-        """, (token_hash,))
-
-        verification = cursor.fetchone()
-
-        if not verification:
-            conn.rollback()
-            return jsonify({"message": "Invalid verification link."}), 400
-
-        if verification.get("verified_at"):
-            conn.rollback()
-            return registration_success_redirect("emailAlreadyVerified")
-
-        if verification.get("used_at"):
-            conn.rollback()
-            return jsonify({"message": "This verification link has already been used. Please request a new link."}), 400
-
-        expires_at = verification.get("expires_at")
-        if expires_at and datetime.utcnow() > expires_at:
-            conn.rollback()
-            return jsonify({"message": "This verification link has expired. Please request a new verification link."}), 400
-
-        cursor.execute("""
-            UPDATE email_verifications
-            SET verified_at = NOW(),
-                used_at = NOW()
-            WHERE verification_id = %s
-        """, (verification["verification_id"],))
-
-        conn.commit()
-
-        create_notification_safe(
-            user_id=verification["user_id"],
-            title="Email verified",
-            detail="Your email has been verified. Your account is now waiting for manager/team lead approval.",
-            notification_type="email_verification",
-            related_id=verification["user_id"]
-        )
-
-        add_audit_log(
-            actor_id=verification["user_id"],
-            actor_name=verification.get("full_name") or "New User",
-            action="Verified registration email",
-            module="Authentication",
-            description=f"Verified email address: {verification.get('email')}"
-        )
-
-        return registration_success_redirect("emailVerified")
-
-    except Exception as error:
-        if conn:
-            conn.rollback()
-
-        print("VERIFY EMAIL ERROR:", error)
-        return jsonify({"message": "Failed to verify email.", "error": str(error)}), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-
-@app.route("/api/auth/resend-verification", methods=["POST"])
-def resend_email_verification():
-    data = request.get_json(silent=True) or {}
-    email = str(data.get("email", "")).strip().lower()
-
-    if not email:
-        return jsonify({"message": "Email is required."}), 400
-
-    conn = None
-    cursor = None
-
-    try:
-        conn = get_db_connection()
-        conn.start_transaction()
-        cursor = conn.cursor(dictionary=True)
-
-        ensure_email_verification_table(cursor)
-
-        cursor.execute("""
-            SELECT user_id, full_name, email, status
-            FROM users
-            WHERE LOWER(email) = %s
-            LIMIT 1
-        """, (email,))
-
-        user = cursor.fetchone()
-
-        # Generic response prevents attackers from checking whether an email exists.
-        generic_message = "If the email is registered and not verified, a new verification link will be sent."
-
-        if not user:
-            conn.rollback()
-            return jsonify({"message": generic_message}), 200
-
-        if is_user_email_verified(cursor, user["user_id"]):
-            conn.rollback()
-            return jsonify({"message": "This email is already verified. Please wait for manager/team lead approval or try logging in."}), 200
-
-        if str(user.get("status", "")).lower() == "declined":
-            conn.rollback()
-            return jsonify({"message": "This registration has been declined. Please contact your manager or team lead."}), 403
-
-        verification_token = create_email_verification_token(cursor, user["user_id"], user["email"])
-        conn.commit()
-
-        email_sent = send_email_verification_link(user["full_name"], user["email"], verification_token)
-
-        return jsonify({
-            "message": "A new verification link has been sent if SMTP email is configured.",
-            "email_sent": email_sent
-        }), 200
-
-    except Exception as error:
-        if conn:
-            conn.rollback()
-
-        print("RESEND EMAIL VERIFICATION ERROR:", error)
-        return jsonify({"message": "Failed to resend verification link.", "error": str(error)}), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
 
 # =========================
 # REGISTRATION KEY ROUTES
 # =========================
-def send_registration_invitation_email(email, key_code):
-    """
-    Legacy/manual invitation helper kept for backward compatibility.
-    The normal new-account workflow now issues keys only after approval.
-    """
-    register_url = f"{FRONTEND_URL}/register" if FRONTEND_URL else "the Jungle House registration page"
-    subject = "Jungle House AI Wiki - Registration invitation"
-    body = f"""Hello,
-
-A registration invitation has been created for this email address.
-
-Registration key: {key_code}
-Assigned email: {email}
-Registration page: {register_url}
-
-This legacy invitation key can only be used once.
-
-Thank you,
-Jungle House AI Wiki Team
-"""
-    return send_email_safe(email, subject, body)
-
 
 def send_registration_activation_email(full_name, email, key_code):
     login_url = f"{FRONTEND_URL}/login" if FRONTEND_URL else "the Jungle House login page"
@@ -4389,8 +4109,8 @@ def generate_registration_key():
     Manual pre-registration key generation is intentionally disabled.
 
     Security flow now is:
-    register -> verify email -> manager/team lead approval -> automatic
-    one-time activation key -> login key verification -> active account.
+    register -> pending review -> manager/team lead approval -> automatic
+    one-time activation key email -> first-login key verification -> active account.
 
     Keeping this route avoids breaking an older frontend with a 404, while
     preventing a key issued before approval from bypassing the approval gate.
@@ -4398,8 +4118,8 @@ def generate_registration_key():
     return jsonify({
         "code": "MANUAL_REGISTRATION_KEY_DISABLED",
         "message": (
-            "Manual registration-key generation is disabled. Approve a verified "
-            "pending registration to generate and email the one-time activation key."
+            "Manual registration-key generation is disabled. Approve a pending "
+            "registration to generate and email the one-time activation key."
         )
     }), 409
 
@@ -4435,6 +4155,8 @@ def list_registration_keys():
                 creator.full_name AS created_by_name
             FROM staff_registration_keys rk
             LEFT JOIN users creator ON rk.created_by_user_id = creator.user_id
+            WHERE rk.assigned_email IS NOT NULL
+              AND TRIM(rk.assigned_email) <> ''
             ORDER BY rk.created_at DESC, rk.key_id DESC
         """)
 
@@ -4485,7 +4207,7 @@ def resend_registration_key(key_id):
         key_row = cursor.fetchone()
 
         if not key_row:
-            return jsonify({"message": "Registration activation key not found."}), 404
+            return jsonify({"message": "Activation key not found."}), 404
 
         if str(key_row.get("status", "")).lower() != "unused":
             return jsonify({"message": "Only unused activation keys can be resent."}), 400
@@ -4565,7 +4287,7 @@ def revoke_registration_key(key_id):
 
         if not is_registration_key_manager(cursor, actor_id):
             conn.rollback()
-            return jsonify({"message": "Only managers can revoke registration invitations."}), 403
+            return jsonify({"message": "Only a Manager or Team Leader can revoke registration activation keys."}), 403
 
         cursor.execute("""
             SELECT status, assigned_email
@@ -4578,11 +4300,11 @@ def revoke_registration_key(key_id):
 
         if not key_row:
             conn.rollback()
-            return jsonify({"message": "Registration invitation not found."}), 404
+            return jsonify({"message": "Activation key not found."}), 404
 
         if str(key_row.get("status", "")).lower() != "unused":
             conn.rollback()
-            return jsonify({"message": "Only unused invitation keys can be revoked."}), 400
+            return jsonify({"message": "Only unused activation keys can be revoked."}), 400
 
         cursor.execute("""
             UPDATE staff_registration_keys
@@ -4593,18 +4315,18 @@ def revoke_registration_key(key_id):
 
         add_audit_log(
             actor_id=actor_id,
-            action="Revoked registration invitation",
+            action="Revoked registration activation key",
             module="User Management",
-            description=f"Unused registration invitation revoked for {key_row.get('assigned_email') or 'legacy unassigned key'}."
+            description=f"Unused registration activation key revoked for {key_row.get('assigned_email') or 'legacy unassigned key'}."
         )
 
-        return jsonify({"message": "Registration invitation revoked successfully."}), 200
+        return jsonify({"message": "Activation key revoked successfully."}), 200
 
     except Exception as error:
         if conn:
             conn.rollback()
         print("REVOKE REGISTRATION KEY ERROR:", error)
-        return jsonify({"message": "Failed to revoke registration invitation."}), 500
+        return jsonify({"message": "Failed to revoke registration activation key."}), 500
 
     finally:
         if cursor:
@@ -10814,7 +10536,6 @@ def get_admin_users():
                 u.status,
                 u.created_at,
                 r.role_name,
-                FALSE AS email_verified,
                 (
                     SELECT rk.status
                     FROM staff_registration_keys rk
@@ -11248,19 +10969,63 @@ def approve_registration_request(user_id):
 
         email_sent = send_registration_activation_email(target_user.get("full_name"), target_user.get("email"), key_code)
 
-        if email_sent:
-            update_conn = None
-            update_cursor = None
+        if not email_sent:
+            # Do not leave the UI in "Awaiting Activation" when the user never
+            # received a key. Remove the undelivered key and restore the
+            # original pending role so the approver can retry cleanly.
             try:
-                update_conn = get_db_connection()
-                update_cursor = update_conn.cursor()
-                update_cursor.execute("UPDATE staff_registration_keys SET email_sent_at = NOW() WHERE key_id = %s", (key_id,))
-                update_conn.commit()
-            finally:
-                if update_cursor:
-                    update_cursor.close()
-                if update_conn:
-                    update_conn.close()
+                conn.start_transaction()
+                cursor.execute(
+                    "DELETE FROM staff_registration_keys WHERE key_id = %s AND status = 'unused'",
+                    (key_id,),
+                )
+                cursor.execute(
+                    "SELECT role_id FROM roles WHERE LOWER(role_name) = %s LIMIT 1",
+                    (str(target_user.get("role_name") or "staff").strip().lower(),),
+                )
+                previous_role = cursor.fetchone()
+                if previous_role:
+                    cursor.execute(
+                        "UPDATE users SET role_id = %s WHERE user_id = %s AND status = 'pending'",
+                        (previous_role["role_id"], user_id),
+                    )
+                conn.commit()
+            except Exception as cleanup_error:
+                conn.rollback()
+                print("APPROVAL EMAIL FAILURE CLEANUP ERROR:", cleanup_error)
+
+            add_audit_log(
+                actor_id=approved_by,
+                actor_name="Manager/Team Lead",
+                action="Approval email delivery failed",
+                module="User Management",
+                description=f"Activation key delivery failed for {target_user.get('email')}; undelivered key was discarded."
+            )
+
+            return jsonify({
+                "code": "ACTIVATION_EMAIL_FAILED",
+                "message": (
+                    "Approval was not completed because the one-time registration key "
+                    "email could not be delivered. The undelivered key was discarded; "
+                    "the registration remains Pending Approval so you can retry."
+                ),
+                "account_status": "pending",
+                "activation_key_issued": False,
+                "email_sent": False,
+            }), 503
+
+        update_conn = None
+        update_cursor = None
+        try:
+            update_conn = get_db_connection()
+            update_cursor = update_conn.cursor()
+            update_cursor.execute("UPDATE staff_registration_keys SET email_sent_at = NOW() WHERE key_id = %s", (key_id,))
+            update_conn.commit()
+        finally:
+            if update_cursor:
+                update_cursor.close()
+            if update_conn:
+                update_conn.close()
 
         create_notification_safe(
             user_id=user_id,
@@ -11280,15 +11045,11 @@ def approve_registration_request(user_id):
         )
 
         return jsonify({
-            "message": (
-                "Registration approved. A one-time registration key was generated and emailed to the user."
-                if email_sent else
-                "Registration approved and a one-time registration key was generated, but the email could not be sent. Use Resend Key after email service configuration is corrected."
-            ),
+            "message": "Registration approved. The one-time registration key was generated and emailed to the user.",
             "account_status": "pending",
             "activation_key_issued": True,
             "key_id": key_id,
-            "email_sent": bool(email_sent)
+            "email_sent": True
         }), 200
 
     except Exception as error:

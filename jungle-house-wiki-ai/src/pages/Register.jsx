@@ -230,8 +230,9 @@ export default function Register() {
             <h2 id="registration-success-title">Registration received</h2>
 
             <p>
-              Your account request has been received. A Manager or Team Leader
-              will normally review it within 24 hours. No action is required now.
+              Your registration was submitted successfully. A confirmation email
+              has been sent to <strong>{form.email.trim().toLowerCase()}</strong>.
+              Your account is now waiting for Manager / Team Leader approval.
             </p>
 
             <div className="auth-success-steps">
@@ -250,9 +251,9 @@ export default function Register() {
             </div>
 
             <div className="auth-email-status">
-              {registrationResult?.email_sent === false
-                ? 'Your registration was saved, but the confirmation email could not be delivered. Your account is still pending review.'
-                : 'A registration-received confirmation has been sent to your email. You will receive another email after approval or rejection.'}
+              {registrationResult?.email_sent === true
+                ? 'System email sent successfully. You will receive another email after the Manager / Team Leader approves or declines your registration.'
+                : 'The server did not confirm email delivery. Registration should not be treated as complete; please contact the system administrator.'}
             </div>
 
             <button

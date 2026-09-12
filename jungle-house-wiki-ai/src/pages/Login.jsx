@@ -18,7 +18,14 @@ export default function Login() {
   const { updateUser } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const from = location.state?.from?.pathname || '/dashboard';
+  const requestedPath = location.state?.from?.pathname || '';
+
+  const destinationFor = (loggedInUser) => {
+    if (requestedPath) return requestedPath;
+    return String(loggedInUser?.role || '').toLowerCase() === 'manager'
+      ? '/admin/dashboard'
+      : '/dashboard';
+  };
 
   const handleChange = (event) => {
     const { name, value } = event.target;
@@ -40,8 +47,9 @@ export default function Login() {
 
     try {
       const response = await api.post('/auth/login', credentials);
-      if (response.data?.user) updateUser(response.data.user);
-      navigate(from, { replace: true });
+      const loggedInUser = response.data?.user;
+      if (loggedInUser) updateUser(loggedInUser);
+      navigate(destinationFor(loggedInUser), { replace: true });
     } catch (requestError) {
       const data = requestError.response?.data || {};
 
@@ -54,6 +62,16 @@ export default function Login() {
 
       if (data.code === 'ACCOUNT_PENDING_APPROVAL') {
         setInfo(data.message || 'Your registration is still awaiting approval.');
+        return;
+      }
+
+      if (data.code === 'ACCOUNT_DECLINED') {
+        setError(data.message || 'This registration is no longer active. Please register again if required.');
+        return;
+      }
+
+      if (data.code === 'ACCOUNT_INACTIVE') {
+        setError(data.message || 'This account is inactive. Please contact a Manager or Team Leader.');
         return;
       }
 
@@ -75,8 +93,9 @@ export default function Login() {
         registration_key: registrationKey.trim().toLowerCase(),
       });
 
-      if (response.data?.user) updateUser(response.data.user);
-      navigate(from, { replace: true });
+      const activatedUser = response.data?.user;
+      if (activatedUser) updateUser(activatedUser);
+      navigate(destinationFor(activatedUser), { replace: true });
     } catch (requestError) {
       const data = requestError.response?.data || {};
 

@@ -19,6 +19,7 @@ export default function UserManagement() {
   const [keyMessage, setKeyMessage] = useState('');
   const [emailTestLoading, setEmailTestLoading] = useState(false);
   const [emailTestMessage, setEmailTestMessage] = useState('');
+  const [testRecipient, setTestRecipient] = useState(user?.email || '');
 
   const fetchUsers = async () => {
     try {
@@ -86,6 +87,9 @@ export default function UserManagement() {
       await Promise.all([fetchUsers(), fetchRegistrationKeys()]);
     } catch (error) {
       setMessage(error.response?.data?.message || 'Failed to approve user registration.');
+      // The backend discards an undelivered key and leaves the user Pending Approval.
+      // Refresh both panels so the UI always reflects the real server state.
+      await Promise.all([fetchUsers(), fetchRegistrationKeys()]);
     } finally {
       setActionLoadingId(null);
     }
@@ -118,7 +122,7 @@ export default function UserManagement() {
       setEmailTestMessage('');
       const response = await api.post('/admin/email/test', {
         actor_id: actorId,
-        email: user?.email || '',
+        email: testRecipient.trim().toLowerCase(),
       });
       setEmailTestMessage(response.data?.message || 'System email test completed.');
     } catch (error) {
@@ -272,8 +276,23 @@ export default function UserManagement() {
           <p className="muted">Send a real production test email using the SMTP settings currently loaded by Railway.</p>
         </div>
         <div className="top-gap-sm" style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
-          <button type="button" className="secondary-btn" onClick={testSystemEmail} disabled={emailTestLoading || !actorId}>
-            {emailTestLoading ? 'Sending test...' : 'Send Test Email to Me'}
+          <input
+            type="email"
+            value={testRecipient}
+            onChange={(event) => {
+              setTestRecipient(event.target.value);
+              setEmailTestMessage('');
+            }}
+            placeholder="Test recipient email"
+            style={{ minWidth: '280px', flex: '1 1 280px' }}
+          />
+          <button
+            type="button"
+            className="secondary-btn"
+            onClick={testSystemEmail}
+            disabled={emailTestLoading || !actorId || !testRecipient.trim()}
+          >
+            {emailTestLoading ? 'Sending test...' : 'Send Test Email'}
           </button>
           {emailTestMessage ? <span className="muted">{emailTestMessage}</span> : null}
         </div>
