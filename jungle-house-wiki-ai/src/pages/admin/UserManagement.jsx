@@ -17,6 +17,8 @@ export default function UserManagement() {
   const [registrationKeys, setRegistrationKeys] = useState([]);
   const [keysLoading, setKeysLoading] = useState(true);
   const [keyMessage, setKeyMessage] = useState('');
+  const [emailTestLoading, setEmailTestLoading] = useState(false);
+  const [emailTestMessage, setEmailTestMessage] = useState('');
 
   const fetchUsers = async () => {
     try {
@@ -92,7 +94,7 @@ export default function UserManagement() {
   const declineUser = async (userId) => {
     const reason = window.prompt('Reason for declining this registration? You can leave it empty.');
     if (reason === null) return;
-    if (!window.confirm('Decline this registration? The user will receive a decision email and will not be able to enter the system.')) return;
+    if (!window.confirm('Decline and permanently remove this pending registration? The account will disappear from User Management and the same email can register again.')) return;
 
     try {
       setActionLoadingId(userId);
@@ -106,6 +108,23 @@ export default function UserManagement() {
       setMessage(error.response?.data?.message || 'Failed to decline user registration.');
     } finally {
       setActionLoadingId(null);
+    }
+  };
+
+  const testSystemEmail = async () => {
+    if (!actorId) return;
+    try {
+      setEmailTestLoading(true);
+      setEmailTestMessage('');
+      const response = await api.post('/admin/email/test', {
+        actor_id: actorId,
+        email: user?.email || '',
+      });
+      setEmailTestMessage(response.data?.message || 'System email test completed.');
+    } catch (error) {
+      setEmailTestMessage(error.response?.data?.message || 'System email test failed.');
+    } finally {
+      setEmailTestLoading(false);
     }
   };
 
@@ -246,6 +265,19 @@ export default function UserManagement() {
           {users.length === 0 ? <p className="muted top-gap">No users found.</p> : null}
         </div>
       )}
+
+      <section className="card-like top-gap">
+        <div>
+          <h3>System Email</h3>
+          <p className="muted">Send a real production test email using the SMTP settings currently loaded by Railway.</p>
+        </div>
+        <div className="top-gap-sm" style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          <button type="button" className="secondary-btn" onClick={testSystemEmail} disabled={emailTestLoading || !actorId}>
+            {emailTestLoading ? 'Sending test...' : 'Send Test Email to Me'}
+          </button>
+          {emailTestMessage ? <span className="muted">{emailTestMessage}</span> : null}
+        </div>
+      </section>
 
       <section className="card-like top-gap">
         <div>
