@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../services/api';
+import '../styles/AuthSecurity.css';
 
 export default function Register() {
   const navigate = useNavigate();
@@ -10,49 +11,54 @@ export default function Register() {
     email: '',
     password: '',
     confirm_password: '',
-    registration_key: '',
   });
 
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
+  const [showPasswords, setShowPasswords] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [registrationResult, setRegistrationResult] = useState(null);
 
   const handleChange = (event) => {
     const { name, value } = event.target;
 
-    setForm((prev) => ({
-      ...prev,
+    setForm((previous) => ({
+      ...previous,
       [name]: value,
     }));
+
+    if (error) setError('');
   };
 
-  const togglePasswordVisibility = () => {
-    setShowPassword((prev) => !prev);
-  };
+  const passwordChecks = useMemo(
+    () => ({
+      length: form.password.length >= 8,
+      uppercase: /[A-Z]/.test(form.password),
+      number: /\d/.test(form.password),
+      match:
+        Boolean(form.confirm_password) &&
+        form.password === form.confirm_password,
+    }),
+    [form.password, form.confirm_password]
+  );
 
-  const validatePassword = (password) => {
-    const minLength = 8;
-    const hasNumber = /\d/.test(password);
-    const hasUpper = /[A-Z]/.test(password);
-
-    return password.length >= minLength && hasNumber && hasUpper;
-  };
+  const passwordValid =
+    passwordChecks.length &&
+    passwordChecks.uppercase &&
+    passwordChecks.number;
 
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError('');
-    setSuccess('');
 
     if (form.password !== form.confirm_password) {
       setError('Passwords do not match.');
       return;
     }
 
-    if (!validatePassword(form.password)) {
+    if (!passwordValid) {
       setError(
-        'Password must be at least 8 characters, include a number, and an uppercase letter.'
+        'Password must be at least 8 characters and include an uppercase letter and a number.'
       );
       return;
     }
@@ -60,27 +66,21 @@ export default function Register() {
     try {
       setLoading(true);
 
-      const payload = {
+      const response = await api.post('/auth/register', {
         full_name: form.full_name.trim(),
         email: form.email.trim().toLowerCase(),
         password: form.password,
         confirm_password: form.confirm_password,
-        registration_key: form.registration_key.trim(),
-
-        // A valid registration key (given out by a manager) is the trust
-        // boundary now, so every self-registered account is staff.
         role: 'staff',
-      };
+      });
 
-      const response = await api.post('/auth/register', payload);
-
-      setSuccess(
-        response.data.message || 'Registration successful. You can now log in.'
-      );
-
+      setRegistrationResult(response.data || {});
       setShowSuccessModal(true);
-    } catch (err) {
-      setError(err.response?.data?.message || 'Registration failed.');
+    } catch (requestError) {
+      setError(
+        requestError.response?.data?.message ||
+          'Registration could not be submitted. Please try again.'
+      );
     } finally {
       setLoading(false);
     }
@@ -93,147 +93,174 @@ export default function Register() {
 
   return (
     <div className="login-page">
-      <div className="login-card card-like">
-        <p className="eyebrow">Jungle House</p>
-        <h1>Create Account</h1>
+      <div className="login-card card-like auth-card">
+        <div className="auth-brand">
+          <span className="auth-brand-mark" aria-hidden="true">
+            JH
+          </span>
+          <div>
+            <p className="eyebrow">Jungle House AI Wiki</p>
+            <span>Staff account registration</span>
+          </div>
+        </div>
 
-        <p className="muted">
-          Enter the registration key given to you by your manager. Any email
-          address can be used.
-        </p>
+        <div className="auth-heading">
+          <h1>Create your account</h1>
+          <p>
+            Register using your own email. Your account will be reviewed by a
+            Manager or Team Leader before one-time key activation.
+          </p>
+        </div>
 
-        <form onSubmit={handleSubmit} className="form-stack">
-          <input
-            type="text"
-            name="full_name"
-            placeholder="Full name"
-            value={form.full_name}
-            onChange={handleChange}
-            required
-          />
+        <div className="auth-registration-flow" aria-label="Registration steps">
+          <span className="current">1. Register</span>
+          <span>2. Approval</span>
+          <span>3. Activation Key</span>
+        </div>
 
-          <input
-            type="email"
-            name="email"
-            placeholder="Email address"
-            value={form.email}
-            onChange={handleChange}
-            autoComplete="username"
-            required
-          />
+        <form onSubmit={handleSubmit} className="form-stack auth-form">
+          <label>
+            Full name
+            <input
+              type="text"
+              name="full_name"
+              placeholder="Enter your full name"
+              value={form.full_name}
+              onChange={handleChange}
+              autoComplete="name"
+              required
+            />
+          </label>
 
-          <div
-            style={{
-              position: 'relative',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '1rem',
-            }}
-          >
-            <div
-              className="row-between"
-              style={{
-                display: 'flex',
-                justifyContent: 'flex-end',
-                marginBottom: '-0.5rem',
-              }}
+          <label>
+            Email address
+            <input
+              type="email"
+              name="email"
+              placeholder="you@example.com"
+              value={form.email}
+              onChange={handleChange}
+              autoComplete="email"
+              required
+            />
+          </label>
+
+          <div className="row-between">
+            <strong className="auth-field-heading">Password</strong>
+            <button
+              type="button"
+              className="auth-inline-action"
+              onClick={() => setShowPasswords((previous) => !previous)}
             >
-              <button
-                type="button"
-                onClick={togglePasswordVisibility}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  cursor: 'pointer',
-                  fontSize: '0.85rem',
-                  color: '#555',
-                }}
-                tabIndex="-1"
-              >
-                {showPassword ? 'Hide Passwords' : 'Show Passwords'}
-              </button>
-            </div>
-
-            <input
-              type={showPassword ? 'text' : 'password'}
-              name="password"
-              placeholder="Password"
-              value={form.password}
-              onChange={handleChange}
-              autoComplete="new-password"
-              required
-            />
-
-            <input
-              type={showPassword ? 'text' : 'password'}
-              name="confirm_password"
-              placeholder="Confirm password"
-              value={form.confirm_password}
-              onChange={handleChange}
-              autoComplete="new-password"
-              required
-            />
+              {showPasswords ? 'Hide' : 'Show'}
+            </button>
           </div>
 
           <input
-            type="text"
-            name="registration_key"
-            placeholder="Enter registration key"
-            value={form.registration_key}
+            type={showPasswords ? 'text' : 'password'}
+            name="password"
+            placeholder="Create password"
+            value={form.password}
             onChange={handleChange}
+            autoComplete="new-password"
             required
           />
 
-          {error ? <p className="error-text">{error}</p> : null}
-          {success ? <p style={{ color: '#2f6b3d' }}>{success}</p> : null}
+          <input
+            type={showPasswords ? 'text' : 'password'}
+            name="confirm_password"
+            placeholder="Confirm password"
+            value={form.confirm_password}
+            onChange={handleChange}
+            autoComplete="new-password"
+            required
+          />
 
-          <button className="primary-btn" type="submit" disabled={loading}>
-            {loading ? 'Submitting...' : 'Register'}
+          <div className="auth-password-checks">
+            <span className={passwordChecks.length ? 'passed' : ''}>
+              {passwordChecks.length ? '✓' : '○'} 8+ characters
+            </span>
+            <span className={passwordChecks.uppercase ? 'passed' : ''}>
+              {passwordChecks.uppercase ? '✓' : '○'} Uppercase
+            </span>
+            <span className={passwordChecks.number ? 'passed' : ''}>
+              {passwordChecks.number ? '✓' : '○'} Number
+            </span>
+            <span className={passwordChecks.match ? 'passed' : ''}>
+              {passwordChecks.match ? '✓' : '○'} Passwords match
+            </span>
+          </div>
+
+          {error ? (
+            <p className="auth-error-message" role="alert">
+              {error}
+            </p>
+          ) : null}
+
+          <button
+            className="primary-btn auth-primary-action"
+            type="submit"
+            disabled={loading}
+          >
+            {loading ? 'Submitting registration...' : 'Submit Registration'}
           </button>
 
-          <div style={{ marginTop: '1rem', textAlign: 'center' }}>
+          <div className="auth-footer-row">
+            <span>Already registered?</span>
             <Link to="/login" className="text-link">
-              Back to Login
+              Back to Sign In
             </Link>
           </div>
         </form>
       </div>
 
       {showSuccessModal ? (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0, 0, 0, 0.45)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 9999,
-            padding: '1rem',
-          }}
-        >
+        <div className="auth-modal-overlay" role="presentation">
           <div
-            className="card-like"
-            style={{
-              maxWidth: '480px',
-              width: '100%',
-              textAlign: 'center',
-              padding: '2rem',
-            }}
+            className="auth-success-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="registration-success-title"
           >
-            <p className="eyebrow">Account Created</p>
+            <span className="auth-success-mark" aria-hidden="true">
+              ✓
+            </span>
 
-            <h2 style={{ marginBottom: '0.75rem' }}>
-              Registration successful
-            </h2>
+            <p className="eyebrow">Registration submitted</p>
+            <h2 id="registration-success-title">Registration received</h2>
 
-            <p className="muted" style={{ marginBottom: '1.5rem' }}>
-              Your account has been created and is ready to use. You can log
-              in now with your email and password.
+            <p>
+              Your account request has been received. A Manager or Team Leader
+              will normally review it within 24 hours. No action is required now.
             </p>
 
-            <button type="button" className="primary-btn" onClick={goToLogin}>
-              Go to Login
+            <div className="auth-success-steps">
+              <div className="done">
+                <strong>1</strong>
+                <span>Registration submitted</span>
+              </div>
+              <div>
+                <strong>2</strong>
+                <span>Manager / Team Leader review</span>
+              </div>
+              <div>
+                <strong>3</strong>
+                <span>If approved, receive and enter the one-time registration key</span>
+              </div>
+            </div>
+
+            <div className="auth-email-status">
+              {registrationResult?.email_sent === false
+                ? 'Your registration was saved, but the confirmation email could not be delivered. Your account is still pending review.'
+                : 'A registration-received confirmation has been sent to your email. You will receive another email after approval or rejection.'}
+            </div>
+
+            <button
+              type="button"
+              className="primary-btn auth-primary-action"
+              onClick={goToLogin}
+            >
+              Go to Sign In
             </button>
           </div>
         </div>
