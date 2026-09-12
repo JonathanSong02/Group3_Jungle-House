@@ -6,6 +6,8 @@ import { useAuth } from './context/AuthContext';
 
 import Login from './pages/Login';
 import Register from './pages/Register';
+import ForgotPassword from './pages/ForgotPassword';
+import ResetPassword from './pages/ResetPassword';
 import Dashboard from './pages/Dashboard';
 import Chat from './pages/Chat';
 import KnowledgeBase from './pages/KnowledgeBase';
@@ -50,6 +52,8 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
 
       <Route
         path="/"
@@ -201,7 +205,7 @@ export default function App() {
         <Route
           path="admin/users"
           element={
-            <RoleRoute allowedRoles={['manager']}>
+            <RoleRoute allowedRoles={['teamlead', 'manager']}>
               <UserManagement />
             </RoleRoute>
           }
