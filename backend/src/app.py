@@ -7034,26 +7034,14 @@ def chat():
         # Staff replies: "not this" / "dont know"
         # Escalation should save original question: "Liong"
         # =========================
-        if is_staff_not_satisfied(question):
-            last_answer = AI_LAST_ANSWER_MEMORY.get(get_last_answer_key(data))
+        last_answer = AI_LAST_ANSWER_MEMORY.get(get_last_answer_key(data))
 
-            if not last_answer:
-                return jsonify({
-                    "reply": (
-                        "I understand this answer is not what you want, but I cannot find the previous question clearly.\n\n"
-                        "Please type the original question again so I can escalate the correct question to the team lead."
-                    ),
-                    "answer": (
-                        "I understand this answer is not what you want, but I cannot find the previous question clearly. "
-                        "Please type the original question again so I can escalate the correct question to the team lead."
-                    ),
-                    "confidence": 0.0,
-                    "score": 0.0,
-                    "source": "staff_not_satisfied_no_previous_question",
-                    "fallback": True,
-                    "escalation_ready": False,
-                    "escalation_required": False
-                }), 200
+        # Only treat phrases like "dont know" / "not sure" as a rejection of
+        # the PREVIOUS AI answer when there actually is a previous answer on
+        # record. Otherwise a brand-new question that happens to contain one
+        # of those phrases (e.g. "...but i dont know what to do next") would
+        # be misread as dissatisfaction and never reach KB search at all.
+        if is_staff_not_satisfied(question) and last_answer:
 
             previous_question = clean_question(last_answer.get("question") or question)
             old_result = last_answer.get("result") or {}
