@@ -2980,62 +2980,6 @@ def search_knowledge_base_articles(question, limit=1):
 
     return scored_results[:limit]
 
-
-def search_related_knowledge_base_articles(question, limit=3, min_score=0.34):
-    """
-    Level-2 retrieval: articles that are topically related but do not clear
-    the strict 100%-confidence bar used by search_knowledge_base_articles().
-    Used to show clickable "related knowledge" cards before escalating,
-    instead of jumping straight from "not confident" to a team lead ticket.
-
-    min_score=0.34 is a tunable heuristic (roughly: at least a third of the
-    question's meaningful tokens appear somewhere in the article's
-    title/category/subcategory/content) chosen to avoid surfacing dozens of
-    low-quality/noisy matches.
-    """
-    conn = None
-    cursor = None
-
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute("""
-            SELECT
-                article_id,
-                title,
-                content,
-                category,
-                sub_category,
-                link,
-                attachment_url,
-                attachment_type,
-                image_files,
-                created_at
-            FROM wiki_article
-            WHERE COALESCE(is_deleted, 0) = 0
-            ORDER BY created_at DESC, article_id DESC
-        """)
-        articles = cursor.fetchall() or []
-    except Exception as error:
-        print("RELATED KB ARTICLE SEARCH ERROR:", error)
-        return []
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-    scored_results = []
-    for article in articles:
-        score = calculate_article_match_score(question, article)
-
-        if min_score <= score < 1.0:
-            scored_results.append(build_article_ai_result(article, question, score))
-
-    scored_results = sorted(scored_results, key=lambda item: item.get("score", 0.0), reverse=True)
-
-    return scored_results[:limit]
-
 def process_question(question, context=None):
     question = clean_question(question)
     context = normalize_context(context or {})
@@ -6170,50 +6114,6 @@ def chat():
                     result["context"]["article_id"] = ai_answer["article_id"]
 
         if should_escalate:
-            related_articles = search_related_knowledge_base_articles(question, limit=3)
-
-            related_options = []
-            seen_related_titles = set()
-            for item in related_articles:
-                for option in build_answer_options(question, None, item):
-                    title_key = str(option.get("title", "")).lower().strip()
-                    if title_key and title_key not in seen_related_titles:
-                        seen_related_titles.add(title_key)
-                        related_options.append(option)
-
-            if related_options:
-                related_message = (
-                    "I couldn't confirm the exact procedure from the information "
-                    "provided, but these Knowledge Base articles may help:"
-                )
-
-                result = standardize_ai_response({
-                    "question": question,
-                    "type": "options",
-                    "reply": related_message,
-                    "answer": related_message,
-                    "score": related_articles[0].get("score", 0.0),
-                    "confidence": related_articles[0].get("score", 0.0),
-                    "confidence_label": get_confidence_label(related_articles[0].get("score", 0.0)),
-                    "source": "related_knowledge",
-                    "fallback": False,
-                    "escalation_ready": False,
-                    "escalation_required": False,
-                    "options": related_options,
-                })
-
-                remember_chat_context(data, result)
-                log_request(
-                    question,
-                    result=result,
-                    user_id=data.get("user_id") or data.get("userId")
-                )
-
-                result["final_source"] = "related_knowledge"
-                result["served_by"] = "related_knowledge"
-
-                return jsonify(result), 200
-
             escalation_id = create_escalation(
             question,
             result,
