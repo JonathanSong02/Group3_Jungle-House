@@ -6,17 +6,17 @@ import { useAuth } from '../../context/AuthContext';
 
 export default function UserManagement() {
   const { user } = useAuth();
-  const actorId = user?.id || user?.user_id || null;
-  const actorRole = String(user?.role || '').toLowerCase().replace(/[\s_-]/g, '');
-  const isManagerActor = actorRole === 'manager' || actorRole === 'admin';
 
   const [users, setUsers] = useState([]);
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(true);
   const [actionLoadingId, setActionLoadingId] = useState(null);
+
   const [registrationKeys, setRegistrationKeys] = useState([]);
   const [keysLoading, setKeysLoading] = useState(true);
+  const [generatingKey, setGeneratingKey] = useState(false);
   const [keyMessage, setKeyMessage] = useState('');
+  const [copiedKeyCode, setCopiedKeyCode] = useState('');
 
   const fetchUsers = async () => {
     try {
@@ -25,217 +25,311 @@ export default function UserManagement() {
       setUsers(Array.isArray(response.data) ? response.data : []);
     } catch (error) {
       console.error('Fetch users error:', error);
-      setMessage(error.response?.data?.message || 'Failed to load users.');
+      setMessage('Failed to load users.');
     } finally {
       setLoading(false);
     }
   };
 
+  useEffect(() => {
+    fetchUsers();
+  }, []);
+
   const fetchRegistrationKeys = async () => {
-    if (!actorId) return;
     try {
       setKeysLoading(true);
-      const response = await api.get('/registration-keys', { params: { actor_id: actorId } });
+      const response = await api.get('/registration-keys');
       setRegistrationKeys(Array.isArray(response.data) ? response.data : []);
     } catch (error) {
       console.error('Fetch registration keys error:', error);
-      setKeyMessage(error.response?.data?.message || 'Failed to load registration key audit.');
+      setKeyMessage('Failed to load registration keys.');
     } finally {
       setKeysLoading(false);
     }
   };
 
-  useEffect(() => { fetchUsers(); }, []);
-  // actorId is the intended trigger; fetchRegistrationKeys reads the latest actorId.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { fetchRegistrationKeys(); }, [actorId]);
+  useEffect(() => {
+    fetchRegistrationKeys();
+  }, []);
+
+  const generateRegistrationKey = async () => {
+    try {
+      setGeneratingKey(true);
+      setKeyMessage('');
+
+      const response = await api.post('/registration-keys/generate', {
+        created_by: user?.id || user?.user_id || null,
+      });
+
+      setKeyMessage(response.data?.message || 'Registration key generated successfully.');
+      fetchRegistrationKeys();
+    } catch (error) {
+      console.error('Generate registration key error:', error);
+      setKeyMessage(
+        error.response?.data?.message || 'Failed to generate registration key.'
+      );
+    } finally {
+      setGeneratingKey(false);
+    }
+  };
+
+  const copyRegistrationKey = async (keyCode) => {
+    try {
+      await navigator.clipboard.writeText(keyCode);
+      setCopiedKeyCode(keyCode);
+      setKeyMessage('Registration key copied.');
+
+      setTimeout(() => {
+        setCopiedKeyCode((prev) => (prev === keyCode ? '' : prev));
+      }, 2000);
+    } catch (error) {
+      console.error('Copy registration key error:', error);
+      setKeyMessage('Unable to copy registration key.');
+    }
+  };
 
   const updateUserStatus = async (userId, currentStatus) => {
     const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
+
     try {
-      await api.put(`/admin/users/${userId}/status`, { status: newStatus, actor_id: actorId });
+      await api.put(`/admin/users/${userId}/status`, {
+        status: newStatus,
+      });
+
       setMessage(`User status updated to ${newStatus}.`);
       fetchUsers();
     } catch (error) {
-      setMessage(error.response?.data?.message || 'Failed to update user status.');
+      console.error('Update user status error:', error);
+      setMessage('Failed to update user status.');
     }
   };
 
   const updateUserRole = async (userId, newRole) => {
     try {
-      await api.put(`/admin/users/${userId}/role`, { role: newRole, actor_id: actorId });
+      await api.put(`/admin/users/${userId}/role`, {
+        role: newRole,
+      });
+
       setMessage(`User role updated to ${newRole}.`);
       fetchUsers();
     } catch (error) {
-      setMessage(error.response?.data?.message || 'Failed to update user role.');
+      console.error('Update user role error:', error);
+      setMessage('Failed to update user role.');
     }
   };
 
-  const approveUser = async (userId, roleName) => {
-    if (!window.confirm('Approve this registration? A one-time registration key will be generated and emailed automatically.')) return;
+  const approveUser = async (userId) => {
+    const confirmApprove = window.confirm(
+      'Approve this user account? The user will be able to log in after approval.'
+    );
+
+    if (!confirmApprove) return;
 
     try {
       setActionLoadingId(userId);
-      const response = await api.put(`/admin/registration-requests/${userId}/approve`, {
-        role: String(roleName || 'staff').toLowerCase() === 'teamlead' ? 'teamlead' : 'staff',
-        approved_by: actorId,
+
+      await api.put(`/admin/registration-requests/${userId}/approve`, {
+        role: 'staff',
       });
-      setMessage(response.data?.message || 'Registration approved successfully.');
-      await Promise.all([fetchUsers(), fetchRegistrationKeys()]);
+
+      setMessage('User registration approved successfully.');
+      fetchUsers();
     } catch (error) {
-      setMessage(error.response?.data?.message || 'Failed to approve user registration.');
+      console.error('Approve user error:', error);
+      setMessage(
+        error.response?.data?.message || 'Failed to approve user registration.'
+      );
     } finally {
       setActionLoadingId(null);
     }
   };
 
   const declineUser = async (userId) => {
-    const reason = window.prompt('Reason for declining this registration? You can leave it empty.');
+    const reason = window.prompt(
+      'Reason for declining this registration? You can leave it empty.'
+    );
+
     if (reason === null) return;
-    if (!window.confirm('Decline this registration? The user will receive a decision email and will not be able to enter the system.')) return;
+
+    const confirmDecline = window.confirm(
+      'Decline this user account? The user will not be able to log in.'
+    );
+
+    if (!confirmDecline) return;
 
     try {
       setActionLoadingId(userId);
-      const response = await api.put(`/admin/registration-requests/${userId}/decline`, {
+
+      await api.put(`/admin/registration-requests/${userId}/decline`, {
         reason,
-        declined_by: actorId,
       });
-      setMessage(response.data?.message || 'Registration declined successfully.');
-      await Promise.all([fetchUsers(), fetchRegistrationKeys()]);
+
+      setMessage('User registration declined successfully.');
+      fetchUsers();
     } catch (error) {
-      setMessage(error.response?.data?.message || 'Failed to decline user registration.');
+      console.error('Decline user error:', error);
+      setMessage(
+        error.response?.data?.message || 'Failed to decline user registration.'
+      );
     } finally {
       setActionLoadingId(null);
     }
   };
 
-  const resendKey = async (keyId) => {
-    try {
-      setKeyMessage('');
-      const response = await api.post(`/registration-keys/${keyId}/resend`, { actor_id: actorId });
-      setKeyMessage(response.data?.message || 'Activation key resent.');
-      fetchRegistrationKeys();
-    } catch (error) {
-      setKeyMessage(error.response?.data?.message || 'Failed to resend activation key.');
-    }
-  };
-
-  const revokeKey = async (keyId) => {
-    if (!window.confirm('Revoke this unused activation key? It will stop working immediately.')) return;
-    try {
-      const response = await api.put(`/registration-keys/${keyId}/revoke`, { actor_id: actorId });
-      setKeyMessage(response.data?.message || 'Activation key revoked.');
-      await Promise.all([fetchUsers(), fetchRegistrationKeys()]);
-    } catch (error) {
-      setKeyMessage(error.response?.data?.message || 'Failed to revoke activation key.');
-    }
-  };
-
-  const pendingApprovalUsers = users.filter(
-    (item) => item.status === 'pending' && !item.awaiting_activation
-  );
-  const awaitingActivationUsers = users.filter(
-    (item) => item.status === 'pending' && item.awaiting_activation
-  );
+  const pendingUsers = users.filter((user) => user.status === 'pending');
 
   return (
     <div>
       <PageHeader
         title="User Management"
-        subtitle="Review registrations, approve or decline access, and monitor one-time activation keys."
+        subtitle="View users, approve new registrations, update roles, and activate or deactivate accounts."
       />
 
-      <section className="card-like top-gap-sm" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem' }}>
+      <section
+        className="card-like top-gap-sm"
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+          gap: '1rem',
+        }}
+      >
         <div>
           <p className="eyebrow">Pending Approval</p>
-          <h2>{pendingApprovalUsers.length}</h2>
-          <p className="muted">New registrations waiting for Manager / Team Leader review.</p>
+          <h2>{pendingUsers.length}</h2>
+          <p className="muted">
+            New accounts waiting for manager/team lead approval.
+          </p>
         </div>
-        <div>
-          <p className="eyebrow">Awaiting Activation</p>
-          <h2>{awaitingActivationUsers.length}</h2>
-          <p className="muted">Approved accounts waiting for the user to enter the emailed key.</p>
-        </div>
+
         <div>
           <p className="eyebrow">Total Users</p>
           <h2>{users.length}</h2>
-          <p className="muted">All account records.</p>
+          <p className="muted">All registered user accounts.</p>
         </div>
       </section>
 
-      {message ? <section className="card-like top-gap-sm"><p className="muted">{message}</p></section> : null}
+      {message && (
+        <section className="card-like top-gap-sm">
+          <p className="muted">{message}</p>
+        </section>
+      )}
 
       {loading ? (
-        <section className="card-like top-gap-sm"><p className="muted">Loading users...</p></section>
+        <section className="card-like top-gap-sm">
+          <p className="muted">Loading users...</p>
+        </section>
       ) : (
         <div className="table-card card-like top-gap-sm">
           <table>
             <thead>
               <tr>
-                <th>User ID</th><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Registration Stage</th><th>Registered At</th><th>Action</th>
+                <th>User ID</th>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Email Verified</th>
+                <th>Role</th>
+                <th>Status</th>
+                <th>Registered At</th>
+                <th>Action</th>
               </tr>
             </thead>
+
             <tbody>
-              {users.map((item) => {
-                const isManager = String(item.role_name).toLowerCase() === 'manager';
-                const isPending = item.status === 'pending';
-                const awaitingActivation = isPending && item.awaiting_activation;
-                const isBusy = actionLoadingId === item.user_id;
+              {users.map((user) => {
+                const isManager = user.role_name === 'manager';
+                const isPending = user.status === 'pending';
+                const isBusy = actionLoadingId === user.user_id;
 
                 return (
-                  <tr key={item.user_id}>
-                    <td>{item.user_id}</td>
-                    <td>{item.full_name}</td>
-                    <td>{item.email}</td>
+                  <tr key={user.user_id}>
+                    <td>{user.user_id}</td>
+                    <td>{user.full_name}</td>
+                    <td>{user.email}</td>
+
+                    <td>
+                      {user.email_verified === true ||
+                      user.email_verified === 1 ||
+                      user.email_verified === '1' ? (
+                        <span className="role-pill">Verified</span>
+                      ) : (
+                        <span className="role-pill">Not verified</span>
+                      )}
+                    </td>
+
                     <td>
                       {isManager ? (
                         <span className="role-pill">manager</span>
-                      ) : isManagerActor ? (
-                        <select value={item.role_name} onChange={(event) => updateUserRole(item.user_id, event.target.value)} disabled={isBusy}>
+                      ) : (
+                        <select
+                          value={user.role_name}
+                          onChange={(event) =>
+                            updateUserRole(user.user_id, event.target.value)
+                          }
+                          disabled={isBusy}
+                        >
                           <option value="staff">staff</option>
                           <option value="teamlead">teamlead</option>
                         </select>
-                      ) : (
-                        <span className="role-pill">{item.role_name}</span>
                       )}
                     </td>
-                    <td><StatusBadge status={item.status} /></td>
+
                     <td>
-                      {awaitingActivation ? (
-                        <span className="role-pill">Awaiting Activation</span>
-                      ) : isPending ? (
-                        <span className="role-pill">Pending Approval</span>
-                      ) : item.status === 'active' ? (
-                        <span className="role-pill">Access Active</span>
-                      ) : item.status === 'declined' ? (
-                        <span className="role-pill">Declined / Cancelled</span>
-                      ) : (
-                        <span className="role-pill">{item.status}</span>
-                      )}
+                      <StatusBadge status={user.status} />
                     </td>
-                    <td>{item.created_at || '-'}</td>
+
+                    <td>{user.created_at || '-'}</td>
+
                     <td>
                       {isManager ? (
-                        <button className="secondary-btn" disabled>Protected</button>
+                        <button className="secondary-btn" disabled>
+                          Protected
+                        </button>
                       ) : isPending ? (
-                        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                          {!awaitingActivation ? (
-                            <button className="primary-btn" type="button" disabled={isBusy} onClick={() => approveUser(item.user_id, item.role_name)}>
-                              {isBusy ? 'Processing...' : 'Approve & Send Key'}
-                            </button>
-                          ) : (
-                            <button className="secondary-btn" disabled>Key Issued</button>
-                          )}
-                          <button className="secondary-btn danger-btn" type="button" disabled={isBusy} onClick={() => declineUser(item.user_id)}>Decline</button>
+                        <div
+                          style={{
+                            display: 'flex',
+                            gap: '0.5rem',
+                            flexWrap: 'wrap',
+                          }}
+                        >
+                          <button
+                            className="primary-btn"
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => approveUser(user.user_id)}
+                          >
+                            {isBusy ? 'Processing...' : 'Approve'}
+                          </button>
+
+                          <button
+                            className="secondary-btn danger-btn"
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => declineUser(user.user_id)}
+                          >
+                            Decline
+                          </button>
                         </div>
-                      ) : item.status === 'declined' ? (
-                        <button className="secondary-btn" disabled>Declined</button>
-                      ) : isManagerActor ? (
-                        <button className={item.status === 'active' ? 'secondary-btn danger-btn' : 'secondary-btn'} disabled={isBusy} onClick={() => updateUserStatus(item.user_id, item.status)}>
-                          {item.status === 'active' ? 'Deactivate' : 'Activate'}
+                      ) : user.status === 'declined' ? (
+                        <button className="secondary-btn" disabled>
+                          Declined
                         </button>
                       ) : (
-                        <button className="secondary-btn" disabled>Manager only</button>
+                        <button
+                          className={
+                            user.status === 'active'
+                              ? 'secondary-btn danger-btn'
+                              : 'secondary-btn'
+                          }
+                          disabled={isBusy}
+                          onClick={() =>
+                            updateUserStatus(user.user_id, user.status)
+                          }
+                        >
+                          {user.status === 'active'
+                            ? 'Deactivate'
+                            : 'Activate'}
+                        </button>
                       )}
                     </td>
                   </tr>
@@ -243,45 +337,79 @@ export default function UserManagement() {
               })}
             </tbody>
           </table>
-          {users.length === 0 ? <p className="muted top-gap">No users found.</p> : null}
+
+          {users.length === 0 && (
+            <p className="muted top-gap">No users found.</p>
+          )}
         </div>
       )}
 
       <section className="card-like top-gap">
-        <div>
-          <h3>Activation Key Audit</h3>
-          <p className="muted">Keys are generated automatically only after approval. Full key values are not displayed here.</p>
+        <div className="row-between wrap-gap">
+          <div>
+            <h3>Registration Key Management</h3>
+            <p className="muted">
+              Generate a one-time key and share it with staff so they can
+              register with any email address.
+            </p>
+          </div>
+
+          <button
+            className="primary-btn"
+            type="button"
+            disabled={generatingKey}
+            onClick={generateRegistrationKey}
+          >
+            {generatingKey ? 'Generating...' : 'Generate New Key'}
+          </button>
         </div>
 
-        {keyMessage ? <p className="muted top-gap-sm">{keyMessage}</p> : null}
+        {keyMessage && (
+          <p className="muted top-gap-sm">{keyMessage}</p>
+        )}
 
         {keysLoading ? (
-          <p className="muted top-gap">Loading activation keys...</p>
+          <p className="muted top-gap">Loading registration keys...</p>
         ) : registrationKeys.length === 0 ? (
-          <p className="muted top-gap">No activation keys issued yet.</p>
+          <p className="muted top-gap">No registration keys generated yet.</p>
         ) : (
           <div className="table-card top-gap">
             <table>
               <thead>
-                <tr><th>Key</th><th>Email</th><th>Status</th><th>Failed Attempts</th><th>Issued By</th><th>Email Sent</th><th>Used At</th><th>Action</th></tr>
+                <tr>
+                  <th>Key</th>
+                  <th>Status</th>
+                  <th>Created By</th>
+                  <th>Used By</th>
+                  <th>Created At</th>
+                  <th>Used At</th>
+                  <th></th>
+                </tr>
               </thead>
+
               <tbody>
                 {registrationKeys.map((key) => (
                   <tr key={key.key_id}>
-                    <td><code>{key.key_preview || '-'}</code></td>
-                    <td>{key.assigned_email || key.used_by_email || '-'}</td>
-                    <td><span className="role-pill">{key.status}</span></td>
-                    <td>{key.failed_attempts || 0} / 3</td>
+                    <td>
+                      <code>{key.key_code}</code>
+                    </td>
+                    <td>
+                      <span className="role-pill">{key.status}</span>
+                    </td>
                     <td>{key.created_by_name || '-'}</td>
-                    <td>{key.email_sent_at || 'Not sent'}</td>
+                    <td>{key.used_by_email || '-'}</td>
+                    <td>{key.created_at || '-'}</td>
                     <td>{key.used_at || '-'}</td>
                     <td>
-                      {key.status === 'unused' ? (
-                        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                          <button type="button" className="secondary-btn" onClick={() => resendKey(key.key_id)}>Resend</button>
-                          <button type="button" className="secondary-btn danger-btn" onClick={() => revokeKey(key.key_id)}>Revoke</button>
-                        </div>
-                      ) : '-'}
+                      {key.status === 'unused' && (
+                        <button
+                          type="button"
+                          className="secondary-btn"
+                          onClick={() => copyRegistrationKey(key.key_code)}
+                        >
+                          {copiedKeyCode === key.key_code ? 'Copied' : 'Copy'}
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
