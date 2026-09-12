@@ -375,7 +375,7 @@ export default function Sidebar() {
                     </NavLink>
                   )}
 
-                  {isManager && (
+                  {(isManager || isTeamLead) && (
                     <NavLink className={linkClass} to="/admin/users" onClick={closeMobileAfterClick}>
                       <SidebarIcon name="users" />
                       <span className="sidebar-link-text">User Management</span>

@@ -15,7 +15,55 @@ import smtplib
 import secrets
 import hashlib
 import requests
+
 from email.message import EmailMessage
+
+
+def load_local_env_file():
+    """
+    Load backend/src/.env automatically for local development.
+
+    Existing OS/Railway environment variables always win.
+    This keeps production configuration unchanged while removing the need
+    to manually enter SMTP variables in PowerShell every time.
+    """
+    try:
+        env_path = Path(__file__).resolve().parent / ".env"
+
+        if not env_path.exists():
+            return
+
+        for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip()
+
+            if not key:
+                continue
+
+            # Support normal .env quoting.
+            if (
+                len(value) >= 2
+                and value[0] == value[-1]
+                and value[0] in {"'", '"'}
+            ):
+                value = value[1:-1]
+
+            # Do not overwrite real Railway/system environment variables.
+            os.environ.setdefault(key, value)
+
+        print(f"LOCAL ENV LOADED: {env_path}")
+
+    except Exception as error:
+        print("LOCAL ENV LOAD WARNING:", error)
+
+
+load_local_env_file()
 from db_helper import (
     save_qa_to_db,
     search_similar_question,
@@ -1263,15 +1311,24 @@ def send_email_safe(to_email, subject, body):
     """
     to_email = str(to_email or "").strip()
 
-    smtp_host = os.getenv("SMTP_HOST", "").strip()
+    # Gmail-compatible defaults. For local use, only the sender email and
+    # app password must be placed in backend/src/.env once.
+    smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com").strip()
     smtp_port = int(os.getenv("SMTP_PORT", "587"))
     smtp_user = os.getenv("SMTP_USER", "").strip()
     smtp_password = os.getenv("SMTP_PASSWORD", "").strip()
     smtp_from = os.getenv("SMTP_FROM_EMAIL", smtp_user).strip()
     smtp_use_tls = os.getenv("SMTP_USE_TLS", "true").strip().lower() != "false"
 
-    if not to_email or not smtp_host or not smtp_from:
-        print("EMAIL SKIPPED: SMTP is not configured.")
+    if not to_email:
+        print("EMAIL SKIPPED: Recipient email is empty.")
+        return False
+
+    if not smtp_user or not smtp_password or not smtp_from:
+        print(
+            "EMAIL SKIPPED: Add SMTP_USER and SMTP_PASSWORD to "
+            "backend/src/.env once to enable automatic email sending."
+        )
         return False
 
     try:
@@ -1527,7 +1584,7 @@ def is_registration_key_manager(cursor, actor_id):
     role_name = str(actor.get("role_name", "")).strip().lower()
     status = str(actor.get("status", "")).strip().lower()
 
-    return role_name == "manager" and status == "active"
+    return role_name in APPROVER_ROLES and status == "active"
 
 
 def is_ai_settings_manager(cursor, actor_id):
@@ -1554,11 +1611,13 @@ def is_ai_settings_manager(cursor, actor_id):
 
 
 def ensure_registration_keys_table(cursor):
-    # Named staff_registration_keys (not registration_keys) on purpose --
-    # a table called registration_keys already exists in this database from
-    # an older/unrelated system (different schema, 42 real rows already in
-    # it) that nothing in this app currently references. Using a distinct
-    # name avoids any risk of colliding with that legacy data.
+    """
+    Keep the existing staff_registration_keys table and upgrade it in-place.
+
+    New invitation keys are bound to one email address. Existing legacy keys
+    are preserved; if assigned_email is NULL they remain usable once for
+    backward compatibility until a manager revokes them or they are consumed.
+    """
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS staff_registration_keys (
             key_id INT AUTO_INCREMENT PRIMARY KEY,
@@ -1567,6 +1626,9 @@ def ensure_registration_keys_table(cursor):
             created_by_user_id INT NULL,
             used_by_user_id INT NULL,
             used_by_email VARCHAR(255) NULL,
+            assigned_email VARCHAR(255) NULL,
+            assigned_at DATETIME NULL,
+            email_sent_at DATETIME NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             used_at DATETIME NULL,
             revoked_at DATETIME NULL,
@@ -1579,6 +1641,39 @@ def ensure_registration_keys_table(cursor):
                 ON DELETE SET NULL
         )
     """)
+
+    # CREATE TABLE IF NOT EXISTS does not add columns to an existing table,
+    # so safely add only the new invitation fields when they are missing.
+    columns = get_table_columns_safe(cursor, "staff_registration_keys")
+
+    migrations = {
+        "assigned_email": "ALTER TABLE staff_registration_keys ADD COLUMN assigned_email VARCHAR(255) NULL AFTER used_by_email",
+        "assigned_at": "ALTER TABLE staff_registration_keys ADD COLUMN assigned_at DATETIME NULL AFTER assigned_email",
+        "email_sent_at": "ALTER TABLE staff_registration_keys ADD COLUMN email_sent_at DATETIME NULL AFTER assigned_at",
+        "revoked_at": "ALTER TABLE staff_registration_keys ADD COLUMN revoked_at DATETIME NULL AFTER used_at",
+    }
+
+    for column_name, statement in migrations.items():
+        if column_name not in columns:
+            cursor.execute(statement)
+
+    # Older databases may still have ENUM('unused','used') only. The new
+    # approval flow needs 'revoked' so a cancelled/declined activation key
+    # can never be reused.
+    cursor.execute("SHOW COLUMNS FROM staff_registration_keys LIKE 'status'")
+    status_column = cursor.fetchone()
+
+    if isinstance(status_column, dict):
+        status_type = str(status_column.get("Type", "")).lower()
+    else:
+        status_type = str(status_column[1] if status_column and len(status_column) > 1 else "").lower()
+
+    if "revoked" not in status_type:
+        cursor.execute("""
+            ALTER TABLE staff_registration_keys
+            MODIFY COLUMN status ENUM('unused', 'used', 'revoked')
+            NOT NULL DEFAULT 'unused'
+        """)
 
 
 def generate_registration_key_code():
@@ -1740,14 +1835,17 @@ def notify_registration_decision(user_id, approved=True, reason=""):
     email = user_contact.get("email")
 
     if approved:
-        title = "Account approved"
-        detail = "Your account has been approved. You can now log in to the Jungle House AI Wiki system."
+        title = "Account approved - activation required"
+        detail = (
+            "Your account has been approved. Use the one-time registration key "
+            "sent to your email to activate access after signing in."
+        )
         subject = "Jungle House AI Wiki - Account approved"
         body = f"""Hi {full_name},
 
 Your Jungle House AI Wiki account has been approved.
 
-You can now log in using your registered email address.
+Please sign in using your registered email address and password, then enter the one-time registration key sent to your email to activate access.
 
 Thank you,
 Jungle House AI Wiki Team
@@ -3330,28 +3428,22 @@ def test_db():
 # =========================
 @app.route("/api/auth/register", methods=["POST"])
 def register():
-    data = request.get_json() or {}
-    print("REGISTER ROUTE HIT:", data)
+    data = request.get_json(silent=True) or {}
 
-    full_name = data.get("full_name", "").strip()
-    email = data.get("email", "").strip().lower()
-    registration_key = str(data.get("registration_key", "")).strip().lower()
-
-    # A valid registration key is now the trust boundary, replacing the old
-    # company-email-domain restriction -- any email can register.
+    full_name = str(data.get("full_name", "")).strip()
+    email = str(data.get("email", "")).strip().lower()
+    password = str(data.get("password", ""))
+    confirm_password = str(data.get("confirm_password", ""))
     role = "staff"
 
-    password = data.get("password", "")
-    confirm_password = data.get("confirm_password", "")
-
     if not all([full_name, email, password, confirm_password]):
-        return jsonify({"message": "Please fill in all fields."}), 400
+        return jsonify({"message": "Please fill in all required fields."}), 400
+
+    if len(full_name) < 3:
+        return jsonify({"message": "Full name must be at least 3 characters."}), 400
 
     if not is_valid_email_format(email):
         return jsonify({"message": "Please enter a valid email address."}), 400
-
-    if not registration_key:
-        return jsonify({"message": "Registration key is required."}), 400
 
     if password != confirm_password:
         return jsonify({"message": "Passwords do not match."}), 400
@@ -3359,50 +3451,37 @@ def register():
     if len(password) < 8:
         return jsonify({"message": "Password must be at least 8 characters."}), 400
 
+    if not re.search(r"[A-Z]", password):
+        return jsonify({"message": "Password must include at least one uppercase letter."}), 400
+
+    if not re.search(r"\d", password):
+        return jsonify({"message": "Password must include at least one number."}), 400
+
     conn = None
     cursor = None
+    new_user_id = None
+    verification_token = None
 
     try:
         conn = get_db_connection()
         conn.start_transaction()
         cursor = conn.cursor(dictionary=True)
 
-        ensure_registration_keys_table(cursor)
+        ensure_email_verification_table(cursor)
 
-        cursor.execute("SELECT user_id FROM users WHERE LOWER(email) = %s", (email,))
-        existing_user = cursor.fetchone()
-
-        if existing_user:
+        cursor.execute(
+            "SELECT user_id FROM users WHERE LOWER(email) = %s LIMIT 1",
+            (email,)
+        )
+        if cursor.fetchone():
             conn.rollback()
             return jsonify({"message": "Email is already registered."}), 409
 
-        # Lock the key row so two simultaneous registrations can never both
-        # succeed with the same key.
         cursor.execute("""
-            SELECT key_id, status
-            FROM staff_registration_keys
-            WHERE key_code = %s
-            LIMIT 1
-            FOR UPDATE
-        """, (registration_key,))
-        key_row = cursor.fetchone()
-
-        if not key_row:
-            conn.rollback()
-            return jsonify({"message": "Invalid registration key."}), 400
-
-        if key_row["status"] == "used":
-            conn.rollback()
-            return jsonify({"message": "This registration key has already been used."}), 400
-
-        if key_row["status"] == "revoked":
-            conn.rollback()
-            return jsonify({"message": "This registration key has been revoked."}), 400
-
-        cursor.execute("""
-            SELECT role_id, role_name
+            SELECT role_id
             FROM roles
             WHERE LOWER(role_name) = %s
+            LIMIT 1
         """, (role,))
         role_row = cursor.fetchone()
 
@@ -3412,86 +3491,66 @@ def register():
 
         password_hash = generate_password_hash(password)
 
-        # Security flow:
-        # The registration key is the trust boundary (a manager already
-        # decided to hand it out), so the account goes active immediately --
-        # no email domain check and no separate pending-approval step.
+        # New self-registered accounts always start pending.
+        # Registration keys are intentionally NOT accepted here. A one-time
+        # activation key is generated only after manager/team lead approval.
         cursor.execute("""
             INSERT INTO users (full_name, email, password_hash, role_id, status)
-            VALUES (%s, %s, %s, %s, 'active')
+            VALUES (%s, %s, %s, %s, 'pending')
         """, (full_name, email, password_hash, role_row["role_id"]))
-
         new_user_id = cursor.lastrowid
 
-        # Mark the key used inside the same transaction. The extra
-        # "AND status = 'unused'" guards against a race even though the
-        # earlier SELECT ... FOR UPDATE already locked the row -- a used key
-        # must never become available again, even after the account that
-        # used it is later deactivated.
-        cursor.execute("""
-            UPDATE staff_registration_keys
-            SET status = 'used',
-                used_by_user_id = %s,
-                used_by_email = %s,
-                used_at = NOW()
-            WHERE key_id = %s
-              AND status = 'unused'
-        """, (new_user_id, email, key_row["key_id"]))
-
-        if cursor.rowcount != 1:
-            conn.rollback()
-            return jsonify({"message": "This registration key has already been used."}), 400
+        verification_token = create_email_verification_token(
+            cursor,
+            new_user_id,
+            email
+        )
 
         conn.commit()
+
+        notify_registration_approvers(new_user_id, full_name, email)
+        email_sent = send_email_verification_link(
+            full_name,
+            email,
+            verification_token
+        )
 
         add_audit_log(
             actor_id=new_user_id,
             actor_name=full_name,
-            action="Registered with registration key",
+            action="Submitted account registration",
             module="Authentication",
-            description=f"New staff account created and activated using a registration key. Email: {email}"
-        )
-
-        send_email_safe(
-            email,
-            "Jungle House AI Wiki - Registration successful",
-            f"""Hi {full_name},
-
-Your Jungle House AI Wiki account has been created successfully using a registration key.
-
-You can now log in using your registered email address.
-
-Thank you,
-Jungle House AI Wiki Team
-"""
+            description=f"Pending staff registration submitted for {email}."
         )
 
         return jsonify({
-            "message": "Registration successful. You can now log in."
+            "message": (
+                "Registration submitted. Please verify your email address. "
+                "After manager or team lead approval, a one-time registration "
+                "key will be sent to your email for account activation."
+            ),
+            "account_status": "pending",
+            "email_verification_required": True,
+            "email_sent": bool(email_sent),
         }), 201
 
     except mysql.connector.Error as err:
+        if conn:
+            conn.rollback()
         print("REGISTER MYSQL ERROR:", err)
+        return jsonify({"message": "Unable to complete registration right now."}), 500
 
+    except Exception as error:
         if conn:
             conn.rollback()
-
-        return jsonify({"message": f"Database error: {str(err)}"}), 500
-
-    except Exception as e:
-        print("REGISTER GENERAL ERROR:", e)
-
-        if conn:
-            conn.rollback()
-
-        return jsonify({"message": f"Server error: {str(e)}"}), 500
+        print("REGISTER GENERAL ERROR:", error)
+        return jsonify({"message": "Unable to complete registration right now."}), 500
 
     finally:
         if cursor:
             cursor.close()
         if conn:
             conn.close()
-
 
 @app.route("/api/auth/verify-email", methods=["GET"])
 def verify_email():
@@ -3656,82 +3715,77 @@ def resend_email_verification():
 # =========================
 # REGISTRATION KEY ROUTES
 # =========================
+def send_registration_invitation_email(email, key_code):
+    """
+    Legacy/manual invitation helper kept for backward compatibility.
+    The normal new-account workflow now issues keys only after approval.
+    """
+    register_url = f"{FRONTEND_URL}/register" if FRONTEND_URL else "the Jungle House registration page"
+    subject = "Jungle House AI Wiki - Registration invitation"
+    body = f"""Hello,
+
+A registration invitation has been created for this email address.
+
+Registration key: {key_code}
+Assigned email: {email}
+Registration page: {register_url}
+
+This legacy invitation key can only be used once.
+
+Thank you,
+Jungle House AI Wiki Team
+"""
+    return send_email_safe(email, subject, body)
+
+
+def send_registration_activation_email(full_name, email, key_code):
+    login_url = f"{FRONTEND_URL}/login" if FRONTEND_URL else "the Jungle House login page"
+    subject = "Jungle House AI Wiki - Account approved"
+    body = f"""Hi {full_name or 'there'},
+
+Your Jungle House AI Wiki account request has been approved by a manager or team leader.
+
+Your one-time registration key is:
+
+{key_code}
+
+Sign in using your registered email address and password:
+{login_url}
+
+After your email and password are accepted, the system will ask you to enter this registration key.
+
+Security notes:
+- This key is assigned only to {email}.
+- This key can be used only once.
+- Do not share this key with anyone.
+- Jungle House staff will never ask you to send your password by email.
+
+After the key is verified, your account will be activated and you can enter the system.
+
+Thank you,
+Jungle House AI Wiki Team
+"""
+    return send_email_safe(email, subject, body)
+
 @app.route("/api/registration-keys/generate", methods=["POST"])
 def generate_registration_key():
-    data = request.get_json(silent=True) or {}
-    actor_id = data.get("created_by") or data.get("user_id")
+    """
+    Manual pre-registration key generation is intentionally disabled.
 
-    conn = None
-    cursor = None
+    Security flow now is:
+    register -> verify email -> manager/team lead approval -> automatic
+    one-time activation key -> login key verification -> active account.
 
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-
-        ensure_registration_keys_table(cursor)
-
-        if not is_registration_key_manager(cursor, actor_id):
-            return jsonify({
-                "message": "Only managers can generate registration keys."
-            }), 403
-
-        # Extremely unlikely to collide (36^10 possibilities), but retry a
-        # few times just in case instead of trusting luck.
-        key_code = None
-
-        for _ in range(5):
-            candidate = generate_registration_key_code()
-
-            cursor.execute(
-                "SELECT key_id FROM staff_registration_keys WHERE key_code = %s LIMIT 1",
-                (candidate,)
-            )
-
-            if not cursor.fetchone():
-                key_code = candidate
-                break
-
-        if not key_code:
-            return jsonify({
-                "message": "Failed to generate registration key."
-            }), 500
-
-        cursor.execute("""
-            INSERT INTO staff_registration_keys (key_code, status, created_by_user_id)
-            VALUES (%s, 'unused', %s)
-        """, (key_code, actor_id))
-
-        conn.commit()
-
-        add_audit_log(
-            actor_id=actor_id,
-            action="Generated registration key",
-            module="User Management",
-            description=f"Registration key generated: {key_code}"
+    Keeping this route avoids breaking an older frontend with a 404, while
+    preventing a key issued before approval from bypassing the approval gate.
+    """
+    return jsonify({
+        "code": "MANUAL_REGISTRATION_KEY_DISABLED",
+        "message": (
+            "Manual registration-key generation is disabled. Approve a verified "
+            "pending registration to generate and email the one-time activation key."
         )
-
-        return jsonify({
-            "message": "Registration key generated successfully.",
-            "key_code": key_code
-        }), 201
-
-    except Exception as error:
-        if conn:
-            conn.rollback()
-
-        print("GENERATE REGISTRATION KEY ERROR:", error)
-
-        return jsonify({
-            "message": "Failed to generate registration key.",
-            "error": str(error)
-        }), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
+    }), 409
 
 @app.route("/api/registration-keys", methods=["GET"])
 def list_registration_keys():
@@ -3741,7 +3795,6 @@ def list_registration_keys():
     try:
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
-
         ensure_registration_keys_table(cursor)
 
         cursor.execute("""
@@ -3749,26 +3802,29 @@ def list_registration_keys():
                 rk.key_id,
                 rk.key_code,
                 rk.status,
+                rk.assigned_email,
+                rk.assigned_at,
+                rk.email_sent_at,
                 rk.used_by_email,
                 rk.created_at,
                 rk.used_at,
+                rk.revoked_at,
                 creator.full_name AS created_by_name
             FROM staff_registration_keys rk
             LEFT JOIN users creator ON rk.created_by_user_id = creator.user_id
-            ORDER BY rk.created_at DESC
+            ORDER BY rk.created_at DESC, rk.key_id DESC
         """)
 
-        keys = cursor.fetchall()
+        keys = cursor.fetchall() or []
+        for item in keys:
+            for field in ["assigned_at", "email_sent_at", "created_at", "used_at", "revoked_at"]:
+                item[field] = format_datetime_value(item.get(field))
 
         return jsonify(keys), 200
 
     except Exception as error:
         print("LIST REGISTRATION KEYS ERROR:", error)
-
-        return jsonify({
-            "message": "Failed to load registration keys.",
-            "error": str(error)
-        }), 500
+        return jsonify({"message": "Failed to load registration keys."}), 500
 
     finally:
         if cursor:
@@ -3777,15 +3833,196 @@ def list_registration_keys():
             conn.close()
 
 
+@app.route("/api/registration-keys/<int:key_id>/resend", methods=["POST"])
+def resend_registration_key(key_id):
+    data = request.get_json(silent=True) or {}
+    actor_id = data.get("actor_id") or data.get("user_id") or data.get("created_by")
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        ensure_registration_keys_table(cursor)
+
+        if not is_registration_key_manager(cursor, actor_id):
+            return jsonify({"message": "Only managers can resend registration invitations."}), 403
+
+        cursor.execute("""
+            SELECT key_code, status, assigned_email
+            FROM staff_registration_keys
+            WHERE key_id = %s
+            LIMIT 1
+        """, (key_id,))
+        key_row = cursor.fetchone()
+
+        if not key_row:
+            return jsonify({"message": "Registration invitation not found."}), 404
+
+        if str(key_row.get("status", "")).lower() != "unused":
+            return jsonify({"message": "Only unused invitation keys can be resent."}), 400
+
+        assigned_email = str(key_row.get("assigned_email") or "").strip().lower()
+        if not assigned_email:
+            return jsonify({
+                "message": "This is a legacy unassigned key and cannot be emailed. Revoke it and create a new assigned invitation."
+            }), 400
+
+        cursor.execute("""
+            SELECT user_id, full_name, email, status
+            FROM users
+            WHERE LOWER(email) = %s
+            LIMIT 1
+        """, (assigned_email,))
+        target_user = cursor.fetchone()
+
+        if not target_user or str(target_user.get("status", "")).strip().lower() != "pending":
+            return jsonify({
+                "message": (
+                    "This key is not linked to a pending approved registration. "
+                    "Legacy/manual invitation keys cannot be resent in the new activation flow."
+                )
+            }), 409
+
+        verified_at = get_user_email_verified_at(cursor, target_user["user_id"])
+        if not verified_at:
+            return jsonify({
+                "message": "The user must verify their email before an activation key can be resent."
+            }), 403
+
+        cursor.execute("""
+            SELECT assigned_at
+            FROM staff_registration_keys
+            WHERE key_id = %s
+            LIMIT 1
+        """, (key_id,))
+        key_time_row = cursor.fetchone() or {}
+        assigned_at = key_time_row.get("assigned_at") if isinstance(key_time_row, dict) else None
+
+        if not assigned_at or assigned_at < verified_at:
+            return jsonify({
+                "message": (
+                    "This is a legacy key created before email verification/approval. "
+                    "Approve the pending registration to issue a new activation key."
+                )
+            }), 409
+
+        email_sent = send_registration_activation_email(
+            target_user.get("full_name"),
+            assigned_email,
+            key_row["key_code"]
+        )
+
+        if email_sent:
+            cursor.execute("""
+                UPDATE staff_registration_keys
+                SET email_sent_at = NOW()
+                WHERE key_id = %s
+            """, (key_id,))
+            conn.commit()
+
+        add_audit_log(
+            actor_id=actor_id,
+            action="Resent registration invitation",
+            module="User Management",
+            description=f"Registration invitation resend requested for {assigned_email}."
+        )
+
+        return jsonify({
+            "message": (
+                "Registration invitation email sent successfully."
+                if email_sent
+                else "The invitation exists, but the email could not be sent."
+            ),
+            "email_sent": bool(email_sent),
+        }), (200 if email_sent else 503)
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+        print("RESEND REGISTRATION KEY ERROR:", error)
+        return jsonify({"message": "Failed to resend registration invitation."}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/registration-keys/<int:key_id>/revoke", methods=["PUT"])
+def revoke_registration_key(key_id):
+    data = request.get_json(silent=True) or {}
+    actor_id = data.get("actor_id") or data.get("user_id") or data.get("created_by")
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        conn.start_transaction()
+        cursor = conn.cursor(dictionary=True)
+        ensure_registration_keys_table(cursor)
+
+        if not is_registration_key_manager(cursor, actor_id):
+            conn.rollback()
+            return jsonify({"message": "Only managers can revoke registration invitations."}), 403
+
+        cursor.execute("""
+            SELECT status, assigned_email
+            FROM staff_registration_keys
+            WHERE key_id = %s
+            LIMIT 1
+            FOR UPDATE
+        """, (key_id,))
+        key_row = cursor.fetchone()
+
+        if not key_row:
+            conn.rollback()
+            return jsonify({"message": "Registration invitation not found."}), 404
+
+        if str(key_row.get("status", "")).lower() != "unused":
+            conn.rollback()
+            return jsonify({"message": "Only unused invitation keys can be revoked."}), 400
+
+        cursor.execute("""
+            UPDATE staff_registration_keys
+            SET status = 'revoked', revoked_at = NOW()
+            WHERE key_id = %s AND status = 'unused'
+        """, (key_id,))
+        conn.commit()
+
+        add_audit_log(
+            actor_id=actor_id,
+            action="Revoked registration invitation",
+            module="User Management",
+            description=f"Unused registration invitation revoked for {key_row.get('assigned_email') or 'legacy unassigned key'}."
+        )
+
+        return jsonify({"message": "Registration invitation revoked successfully."}), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+        print("REVOKE REGISTRATION KEY ERROR:", error)
+        return jsonify({"message": "Failed to revoke registration invitation."}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
 # =========================
 # AUTH - LOGIN
 # =========================
 @app.route("/api/auth/login", methods=["POST"])
 def login():
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
 
-    email = data.get("email", "").strip().lower()
-    password = data.get("password", "")
+    email = str(data.get("email", "")).strip().lower()
+    password = str(data.get("password", ""))
 
     if not email or not password:
         return jsonify({"message": "Email and password are required."}), 400
@@ -3796,31 +4033,17 @@ def login():
     try:
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
+        ensure_email_verification_table(cursor)
 
         cursor.execute("""
-            SELECT 
+            SELECT
                 u.user_id,
                 u.full_name,
                 u.email,
                 u.password_hash,
                 u.status,
                 u.created_at,
-                r.role_name,
-                CASE
-                    WHEN EXISTS (
-                        SELECT 1
-                        FROM email_verifications ev
-                        WHERE ev.user_id = u.user_id
-                          AND ev.verified_at IS NOT NULL
-                    ) THEN TRUE
-                    ELSE FALSE
-                END AS email_verified,
-                (
-                    SELECT MAX(ev2.verified_at)
-                    FROM email_verifications ev2
-                    WHERE ev2.user_id = u.user_id
-                      AND ev2.verified_at IS NOT NULL
-                ) AS email_verified_at
+                r.role_name
             FROM users u
             JOIN roles r ON u.role_id = r.role_id
             WHERE LOWER(u.email) = %s
@@ -3839,67 +4062,7 @@ def login():
             conn.commit()
             return jsonify({"message": "Invalid email or password."}), 401
 
-        user_status = str(user.get("status", "")).strip().lower()
-        email_verified = is_user_email_verified(cursor, user["user_id"])
-
-        if user_status == "pending" and not email_verified:
-            record_login_history(
-                cursor,
-                user_id=user["user_id"],
-                email=user["email"],
-                full_name=user["full_name"],
-                status="failed"
-            )
-            conn.commit()
-
-            return jsonify({
-                "message": "Please verify your email first. Check your inbox for the Jungle House AI Wiki verification link."
-            }), 403
-
-        if user_status == "pending":
-            record_login_history(
-                cursor,
-                user_id=user["user_id"],
-                email=user["email"],
-                full_name=user["full_name"],
-                status="failed"
-            )
-            conn.commit()
-
-            return jsonify({
-                "message": "Your account is pending verification. A manager or team lead will review your registration within 24 hours. You will be notified through your registered email."
-            }), 403
-
-        if user_status == "declined":
-            record_login_history(
-                cursor,
-                user_id=user["user_id"],
-                email=user["email"],
-                full_name=user["full_name"],
-                status="failed"
-            )
-            conn.commit()
-
-            return jsonify({
-                "message": "Your registration was declined. Please contact the manager if you think this is a mistake."
-            }), 403
-
-        if user_status != "active":
-            record_login_history(
-                cursor,
-                user_id=user["user_id"],
-                email=user["email"],
-                full_name=user["full_name"],
-                status="failed"
-            )
-            conn.commit()
-
-            return jsonify({
-                "message": "This account is inactive. Please contact the manager."
-            }), 403
-
         stored_password = str(user.get("password_hash", "")).strip()
-
         password_ok = False
 
         try:
@@ -3907,22 +4070,20 @@ def login():
         except Exception:
             password_ok = False
 
-        # fallback for old plain-text passwords
+        # Backward compatibility for old accounts that still contain a plain
+        # text password. Convert it immediately after the first valid login.
         if not password_ok and stored_password == password:
-            print("PLAIN TEXT PASSWORD MATCH DETECTED. Auto-fixing hash...")
             new_hash = generate_password_hash(password)
-
             cursor.execute("""
                 UPDATE users
                 SET password_hash = %s
                 WHERE user_id = %s
             """, (new_hash, user["user_id"]))
-            conn.commit()
-
             password_ok = True
 
-        print("PASSWORD CHECK RESULT:", password_ok)
-
+        # Do not reveal pending/declined account state until the password is
+        # proven. This avoids leaking account status to someone who only
+        # knows a staff email address.
         if not password_ok:
             record_login_history(
                 cursor,
@@ -3932,8 +4093,88 @@ def login():
                 status="failed"
             )
             conn.commit()
-
             return jsonify({"message": "Invalid email or password."}), 401
+
+        user_status = str(user.get("status", "")).strip().lower()
+        email_verified_at = get_user_email_verified_at(cursor, user["user_id"])
+        email_verified = bool(email_verified_at)
+
+        if user_status == "pending" and not email_verified:
+            record_login_history(cursor, user["user_id"], user["email"], user["full_name"], "failed")
+            conn.commit()
+            return jsonify({
+                "code": "EMAIL_VERIFICATION_REQUIRED",
+                "account_status": "pending",
+                "email_verified": False,
+                "message": "Please verify your email first. Check your inbox for the Jungle House AI Wiki verification link."
+            }), 403
+
+        if user_status == "pending":
+            ensure_registration_keys_table(cursor)
+
+            cursor.execute("""
+                SELECT key_id
+                FROM staff_registration_keys
+                WHERE LOWER(assigned_email) = %s
+                  AND status = 'unused'
+                  AND assigned_at IS NOT NULL
+                  AND assigned_at >= %s
+                ORDER BY assigned_at DESC, key_id DESC
+                LIMIT 1
+            """, (email, email_verified_at))
+            activation_key = cursor.fetchone()
+
+            record_login_history(
+                cursor,
+                user["user_id"],
+                user["email"],
+                user["full_name"],
+                "failed"
+            )
+            conn.commit()
+
+            if activation_key:
+                return jsonify({
+                    "code": "REGISTRATION_KEY_REQUIRED",
+                    "account_status": "pending",
+                    "email_verified": True,
+                    "registration_key_required": True,
+                    "message": (
+                        "Your account has been approved. Enter the one-time "
+                        "registration key sent to your email to activate access."
+                    )
+                }), 403
+
+            return jsonify({
+                "code": "ACCOUNT_PENDING_APPROVAL",
+                "account_status": "pending",
+                "email_verified": True,
+                "registration_key_required": False,
+                "message": (
+                    "Your account is awaiting manager or team leader approval. "
+                    "You will receive a one-time registration key by email after approval."
+                )
+            }), 403
+
+        if user_status == "declined":
+            record_login_history(cursor, user["user_id"], user["email"], user["full_name"], "failed")
+            conn.commit()
+            return jsonify({
+                "code": "ACCOUNT_DECLINED",
+                "account_status": "declined",
+                "email_verified": bool(email_verified),
+                "message": "Your registration was declined. Please contact the manager if you think this is a mistake."
+            }), 403
+
+        if user_status != "active":
+            record_login_history(cursor, user["user_id"], user["email"], user["full_name"], "failed")
+            conn.commit()
+            return jsonify({
+                "code": "ACCOUNT_INACTIVE",
+                "account_status": user_status or "inactive",
+                "email_verified": bool(email_verified),
+                "message": "This account is inactive. Please contact the manager."
+            }), 403
 
         record_login_history(
             cursor,
@@ -3960,11 +4201,11 @@ def login():
 
     except mysql.connector.Error as err:
         print("LOGIN MYSQL ERROR:", err)
-        return jsonify({"message": f"Database error: {str(err)}"}), 500
+        return jsonify({"message": "Unable to sign in right now."}), 500
 
-    except Exception as e:
-        print("LOGIN GENERAL ERROR:", e)
-        return jsonify({"message": f"Server error: {str(e)}"}), 500
+    except Exception as error:
+        print("LOGIN GENERAL ERROR:", error)
+        return jsonify({"message": "Unable to sign in right now."}), 500
 
     finally:
         if cursor:
@@ -3972,6 +4213,331 @@ def login():
         if conn:
             conn.close()
 
+# =========================
+# AUTH - REGISTRATION KEY ACTIVATION
+# =========================
+@app.route("/api/auth/activate-registration-key", methods=["POST"])
+def activate_registration_key():
+    data = request.get_json(silent=True) or {}
+
+    email = str(data.get("email", "")).strip().lower()
+    password = str(data.get("password", ""))
+    registration_key = str(data.get("registration_key", "")).strip().lower()
+
+    if not email or not password or not registration_key:
+        return jsonify({
+            "message": "Email, password, and registration key are required."
+        }), 400
+
+    if not re.fullmatch(r"[a-z0-9]{10}", registration_key):
+        return jsonify({"message": "Invalid registration key."}), 400
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        conn.start_transaction()
+        cursor = conn.cursor(dictionary=True)
+
+        ensure_registration_keys_table(cursor)
+        ensure_email_verification_table(cursor)
+
+        cursor.execute("""
+            SELECT
+                u.user_id,
+                u.full_name,
+                u.email,
+                u.password_hash,
+                u.status,
+                u.created_at,
+                r.role_name
+            FROM users u
+            JOIN roles r ON u.role_id = r.role_id
+            WHERE LOWER(u.email) = %s
+            LIMIT 1
+            FOR UPDATE
+        """, (email,))
+        user = cursor.fetchone()
+
+        if not user:
+            conn.rollback()
+            return jsonify({"message": "Invalid email, password, or registration key."}), 401
+
+        stored_password = str(user.get("password_hash", "")).strip()
+        password_ok = False
+
+        try:
+            password_ok = check_password_hash(stored_password, password)
+        except Exception:
+            password_ok = False
+
+        # Backward compatibility for old plain-text password rows.
+        if not password_ok and stored_password == password:
+            cursor.execute("""
+                UPDATE users
+                SET password_hash = %s
+                WHERE user_id = %s
+            """, (generate_password_hash(password), user["user_id"]))
+            password_ok = True
+
+        if not password_ok:
+            conn.rollback()
+            return jsonify({"message": "Invalid email, password, or registration key."}), 401
+
+        email_verified_at = get_user_email_verified_at(cursor, user["user_id"])
+        if not email_verified_at:
+            conn.rollback()
+            return jsonify({
+                "code": "EMAIL_VERIFICATION_REQUIRED",
+                "message": "Please verify your email address before activating your account."
+            }), 403
+
+        user_status = str(user.get("status", "")).strip().lower()
+
+        if user_status == "active":
+            conn.rollback()
+            return jsonify({
+                "code": "ACCOUNT_ALREADY_ACTIVE",
+                "message": "This account is already active. Please sign in normally."
+            }), 409
+
+        if user_status == "declined":
+            conn.rollback()
+            return jsonify({
+                "code": "ACCOUNT_DECLINED",
+                "message": "This registration has been declined."
+            }), 403
+
+        if user_status != "pending":
+            conn.rollback()
+            return jsonify({
+                "code": "ACCOUNT_INACTIVE",
+                "message": "This account cannot be activated. Please contact a manager or team leader."
+            }), 403
+
+        # Lock the exact key row so two requests cannot consume it at the same time.
+        cursor.execute("""
+            SELECT
+                key_id,
+                status,
+                assigned_email,
+                assigned_at
+            FROM staff_registration_keys
+            WHERE key_code = %s
+            LIMIT 1
+            FOR UPDATE
+        """, (registration_key,))
+        key_row = cursor.fetchone()
+
+        if not key_row:
+            conn.rollback()
+            return jsonify({"message": "Invalid registration key."}), 400
+
+        key_status = str(key_row.get("status", "")).strip().lower()
+        assigned_email = str(key_row.get("assigned_email") or "").strip().lower()
+
+        if key_status == "used":
+            conn.rollback()
+            return jsonify({"message": "This registration key has already been used."}), 409
+
+        if key_status == "revoked":
+            conn.rollback()
+            return jsonify({"message": "This registration key has been revoked."}), 409
+
+        if assigned_email != email:
+            conn.rollback()
+            return jsonify({
+                "message": "This registration key is not valid for this account."
+            }), 403
+
+        assigned_at = key_row.get("assigned_at")
+        if not assigned_at or assigned_at < email_verified_at:
+            conn.rollback()
+            return jsonify({
+                "message": (
+                    "This registration key was not issued by the current approval flow. "
+                    "Please contact your manager or team leader for a new activation key."
+                )
+            }), 403
+
+        cursor.execute("""
+            UPDATE staff_registration_keys
+            SET status = 'used',
+                used_by_user_id = %s,
+                used_by_email = %s,
+                used_at = NOW()
+            WHERE key_id = %s
+              AND status = 'unused'
+        """, (user["user_id"], email, key_row["key_id"]))
+
+        if cursor.rowcount != 1:
+            conn.rollback()
+            return jsonify({
+                "message": "This registration key is no longer available."
+            }), 409
+
+        cursor.execute("""
+            UPDATE users
+            SET status = 'active'
+            WHERE user_id = %s
+              AND status = 'pending'
+        """, (user["user_id"],))
+
+        if cursor.rowcount != 1:
+            conn.rollback()
+            return jsonify({
+                "message": "Unable to activate this account."
+            }), 409
+
+        conn.commit()
+
+        create_notification_safe(
+            user_id=user["user_id"],
+            title="Account activated",
+            detail="Your registration key was verified and your Jungle House account is now active.",
+            notification_type="registration_activation",
+            related_id=user["user_id"]
+        )
+
+        add_audit_log(
+            actor_id=user["user_id"],
+            actor_name=user.get("full_name") or "User",
+            action="Activated account with registration key",
+            module="Authentication",
+            description=f"One-time registration key consumed for {email}."
+        )
+
+        return jsonify({
+            "message": "Registration key verified. Your account is now active.",
+            "account_status": "active",
+            "activation_complete": True
+        }), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+        print("ACTIVATE REGISTRATION KEY ERROR:", error)
+        return jsonify({
+            "message": "Unable to verify the registration key right now."
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/auth/resend-activation-key", methods=["POST"])
+def resend_activation_key():
+    data = request.get_json(silent=True) or {}
+
+    email = str(data.get("email", "")).strip().lower()
+    password = str(data.get("password", ""))
+
+    if not email or not password:
+        return jsonify({"message": "Email and password are required."}), 400
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        ensure_registration_keys_table(cursor)
+        ensure_email_verification_table(cursor)
+
+        cursor.execute("""
+            SELECT user_id, full_name, email, password_hash, status
+            FROM users
+            WHERE LOWER(email) = %s
+            LIMIT 1
+        """, (email,))
+        user = cursor.fetchone()
+
+        if not user:
+            return jsonify({"message": "Unable to resend the activation key."}), 401
+
+        stored_password = str(user.get("password_hash", "")).strip()
+        password_ok = False
+
+        try:
+            password_ok = check_password_hash(stored_password, password)
+        except Exception:
+            password_ok = False
+
+        if not password_ok and stored_password == password:
+            password_ok = True
+
+        if not password_ok:
+            return jsonify({"message": "Unable to resend the activation key."}), 401
+
+        if str(user.get("status", "")).strip().lower() != "pending":
+            return jsonify({
+                "message": "A registration key is not required for this account."
+            }), 409
+
+        email_verified_at = get_user_email_verified_at(cursor, user["user_id"])
+        if not email_verified_at:
+            return jsonify({
+                "message": "Please verify your email before requesting the activation key."
+            }), 403
+
+        cursor.execute("""
+            SELECT key_id, key_code
+            FROM staff_registration_keys
+            WHERE LOWER(assigned_email) = %s
+              AND status = 'unused'
+              AND assigned_at IS NOT NULL
+              AND assigned_at >= %s
+            ORDER BY assigned_at DESC, key_id DESC
+            LIMIT 1
+        """, (email, email_verified_at))
+        key_row = cursor.fetchone()
+
+        if not key_row:
+            return jsonify({
+                "message": "Your account is still awaiting manager or team leader approval."
+            }), 403
+
+        email_sent = send_registration_activation_email(
+            user.get("full_name"),
+            user.get("email"),
+            key_row["key_code"]
+        )
+
+        if email_sent:
+            cursor.execute("""
+                UPDATE staff_registration_keys
+                SET email_sent_at = NOW()
+                WHERE key_id = %s
+            """, (key_row["key_id"],))
+            conn.commit()
+
+        return jsonify({
+            "message": (
+                "The registration key has been resent to your email."
+                if email_sent
+                else "The registration key could not be emailed right now. Please contact your manager or team leader."
+            ),
+            "email_sent": bool(email_sent)
+        }), 200 if email_sent else 503
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+        print("RESEND ACTIVATION KEY ERROR:", error)
+        return jsonify({
+            "message": "Unable to resend the activation key right now."
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 # =========================
 # PROFILE
@@ -10023,11 +10589,17 @@ def approve_registration_request(user_id):
 
     conn = None
     cursor = None
+    key_id = None
+    key_code = None
+    target_user = None
 
     try:
         conn = get_db_connection()
         conn.start_transaction()
         cursor = conn.cursor(dictionary=True)
+
+        ensure_registration_keys_table(cursor)
+        ensure_email_verification_table(cursor)
 
         if not approved_by:
             conn.rollback()
@@ -10052,8 +10624,8 @@ def approve_registration_request(user_id):
             JOIN roles r ON u.role_id = r.role_id
             WHERE u.user_id = %s
             LIMIT 1
+            FOR UPDATE
         """, (user_id,))
-
         target_user = cursor.fetchone()
 
         if not target_user:
@@ -10066,10 +10638,14 @@ def approve_registration_request(user_id):
                 "message": "Only pending registration requests can be approved."
             }), 400
 
-        if not is_user_email_verified(cursor, user_id):
+        email_verified_at = get_user_email_verified_at(cursor, user_id)
+        if not email_verified_at:
             conn.rollback()
             return jsonify({
-                "message": "This user has not verified their email yet. Ask them to click the email verification link before approval."
+                "message": (
+                    "This user has not verified their email yet. Ask them to "
+                    "click the email verification link before approval."
+                )
             }), 400
 
         cursor.execute("""
@@ -10078,34 +10654,139 @@ def approve_registration_request(user_id):
             WHERE LOWER(role_name) = %s
             LIMIT 1
         """, (new_role,))
-
         role_row = cursor.fetchone()
 
         if not role_row:
             conn.rollback()
             return jsonify({"message": "Selected role does not exist."}), 400
 
+        # The account remains pending after approval. Only a key issued AFTER
+        # the user's verified email counts as an approval-issued activation key.
+        # Any older pre-registration/manual key is not allowed to satisfy this gate.
+        cursor.execute("""
+            SELECT key_id, key_code
+            FROM staff_registration_keys
+            WHERE LOWER(assigned_email) = %s
+              AND status = 'unused'
+              AND assigned_at IS NOT NULL
+              AND assigned_at >= %s
+            ORDER BY assigned_at DESC, key_id DESC
+            LIMIT 1
+            FOR UPDATE
+        """, (str(target_user["email"]).strip().lower(), email_verified_at))
+        existing_key = cursor.fetchone()
+
+        if existing_key:
+            conn.rollback()
+            return jsonify({
+                "code": "ACTIVATION_KEY_ALREADY_ISSUED",
+                "message": (
+                    "This registration has already been approved and a one-time "
+                    "registration key is waiting for the user to activate the account."
+                ),
+                "key_id": existing_key["key_id"]
+            }), 409
+
+        for _ in range(5):
+            candidate = generate_registration_key_code()
+            cursor.execute("""
+                SELECT key_id
+                FROM staff_registration_keys
+                WHERE key_code = %s
+                LIMIT 1
+            """, (candidate,))
+            if not cursor.fetchone():
+                key_code = candidate
+                break
+
+        if not key_code:
+            conn.rollback()
+            return jsonify({
+                "message": "Unable to generate a unique registration key."
+            }), 500
+
+        # Set the approved role now, but DO NOT activate the account yet.
         cursor.execute("""
             UPDATE users
-            SET status = 'active',
-                role_id = %s
+            SET role_id = %s
             WHERE user_id = %s
+              AND status = 'pending'
         """, (role_row["role_id"], user_id))
+
+        cursor.execute("""
+            INSERT INTO staff_registration_keys
+                (key_code, status, created_by_user_id, assigned_email, assigned_at)
+            VALUES (%s, 'unused', %s, %s, NOW())
+        """, (
+            key_code,
+            approved_by,
+            str(target_user["email"]).strip().lower()
+        ))
+        key_id = cursor.lastrowid
 
         conn.commit()
 
-        notify_registration_decision(user_id, approved=True)
+        email_sent = send_registration_activation_email(
+            target_user.get("full_name"),
+            target_user.get("email"),
+            key_code
+        )
+
+        if email_sent:
+            update_conn = None
+            update_cursor = None
+            try:
+                update_conn = get_db_connection()
+                update_cursor = update_conn.cursor()
+                update_cursor.execute("""
+                    UPDATE staff_registration_keys
+                    SET email_sent_at = NOW()
+                    WHERE key_id = %s
+                """, (key_id,))
+                update_conn.commit()
+            finally:
+                if update_cursor:
+                    update_cursor.close()
+                if update_conn:
+                    update_conn.close()
+
+        create_notification_safe(
+            user_id=user_id,
+            title="Account approved - activation required",
+            detail=(
+                "Your account was approved. A one-time registration key was "
+                "sent to your email. Enter it after signing in to activate access."
+            ),
+            notification_type="registration_approved",
+            related_id=user_id,
+            created_by=approved_by
+        )
 
         add_audit_log(
             actor_id=approved_by,
             actor_name="Manager/Team Lead",
             action="Approved account registration",
             module="User Management",
-            description=f"Approved user ID {user_id} as {new_role}."
+            description=(
+                f"Approved user ID {user_id} as {new_role}; one-time activation "
+                f"key issued to {target_user.get('email')}."
+            )
         )
 
         return jsonify({
-            "message": "Registration approved successfully. The user can now log in."
+            "message": (
+                "Registration approved. A one-time registration key has been "
+                "generated and sent to the user's email. The account will become "
+                "active after the user verifies the key."
+                if email_sent
+                else
+                "Registration approved and a one-time registration key was generated, "
+                "but the email could not be sent. Use Resend Key in Registration Key Management."
+            ),
+            "account_status": "pending",
+            "activation_key_issued": True,
+            "key_id": key_id,
+            "email_sent": bool(email_sent)
         }), 200
 
     except Exception as error:
@@ -10113,10 +10794,8 @@ def approve_registration_request(user_id):
             conn.rollback()
 
         print("APPROVE REGISTRATION ERROR:", error)
-
         return jsonify({
-            "message": "Failed to approve registration.",
-            "error": str(error)
+            "message": "Failed to approve registration."
         }), 500
 
     finally:
@@ -10124,7 +10803,6 @@ def approve_registration_request(user_id):
             cursor.close()
         if conn:
             conn.close()
-
 
 @app.route("/api/admin/registration-requests/<int:user_id>/decline", methods=["PUT"])
 def decline_registration_request(user_id):
@@ -10177,6 +10855,17 @@ def decline_registration_request(user_id):
             return jsonify({
                 "message": "Only pending registration requests can be declined."
             }), 400
+
+        ensure_registration_keys_table(cursor)
+
+        # If approval had already issued a key, revoke it before declining.
+        cursor.execute("""
+            UPDATE staff_registration_keys
+            SET status = 'revoked',
+                revoked_at = NOW()
+            WHERE LOWER(assigned_email) = %s
+              AND status = 'unused'
+        """, (str(target_user.get("email") or "").strip().lower(),))
 
         cursor.execute("""
             UPDATE users
