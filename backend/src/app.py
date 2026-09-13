@@ -14,6 +14,7 @@ import traceback
 import smtplib
 import secrets
 import hashlib
+import math
 import requests
 
 from email.message import EmailMessage
@@ -834,8 +835,8 @@ Return ONLY valid JSON. No markdown, no code fences, no extra text.
 Fields:
 - isWorkRelated: boolean
 - confidence: number between 0 and 1
-- detectedObjects: array of strings
-- possibleAliases: array of strings
+- detectedObjects: array of strings (at most 4)
+- possibleAliases: array of strings (at most 3)
 - imageSummary: string
 - irrelevantReason: string or null
 
@@ -843,7 +844,13 @@ Important:
 - Detect objects even if shown from front, back, side, tilted, close-up, far away, or a different angle.
 - If the image is random, personal, unclear, a meme, a selfie, food unrelated to work, or otherwise not related to work, set isWorkRelated to false.
 - Do not answer the user's question here.
-- Only describe the image and whether it is work-related."""
+- Only describe the image and whether it is work-related.
+- detectedObjects and possibleAliases will be used as search keywords against a
+  Knowledge Base, so they must be SHORT, SPECIFIC, and DISTINCTIVE: the actual
+  object/product/equipment/document name (e.g. "iPad", "ice cooler", "bottle
+  return point sign", "petty cash log"). Do NOT include generic scene-description
+  words that could apply to almost any photo, such as "hand", "text", "sign"
+  alone, "label", "screen", "notice", "sleeve", "plastic", "paper", or "photo"."""
 
 GEMINI_VISION_CACHE = {}  # file_hash -> (timestamp, result_dict or None)
 GEMINI_VISION_CACHE_MAX = 200
@@ -863,8 +870,8 @@ def _parse_vision_json_reply(raw_text):
     return {
         "isWorkRelated": bool(parsed.get("isWorkRelated", False)),
         "confidence": float(parsed.get("confidence", 0.0) or 0.0),
-        "detectedObjects": [str(item) for item in (parsed.get("detectedObjects") or [])][:10],
-        "possibleAliases": [str(item) for item in (parsed.get("possibleAliases") or [])][:10],
+        "detectedObjects": [str(item) for item in (parsed.get("detectedObjects") or [])][:4],
+        "possibleAliases": [str(item) for item in (parsed.get("possibleAliases") or [])][:3],
         "imageSummary": str(parsed.get("imageSummary") or ""),
         "irrelevantReason": parsed.get("irrelevantReason"),
     }
@@ -977,6 +984,26 @@ def build_image_only_clarification_response(vision_result, kb_hint=None):
     })
 
 
+# Generic scene-description words Gemini sometimes still returns despite the
+# prompt asking for specific object/product names. These describe almost any
+# photo and never meaningfully distinguish one Knowledge Base article from
+# another, so they get dropped before the term is used as search context --
+# otherwise they dilute/outweigh the one or two genuinely distinctive words
+# (e.g. "bottle", "return") in both the strict and related-knowledge search.
+VISION_TERM_STOPWORDS = {
+    "hand", "hands", "finger", "fingers", "text", "sign", "signs", "label",
+    "labels", "screen", "notice", "sleeve", "plastic", "paper", "photo",
+    "picture", "image", "object", "item", "device", "background", "table",
+    "counter", "floor", "wall", "surface", "close", "closeup", "person",
+}
+
+
+def _clean_vision_term(term):
+    term = str(term or "").strip().lower()
+    words = [w for w in re.findall(r"[a-z0-9]+", term) if w not in VISION_TERM_STOPWORDS]
+    return " ".join(words)
+
+
 def build_vision_augmented_question(question, vision_result):
     """
     Combine the detected object(s) with the staff member's own question so
@@ -987,7 +1014,12 @@ def build_vision_augmented_question(question, vision_result):
     detected = list((vision_result or {}).get("detectedObjects") or [])
     aliases = list((vision_result or {}).get("possibleAliases") or [])
 
-    object_terms = " ".join(dict.fromkeys(detected + aliases))
+    cleaned_terms = [
+        cleaned
+        for cleaned in (_clean_vision_term(term) for term in (detected + aliases))
+        if cleaned
+    ]
+    object_terms = " ".join(dict.fromkeys(cleaned_terms))
     question = str(question or "").strip()
 
     if object_terms and question:
@@ -3231,20 +3263,44 @@ def search_knowledge_base_articles(question, limit=1):
     return scored_results[:limit]
 
 
-def search_related_knowledge_base_articles(question, limit=3, min_score=0.3):
+def search_related_knowledge_base_articles(question, limit=3, min_score=0.08, min_overlap=2):
     """
     Level-2 retrieval: articles that are topically related but do not clear
     the strict 100%-confidence bar used by search_knowledge_base_articles().
     Used to show clickable "related knowledge" cards before escalating,
     instead of jumping straight from "not confident" to a team lead ticket.
 
-    Scored by calculate_related_relevance_score(), which requires at least 2
-    overlapping meaningful tokens (min_overlap) between the question and the
-    article's title/category/subcategory/content, capped against a max
-    effective question length of 6 tokens. min_score=0.3 is set just below
-    the 2-overlap/6-effective-length floor (0.333) so that minimum case is
-    not rejected, while still avoiding single-coincidental-word "related"
-    matches (guarded separately by min_overlap).
+    Scored with IDF-weighted cosine similarity (bag-of-words, binary term
+    presence), not a plain token-overlap ratio:
+    - A plain ratio (overlap_count / len(q_tokens)) badly under-scores
+      image+text questions, since build_vision_augmented_question() appends
+      several vision-detected words that may not appear in ANY article,
+      diluting a real match (e.g. "bottle", "return") toward zero just
+      because the combined question+image search text is long.
+    - Scoring plain overlap COUNT against a capped denominator instead (an
+      earlier version of this function) overcorrects: any article sharing a
+      handful of tokens with the query maxes out near 99% regardless of how
+      generic those tokens are, so a long, broad document (e.g. a general
+      onboarding checklist) that incidentally touches lots of everyday
+      vocabulary outranks the actual specific article just by sheer size.
+    - Weighting overlap by rarity (IDF) alone still doesn't fully fix that:
+      an article matching many moderately-common words can still out-sum an
+      article matching fewer highly-specific ones.
+    - Cosine similarity fixes both at once: each article is also treated as
+      a vector over ITS OWN full token set (not just the overlapping terms),
+      so a broad/long document has a larger vector norm -- a few incidental
+      matches then count for less of that document's total "mass" -- while a
+      document that is mostly ABOUT the matched terms scores highly even if
+      it only shares a couple of very distinctive words with the query.
+
+    NOTE ON SCALE: cosine similarity over sparse bag-of-words vectors sits
+    much lower than the old overlap-ratio score -- a genuinely correct match
+    typically lands around 0.08-0.15, not 0.3+. min_score=0.08 is a starting
+    point simulated against representative sample data, not this KB's real
+    content/size; min_overlap (>=2 real overlapping tokens) is the primary
+    noise guard, so treat min_score mainly as a floor against near-zero
+    coincidental matches, and re-tune both against real usage if related
+    results are consistently too sparse or too noisy.
     """
     conn = None
     cursor = None
@@ -3278,9 +3334,50 @@ def search_related_knowledge_base_articles(question, limit=3, min_score=0.3):
         if conn:
             conn.close()
 
-    scored_results = []
+    question_text = clean_question(question).lower()
+    q_tokens = tokenize_for_knowledge_match(question_text)
+
+    if not q_tokens or not articles:
+        return []
+
+    article_token_sets = []
     for article in articles:
-        score = calculate_related_relevance_score(question, article)
+        tokens = (
+            tokenize_for_knowledge_match(str(article.get("title") or ""))
+            | tokenize_for_knowledge_match(str(article.get("category") or ""))
+            | tokenize_for_knowledge_match(str(article.get("sub_category") or ""))
+            | tokenize_for_knowledge_match(str(article.get("content") or ""))
+        )
+        article_token_sets.append((article, tokens))
+
+    total_articles = len(article_token_sets)
+
+    # Document frequency across the WHOLE Knowledge Base vocabulary (every
+    # article's tokens, not just the question's), so IDF weight -- and each
+    # article's own vector norm below -- reflect true rarity/commonness.
+    global_doc_frequency = {}
+    for _, tokens in article_token_sets:
+        for token in tokens:
+            global_doc_frequency[token] = global_doc_frequency.get(token, 0) + 1
+    for token in q_tokens:
+        global_doc_frequency.setdefault(token, 0)
+
+    def idf(token):
+        return math.log((total_articles + 1) / (global_doc_frequency[token] + 1)) + 1.0
+
+    query_norm = math.sqrt(sum(idf(token) ** 2 for token in q_tokens)) or 1.0
+
+    scored_results = []
+    for article, tokens in article_token_sets:
+        overlap = q_tokens & tokens
+
+        if len(overlap) < min(min_overlap, len(q_tokens)):
+            continue
+
+        dot_product = sum(idf(token) ** 2 for token in overlap)
+        doc_norm = math.sqrt(sum(idf(token) ** 2 for token in tokens)) or 1.0
+        cosine = dot_product / (query_norm * doc_norm)
+        score = round(min(cosine, 0.99), 4)
 
         if score >= min_score:
             scored_results.append(build_article_ai_result(article, question, score))
@@ -3288,52 +3385,6 @@ def search_related_knowledge_base_articles(question, limit=3, min_score=0.3):
     scored_results = sorted(scored_results, key=lambda item: item.get("score", 0.0), reverse=True)
 
     return scored_results[:limit]
-
-
-def calculate_related_relevance_score(question, article, min_overlap=2):
-    """
-    Relatedness scoring for the Level-2 "related knowledge" tier only.
-
-    calculate_article_match_score() divides overlap by the FULL question
-    token count, which works for the strict 100%-confidence tier but badly
-    under-scores image+text questions: build_vision_augmented_question()
-    appends several generic vision-detected words ("hand", "text", "sleeve",
-    "notice", "loyalty", "incentive"...) that never appear in any article,
-    inflating the denominator without ever contributing to the numerator.
-    A real match (e.g. "bottle", "return") then gets diluted down near zero
-    just because the combined question+image search text is long.
-
-    This caps the effective denominator so long augmented queries aren't
-    unfairly penalized, while requiring a minimum absolute overlap count so
-    a single coincidental word match on a long question still doesn't count
-    as "related".
-    """
-    question_text = clean_question(question).lower()
-    q_tokens = tokenize_for_knowledge_match(question_text)
-
-    title = str(article.get("title") or "").lower()
-    category = str(article.get("category") or "").lower()
-    sub_category = str(article.get("sub_category") or "").lower()
-    content = str(article.get("content") or "").lower()
-
-    all_tokens = (
-        tokenize_for_knowledge_match(title)
-        | tokenize_for_knowledge_match(category)
-        | tokenize_for_knowledge_match(sub_category)
-        | tokenize_for_knowledge_match(content)
-    )
-
-    if not q_tokens or not all_tokens:
-        return 0.0
-
-    overlap_count = len(q_tokens & all_tokens)
-
-    if overlap_count < min(min_overlap, len(q_tokens)):
-        return 0.0
-
-    effective_len = min(len(q_tokens), 6)
-
-    return round(min(overlap_count / effective_len, 0.99), 4)
 
 def process_question(question, context=None):
     question = clean_question(question)
@@ -6578,13 +6629,35 @@ def chat():
                     # pipeline (which only escalates every plain photo, since
                     # it never finds an exact text match for "").
                     if not had_real_question and (not used_vision or vision_result.get("isWorkRelated")):
+                        # Use the same cleaned/deduped detected-object terms
+                        # as the text+image path (build_vision_augmented_question
+                        # with an empty question just returns those terms), so
+                        # an image-only upload can still actively search the
+                        # Knowledge Base by image content alone, instead of
+                        # only asking a generic clarifying question.
+                        detected_terms = build_vision_augmented_question("", vision_result)
+
                         kb_hint = None
-                        detected_terms = " ".join((vision_result or {}).get("detectedObjects") or [])
+                        related_options = []
 
                         if detected_terms:
                             kb_hint = search_knowledge_base_articles(detected_terms, limit=1)
 
+                            related_articles = search_related_knowledge_base_articles(detected_terms, limit=3)
+                            seen_related_titles = set()
+
+                            for item in related_articles:
+                                for option in build_answer_options(detected_terms, None, item):
+                                    title_key = str(option.get("title", "")).lower().strip()
+                                    if title_key and title_key not in seen_related_titles:
+                                        seen_related_titles.add(title_key)
+                                        related_options.append(option)
+
                         clarification_result = build_image_only_clarification_response(vision_result, kb_hint)
+
+                        if related_options:
+                            clarification_result["type"] = "options"
+                            clarification_result["options"] = related_options
 
                         log_request(
                             question,
