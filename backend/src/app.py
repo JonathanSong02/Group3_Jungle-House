@@ -6367,6 +6367,22 @@ def start_notion_oauth():
     data = request.get_json(silent=True) or {}
     actor_id = data.get("user_id")
 
+    # Fail here with a clear message instead of silently building an
+    # authorize URL with an empty client_id and letting Notion's own API
+    # return a cryptic "client_id should be a string" error after the
+    # browser has already navigated away.
+    if not os.getenv("NOTION_OAUTH_CLIENT_ID"):
+        return jsonify({
+            "success": False,
+            "message": "Notion OAuth is not configured on this server yet (NOTION_OAUTH_CLIENT_ID is missing). Set it in Railway's Variables tab for this exact service, then redeploy."
+        }), 500
+
+    if not os.getenv("NOTION_OAUTH_CLIENT_SECRET"):
+        return jsonify({
+            "success": False,
+            "message": "Notion OAuth is not configured on this server yet (NOTION_OAUTH_CLIENT_SECRET is missing). Set it in Railway's Variables tab for this exact service, then redeploy."
+        }), 500
+
     conn = None
     cursor = None
 
@@ -6401,6 +6417,29 @@ def start_notion_oauth():
             cursor.close()
         if conn:
             conn.close()
+
+
+@app.route("/api/notion-sync/oauth/diagnostics", methods=["GET"])
+def notion_oauth_diagnostics():
+    """
+    Lets an admin confirm the OAuth env vars are actually visible to THIS
+    running server process -- never returns the secret values themselves,
+    only whether they're set, plus the exact redirect_uri this server will
+    send to Notion (must match a Redirect URI registered on the Notion
+    integration EXACTLY, or Notion rejects the request).
+    """
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
+
+    redirect_uri = f"{notion_sync_service.get_public_base_url()}/api/notion-sync/oauth/callback"
+
+    return jsonify({
+        "success": True,
+        "clientIdSet": bool(os.getenv("NOTION_OAUTH_CLIENT_ID")),
+        "clientSecretSet": bool(os.getenv("NOTION_OAUTH_CLIENT_SECRET")),
+        "frontendPublicUrlSet": bool(os.getenv("FRONTEND_PUBLIC_URL")),
+        "redirectUriThisServerWillUse": redirect_uri,
+    }), 200
 
 
 @app.route("/api/notion-sync/oauth/callback", methods=["GET"])
