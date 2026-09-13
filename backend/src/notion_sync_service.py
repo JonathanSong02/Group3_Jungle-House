@@ -89,6 +89,10 @@ def ensure_notion_columns_on_wiki_article(cursor):
 def ensure_notion_sync_tables(cursor):
     ensure_notion_columns_on_wiki_article(cursor)
 
+    # source_id/encrypted_notion_token kept NOT NULL for backward compatibility
+    # with any existing row from the old token-paste flow, but the OAuth flow
+    # below writes empty strings into them and uses the new columns instead --
+    # dropping/renaming them would risk losing whatever is already saved.
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS notion_sync_configs (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -104,6 +108,21 @@ def ensure_notion_sync_tables(cursor):
         )
     """)
 
+    config_columns = {
+        "encrypted_access_token": "ALTER TABLE notion_sync_configs ADD COLUMN encrypted_access_token TEXT NULL",
+        "notion_workspace_id": "ALTER TABLE notion_sync_configs ADD COLUMN notion_workspace_id VARCHAR(64) NULL",
+        "notion_workspace_name": "ALTER TABLE notion_sync_configs ADD COLUMN notion_workspace_name VARCHAR(255) NULL",
+        "notion_workspace_icon": "ALTER TABLE notion_sync_configs ADD COLUMN notion_workspace_icon VARCHAR(500) NULL",
+        "notion_bot_id": "ALTER TABLE notion_sync_configs ADD COLUMN notion_bot_id VARCHAR(64) NULL",
+    }
+    existing_config_columns = {
+        row["Field"] if isinstance(row, dict) else row[0]
+        for row in _describe_table(cursor, "notion_sync_configs")
+    }
+    for column_name, statement in config_columns.items():
+        if column_name not in existing_config_columns:
+            cursor.execute(statement)
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS notion_sync_jobs (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -118,6 +137,38 @@ def ensure_notion_sync_tables(cursor):
             created_by INT NULL
         )
     """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS notion_oauth_states (
+            state VARCHAR(64) PRIMARY KEY,
+            created_by INT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            expires_at DATETIME NOT NULL
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS notion_pending_updates (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            article_id INT NOT NULL,
+            notion_page_id VARCHAR(64) NOT NULL,
+            proposed_title VARCHAR(500) NULL,
+            proposed_content MEDIUMTEXT NULL,
+            previous_title VARCHAR(500) NULL,
+            previous_content MEDIUMTEXT NULL,
+            notion_last_edited_time DATETIME NULL,
+            status ENUM('pending', 'applied', 'dismissed') NOT NULL DEFAULT 'pending',
+            detected_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            resolved_by INT NULL,
+            resolved_at DATETIME NULL,
+            INDEX idx_notion_pending_updates_article (article_id, status)
+        )
+    """)
+
+
+def _describe_table(cursor, table_name):
+    cursor.execute(f"SHOW COLUMNS FROM {table_name}")
+    return cursor.fetchall() or []
 
 
 # =========================
@@ -135,23 +186,40 @@ def get_active_notion_config(cursor):
 
 
 def get_notion_public_config(cursor):
+    """
+    Connection status for the OAuth flow: whether a workspace is connected,
+    and its name/icon -- never the access token itself. The old token-hint
+    shape is no longer needed since the OAuth flow replaces manual token
+    entry, but get_active_notion_config()/save_notion_config() (the old
+    integration-token path) are left in place, unused, so any pre-existing
+    row and the encrypted_notion_token/source_id NOT NULL columns are never
+    touched or lost.
+    """
     config = get_active_notion_config(cursor)
 
-    if not config:
+    if not config or not config.get("encrypted_access_token"):
         return None
 
     return {
-        "sourceId": config.get("source_id"),
-        "sourceName": config.get("source_name"),
-        "tokenHint": ai_provider_service.mask_api_key(
-            ai_provider_service.decrypt_api_key(config["encrypted_notion_token"])
-        ),
+        "connected": True,
+        "workspaceId": config.get("notion_workspace_id"),
+        "workspaceName": config.get("notion_workspace_name"),
+        "workspaceIcon": config.get("notion_workspace_icon"),
         "updatedAt": (
             config["updated_at"].strftime("%d/%m/%Y %I:%M %p")
             if config.get("updated_at")
             else None
         ),
     }
+
+
+def get_active_notion_access_token(cursor):
+    config = get_active_notion_config(cursor)
+
+    if not config or not config.get("encrypted_access_token"):
+        return None
+
+    return ai_provider_service.decrypt_api_key(config["encrypted_access_token"])
 
 
 def save_notion_config(cursor, raw_token, source_id, source_name, actor_id):
@@ -166,6 +234,101 @@ def save_notion_config(cursor, raw_token, source_id, source_name, actor_id):
     """, (encrypted_token, source_id, source_name, actor_id, actor_id))
 
     return cursor.lastrowid
+
+
+def save_notion_oauth_config(cursor, access_token, workspace_id, workspace_name, workspace_icon, bot_id, actor_id):
+    cursor.execute("UPDATE notion_sync_configs SET is_active = 0 WHERE is_active = 1")
+
+    encrypted_access_token = ai_provider_service.encrypt_api_key(access_token)
+
+    cursor.execute("""
+        INSERT INTO notion_sync_configs
+        (encrypted_notion_token, source_id, source_name, is_active,
+         encrypted_access_token, notion_workspace_id, notion_workspace_name,
+         notion_workspace_icon, notion_bot_id, created_by, updated_by)
+        VALUES ('', '', %s, 1, %s, %s, %s, %s, %s, %s, %s)
+    """, (
+        workspace_name, encrypted_access_token, workspace_id, workspace_name,
+        workspace_icon, bot_id, actor_id, actor_id
+    ))
+
+    return cursor.lastrowid
+
+
+def disconnect_notion(cursor):
+    cursor.execute("UPDATE notion_sync_configs SET is_active = 0 WHERE is_active = 1")
+
+
+def create_oauth_state(cursor, actor_id, ttl_seconds=600):
+    import secrets as secrets_module
+
+    state = secrets_module.token_urlsafe(32)
+
+    cursor.execute("""
+        INSERT INTO notion_oauth_states (state, created_by, expires_at)
+        VALUES (%s, %s, DATE_ADD(NOW(), INTERVAL %s SECOND))
+    """, (state, actor_id, ttl_seconds))
+
+    return state
+
+
+def consume_oauth_state(cursor, state):
+    """
+    Validates and immediately deletes the state row (single use). Returns
+    the actor_id that originated the request, or None if the state is
+    missing/expired/already used -- the caller must treat that as a failed
+    OAuth attempt.
+    """
+    if not state:
+        return None
+
+    cursor.execute("""
+        SELECT created_by FROM notion_oauth_states
+        WHERE state = %s AND expires_at > NOW()
+        LIMIT 1
+    """, (state,))
+    row = cursor.fetchone()
+
+    cursor.execute("DELETE FROM notion_oauth_states WHERE state = %s", (state,))
+
+    if not row:
+        return None
+
+    return row.get("created_by") if isinstance(row, dict) else row[0]
+
+
+def build_authorize_url(redirect_uri, state):
+    client_id = os.getenv("NOTION_OAUTH_CLIENT_ID", "")
+
+    from urllib.parse import urlencode
+
+    params = {
+        "client_id": client_id,
+        "response_type": "code",
+        "owner": "user",
+        "redirect_uri": redirect_uri,
+        "state": state,
+    }
+    return f"{NOTION_API_BASE}/oauth/authorize?{urlencode(params)}"
+
+
+def exchange_oauth_code_for_token(code, redirect_uri):
+    client_id = os.getenv("NOTION_OAUTH_CLIENT_ID", "")
+    client_secret = os.getenv("NOTION_OAUTH_CLIENT_SECRET", "")
+
+    response = requests.post(
+        f"{NOTION_API_BASE}/oauth/token",
+        auth=(client_id, client_secret),
+        headers={"Content-Type": "application/json", "Notion-Version": NOTION_VERSION},
+        json={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": redirect_uri,
+        },
+        timeout=20,
+    )
+    response.raise_for_status()
+    return response.json()
 
 
 # =========================
@@ -245,6 +408,38 @@ def list_notion_pages(token, source_id):
             page = notion_request(token, "GET", f"/pages/{source_id}")
             return [page]
         raise
+
+
+def discover_notion_content(token):
+    """
+    Replaces the old single-source_id model: after OAuth, the integration
+    may have access to many pages/databases (whatever the admin selected on
+    Notion's own consent screen). POST /v1/search with no query/filter
+    returns everything currently shared with it -- top-level pages AND
+    database entries alike -- so this is the one call needed to discover the
+    full accessible content instead of requiring one hardcoded page/database
+    ID. Database entries also returned via search need no separate
+    /databases/{id}/query call; only the "container" databases themselves
+    (object == "database") are excluded here since their rows already came
+    back individually as object == "page" results.
+    """
+    results = []
+    start_cursor = None
+
+    while True:
+        body = {"page_size": 100}
+        if start_cursor:
+            body["start_cursor"] = start_cursor
+
+        data = notion_request(token, "POST", "/search", body)
+        results.extend(data.get("results", []))
+
+        if not data.get("has_more"):
+            break
+
+        start_cursor = data.get("next_cursor")
+
+    return [item for item in results if item.get("object") == "page"]
 
 
 def extract_notion_page_title(page):
@@ -557,15 +752,43 @@ def notion_blocks_to_html(token, blocks, upload_folder, depth=0):
 # =========================
 # SYNC ORCHESTRATION
 # =========================
-def sync_notion_source(token, source_id, actor_id, upload_folder):
+def _normalize_notion_edited_time(last_edited_time):
+    # MySQL's DATETIME column drops fractional seconds, but Notion's
+    # last_edited_time always includes them (e.g. "...T00:00:00.000Z") --
+    # normalize both sides to whole-second precision before comparing, or a
+    # real unchanged page would always look "changed".
+    return re.sub(r"\.\d+", "", last_edited_time).replace("T", " ").replace("Z", "")
+
+
+def check_for_notion_updates(token, actor_id, upload_folder):
+    """
+    Discovers everything currently shared with the connected integration
+    (discover_notion_content) and, per page:
+      - not yet imported -> import directly as a new wiki_article (new
+        content doesn't need approval, only edits to already-imported
+        content do).
+      - already imported and Notion's last_edited_time changed, with no
+        existing pending/dismissed notion_pending_updates row already
+        covering this exact edited-time -> stage the new content as a
+        pending update instead of overwriting the live article, and report
+        it in flagged_items so the caller (the /check route) can notify the
+        admin(s).
+      - unchanged -> skip.
+
+    Returns counts plus flagged_items ([{article_id, title, pending_id}])
+    for the caller to notify about. This function intentionally does not
+    call into app.py's create_notification_safe() itself, to avoid a
+    circular import between this service module and app.py.
+    """
     conn = None
     cursor = None
 
-    imported_count = 0
-    updated_count = 0
-    skipped_count = 0
+    new_count = 0
+    flagged_count = 0
+    unchanged_count = 0
     failed_count = 0
     error_message = None
+    flagged_items = []
 
     try:
         conn = get_db_connection()
@@ -573,7 +796,7 @@ def sync_notion_source(token, source_id, actor_id, upload_folder):
 
         ensure_notion_sync_tables(cursor)
 
-        pages = list_notion_pages(token, source_id)
+        pages = discover_notion_content(token)
 
         for page in pages:
             page_id = page.get("id")
@@ -581,19 +804,14 @@ def sync_notion_source(token, source_id, actor_id, upload_folder):
 
             try:
                 cursor.execute("""
-                    SELECT article_id, notion_last_edited_time
+                    SELECT article_id, title, content, notion_last_edited_time
                     FROM wiki_article
                     WHERE notion_page_id = %s
                     LIMIT 1
                 """, (page_id,))
                 existing = cursor.fetchone()
 
-                # MySQL's DATETIME column drops fractional seconds, but
-                # Notion's last_edited_time always includes them (e.g.
-                # "...T00:00:00.000Z") -- normalize both sides to
-                # whole-second precision before comparing, or a real
-                # unchanged page would always look "changed".
-                edited_time_mysql = re.sub(r"\.\d+", "", last_edited_time).replace("T", " ").replace("Z", "")
+                edited_time_mysql = _normalize_notion_edited_time(last_edited_time)
 
                 existing_edited = (
                     existing["notion_last_edited_time"].strftime("%Y-%m-%d %H:%M:%S")
@@ -602,45 +820,78 @@ def sync_notion_source(token, source_id, actor_id, upload_folder):
                 )
 
                 if existing and existing_edited == edited_time_mysql:
-                    skipped_count += 1
+                    unchanged_count += 1
                     continue
 
-                title = extract_notion_page_title(page)
-                blocks = fetch_notion_block_children(token, page_id)
-                content_html = notion_blocks_to_html(token, blocks, upload_folder)
-
-                if not content_html.strip():
-                    content_html = "<p>(No readable content found in this Notion page.)</p>"
-
                 if existing:
+                    # Already imported, Notion side changed. Don't overwrite
+                    # yet -- only stage it if this exact edited-time isn't
+                    # already sitting as a pending or previously-dismissed
+                    # proposal (avoids re-flagging the same change on every
+                    # click of "Check for Updates").
                     cursor.execute("""
-                        UPDATE wiki_article
-                        SET title = %s,
-                            content = %s,
-                            notion_last_edited_time = %s
-                        WHERE article_id = %s
-                    """, (title, content_html, edited_time_mysql, existing["article_id"]))
-                    updated_count += 1
+                        SELECT id FROM notion_pending_updates
+                        WHERE notion_page_id = %s AND notion_last_edited_time = %s
+                        LIMIT 1
+                    """, (page_id, edited_time_mysql))
+                    already_staged = cursor.fetchone()
+
+                    if already_staged:
+                        unchanged_count += 1
+                        continue
+
+                    title = extract_notion_page_title(page)
+                    blocks = fetch_notion_block_children(token, page_id)
+                    content_html = notion_blocks_to_html(token, blocks, upload_folder)
+
+                    if not content_html.strip():
+                        content_html = "<p>(No readable content found in this Notion page.)</p>"
+
+                    cursor.execute("""
+                        INSERT INTO notion_pending_updates
+                        (article_id, notion_page_id, proposed_title, proposed_content,
+                         previous_title, previous_content, notion_last_edited_time, status)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
+                    """, (
+                        existing["article_id"], page_id, title, content_html,
+                        existing.get("title"), existing.get("content"),
+                        edited_time_mysql,
+                    ))
+                    pending_id = cursor.lastrowid
+
+                    flagged_count += 1
+                    flagged_items.append({
+                        "article_id": existing["article_id"],
+                        "title": title,
+                        "pending_id": pending_id,
+                    })
                 else:
+                    title = extract_notion_page_title(page)
+                    blocks = fetch_notion_block_children(token, page_id)
+                    content_html = notion_blocks_to_html(token, blocks, upload_folder)
+
+                    if not content_html.strip():
+                        content_html = "<p>(No readable content found in this Notion page.)</p>"
+
                     cursor.execute("""
                         INSERT INTO wiki_article
                         (title, content, category, sub_category, link, is_deleted, source_type, notion_page_id, notion_last_edited_time)
                         VALUES (%s, %s, %s, %s, %s, FALSE, 'notion', %s, %s)
                     """, (title, content_html, "Notion", "", "", page_id, edited_time_mysql))
-                    imported_count += 1
+                    new_count += 1
 
                 conn.commit()
             except Exception as page_error:
                 conn.rollback()
                 failed_count += 1
-                print("NOTION PAGE IMPORT ERROR:", page_id, page_error)
+                print("NOTION PAGE CHECK ERROR:", page_id, page_error)
                 continue
 
         status = "completed"
     except Exception as error:
         status = "failed"
         error_message = str(error)
-        print("NOTION SYNC ERROR:", error)
+        print("NOTION CHECK ERROR:", error)
     finally:
         if cursor:
             try:
@@ -648,7 +899,7 @@ def sync_notion_source(token, source_id, actor_id, upload_folder):
                     INSERT INTO notion_sync_jobs
                     (status, imported_count, updated_count, skipped_count, failed_count, error_message, completed_at, created_by)
                     VALUES (%s, %s, %s, %s, %s, %s, NOW(), %s)
-                """, (status, imported_count, updated_count, skipped_count, failed_count, error_message, actor_id))
+                """, (status, new_count, flagged_count, unchanged_count, failed_count, error_message, actor_id))
                 conn.commit()
             except Exception:
                 pass
@@ -659,9 +910,62 @@ def sync_notion_source(token, source_id, actor_id, upload_folder):
 
     return {
         "status": status,
-        "imported": imported_count,
-        "updated": updated_count,
-        "skipped": skipped_count,
+        "new": new_count,
+        "flagged": flagged_count,
+        "unchanged": unchanged_count,
         "failed": failed_count,
         "errorMessage": error_message,
+        "flaggedItems": flagged_items,
     }
+
+
+def list_pending_updates(cursor):
+    cursor.execute("""
+        SELECT id, article_id, notion_page_id, proposed_title, previous_title,
+               notion_last_edited_time, detected_at
+        FROM notion_pending_updates
+        WHERE status = 'pending'
+        ORDER BY detected_at DESC
+    """)
+    return cursor.fetchall() or []
+
+
+def get_pending_update(cursor, pending_id):
+    cursor.execute("""
+        SELECT * FROM notion_pending_updates WHERE id = %s LIMIT 1
+    """, (pending_id,))
+    return cursor.fetchone()
+
+
+def apply_pending_update(cursor, pending_id, actor_id):
+    pending = get_pending_update(cursor, pending_id)
+
+    if not pending or pending.get("status") != "pending":
+        return None
+
+    cursor.execute("""
+        UPDATE wiki_article
+        SET title = %s, content = %s, notion_last_edited_time = %s
+        WHERE article_id = %s
+    """, (
+        pending["proposed_title"], pending["proposed_content"],
+        pending["notion_last_edited_time"], pending["article_id"],
+    ))
+
+    cursor.execute("""
+        UPDATE notion_pending_updates
+        SET status = 'applied', resolved_by = %s, resolved_at = NOW()
+        WHERE id = %s AND status = 'pending'
+    """, (actor_id, pending_id))
+
+    return cursor.rowcount > 0
+
+
+def dismiss_pending_update(cursor, pending_id, actor_id):
+    cursor.execute("""
+        UPDATE notion_pending_updates
+        SET status = 'dismissed', resolved_by = %s, resolved_at = NOW()
+        WHERE id = %s AND status = 'pending'
+    """, (actor_id, pending_id))
+
+    return cursor.rowcount > 0
