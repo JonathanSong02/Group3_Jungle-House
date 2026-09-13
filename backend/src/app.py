@@ -2954,7 +2954,19 @@ def tokenize_for_knowledge_match(value):
         if len(token) <= 1:
             continue
 
-        tokens.add(word_map.get(token, token))
+        mapped = word_map.get(token)
+
+        if mapped is None:
+            # Light plural -> singular normalisation so e.g. "bottle" (a
+            # vision-detected object) and "bottles" (how an article's
+            # content happens to word it) count as the same token. word_map
+            # above still takes priority for irregular cases.
+            if len(token) > 3 and token.endswith("s") and not token.endswith(("ss", "us", "is")):
+                mapped = token[:-1]
+            else:
+                mapped = token
+
+        tokens.add(mapped)
 
     return tokens
 
