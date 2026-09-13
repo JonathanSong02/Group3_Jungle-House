@@ -2368,6 +2368,42 @@ def get_confidence_label(score: float) -> str:
     return "low"
 
 
+def build_related_knowledge_message(question: str, related_options: list) -> str:
+    """
+    Level-2 "related knowledge" response text. With 2+ candidates, phrase it
+    as an explicit disambiguation question naming each verified procedure
+    (e.g. "When you say 'settlement', which of these verified procedures do
+    you mean: Payment Un-tally Process, SOP: Ice Receiving, or Petty Cash
+    Operation SOP?"), matching the pattern requested: confirm which specific
+    source the crew member means before they click one, not just a passive
+    "these might help" list. With only one candidate there's nothing to
+    disambiguate, so it keeps the softer single-suggestion phrasing.
+    """
+    titles = [
+        str(option.get("title") or "").strip()
+        for option in (related_options or [])
+        if str(option.get("title") or "").strip()
+    ]
+
+    question_text = str(question or "").strip()
+
+    if len(titles) >= 2:
+        if len(titles) == 2:
+            title_list = f"{titles[0]} or {titles[1]}"
+        else:
+            title_list = ", ".join(titles[:-1]) + f", or {titles[-1]}"
+
+        if question_text:
+            return f'When you say "{question_text}", which of these verified procedures do you mean: {title_list}?'
+
+        return f"Which of these verified procedures do you mean: {title_list}?"
+
+    return (
+        "I couldn't confirm the exact procedure from the information provided, "
+        "but this verified Knowledge Base article may help:"
+    )
+
+
 def is_fallback_result(result: dict | None) -> bool:
     result = result or {}
 
@@ -6684,8 +6720,11 @@ def chat():
     uploaded_chat_image_filename = ""
 
     try:
+        original_question = ""
+
         if request.content_type and request.content_type.startswith("multipart/form-data"):
             question = request.form.get("question", "")
+            original_question = question
             uploaded_chat_image = request.files.get("image") or request.files.get("attachment")
             uploaded_chat_image_filename = uploaded_chat_image.filename if uploaded_chat_image else ""
 
@@ -6824,10 +6863,7 @@ def chat():
 
                         if related_options:
                             # Level 2: related but not 100% confident.
-                            related_message = (
-                                "I couldn't confirm the exact article from the image alone, "
-                                "but these Knowledge Base articles may help:"
-                            )
+                            related_message = build_related_knowledge_message(question, related_options)
 
                             related_result = standardize_ai_response({
                                 "question": detected_terms,
@@ -6888,6 +6924,7 @@ def chat():
         else:
             data = request.get_json(silent=True) or {}
             question = data.get("question", "")
+            original_question = question
 
             # No new image on THIS request, but if one was uploaded earlier
             # in this same conversation (within the TTL), a follow-up like
@@ -7301,10 +7338,7 @@ def chat():
                         related_options.append(option)
 
             if related_options:
-                related_message = (
-                    "I couldn't confirm the exact procedure from the information "
-                    "provided, but these Knowledge Base articles may help:"
-                )
+                related_message = build_related_knowledge_message(original_question, related_options)
 
                 result = standardize_ai_response({
                     "question": question,
