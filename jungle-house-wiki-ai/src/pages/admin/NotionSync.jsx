@@ -110,7 +110,19 @@ export default function NotionSync() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleConnect = async () => {
+  // PLACEHOLDER (temporary): the real OAuth flow is fully built on the
+  // backend (POST /notion-sync/oauth/start builds a real authorize URL with
+  // state/client_id/redirect_uri), but NOTION_OAUTH_CLIENT_ID/SECRET aren't
+  // configured on Railway yet, so that call would currently fail. Until
+  // that's set up, this just sends the browser straight to Notion's login
+  // page as a UI stand-in -- it does NOT authorize anything or import any
+  // content. Swap the button below back to calling _handleConnectReal once
+  // the Notion integration + Railway env vars are ready.
+  const handleConnectPlaceholder = () => {
+    window.location.href = 'https://app.notion.com/login';
+  };
+
+  const _handleConnectReal = async () => {
     try {
       setConnecting(true);
       setMessage('');
@@ -227,7 +239,7 @@ export default function NotionSync() {
               <button
                 type="button"
                 className="primary-btn"
-                onClick={handleConnect}
+                onClick={handleConnectPlaceholder}
                 disabled={connecting}
               >
                 {connecting ? 'Redirecting to Notion...' : 'Connect Notion'}
