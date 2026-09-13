@@ -3332,6 +3332,16 @@ def search_related_knowledge_base_articles(question, limit=3, min_score=0.08, mi
       matches then count for less of that document's total "mass" -- while a
       document that is mostly ABOUT the matched terms scores highly even if
       it only shares a couple of very distinctive words with the query.
+    - But whole-document cosine has its own failure mode on THIS Knowledge
+      Base: articles here are often one long multi-step SOP covering several
+      distinct procedures (e.g. "Kiosk Closing Check List" covers stocktake,
+      cash counting, equipment shutdown... all in one article). A query
+      matching ONE step gets diluted by every OTHER unrelated step in that
+      same document's vector norm, even though the article genuinely
+      contains the right answer. So each article is scored per SEGMENT
+      (title/category/subcategory as one segment, then each numbered step
+      parsed by parse_article_steps() as its own segment) and the article's
+      score is the BEST segment match, not the whole document at once.
 
     NOTE ON SCALE: cosine similarity over sparse bag-of-words vectors sits
     much lower than the old overlap-ratio score -- a genuinely correct match
@@ -3415,16 +3425,24 @@ def search_related_knowledge_base_articles(question, limit=3, min_score=0.08, mi
     required_overlap = 1 if len(q_tokens) <= 2 else min(min_overlap, len(q_tokens))
 
     scored_results = []
-    for article, tokens in article_token_sets:
-        overlap = q_tokens & tokens
+    for article, _ in article_token_sets:
+        best_score = 0.0
 
-        if len(overlap) < required_overlap:
-            continue
+        for segment_text in build_article_search_segments(article):
+            segment_tokens = tokenize_for_knowledge_match(segment_text)
+            overlap = q_tokens & segment_tokens
 
-        dot_product = sum(idf(token) ** 2 for token in overlap)
-        doc_norm = math.sqrt(sum(idf(token) ** 2 for token in tokens)) or 1.0
-        cosine = dot_product / (query_norm * doc_norm)
-        score = round(min(cosine, 0.99), 4)
+            if len(overlap) < required_overlap:
+                continue
+
+            dot_product = sum(idf(token) ** 2 for token in overlap)
+            segment_norm = math.sqrt(sum(idf(token) ** 2 for token in segment_tokens)) or 1.0
+            cosine = dot_product / (query_norm * segment_norm)
+
+            if cosine > best_score:
+                best_score = cosine
+
+        score = round(min(best_score, 0.99), 4)
 
         if score >= min_score:
             scored_results.append(build_article_ai_result(article, question, score))
@@ -3432,6 +3450,42 @@ def search_related_knowledge_base_articles(question, limit=3, min_score=0.08, mi
     scored_results = sorted(scored_results, key=lambda item: item.get("score", 0.0), reverse=True)
 
     return scored_results[:limit]
+
+
+def build_article_search_segments(article):
+    """
+    Split an article into independently-scorable text segments for the
+    related-knowledge search above: title/category/subcategory as one
+    segment, then each numbered step (parsed the same way parse_article_steps
+    already does for rendering) as its own segment, plus any free-text lead-in
+    before the first numbered step (e.g. a "Stocktake:" sub-heading). A query
+    is scored against whichever ONE segment matches best, so a long multi-step
+    SOP isn't penalized for containing many OTHER unrelated steps.
+    """
+    title = str(article.get("title") or "")
+    category = str(article.get("category") or "")
+    sub_category = str(article.get("sub_category") or "")
+    content = str(article.get("content") or "")
+
+    segments = [f"{title} {category} {sub_category}"]
+
+    steps = parse_article_steps(content)
+
+    if steps:
+        first_step_match = re.search(
+            r"(?:^|\n)\s*(?:step\s*)?\d+\s*[\).:-]", content, re.IGNORECASE
+        )
+        if first_step_match and first_step_match.start() > 0:
+            lead_in = content[:first_step_match.start()].strip()
+            if lead_in:
+                segments.append(lead_in)
+
+        for step in steps:
+            segments.append(str(step.get("answer") or step.get("content") or ""))
+    else:
+        segments.append(content)
+
+    return segments
 
 def process_question(question, context=None):
     question = clean_question(question)
