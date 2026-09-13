@@ -15,6 +15,7 @@ import smtplib
 import secrets
 import hashlib
 import math
+import html as html_lib
 import requests
 
 from email.message import EmailMessage
@@ -3082,7 +3083,7 @@ def calculate_article_match_score(question, article):
     title = str(article.get("title") or "").lower()
     category = str(article.get("category") or "").lower()
     sub_category = str(article.get("sub_category") or "").lower()
-    content = str(article.get("content") or "").lower()
+    content = normalize_article_html_for_parsing(article.get("content")).lower()
 
     title_tokens = tokenize_for_knowledge_match(title)
     category_tokens = tokenize_for_knowledge_match(category)
@@ -3126,8 +3127,44 @@ def calculate_article_match_score(question, article):
     return weak_score
 
 
+def normalize_article_html_for_parsing(content):
+    """
+    Article content is authored in a Jodit rich-text editor and stored as
+    HTML (see AddArticle.jsx/EditArticle.jsx). Block-level tags like </p>,
+    <br>, </li> don't contain literal newline characters, so a numbered list
+    typed as "<p>1. Restock...</p><p>2. Click...</p>" has NO \n between "1."
+    and "2." -- silently breaking any line-based regex parsing (e.g.
+    parse_article_steps() below, or the KB search token overlap functions
+    tokenizing raw HTML tag noise like "li"/"div"/"href" as if they were
+    real words).
+
+    Converts the HTML into plain text the way a person reading it would see
+    it: inline <img> tags become the [IMAGE]url marker parse_article_steps()
+    already knows how to extract (done BEFORE the generic tag-strip so it
+    isn't lost), block-level boundaries become real newlines, everything
+    else is stripped, and HTML entities (&nbsp;, &amp;, ...) are unescaped.
+    """
+    text = str(content or "")
+
+    text = re.sub(
+        r'<img[^>]*\bsrc=["\']([^"\']+)["\'][^>]*>',
+        lambda m: f"[IMAGE]{m.group(1)}",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    text = re.sub(r'<\s*br\s*/?>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'</\s*(p|div|li|h[1-6]|tr)\s*>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'<\s*li[^>]*>', '\n', text, flags=re.IGNORECASE)
+
+    text = re.sub(r'<[^>]+>', ' ', text)
+    text = html_lib.unescape(text)
+
+    return text
+
+
 def parse_article_steps(content):
-    text = str(content or "").strip()
+    text = normalize_article_html_for_parsing(content).strip()
     if not text:
         return []
 
@@ -3396,7 +3433,7 @@ def search_related_knowledge_base_articles(question, limit=3, min_score=0.08, mi
             tokenize_for_knowledge_match(str(article.get("title") or ""))
             | tokenize_for_knowledge_match(str(article.get("category") or ""))
             | tokenize_for_knowledge_match(str(article.get("sub_category") or ""))
-            | tokenize_for_knowledge_match(str(article.get("content") or ""))
+            | tokenize_for_knowledge_match(normalize_article_html_for_parsing(article.get("content")))
         )
         article_token_sets.append((article, tokens))
 
@@ -3465,25 +3502,29 @@ def build_article_search_segments(article):
     title = str(article.get("title") or "")
     category = str(article.get("category") or "")
     sub_category = str(article.get("sub_category") or "")
-    content = str(article.get("content") or "")
+    raw_content = article.get("content")
+    plain_content = normalize_article_html_for_parsing(raw_content)
 
     segments = [f"{title} {category} {sub_category}"]
 
-    steps = parse_article_steps(content)
+    # parse_article_steps() normalizes internally too (redundant but
+    # idempotent/harmless); the lead-in slice below needs to search the SAME
+    # normalized plain text so its offsets line up with real content.
+    steps = parse_article_steps(raw_content)
 
     if steps:
         first_step_match = re.search(
-            r"(?:^|\n)\s*(?:step\s*)?\d+\s*[\).:-]", content, re.IGNORECASE
+            r"(?:^|\n)\s*(?:step\s*)?\d+\s*[\).:-]", plain_content, re.IGNORECASE
         )
         if first_step_match and first_step_match.start() > 0:
-            lead_in = content[:first_step_match.start()].strip()
+            lead_in = plain_content[:first_step_match.start()].strip()
             if lead_in:
                 segments.append(lead_in)
 
         for step in steps:
             segments.append(str(step.get("answer") or step.get("content") or ""))
     else:
-        segments.append(content)
+        segments.append(plain_content)
 
     return segments
 
