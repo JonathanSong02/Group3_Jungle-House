@@ -4,71 +4,13 @@ import { useAuth } from '../../context/AuthContext';
 import api from '../../services/api';
 import './styles/AdminDashboard.css';
 
-const MANAGEMENT_MODULES = [
-  {
-    title: 'Content Management',
-    description: 'Create, organise, verify, and maintain Jungle House knowledge.',
-    route: '/admin/content',
-    label: 'Knowledge',
-    icon: 'knowledge',
-    tone: 'green',
-  },
-  {
-    title: 'Review Management',
-    description: 'Review human answers before they become trusted knowledge.',
-    route: '/admin/review',
-    label: 'Governance',
-    icon: 'review',
-    tone: 'amber',
-  },
-  {
-    title: 'User Management',
-    description: 'Manage account access, approval status, and staff roles.',
-    route: '/admin/users',
-    label: 'People',
-    icon: 'users',
-    tone: 'blue',
-  },
-  {
-    title: 'Security Monitoring',
-    description: 'Inspect login activity, audit events, and system access.',
-    route: '/admin/security',
-    label: 'Security',
-    icon: 'shield',
-    tone: 'red',
-  },
-  {
-    title: 'Quiz Management',
-    description: 'Manage training quizzes and knowledge-check content.',
-    route: '/admin/quiz-management',
-    label: 'Training',
-    icon: 'quiz',
-    tone: 'purple',
-  },
-  {
-    title: 'Notion Sync',
-    description: 'Control imported knowledge and synchronisation with Notion.',
-    route: '/admin/notion-sync',
-    label: 'Integration',
-    icon: 'sync',
-    tone: 'slate',
-  },
-  {
-    title: 'Analytics',
-    description: 'Review system usage, knowledge trends, and AI activity.',
-    route: '/admin/analytics',
-    label: 'Insights',
-    icon: 'analytics',
-    tone: 'teal',
-  },
-  {
-    title: 'AI Model Settings',
-    description: 'Manage AI provider behaviour and workspace configuration.',
-    route: '/admin/ai-settings',
-    label: 'AI Control',
-    icon: 'settings',
-    tone: 'gold',
-  },
+const QUICK_ACTIONS = [
+  { title: 'Users', route: '/admin/users', icon: 'users' },
+  { title: 'Content', route: '/admin/content', icon: 'knowledge' },
+  { title: 'Reviews', route: '/admin/review', icon: 'review' },
+  { title: 'Quiz', route: '/admin/quiz-management', icon: 'quiz' },
+  { title: 'AI Settings', route: '/admin/ai-settings', icon: 'settings' },
+  { title: 'Notion', route: '/admin/notion-sync', icon: 'sync' },
 ];
 
 function DashboardIcon({ name }) {
@@ -93,6 +35,7 @@ function DashboardIcon({ name }) {
           <path d="M8 7h7M8 11h8" />
         </svg>
       );
+
     case 'review':
       return (
         <svg {...commonProps}>
@@ -101,6 +44,7 @@ function DashboardIcon({ name }) {
           <path d="M8 17h8" />
         </svg>
       );
+
     case 'users':
       return (
         <svg {...commonProps}>
@@ -109,13 +53,7 @@ function DashboardIcon({ name }) {
           <path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
         </svg>
       );
-    case 'shield':
-      return (
-        <svg {...commonProps}>
-          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-          <path d="m9 12 2 2 4-4" />
-        </svg>
-      );
+
     case 'quiz':
       return (
         <svg {...commonProps}>
@@ -124,6 +62,7 @@ function DashboardIcon({ name }) {
           <rect x="3" y="2" width="18" height="20" rx="3" />
         </svg>
       );
+
     case 'sync':
       return (
         <svg {...commonProps}>
@@ -132,12 +71,7 @@ function DashboardIcon({ name }) {
           <path d="M5.8 8A7 7 0 0 1 18.5 5L20 7M4 17l1.5 2A7 7 0 0 0 18.2 16" />
         </svg>
       );
-    case 'analytics':
-      return (
-        <svg {...commonProps}>
-          <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
-        </svg>
-      );
+
     case 'settings':
       return (
         <svg {...commonProps}>
@@ -145,6 +79,7 @@ function DashboardIcon({ name }) {
           <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.1A1.7 1.7 0 0 0 4.6 8.5a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.1A1.7 1.7 0 0 0 15.5 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.4.3.6.65.6 1.1v.1h1v4h-.1A1.7 1.7 0 0 0 19.4 15z" />
         </svg>
       );
+
     case 'question':
       return (
         <svg {...commonProps}>
@@ -153,6 +88,7 @@ function DashboardIcon({ name }) {
           <path d="M12 17h.01" />
         </svg>
       );
+
     case 'bell':
       return (
         <svg {...commonProps}>
@@ -160,6 +96,15 @@ function DashboardIcon({ name }) {
           <path d="M10 21h4" />
         </svg>
       );
+
+    case 'shield':
+      return (
+        <svg {...commonProps}>
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+          <path d="m9 12 2 2 4-4" />
+        </svg>
+      );
+
     default:
       return (
         <svg {...commonProps}>
@@ -184,10 +129,13 @@ function parsePercent(value) {
 
 export default function AdminDashboard() {
   const { user } = useAuth();
+
   const [stats, setStats] = useState([]);
+  const [users, setUsers] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [activities, setActivities] = useState([]);
   const [ai, setAi] = useState({ accuracy: '0%' });
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -196,21 +144,41 @@ export default function AdminDashboard() {
 
     const loadDashboard = async () => {
       try {
-        const response = await api.get('/dashboard');
+        const [dashboardResponse, usersResponse] = await Promise.all([
+          api.get('/dashboard'),
+          api.get('/admin/users'),
+        ]);
+
         if (cancelled) return;
 
-        const data = response.data || {};
-        setStats(Array.isArray(data.stats) ? data.stats : []);
-        setNotifications(Array.isArray(data.notifications) ? data.notifications : []);
-        setActivities(Array.isArray(data.activities) ? data.activities : []);
-        setAi(data.ai || { accuracy: '0%' });
+        const dashboardData = dashboardResponse.data || {};
+        setStats(Array.isArray(dashboardData.stats) ? dashboardData.stats : []);
+        setNotifications(
+          Array.isArray(dashboardData.notifications)
+            ? dashboardData.notifications
+            : []
+        );
+        setActivities(
+          Array.isArray(dashboardData.activities)
+            ? dashboardData.activities
+            : []
+        );
+        setAi(dashboardData.ai || { accuracy: '0%' });
+
+        setUsers(
+          Array.isArray(usersResponse.data)
+            ? usersResponse.data
+            : []
+        );
       } catch (requestError) {
         if (cancelled) return;
+
         console.error('Admin dashboard fetch error:', requestError);
+
         setError(
           requestError.response?.data?.message ||
             requestError.response?.data?.error ||
-            'Live dashboard data is temporarily unavailable.'
+            'Some dashboard data is unavailable.'
         );
       } finally {
         if (!cancelled) setLoading(false);
@@ -233,50 +201,53 @@ export default function AdminDashboard() {
   const weeklyQuestions = Number(statMap['Questions This Week'] || 0);
   const pendingEscalations = Number(statMap['Pending Escalations'] || 0);
   const unreadNotifications = Number(statMap['Unread Notifications'] || 0);
+
+  const totalUsers = users.length;
+  const pendingUsers = users.filter(
+    (item) => item.status === 'pending' && !item.awaiting_activation
+  ).length;
+
   const confidence = parsePercent(ai.accuracy);
   const managerName = user?.name || user?.full_name || 'Manager';
 
   const overviewCards = [
     {
-      label: 'Knowledge Articles',
+      label: 'Users',
+      value: totalUsers,
+      route: '/admin/users',
+      icon: 'users',
+      tone: 'blue',
+    },
+    {
+      label: 'Pending',
+      value: pendingUsers,
+      route: '/admin/users',
+      icon: 'review',
+      tone: pendingUsers > 0 ? 'amber' : 'green',
+    },
+    {
+      label: 'Articles',
       value: articles,
-      caption: 'Available knowledge records',
+      route: '/admin/content',
       icon: 'knowledge',
       tone: 'green',
     },
     {
-      label: 'Questions This Week',
-      value: weeklyQuestions,
-      caption: 'Recent knowledge demand',
-      icon: 'question',
-      tone: 'blue',
-    },
-    {
-      label: 'Pending Escalations',
+      label: 'Escalations',
       value: pendingEscalations,
-      caption: pendingEscalations > 0 ? 'Require human attention' : 'No pending review',
-      icon: 'review',
-      tone: pendingEscalations > 0 ? 'amber' : 'green',
-    },
-    {
-      label: 'Unread Notifications',
-      value: unreadNotifications,
-      caption: 'System and workflow updates',
-      icon: 'bell',
-      tone: unreadNotifications > 0 ? 'purple' : 'slate',
+      route: '/escalation',
+      icon: 'question',
+      tone: pendingEscalations > 0 ? 'amber' : 'slate',
     },
   ];
 
   return (
-    <div className="hd-admin-page">
-      <header className="hd-admin-page-header">
+    <div className="hd-admin-page hd-admin-page-compact">
+      <header className="hd-admin-page-header compact">
         <div>
-          <span className="hd-admin-overline">Manager workspace</span>
+          <span className="hd-admin-overline">Admin Dashboard</span>
           <h1>Welcome back, {managerName}</h1>
-          <p>
-            Monitor knowledge quality, AI activity, team workflows, and system governance
-            from one operational view.
-          </p>
+          <p>System overview and quick actions.</p>
         </div>
 
         <div className="hd-admin-header-actions">
@@ -284,230 +255,191 @@ export default function AdminDashboard() {
             <DashboardIcon name="question" />
             Ask AI
           </Link>
-          <Link to="/admin/content/add" className="hd-admin-btn hd-admin-btn-primary">
+
+          <Link
+            to="/admin/content/add"
+            className="hd-admin-btn hd-admin-btn-primary"
+          >
             <span className="hd-admin-btn-plus">+</span>
-            Add article
+            Add Article
           </Link>
         </div>
       </header>
 
       {error ? (
         <div className="hd-admin-data-notice" role="status">
-          <strong>Dashboard is showing limited live data.</strong>
+          <DashboardIcon name="bell" />
           <span>{error}</span>
         </div>
       ) : null}
 
-      <section className="hd-admin-hero" aria-label="Admin control centre overview">
-        <div className="hd-admin-hero-copy">
-          <span className="hd-admin-live-pill">
-            <span className="hd-admin-live-dot" aria-hidden="true" />
-            Knowledge operations
-          </span>
-          <h2>Jungle House AI Wiki Control Centre</h2>
-          <p>
-            Keep trusted knowledge current, resolve unanswered questions, and maintain the
-            quality of the AI experience used by Jungle House staff.
-          </p>
-
-          <div className="hd-admin-hero-links">
-            <Link to="/escalation">Review escalations <span>→</span></Link>
-            <Link to="/admin/review">Open review queue <span>→</span></Link>
-          </div>
-        </div>
-
-        <div className="hd-admin-confidence-card">
-          <div
-            className="hd-admin-confidence-ring"
-            style={{ '--hd-confidence': `${confidence * 3.6}deg` }}
-            aria-label={`AI confidence ${ai.accuracy || '0%'}`}
-          >
-            <div className="hd-admin-confidence-ring-inner">
-              <strong>{loading ? '—' : ai.accuracy || '0%'}</strong>
-              <span>AI confidence</span>
-            </div>
-          </div>
-
-          <div className="hd-admin-confidence-copy">
-            <span>Knowledge pulse</span>
-            <strong>{weeklyQuestions} questions this week</strong>
-            <p>Confidence is calculated from recorded AI responses.</p>
-          </div>
-        </div>
-      </section>
-
-      <section className="hd-admin-overview-grid" aria-label="System overview">
+      <section
+        className="hd-admin-overview-grid compact"
+        aria-label="System overview"
+      >
         {overviewCards.map((item) => (
-          <article key={item.label} className={`hd-admin-metric hd-tone-${item.tone}`}>
+          <Link
+            key={item.label}
+            to={item.route}
+            className={`hd-admin-metric compact hd-tone-${item.tone}`}
+          >
             <div className="hd-admin-metric-top">
               <span className="hd-admin-metric-icon">
                 <DashboardIcon name={item.icon} />
               </span>
+
               <span className="hd-admin-metric-label">{item.label}</span>
             </div>
-            <strong className="hd-admin-metric-value">{loading ? '—' : item.value}</strong>
-            <span className="hd-admin-metric-caption">{item.caption}</span>
-          </article>
+
+            <strong className="hd-admin-metric-value">
+              {loading ? '—' : item.value}
+            </strong>
+
+            <span className="hd-admin-metric-link">Open →</span>
+          </Link>
         ))}
       </section>
 
-      <section className="hd-admin-main-grid">
-        <article className="hd-admin-panel hd-admin-attention-panel">
-          <div className="hd-admin-panel-heading">
-            <div>
-              <span className="hd-admin-panel-overline">Priority queue</span>
-              <h3>Needs your attention</h3>
-            </div>
-            <span className="hd-admin-panel-count">
-              {loading ? '—' : pendingEscalations + unreadNotifications}
-            </span>
+      <section className="hd-admin-pulse-row">
+        <div className="hd-admin-pulse-item">
+          <span>AI Confidence</span>
+          <strong>{loading ? '—' : ai.accuracy || '0%'}</strong>
+          <div className="hd-admin-pulse-track" aria-hidden="true">
+            <span style={{ width: `${confidence}%` }} />
           </div>
+        </div>
 
-          <div className="hd-admin-attention-list">
-            <Link to="/escalation" className="hd-admin-attention-item">
-              <span className="hd-admin-attention-icon hd-tone-amber">
-                <DashboardIcon name="review" />
-              </span>
-              <div>
-                <strong>Escalated questions</strong>
-                <p>Questions the AI could not answer confidently.</p>
-              </div>
-              <span className="hd-admin-attention-value">{pendingEscalations}</span>
-              <span className="hd-admin-chevron">→</span>
-            </Link>
+        <div className="hd-admin-pulse-item">
+          <span>Questions This Week</span>
+          <strong>{loading ? '—' : weeklyQuestions}</strong>
+        </div>
 
-            <Link to="/admin/review" className="hd-admin-attention-item">
-              <span className="hd-admin-attention-icon hd-tone-green">
-                <DashboardIcon name="review" />
-              </span>
-              <div>
-                <strong>Answer review workflow</strong>
-                <p>Validate approved human knowledge before reuse.</p>
-              </div>
-              <span className="hd-admin-attention-status">Review</span>
-              <span className="hd-admin-chevron">→</span>
-            </Link>
+        <div className="hd-admin-pulse-item">
+          <span>Notifications</span>
+          <strong>{loading ? '—' : unreadNotifications}</strong>
+        </div>
+      </section>
 
-            <Link to="/admin/security" className="hd-admin-attention-item">
-              <span className="hd-admin-attention-icon hd-tone-red">
-                <DashboardIcon name="shield" />
-              </span>
-              <div>
-                <strong>Security & audit</strong>
-                <p>Review authentication activity and system events.</p>
-              </div>
-              <span className="hd-admin-attention-status">Monitor</span>
-              <span className="hd-admin-chevron">→</span>
-            </Link>
+      <section className="hd-admin-section-block">
+        <div className="hd-admin-section-title">
+          <div>
+            <h2>Quick Actions</h2>
+            <p>Go directly to a management area.</p>
           </div>
-        </article>
+        </div>
 
-        <article className="hd-admin-panel hd-admin-notification-panel">
-          <div className="hd-admin-panel-heading">
+        <div className="hd-admin-quick-grid">
+          {QUICK_ACTIONS.map((item) => (
+            <Link
+              key={item.title}
+              to={item.route}
+              className="hd-admin-quick-card"
+            >
+              <span className="hd-admin-quick-icon">
+                <DashboardIcon name={item.icon} />
+              </span>
+
+              <strong>{item.title}</strong>
+              <span className="hd-admin-quick-arrow">→</span>
+            </Link>
+          ))}
+        </div>
+      </section>
+
+      <section className="hd-admin-info-grid">
+        <article className="hd-admin-panel compact">
+          <div className="hd-admin-panel-heading compact">
             <div>
-              <span className="hd-admin-panel-overline">Latest updates</span>
-              <h3>Notifications</h3>
+              <h3>Recent Activity</h3>
             </div>
-            <span className="hd-admin-panel-count hd-admin-panel-count-soft">
-              {unreadNotifications}
-            </span>
+
+            <Link
+              to="/admin/security"
+              className="hd-admin-inline-link"
+            >
+              View all
+            </Link>
           </div>
 
           {loading ? (
-            <div className="hd-admin-skeleton-list" aria-label="Loading notifications">
+            <div className="hd-admin-skeleton-list">
               <span />
               <span />
               <span />
             </div>
-          ) : notifications.length === 0 ? (
-            <div className="hd-admin-empty-state">
-              <span className="hd-admin-empty-icon"><DashboardIcon name="bell" /></span>
-              <strong>Nothing new right now</strong>
-              <p>Recent workflow updates will appear here.</p>
+          ) : activities.length === 0 ? (
+            <div className="hd-admin-empty-state compact">
+              <strong>No recent activity</strong>
             </div>
           ) : (
-            <div className="hd-admin-notification-list">
-              {notifications.slice(0, 3).map((item) => (
-                <div key={item.id} className="hd-admin-notification-item">
-                  <span className="hd-admin-notification-dot" aria-hidden="true" />
+            <div className="hd-admin-activity-list compact">
+              {activities.slice(0, 4).map((item, index) => (
+                <div
+                  key={`${item.action}-${index}`}
+                  className="hd-admin-activity-item compact"
+                >
+                  <span
+                    className="hd-admin-activity-marker"
+                    aria-hidden="true"
+                  />
+
                   <div>
-                    <strong>{item.title}</strong>
-                    <p>{item.detail || item.message || 'System notification'}</p>
+                    <strong>{item.action}</strong>
+
+                    {item.created_at ? (
+                      <time dateTime={item.created_at}>
+                        {formatDateTime(item.created_at)}
+                      </time>
+                    ) : null}
                   </div>
                 </div>
               ))}
             </div>
           )}
         </article>
-      </section>
 
-      <section className="hd-admin-workspace-section">
-        <div className="hd-admin-section-heading">
-          <div>
-            <span className="hd-admin-overline">Management workspace</span>
-            <h2>Tools & governance</h2>
-            <p>Open the area you need without searching through the sidebar.</p>
-          </div>
-        </div>
+        <article className="hd-admin-panel compact">
+          <div className="hd-admin-panel-heading compact">
+            <div>
+              <h3>Notifications</h3>
+            </div>
 
-        <div className="hd-admin-module-grid">
-          {MANAGEMENT_MODULES.map((module) => (
-            <Link
-              key={module.title}
-              to={module.route}
-              className={`hd-admin-module-card hd-tone-${module.tone}`}
-            >
-              <div className="hd-admin-module-top">
-                <span className="hd-admin-module-icon">
-                  <DashboardIcon name={module.icon} />
-                </span>
-                <span className="hd-admin-module-arrow">↗</span>
-              </div>
-              <span className="hd-admin-module-label">{module.label}</span>
-              <h3>{module.title}</h3>
-              <p>{module.description}</p>
-            </Link>
-          ))}
-        </div>
-      </section>
+            <span className="hd-admin-panel-count hd-admin-panel-count-soft">
+              {unreadNotifications}
+            </span>
+          </div>
 
-      <section className="hd-admin-panel hd-admin-activity-panel">
-        <div className="hd-admin-panel-heading">
-          <div>
-            <span className="hd-admin-panel-overline">Audit trail</span>
-            <h3>Recent system activity</h3>
-          </div>
-          <Link to="/admin/security" className="hd-admin-inline-link">
-            View security log <span>→</span>
-          </Link>
-        </div>
+          {loading ? (
+            <div className="hd-admin-skeleton-list">
+              <span />
+              <span />
+              <span />
+            </div>
+          ) : notifications.length === 0 ? (
+            <div className="hd-admin-empty-state compact">
+              <strong>No new notifications</strong>
+            </div>
+          ) : (
+            <div className="hd-admin-notification-list compact">
+              {notifications.slice(0, 4).map((item) => (
+                <div
+                  key={item.id}
+                  className="hd-admin-notification-item compact"
+                >
+                  <span
+                    className="hd-admin-notification-dot"
+                    aria-hidden="true"
+                  />
 
-        {loading ? (
-          <div className="hd-admin-skeleton-list" aria-label="Loading activity">
-            <span />
-            <span />
-            <span />
-          </div>
-        ) : activities.length === 0 ? (
-          <div className="hd-admin-empty-state hd-admin-empty-state-inline">
-            <strong>No recent activity</strong>
-            <p>Audit actions will appear here as the system is used.</p>
-          </div>
-        ) : (
-          <div className="hd-admin-activity-list">
-            {activities.slice(0, 4).map((item, index) => (
-              <div key={`${item.action}-${index}`} className="hd-admin-activity-item">
-                <span className="hd-admin-activity-marker" aria-hidden="true" />
-                <div>
-                  <strong>{item.action}</strong>
-                  {item.created_at ? (
-                    <time dateTime={item.created_at}>{formatDateTime(item.created_at)}</time>
-                  ) : null}
+                  <div>
+                    <strong>{item.title}</strong>
+                    <p>{item.detail || item.message || 'System update'}</p>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
+              ))}
+            </div>
+          )}
+        </article>
       </section>
     </div>
   );

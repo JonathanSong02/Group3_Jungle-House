@@ -4,24 +4,20 @@ import PageHeader from '../../components/PageHeader';
 import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 
-const categories = ['All', 'SOP', 'PRODUCT', 'SALES', 'Training', 'Notice'];
+const CATEGORIES = ['All', 'SOP', 'PRODUCT', 'SALES', 'Training', 'Notice'];
 
 export default function ContentManagement() {
   const navigate = useNavigate();
   const { user } = useAuth();
-
   const currentUserId = user?.user_id || user?.id || null;
 
   const [articleList, setArticleList] = useState([]);
   const [deletedArticleList, setDeletedArticleList] = useState([]);
-
   const [activeTab, setActiveTab] = useState('active');
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
-
   const [selectedDeletedIds, setSelectedDeletedIds] = useState([]);
   const [bulkDeleting, setBulkDeleting] = useState(false);
-
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
 
@@ -29,19 +25,15 @@ export default function ContentManagement() {
     try {
       setLoading(true);
       setMessage('');
-
       const [activeResponse, deletedResponse] = await Promise.all([
         api.get('/articles'),
         api.get('/articles?deleted=true'),
       ]);
-
       setArticleList(Array.isArray(activeResponse.data) ? activeResponse.data : []);
-      setDeletedArticleList(
-        Array.isArray(deletedResponse.data) ? deletedResponse.data : []
-      );
+      setDeletedArticleList(Array.isArray(deletedResponse.data) ? deletedResponse.data : []);
     } catch (error) {
       console.error('Fetch articles error:', error);
-      setMessage(error.response?.data?.message || 'Failed to load articles.');
+      setMessage(error.response?.data?.message || 'Unable to load articles.');
     } finally {
       setLoading(false);
     }
@@ -54,6 +46,8 @@ export default function ContentManagement() {
   const currentList = activeTab === 'active' ? articleList : deletedArticleList;
 
   const filteredArticles = useMemo(() => {
+    const keyword = search.trim().toLowerCase();
+
     return currentList.filter((article) => {
       const categoryMatch =
         selectedCategory === 'All' || article.category === selectedCategory;
@@ -62,115 +56,90 @@ export default function ContentManagement() {
         article.sub_category || ''
       }`.toLowerCase();
 
-      return categoryMatch && text.includes(search.toLowerCase());
+      return categoryMatch && (!keyword || text.includes(keyword));
     });
   }, [currentList, search, selectedCategory]);
 
-  const deleteArticle = async (articleId) => {
-    const confirmDelete = window.confirm(
-      'Move this article to Retrieve Bin? You can restore it later.'
-    );
+  const categoryCounts = useMemo(() => {
+    const counts = { All: currentList.length };
+    CATEGORIES.slice(1).forEach((category) => {
+      counts[category] = currentList.filter(
+        (article) => article.category === category
+      ).length;
+    });
+    return counts;
+  }, [currentList]);
 
-    if (!confirmDelete) return;
+  const deleteArticle = async (articleId) => {
+    if (!window.confirm('Move this article to Retrieve Bin?')) return;
 
     try {
       setMessage('');
-
       await api.delete(`/articles/${articleId}`, {
-        data: {
-          deleted_by: currentUserId,
-        },
+        data: { deleted_by: currentUserId },
       });
-
-      setMessage('Article moved to Retrieve Bin successfully.');
+      setMessage('Article moved to Retrieve Bin.');
       await fetchArticles();
     } catch (error) {
       console.error('Delete article error:', error);
-      alert(error.response?.data?.message || 'Failed to move article to bin.');
+      setMessage(error.response?.data?.message || 'Unable to move article.');
     }
   };
 
   const restoreArticle = async (articleId) => {
-    const confirmRestore = window.confirm(
-      'Restore this article back to active content?'
-    );
-
-    if (!confirmRestore) return;
+    if (!window.confirm('Restore this article?')) return;
 
     try {
       setMessage('');
-
       await api.put(`/articles/${articleId}/restore`);
-
-      setMessage('Article restored successfully.');
+      setMessage('Article restored.');
       setSelectedDeletedIds((prev) => prev.filter((id) => id !== articleId));
       await fetchArticles();
     } catch (error) {
       console.error('Restore article error:', error);
-      alert(error.response?.data?.message || 'Failed to restore article.');
+      setMessage(error.response?.data?.message || 'Unable to restore article.');
     }
   };
 
   const toggleDeletedSelection = (articleId) => {
-    setSelectedDeletedIds((prev) => {
-      if (prev.includes(articleId)) {
-        return prev.filter((id) => id !== articleId);
-      }
-
-      return [...prev, articleId];
-    });
+    setSelectedDeletedIds((prev) =>
+      prev.includes(articleId)
+        ? prev.filter((id) => id !== articleId)
+        : [...prev, articleId]
+    );
   };
 
   const toggleSelectAllDeleted = () => {
-    const allVisibleDeletedIds = filteredArticles.map(
-      (article) => article.article_id
-    );
-
+    const visibleIds = filteredArticles.map((article) => article.article_id);
     const allSelected =
-      allVisibleDeletedIds.length > 0 &&
-      allVisibleDeletedIds.every((id) => selectedDeletedIds.includes(id));
+      visibleIds.length > 0 &&
+      visibleIds.every((id) => selectedDeletedIds.includes(id));
 
     if (allSelected) {
       setSelectedDeletedIds((prev) =>
-        prev.filter((id) => !allVisibleDeletedIds.includes(id))
+        prev.filter((id) => !visibleIds.includes(id))
       );
       return;
     }
 
-    setSelectedDeletedIds((prev) => {
-      const updatedIds = [...prev];
-
-      allVisibleDeletedIds.forEach((id) => {
-        if (!updatedIds.includes(id)) {
-          updatedIds.push(id);
-        }
-      });
-
-      return updatedIds;
-    });
+    setSelectedDeletedIds((prev) => [...new Set([...prev, ...visibleIds])]);
   };
 
   const permanentDeleteArticle = async (articleId) => {
-    const confirmDelete = window.confirm(
-      'Permanently delete this article? This action cannot be undone.'
-    );
-
-    if (!confirmDelete) return;
+    if (!window.confirm('Permanently delete this article?')) return;
 
     try {
       setMessage('');
-
       await api.delete(`/articles/${articleId}/permanent-delete`);
-
-      setMessage('Article permanently deleted successfully.');
+      setMessage('Article permanently deleted.');
       setSelectedDeletedIds((prev) => prev.filter((id) => id !== articleId));
       await fetchArticles();
     } catch (error) {
       console.error('Permanent delete article error:', error);
-      alert(
+      setMessage(
         error.response?.data?.error ||
           error.response?.data?.message ||
-          'Failed to permanently delete article.'
+          'Unable to delete article.'
       );
     }
   };
@@ -180,16 +149,15 @@ export default function ContentManagement() {
       filteredArticles.some((article) => article.article_id === id)
     );
 
-    if (selectedVisibleIds.length === 0) {
-      setMessage('Please select at least one article to delete permanently.');
+    if (selectedVisibleIds.length === 0) return;
+
+    if (
+      !window.confirm(
+        `Permanently delete ${selectedVisibleIds.length} selected article(s)?`
+      )
+    ) {
       return;
     }
-
-    const confirmDelete = window.confirm(
-      `Permanently delete ${selectedVisibleIds.length} selected article(s)? This action cannot be undone.`
-    );
-
-    if (!confirmDelete) return;
 
     try {
       setBulkDeleting(true);
@@ -202,18 +170,17 @@ export default function ContentManagement() {
 
       setMessage(
         response.data?.message ||
-          `${selectedVisibleIds.length} article(s) permanently deleted.`
+          `${selectedVisibleIds.length} article(s) deleted.`
       );
 
       setSelectedDeletedIds([]);
       await fetchArticles();
     } catch (error) {
       console.error('Bulk permanent delete error:', error);
-
-      alert(
+      setMessage(
         error.response?.data?.error ||
           error.response?.data?.message ||
-          'Failed to delete selected articles.'
+          'Unable to delete selected articles.'
       );
     } finally {
       setBulkDeleting(false);
@@ -238,249 +205,280 @@ export default function ContentManagement() {
       selectedDeletedIds.includes(article.article_id)
     );
 
+  const categoryTotal = new Set(
+    articleList.map((article) => article.category).filter(Boolean)
+  ).size;
+
   return (
-    <div>
-      <PageHeader
-        title="Content Management"
-        subtitle="Create, edit, delete, retrieve, and organize knowledge content."
-      />
+    <div className="cm-page">
+      <div className="cm-page-heading">
+        <PageHeader
+          title="Content Management"
+          subtitle="Manage knowledge articles."
+        />
 
-      <section className="card-like top-gap-sm content-toolbar-card">
-        <div className="content-toolbar-main">
-          <div>
-            <h3>Knowledge Articles</h3>
-            <p className="muted">
-              Manage SOP, product, sales, notice, and training content.
-            </p>
-          </div>
+        <Link to="/admin/content/add" className="cm-add-btn">
+          <span aria-hidden="true">+</span>
+          Add Article
+        </Link>
+      </div>
 
-          <Link to="/admin/content/add" className="primary-btn narrow-btn link-btn">
-            + Add Article
-          </Link>
-        </div>
+      <section className="cm-summary-grid" aria-label="Content overview">
+        <button
+          type="button"
+          className={`cm-summary-card ${activeTab === 'active' ? 'active' : ''}`}
+          onClick={() => switchTab('active')}
+        >
+          <span>Active Articles</span>
+          <strong>{articleList.length}</strong>
+        </button>
 
-        <div className="content-management-tabs">
-          <button
-            type="button"
-            className={activeTab === 'active' ? 'primary-btn' : 'secondary-btn'}
-            onClick={() => switchTab('active')}
-          >
-            Active Articles ({articleList.length})
-          </button>
+        <button
+          type="button"
+          className={`cm-summary-card ${activeTab === 'bin' ? 'active' : ''}`}
+          onClick={() => switchTab('bin')}
+        >
+          <span>Retrieve Bin</span>
+          <strong>{deletedArticleList.length}</strong>
+        </button>
 
-          <button
-            type="button"
-            className={activeTab === 'bin' ? 'primary-btn' : 'secondary-btn'}
-            onClick={() => switchTab('bin')}
-          >
-            Retrieve Bin ({deletedArticleList.length})
-          </button>
-        </div>
-
-        <div className="content-filter-row">
-          <input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder={
-              activeTab === 'active'
-                ? 'Search active article title, category, or sub category...'
-                : 'Search deleted article title, category, or sub category...'
-            }
-          />
-
-          <select
-            value={selectedCategory}
-            onChange={(event) => setSelectedCategory(event.target.value)}
-          >
-            {categories.map((category) => (
-              <option key={category} value={category}>
-                {category}
-              </option>
-            ))}
-          </select>
+        <div className="cm-summary-card static">
+          <span>Categories</span>
+          <strong>{categoryTotal}</strong>
         </div>
       </section>
 
-      {message && (
-        <section className="card-like top-gap-sm">
-          <p className="muted">{message}</p>
-        </section>
-      )}
+      <section className="cm-workspace">
+        <div className="cm-workspace-head">
+          <div className="cm-tabs">
+            <button
+              type="button"
+              className={activeTab === 'active' ? 'active' : ''}
+              onClick={() => switchTab('active')}
+            >
+              Articles
+              <span>{articleList.length}</span>
+            </button>
 
-      <div className="content-info-bar">
-        <p>
-          Showing <strong>{filteredArticles.length}</strong> of{' '}
-          <strong>{currentList.length}</strong>{' '}
-          {activeTab === 'active' ? 'active articles' : 'deleted articles'}
-        </p>
+            <button
+              type="button"
+              className={activeTab === 'bin' ? 'active' : ''}
+              onClick={() => switchTab('bin')}
+            >
+              Retrieve Bin
+              <span>{deletedArticleList.length}</span>
+            </button>
+          </div>
 
-        <div className="content-category-chips">
-          {categories.map((category) => (
+          <div className="cm-search-tools">
+            <input
+              type="search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search articles"
+              aria-label="Search articles"
+            />
+
+            <select
+              value={selectedCategory}
+              onChange={(event) => setSelectedCategory(event.target.value)}
+              aria-label="Filter by category"
+            >
+              {CATEGORIES.map((category) => (
+                <option key={category} value={category}>
+                  {category}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="cm-category-bar">
+          {CATEGORIES.map((category) => (
             <button
               key={category}
               type="button"
-              className={selectedCategory === category ? 'chip active' : 'chip'}
+              className={selectedCategory === category ? 'active' : ''}
               onClick={() => setSelectedCategory(category)}
             >
               {category}
+              <span>{categoryCounts[category] || 0}</span>
             </button>
           ))}
         </div>
-      </div>
 
-      {activeTab === 'bin' && (
-        <section className="card-like top-gap-sm retrieve-bin-notice">
-          <div className="row-between wrap-gap">
-            <div>
-              <p className="eyebrow">Retrieve Bin</p>
-              <h3>Temporary deleted articles</h3>
-              <p className="muted">
-                Deleted articles are stored here so admin can restore them if content
-                was removed by mistake.
-              </p>
-            </div>
+        {message ? <div className="cm-feedback">{message}</div> : null}
 
-            {filteredArticles.length > 0 && (
-              <div className="button-group wrap-gap">
-                <button
-                  type="button"
-                  className="secondary-btn"
-                  onClick={toggleSelectAllDeleted}
-                >
-                  {allVisibleDeletedSelected ? 'Clear All' : 'Select All'}
-                </button>
+        {activeTab === 'bin' && filteredArticles.length > 0 ? (
+          <div className="cm-bin-toolbar">
+            <label className="cm-select-all">
+              <input
+                type="checkbox"
+                checked={allVisibleDeletedSelected}
+                onChange={toggleSelectAllDeleted}
+              />
+              <span>Select all</span>
+            </label>
 
-                <button
-                  type="button"
-                  className="danger-btn"
-                  onClick={permanentDeleteSelected}
-                  disabled={selectedVisibleDeletedIds.length === 0 || bulkDeleting}
-                >
-                  {bulkDeleting
-                    ? 'Deleting...'
-                    : `Delete Selected (${selectedVisibleDeletedIds.length})`}
-                </button>
-              </div>
-            )}
-          </div>
-        </section>
-      )}
+            <span className="cm-selection-count">
+              {selectedVisibleDeletedIds.length} selected
+            </span>
 
-      {loading ? (
-        <section className="card-like top-gap-sm">
-          <p className="muted">Loading articles...</p>
-        </section>
-      ) : filteredArticles.length === 0 ? (
-        <section className="card-like top-gap-sm empty-state-card">
-          <h3>
-            {activeTab === 'active'
-              ? 'No active articles found'
-              : 'Retrieve Bin is empty'}
-          </h3>
-
-          <p className="muted">
-            {activeTab === 'active'
-              ? 'Try another keyword or add a new knowledge article.'
-              : 'Deleted articles will appear here when admin removes content.'}
-          </p>
-
-          {activeTab === 'active' && (
-            <Link to="/admin/content/add" className="primary-btn narrow-btn link-btn">
-              Add Article
-            </Link>
-          )}
-        </section>
-      ) : (
-        <div className="content-card-grid top-gap-sm">
-          {filteredArticles.map((article) => (
-            <article
-              key={article.article_id || article.id}
-              className={
-                activeTab === 'bin'
-                  ? selectedDeletedIds.includes(article.article_id)
-                    ? 'card-like content-article-card deleted-article-card selected'
-                    : 'card-like content-article-card deleted-article-card'
-                  : 'card-like content-article-card'
+            <button
+              type="button"
+              className="cm-btn danger"
+              onClick={permanentDeleteSelected}
+              disabled={
+                selectedVisibleDeletedIds.length === 0 || bulkDeleting
               }
             >
-              <div>
-                <div className="content-card-top">
-                  <p className="eyebrow">{article.category || 'UNCATEGORIZED'}</p>
+              {bulkDeleting ? 'Deleting...' : 'Delete Selected'}
+            </button>
+          </div>
+        ) : null}
 
-                  <span className="role-pill">
-                    ID {article.article_id || article.id}
-                  </span>
-                </div>
+        {loading ? (
+          <div className="cm-empty-state">
+            <span className="cm-loading-dot" />
+            <strong>Loading articles...</strong>
+          </div>
+        ) : filteredArticles.length === 0 ? (
+          <div className="cm-empty-state">
+            <strong>
+              {activeTab === 'active'
+                ? 'No articles found'
+                : 'Retrieve Bin is empty'}
+            </strong>
 
-                <h3>{article.title}</h3>
+            {activeTab === 'active' ? (
+              <Link to="/admin/content/add" className="cm-btn primary">
+                Add Article
+              </Link>
+            ) : null}
+          </div>
+        ) : (
+          <div className="cm-table-wrap">
+            <table className="cm-table">
+              <thead>
+                <tr>
+                  {activeTab === 'bin' ? <th className="cm-check-col" /> : null}
+                  <th>Article</th>
+                  <th>Category</th>
+                  <th>ID</th>
+                  {activeTab === 'bin' ? <th>Deleted</th> : null}
+                  <th className="cm-action-col">Action</th>
+                </tr>
+              </thead>
 
-                <p className="muted">
-                  {article.sub_category || 'No sub category'}
-                </p>
+              <tbody>
+                {filteredArticles.map((article) => {
+                  const articleId = article.article_id || article.id;
+                  const selected = selectedDeletedIds.includes(
+                    article.article_id
+                  );
 
-                {activeTab === 'bin' && (
-                  <p className="muted small top-gap-sm">
-                    Deleted at: {article.deleted_at || 'Not recorded'}
-                  </p>
-                )}
-              </div>
-
-              <div className="button-group content-card-actions">
-                {activeTab === 'active' ? (
-                  <>
-                    <button
-                      type="button"
-                      className="secondary-btn"
-                      onClick={() =>
-                        navigate(`/admin/content/edit/${article.article_id}`)
-                      }
+                  return (
+                    <tr
+                      key={articleId}
+                      className={selected ? 'selected' : ''}
                     >
-                      Edit
-                    </button>
+                      {activeTab === 'bin' ? (
+                        <td className="cm-check-col">
+                          <input
+                            type="checkbox"
+                            checked={selected}
+                            onChange={() =>
+                              toggleDeletedSelection(article.article_id)
+                            }
+                            aria-label={`Select ${article.title}`}
+                          />
+                        </td>
+                      ) : null}
 
-                    <button
-                      type="button"
-                      className="secondary-btn danger-btn"
-                      onClick={() => deleteArticle(article.article_id)}
-                    >
-                      Move to Bin
-                    </button>
-                  </>
-                ) : (
-                  <div className="retrieve-bin-actions">
-                    <label className="checkbox-row">
-                      <input
-                        type="checkbox"
-                        checked={selectedDeletedIds.includes(article.article_id)}
-                        onChange={() => toggleDeletedSelection(article.article_id)}
-                      />
-                      <span>Select</span>
-                    </label>
+                      <td>
+                        <div className="cm-article-cell">
+                          <strong>{article.title}</strong>
+                          <span>
+                            {article.sub_category || 'No sub category'}
+                          </span>
+                        </div>
+                      </td>
 
-                    <div className="button-group wrap-gap">
-                      <button
-                        type="button"
-                        className="primary-btn"
-                        onClick={() => restoreArticle(article.article_id)}
-                      >
-                        Restore
-                      </button>
+                      <td>
+                        <span className="cm-category-badge">
+                          {article.category || 'Uncategorized'}
+                        </span>
+                      </td>
 
-                      <button
-                        type="button"
-                        className="danger-btn"
-                        onClick={() => permanentDeleteArticle(article.article_id)}
-                      >
-                        Delete Permanently
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </article>
-          ))}
-        </div>
-      )}
+                      <td>
+                        <span className="cm-id">#{articleId}</span>
+                      </td>
+
+                      {activeTab === 'bin' ? (
+                        <td>
+                          <span className="cm-date">
+                            {article.deleted_at || 'Not recorded'}
+                          </span>
+                        </td>
+                      ) : null}
+
+                      <td>
+                        <div className="cm-actions">
+                          {activeTab === 'active' ? (
+                            <>
+                              <button
+                                type="button"
+                                className="cm-btn secondary"
+                                onClick={() =>
+                                  navigate(`/admin/content/edit/${article.article_id}`)
+                                }
+                              >
+                                Edit
+                              </button>
+
+                              <button
+                                type="button"
+                                className="cm-btn danger-soft"
+                                onClick={() =>
+                                  deleteArticle(article.article_id)
+                                }
+                              >
+                                Move to Bin
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                className="cm-btn primary"
+                                onClick={() =>
+                                  restoreArticle(article.article_id)
+                                }
+                              >
+                                Restore
+                              </button>
+
+                              <button
+                                type="button"
+                                className="cm-btn danger"
+                                onClick={() =>
+                                  permanentDeleteArticle(article.article_id)
+                                }
+                              >
+                                Delete
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
     </div>
   );
 }
