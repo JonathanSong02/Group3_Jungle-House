@@ -203,6 +203,14 @@ AI_CHAT_MEMORY = {}
 AI_FAIL_MEMORY = {}
 AI_LAST_ANSWER_MEMORY = {}
 
+# Remembers the last work-related image's vision analysis per user/session,
+# so a follow-up TEXT-ONLY message in the same conversation (e.g. "which
+# article should I refer", "where do I store this") can still resolve "this"
+# to the photo sent a message earlier, instead of only working when the
+# image and the question arrive in the exact same request.
+LAST_IMAGE_CONTEXT_MEMORY = {}
+LAST_IMAGE_CONTEXT_TTL_SECONDS = 900
+
 app = Flask(__name__, static_folder=None)
 
 # Reject oversized uploads before they hit disk/AI providers (cost control +
@@ -2222,6 +2230,38 @@ def should_escalate_generic_answer(question: str, result: dict | None) -> bool:
     return False
 
 
+def get_last_image_context_key(data: dict | None = None) -> str:
+    data = data or {}
+    user_id = data.get("user_id") or data.get("userId")
+
+    if user_id:
+        return f"user:{user_id}:last_image_context"
+
+    return f"ip:{request.remote_addr or 'local'}:last_image_context"
+
+
+def remember_last_image_context(data: dict | None, vision_result: dict | None) -> None:
+    if not vision_result:
+        return
+
+    LAST_IMAGE_CONTEXT_MEMORY[get_last_image_context_key(data)] = {
+        "vision_result": vision_result,
+        "timestamp": time.time(),
+    }
+
+
+def get_remembered_image_context(data: dict | None) -> dict | None:
+    entry = LAST_IMAGE_CONTEXT_MEMORY.get(get_last_image_context_key(data))
+
+    if not entry:
+        return None
+
+    if (time.time() - entry.get("timestamp", 0)) > LAST_IMAGE_CONTEXT_TTL_SECONDS:
+        return None
+
+    return entry.get("vision_result")
+
+
 def remember_last_ai_answer(data: dict | None, question: str, result: dict | None) -> None:
     if not result:
         return
@@ -3367,11 +3407,18 @@ def search_related_knowledge_base_articles(question, limit=3, min_score=0.08, mi
 
     query_norm = math.sqrt(sum(idf(token) ** 2 for token in q_tokens)) or 1.0
 
+    # Image-only searches (just the cleaned detected-object terms, e.g.
+    # "bottle return") are inherently short -- requiring the full min_overlap
+    # on a 1-2 token query is an unreasonably high bar (it would demand every
+    # single word literally appear in the article). Only enforce the stricter
+    # floor once the query has enough tokens for it to mean something.
+    required_overlap = 1 if len(q_tokens) <= 2 else min(min_overlap, len(q_tokens))
+
     scored_results = []
     for article, tokens in article_token_sets:
         overlap = q_tokens & tokens
 
-        if len(overlap) < min(min_overlap, len(q_tokens)):
+        if len(overlap) < required_overlap:
             continue
 
         dot_product = sum(idf(token) ** 2 for token in overlap)
@@ -6609,6 +6656,12 @@ def chat():
                         vision_result = analyze_uploaded_image_with_vision(local_image_path, file_hash)
                         used_vision = vision_result is not None
 
+                        if used_vision and vision_result.get("isWorkRelated"):
+                            # So a later text-only follow-up in this same
+                            # conversation ("which article should I refer")
+                            # can still resolve "this" to this photo.
+                            remember_last_image_context(data, vision_result)
+
                     if used_vision and not vision_result.get("isWorkRelated") and vision_result.get("confidence", 0) >= 0.55:
                         rejection_result = build_image_irrelevant_response(vision_result)
 
@@ -6688,6 +6741,18 @@ def chat():
         else:
             data = request.get_json(silent=True) or {}
             question = data.get("question", "")
+
+            # No new image on THIS request, but if one was uploaded earlier
+            # in this same conversation (within the TTL), a follow-up like
+            # "which article should I refer" or "where do I store this"
+            # should still resolve "this" to that photo, not just when the
+            # image and question arrive together in one request.
+            if question and question.strip():
+                remembered_vision_result = get_remembered_image_context(data)
+
+                if remembered_vision_result:
+                    question = build_vision_augmented_question(question, remembered_vision_result)
+                    print("REUSED LAST IMAGE CONTEXT FOR FOLLOW-UP QUESTION:", question)
 
         question = clean_question(question)
         q_lower = question.lower()
