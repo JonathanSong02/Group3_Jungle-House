@@ -6682,12 +6682,16 @@ def chat():
                     # pipeline (which only escalates every plain photo, since
                     # it never finds an exact text match for "").
                     if not had_real_question and (not used_vision or vision_result.get("isWorkRelated")):
+                        # Image-only upload: the image itself IS the query.
                         # Use the same cleaned/deduped detected-object terms
                         # as the text+image path (build_vision_augmented_question
-                        # with an empty question just returns those terms), so
-                        # an image-only upload can still actively search the
-                        # Knowledge Base by image content alone, instead of
-                        # only asking a generic clarifying question.
+                        # with an empty question just returns those terms) and
+                        # run it through the same 3-tier retrieval used for a
+                        # typed question -- confident match answers directly,
+                        # related-but-uncertain shows clickable cards, and only
+                        # when NEITHER exists do we fall back to asking what
+                        # the crew member wants to know. Per spec, a bare
+                        # image with no useful match never auto-escalates.
                         detected_terms = build_vision_augmented_question("", vision_result)
 
                         kb_hint = None
@@ -6696,21 +6700,69 @@ def chat():
                         if detected_terms:
                             kb_hint = search_knowledge_base_articles(detected_terms, limit=1)
 
-                            related_articles = search_related_knowledge_base_articles(detected_terms, limit=3)
-                            seen_related_titles = set()
+                            if not kb_hint:
+                                related_articles = search_related_knowledge_base_articles(detected_terms, limit=3)
+                                seen_related_titles = set()
 
-                            for item in related_articles:
-                                for option in build_answer_options(detected_terms, None, item):
-                                    title_key = str(option.get("title", "")).lower().strip()
-                                    if title_key and title_key not in seen_related_titles:
-                                        seen_related_titles.add(title_key)
-                                        related_options.append(option)
+                                for item in related_articles:
+                                    for option in build_answer_options(detected_terms, None, item):
+                                        title_key = str(option.get("title", "")).lower().strip()
+                                        if title_key and title_key not in seen_related_titles:
+                                            seen_related_titles.add(title_key)
+                                            related_options.append(option)
 
-                        clarification_result = build_image_only_clarification_response(vision_result, kb_hint)
+                        if kb_hint:
+                            # Level 1: confident match -- answer directly,
+                            # same as a typed question would.
+                            clear_ai_fail_count(data, question)
+                            remember_chat_context(data, kb_hint)
+                            log_request(
+                                detected_terms,
+                                result=kb_hint,
+                                user_id=data.get("user_id") or data.get("userId")
+                            )
+
+                            kb_hint["final_source"] = kb_hint.get("source")
+                            kb_hint["served_by"] = "image_only_knowledge_base"
+
+                            return jsonify(kb_hint), 200
 
                         if related_options:
-                            clarification_result["type"] = "options"
-                            clarification_result["options"] = related_options
+                            # Level 2: related but not 100% confident.
+                            related_message = (
+                                "I couldn't confirm the exact article from the image alone, "
+                                "but these Knowledge Base articles may help:"
+                            )
+
+                            related_result = standardize_ai_response({
+                                "question": detected_terms,
+                                "type": "options",
+                                "reply": related_message,
+                                "answer": related_message,
+                                "score": related_options[0].get("confidence", 0.0),
+                                "confidence": related_options[0].get("confidence", 0.0),
+                                "confidence_label": get_confidence_label(related_options[0].get("confidence", 0.0)),
+                                "source": "related_knowledge",
+                                "fallback": False,
+                                "escalation_ready": False,
+                                "escalation_required": False,
+                                "options": related_options,
+                            })
+
+                            log_request(
+                                detected_terms,
+                                result=related_result,
+                                user_id=data.get("user_id") or data.get("userId")
+                            )
+
+                            related_result["final_source"] = "related_knowledge"
+                            related_result["served_by"] = "related_knowledge"
+
+                            return jsonify(related_result), 200
+
+                        # Level 3: nothing found. Ask what they want to know
+                        # instead of escalating a bare, unmatched image.
+                        clarification_result = build_image_only_clarification_response(vision_result, None)
 
                         log_request(
                             question,
