@@ -274,3 +274,430 @@
     font-size: 16px;
   }
 }
+
+/* ==========================================================================
+   FINAL HONEY + AI CONSISTENCY PASS
+   UI-only polish for the floating assistant.
+   FloatingAIChat.jsx and all API/drag/chat logic remain unchanged.
+   ========================================================================== */
+
+.floating-ai-chat {
+  --fai-honey: #c98a25;
+  --fai-honey-dark: #8f5b0f;
+  --fai-honey-soft: #fff0cf;
+
+  --fai-violet: #7662c6;
+  --fai-violet-dark: #5f4ea8;
+  --fai-violet-soft: #f1eef9;
+
+  --fai-green: #5f8868;
+  --fai-red: #a94f44;
+
+  --fai-cream: #fff9ed;
+  --fai-cream-2: #f7ead0;
+  --fai-ink: #3d3023;
+  --fai-text: #574633;
+  --fai-muted: #7c6d5b;
+  --fai-line: rgba(194, 151, 86, 0.30);
+
+  gap: 11px;
+}
+
+/* Launcher -------------------------------------------------------------- */
+
+.floating-ai-button {
+  min-width: 60px;
+  min-height: 60px;
+  padding: 0 21px;
+
+  background:
+    linear-gradient(
+      135deg,
+      var(--fai-violet),
+      #8a70d2
+    );
+
+  border: 1px solid rgba(89, 69, 168, 0.18);
+  box-shadow:
+    0 12px 28px rgba(84, 65, 157, 0.24),
+    0 4px 12px rgba(83, 57, 24, 0.10);
+
+  font-size: 15px;
+  font-weight: 850;
+  letter-spacing: 0.03em;
+}
+
+.floating-ai-button:hover {
+  box-shadow:
+    0 15px 34px rgba(84, 65, 157, 0.30),
+    0 5px 14px rgba(83, 57, 24, 0.11);
+}
+
+/* Main panel ------------------------------------------------------------ */
+
+.floating-ai-panel {
+  width: 410px;
+  max-width: calc(100vw - 24px);
+  max-height: 72vh;
+
+  background:
+    linear-gradient(
+      180deg,
+      #fff9ed,
+      #f8ebd3
+    );
+
+  border-color: var(--fai-line);
+  border-radius: 22px;
+
+  box-shadow:
+    0 24px 58px rgba(72, 51, 25, 0.18),
+    0 8px 24px rgba(89, 69, 168, 0.08);
+}
+
+/* Header ---------------------------------------------------------------- */
+
+.floating-ai-header {
+  align-items: center;
+  padding: 16px 18px;
+
+  background:
+    radial-gradient(
+      circle at 100% 0%,
+      rgba(118, 98, 198, 0.12),
+      transparent 38%
+    ),
+    linear-gradient(
+      180deg,
+      #fff1d5 0%,
+      #f4ddb0 100%
+    );
+
+  border-bottom-color: rgba(194, 151, 86, 0.32);
+}
+
+.floating-ai-header strong {
+  color: var(--fai-ink);
+  font-size: 16px;
+  font-weight: 850;
+}
+
+.floating-ai-header p {
+  margin-top: 3px;
+  color: var(--fai-muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.floating-ai-close-btn {
+  color: var(--fai-honey-dark);
+  background: rgba(255, 249, 237, 0.68);
+  border: 1px solid rgba(194, 151, 86, 0.22);
+  border-radius: 10px;
+}
+
+.floating-ai-close-btn:hover {
+  background: #ffe7b8;
+}
+
+/* Conversation area ----------------------------------------------------- */
+
+.floating-ai-messages {
+  padding: 15px;
+  gap: 11px;
+
+  background:
+    radial-gradient(
+      circle at 0% 0%,
+      rgba(201, 138, 37, 0.10),
+      transparent 32%
+    ),
+    radial-gradient(
+      circle at 100% 0%,
+      rgba(118, 98, 198, 0.06),
+      transparent 30%
+    ),
+    linear-gradient(
+      180deg,
+      #fff8eb 0%,
+      #f5e6ca 100%
+    );
+
+  scrollbar-width: thin;
+  scrollbar-color: rgba(143, 91, 15, 0.20) transparent;
+}
+
+.floating-ai-messages::-webkit-scrollbar {
+  width: 6px;
+}
+
+.floating-ai-messages::-webkit-scrollbar-thumb {
+  background: rgba(143, 91, 15, 0.20);
+  border-radius: 999px;
+}
+
+/* Bubbles --------------------------------------------------------------- */
+
+.floating-ai-bubble {
+  max-width: 88%;
+  padding: 11px 14px;
+
+  font-size: 14px;
+  line-height: 1.58;
+
+  box-shadow: 0 6px 18px rgba(77, 54, 27, 0.045);
+}
+
+.floating-ai-bubble.ai {
+  color: var(--fai-text);
+
+  background:
+    linear-gradient(
+      145deg,
+      #fffaf2,
+      #f7f2fb
+    );
+
+  border: 1px solid rgba(151, 126, 190, 0.24);
+  border-left: 3px solid var(--fai-violet);
+
+  border-bottom-left-radius: 6px;
+}
+
+.floating-ai-bubble.user {
+  color: #523914;
+
+  background:
+    linear-gradient(
+      135deg,
+      #ffefc8,
+      #f4d488
+    );
+
+  border: 1px solid rgba(195, 139, 39, 0.32);
+  border-bottom-right-radius: 6px;
+}
+
+/* Option buttons -------------------------------------------------------- */
+
+.floating-ai-options {
+  gap: 7px;
+  margin-top: 7px;
+}
+
+.floating-ai-option-btn {
+  max-width: 90%;
+  min-height: 36px;
+  padding: 8px 13px;
+
+  color: var(--fai-violet-dark);
+  background: #f3effb;
+  border: 1px solid #d9d0ee;
+
+  border-radius: 12px;
+
+  font-size: 12px;
+  font-weight: 800;
+
+  box-shadow: none;
+}
+
+.floating-ai-option-btn:hover {
+  color: #fff;
+  background:
+    linear-gradient(
+      135deg,
+      var(--fai-violet),
+      #8a70d2
+    );
+  border-color: transparent;
+  filter: none;
+}
+
+/* Rich HTML ------------------------------------------------------------- */
+
+.floating-ai-html-content {
+  color: var(--fai-text);
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+.floating-ai-html-content img {
+  margin: 8px 0;
+  background: #fffaf0;
+  border: 1px solid var(--fai-line);
+  border-radius: 11px;
+}
+
+.floating-ai-html-content h1,
+.floating-ai-html-content h2,
+.floating-ai-html-content h3 {
+  color: var(--fai-ink);
+  font-size: 15px;
+}
+
+.floating-ai-html-content table {
+  background: #fffaf0;
+  font-size: 12px;
+}
+
+.floating-ai-html-content table td,
+.floating-ai-html-content table th {
+  border-color: #e5cfa5;
+  padding: 7px 8px;
+}
+
+.floating-ai-html-content table th {
+  color: #775014;
+  background: #fff0cf;
+}
+
+/* Thinking / error ------------------------------------------------------ */
+
+.floating-ai-thinking {
+  color: var(--fai-violet-dark);
+  background: var(--fai-violet-soft);
+  border-color: #ddd3ef;
+  font-style: normal;
+}
+
+.floating-ai-thinking::before {
+  content: '✦';
+  margin-right: 6px;
+  color: var(--fai-violet);
+}
+
+.floating-ai-error {
+  max-width: 88%;
+  padding: 11px 14px;
+
+  color: var(--fai-red);
+  background: #fff0ed;
+  border-color: #e9c2bb;
+
+  font-size: 13px;
+}
+
+/* Composer -------------------------------------------------------------- */
+
+.floating-ai-input-row {
+  gap: 9px;
+  padding: 12px 13px;
+
+  background:
+    linear-gradient(
+      180deg,
+      #fff7e8,
+      #f6e5c6
+    );
+
+  border-top-color: var(--fai-line);
+}
+
+.floating-ai-input-row input {
+  min-height: 44px;
+  padding: 10px 13px;
+
+  color: var(--fai-text);
+  background: #fffaf2;
+  border-color: rgba(194, 151, 86, 0.36);
+
+  font-size: 13.5px;
+}
+
+.floating-ai-input-row input::placeholder {
+  color: #96836d;
+}
+
+.floating-ai-input-row input:focus {
+  background: #fffdf8;
+  border-color: rgba(201, 138, 37, 0.60);
+  box-shadow: 0 0 0 3px rgba(201, 138, 37, 0.10);
+}
+
+.floating-ai-send-btn {
+  min-width: 72px;
+  min-height: 44px;
+  padding: 0 16px;
+
+  background:
+    linear-gradient(
+      135deg,
+      var(--fai-honey),
+      #b87512
+    );
+
+  border: 1px solid rgba(143, 91, 15, 0.12);
+  border-radius: 11px;
+
+  font-size: 12.5px;
+  font-weight: 850;
+
+  box-shadow: 0 7px 18px rgba(171, 105, 14, 0.18);
+}
+
+.floating-ai-send-btn:hover:not(:disabled) {
+  background:
+    linear-gradient(
+      135deg,
+      #d79a2f,
+      #a96910
+    );
+}
+
+/* Mobile --------------------------------------------------------------- */
+
+@media (max-width: 640px) {
+  .floating-ai-button {
+    min-width: 58px;
+    min-height: 58px;
+    padding: 0 18px;
+  }
+
+  .floating-ai-panel {
+    width: calc(100vw - 24px);
+    max-height: 72vh;
+    border-radius: 19px;
+  }
+
+  .floating-ai-header {
+    padding: 14px 15px;
+  }
+
+  .floating-ai-header strong {
+    font-size: 15px;
+  }
+
+  .floating-ai-header p {
+    font-size: 11px;
+  }
+
+  .floating-ai-messages {
+    padding: 12px;
+  }
+
+  .floating-ai-bubble {
+    max-width: 91%;
+    padding: 10px 12px;
+    font-size: 13px;
+  }
+
+  .floating-ai-option-btn {
+    max-width: 94%;
+    font-size: 11.5px;
+  }
+
+  .floating-ai-input-row {
+    padding: 10px;
+  }
+
+  .floating-ai-input-row input {
+    min-height: 43px;
+    font-size: 16px;
+  }
+
+  .floating-ai-send-btn {
+    min-height: 43px;
+    font-size: 12px;
+  }
+}

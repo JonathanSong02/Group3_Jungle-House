@@ -1,0 +1,685 @@
+/* ==========================================================================
+   AI SETTINGS — HONEY + AI THEME
+   UI only. Scoped to AISettings.
+   ========================================================================== */
+
+.ais-page {
+  --ais-honey: #c98a25;
+  --ais-honey-dark: #a96b0d;
+  --ais-honey-soft: #fff0ce;
+  --ais-cream: #fffaf0;
+  --ais-cream-2: #fff4df;
+
+  --ais-violet: #7662c6;
+  --ais-violet-dark: #5f4da9;
+  --ais-violet-soft: #f1eef9;
+
+  --ais-green: #4f8460;
+  --ais-green-soft: #edf6ee;
+
+  --ais-red: #a84e45;
+  --ais-red-soft: #fff0ed;
+
+  --ais-ink: #3d3226;
+  --ais-muted: #7c6d5a;
+  --ais-border: rgba(177, 137, 81, 0.22);
+
+  width: 100%;
+  max-width: 1500px;
+  min-width: 0;
+  margin: 0 auto;
+  padding-bottom: 48px;
+}
+
+.ais-page button,
+.ais-page input,
+.ais-page select {
+  font-family: inherit;
+}
+
+/* Feedback -------------------------------------------------------------- */
+
+.ais-feedback {
+  margin-top: 13px;
+  padding: 11px 14px;
+
+  color: #76501b;
+  background: #fff3d8;
+  border: 1px solid #e8c982;
+  border-radius: 12px;
+
+  font-size: 12px;
+  font-weight: 750;
+}
+
+/* Main layout ----------------------------------------------------------- */
+
+.ais-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.75fr) minmax(0, 1.35fr);
+  gap: 14px;
+
+  margin-top: 16px;
+}
+
+/* Current model card ---------------------------------------------------- */
+
+.ais-status-card,
+.ais-settings-card {
+  border: 1px solid var(--ais-border);
+  border-radius: 22px;
+  box-shadow: 0 12px 32px rgba(87, 60, 23, 0.07);
+}
+
+.ais-status-card {
+  position: relative;
+  overflow: hidden;
+
+  min-height: 500px;
+  padding: 22px;
+
+  background:
+    radial-gradient(
+      circle at 100% 0%,
+      rgba(118, 98, 198, 0.13),
+      transparent 34%
+    ),
+    radial-gradient(
+      circle at 0% 100%,
+      rgba(201, 138, 37, 0.14),
+      transparent 33%
+    ),
+    linear-gradient(150deg, #fff9ec, #f9edd8);
+}
+
+.ais-status-card::after {
+  content: '';
+
+  position: absolute;
+  right: -70px;
+  bottom: -70px;
+
+  width: 220px;
+  height: 220px;
+
+  background:
+    radial-gradient(
+      circle,
+      rgba(201, 138, 37, 0.08),
+      transparent 66%
+    );
+  border-radius: 50%;
+
+  pointer-events: none;
+}
+
+.ais-status-top {
+  position: relative;
+  z-index: 1;
+
+  display: grid;
+  grid-template-columns: 50px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.ais-orb {
+  width: 50px;
+  height: 50px;
+
+  display: grid;
+  place-items: center;
+
+  color: #fff;
+  background:
+    linear-gradient(145deg, var(--ais-violet), #967bdd);
+  border-radius: 16px;
+
+  box-shadow: 0 10px 24px rgba(102, 82, 185, 0.22);
+}
+
+.ais-orb span {
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+}
+
+.ais-kicker {
+  display: block;
+
+  color: #88755f;
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0.075em;
+  text-transform: uppercase;
+}
+
+.ais-status-top h2,
+.ais-section-head h2 {
+  margin: 4px 0 0;
+
+  color: var(--ais-ink);
+  font-weight: 850;
+  letter-spacing: -0.03em;
+}
+
+.ais-status-top h2 {
+  font-size: 21px;
+}
+
+.ais-status-pill {
+  min-height: 29px;
+
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+
+  padding: 5px 9px;
+
+  border: 1px solid transparent;
+  border-radius: 999px;
+
+  font-size: 10px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.ais-status-pill i {
+  width: 7px;
+  height: 7px;
+
+  flex: 0 0 7px;
+
+  background: currentColor;
+  border-radius: 50%;
+}
+
+.ais-status-pill.connected {
+  color: #39704c;
+  background: var(--ais-green-soft);
+  border-color: #cde4d3;
+}
+
+.ais-status-pill.failed {
+  color: #9e4a42;
+  background: var(--ais-red-soft);
+  border-color: #ebc8c1;
+}
+
+.ais-status-pill.untested {
+  color: #8b641f;
+  background: #fff2d5;
+  border-color: #ead29c;
+}
+
+/* Model details --------------------------------------------------------- */
+
+.ais-model-name {
+  position: relative;
+  z-index: 1;
+
+  margin-top: 26px;
+  padding: 17px;
+
+  background: rgba(255, 253, 247, 0.72);
+  border: 1px solid rgba(180, 139, 81, 0.2);
+  border-radius: 16px;
+  backdrop-filter: blur(8px);
+}
+
+.ais-model-name span,
+.ais-config-grid span {
+  display: block;
+
+  color: #8a7a66;
+  font-size: 10.5px;
+  font-weight: 750;
+}
+
+.ais-model-name strong {
+  display: block;
+
+  margin-top: 5px;
+
+  color: var(--ais-violet-dark);
+  font-size: 15px;
+  font-weight: 850;
+
+  overflow-wrap: anywhere;
+}
+
+.ais-config-grid {
+  position: relative;
+  z-index: 1;
+
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+
+  margin-top: 10px;
+}
+
+.ais-config-grid > div {
+  min-width: 0;
+  padding: 14px;
+
+  background: rgba(255, 250, 240, 0.68);
+  border: 1px solid rgba(180, 139, 81, 0.18);
+  border-radius: 14px;
+}
+
+.ais-config-grid strong {
+  display: block;
+
+  margin-top: 5px;
+
+  color: var(--ais-ink);
+  font-size: 11.5px;
+  font-weight: 800;
+
+  overflow-wrap: anywhere;
+}
+
+.ais-empty-config {
+  position: relative;
+  z-index: 1;
+
+  min-height: 180px;
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+
+  margin-top: 24px;
+
+  color: var(--ais-muted);
+  text-align: center;
+}
+
+.ais-empty-config strong {
+  color: var(--ais-ink);
+  font-size: 14px;
+  font-weight: 850;
+}
+
+.ais-empty-config span {
+  margin-top: 4px;
+  font-size: 11.5px;
+}
+
+.ais-ai-note {
+  position: relative;
+  z-index: 1;
+
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+
+  margin-top: 24px;
+  padding: 13px;
+
+  color: #6755aa;
+  background: rgba(243, 239, 253, 0.72);
+  border: 1px solid #ddd3f1;
+  border-radius: 14px;
+}
+
+.ais-ai-note-icon {
+  width: 38px;
+  height: 38px;
+
+  display: grid;
+  place-items: center;
+
+  color: #fff;
+  background: linear-gradient(145deg, #7460c7, #9477dc);
+  border-radius: 11px;
+
+  font-size: 17px;
+}
+
+.ais-ai-note strong,
+.ais-ai-note span {
+  display: block;
+}
+
+.ais-ai-note strong {
+  font-size: 11.5px;
+  font-weight: 850;
+}
+
+.ais-ai-note div > span {
+  margin-top: 2px;
+
+  color: #80739e;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+/* Loading --------------------------------------------------------------- */
+
+.ais-loading-block {
+  display: grid;
+  gap: 9px;
+
+  margin-top: 26px;
+}
+
+.ais-loading-block span {
+  height: 56px;
+
+  background:
+    linear-gradient(
+      90deg,
+      #f5e7cf,
+      #fff6e6,
+      #f5e7cf
+    );
+  background-size: 200% 100%;
+
+  border-radius: 14px;
+
+  animation: ais-shimmer 1.4s linear infinite;
+}
+
+@keyframes ais-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* Settings form --------------------------------------------------------- */
+
+.ais-settings-card {
+  padding: 24px;
+
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 252, 245, 0.98),
+      rgba(255, 246, 228, 0.96)
+    );
+}
+
+.ais-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+
+  padding-bottom: 18px;
+
+  border-bottom: 1px solid rgba(185, 145, 88, 0.18);
+}
+
+.ais-section-head h2 {
+  font-size: 22px;
+}
+
+.ais-provider-chip {
+  min-height: 31px;
+
+  display: inline-flex;
+  align-items: center;
+
+  padding: 6px 10px;
+
+  color: var(--ais-violet-dark);
+  background: var(--ais-violet-soft);
+  border: 1px solid #ddd4ef;
+  border-radius: 999px;
+
+  font-size: 10.5px;
+  font-weight: 850;
+}
+
+.ais-form {
+  display: grid;
+  gap: 15px;
+
+  margin-top: 21px;
+}
+
+.ais-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.ais-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.ais-field > span {
+  color: #62523f;
+  font-size: 11.5px;
+  font-weight: 800;
+}
+
+.ais-field input,
+.ais-field select {
+  width: 100%;
+  min-height: 43px;
+
+  padding: 9px 12px;
+
+  color: var(--ais-ink);
+  background: #fffaf0;
+  border: 1px solid rgba(171, 130, 73, 0.24);
+  border-radius: 11px;
+
+  font-size: 12.5px;
+
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    background 0.15s ease;
+}
+
+.ais-field input:focus,
+.ais-field select:focus {
+  outline: none;
+
+  background: #fffdf8;
+  border-color: rgba(201, 138, 37, 0.58);
+  box-shadow: 0 0 0 3px rgba(201, 138, 37, 0.1);
+}
+
+.ais-field-full {
+  grid-column: 1 / -1;
+}
+
+.ais-key-input {
+  position: relative;
+}
+
+.ais-key-input input {
+  padding-right: 85px;
+}
+
+.ais-key-input > span {
+  position: absolute;
+  top: 50%;
+  right: 9px;
+
+  transform: translateY(-50%);
+
+  padding: 4px 7px;
+
+  color: #5f704f;
+  background: #edf5e9;
+  border: 1px solid #d3e5cc;
+  border-radius: 7px;
+
+  font-size: 9px;
+  font-weight: 850;
+}
+
+/* Test result ----------------------------------------------------------- */
+
+.ais-test-result {
+  min-height: 43px;
+
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  padding: 10px 12px;
+
+  border-radius: 11px;
+
+  font-size: 11.5px;
+  font-weight: 750;
+  line-height: 1.45;
+}
+
+.ais-test-result.success {
+  color: #3f7150;
+  background: var(--ais-green-soft);
+  border: 1px solid #cce2d2;
+}
+
+.ais-test-result.error {
+  color: #9e4a42;
+  background: var(--ais-red-soft);
+  border: 1px solid #ebc8c1;
+}
+
+.ais-result-dot {
+  width: 8px;
+  height: 8px;
+
+  flex: 0 0 8px;
+
+  background: currentColor;
+  border-radius: 50%;
+}
+
+/* Actions --------------------------------------------------------------- */
+
+.ais-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 9px;
+
+  margin-top: 3px;
+  padding-top: 17px;
+
+  border-top: 1px solid rgba(185, 145, 88, 0.16);
+}
+
+.ais-btn {
+  min-height: 42px;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  padding: 9px 15px;
+
+  border-radius: 11px;
+
+  font-size: 12px;
+  font-weight: 850;
+
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease,
+    background 0.15s ease;
+}
+
+.ais-btn:hover {
+  transform: translateY(-1px);
+}
+
+.ais-btn:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.ais-btn.secondary {
+  color: #67523a;
+  background: #fff9ed;
+  border: 1px solid rgba(161, 120, 64, 0.22);
+  box-shadow: none;
+}
+
+.ais-btn.secondary:hover {
+  background: #fff1d8;
+}
+
+.ais-btn.primary {
+  color: #fff;
+  background:
+    linear-gradient(
+      135deg,
+      #d99a2c,
+      #b97612
+    );
+  border: 1px solid rgba(144, 89, 8, 0.12);
+
+  box-shadow: 0 8px 19px rgba(176, 110, 15, 0.19);
+}
+
+.ais-btn.primary:hover {
+  box-shadow: 0 11px 24px rgba(176, 110, 15, 0.24);
+}
+
+/* Responsive ------------------------------------------------------------ */
+
+@media (max-width: 1000px) {
+  .ais-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .ais-status-card {
+    min-height: auto;
+  }
+}
+
+@media (max-width: 620px) {
+  .ais-status-card,
+  .ais-settings-card {
+    padding: 17px;
+    border-radius: 18px;
+  }
+
+  .ais-status-top {
+    grid-template-columns: 46px minmax(0, 1fr);
+  }
+
+  .ais-status-pill {
+    grid-column: 1 / -1;
+    width: fit-content;
+  }
+
+  .ais-form-grid,
+  .ais-config-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ais-actions {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+
+  .ais-actions .ais-btn {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ais-loading-block span {
+    animation: none;
+  }
+
+  .ais-btn {
+    transition: none;
+  }
+}

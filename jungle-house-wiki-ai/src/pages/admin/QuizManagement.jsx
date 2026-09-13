@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import PageHeader from '../../components/PageHeader';
 import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
+import './styles/QuizManagement.css';
 
 const emptyQuizForm = {
   title: '',
@@ -33,10 +34,100 @@ const emptyAiForm = {
 
 const optionLetters = ['A', 'B', 'C', 'D'];
 
+function Icon({ name, size = 20 }) {
+  const props = {
+    width: size,
+    height: size,
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 1.9,
+    strokeLinecap: 'round',
+    strokeLinejoin: 'round',
+    'aria-hidden': true,
+  };
+
+  if (name === 'sparkles') {
+    return (
+      <svg {...props}>
+        <path d="m12 3 1.4 3.6L17 8l-3.6 1.4L12 13l-1.4-3.6L7 8l3.6-1.4L12 3Z" />
+        <path d="m19 14 .8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8L19 14Z" />
+        <path d="m5 13 1 2.5L8.5 16 6 17l-1 2.5L4 17l-2.5-1L4 15.5 5 13Z" />
+      </svg>
+    );
+  }
+
+  if (name === 'quiz') {
+    return (
+      <svg {...props}>
+        <rect x="4" y="3" width="16" height="18" rx="3" />
+        <path d="M8 8h8M8 12h5M8 16h3" />
+      </svg>
+    );
+  }
+
+  if (name === 'plus') {
+    return (
+      <svg {...props}>
+        <path d="M12 5v14M5 12h14" />
+      </svg>
+    );
+  }
+
+  if (name === 'search') {
+    return (
+      <svg {...props}>
+        <circle cx="11" cy="11" r="7" />
+        <path d="m20 20-3.5-3.5" />
+      </svg>
+    );
+  }
+
+  if (name === 'edit') {
+    return (
+      <svg {...props}>
+        <path d="M12 20h9" />
+        <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4Z" />
+      </svg>
+    );
+  }
+
+  if (name === 'trash') {
+    return (
+      <svg {...props}>
+        <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
+      </svg>
+    );
+  }
+
+  if (name === 'arrow') {
+    return (
+      <svg {...props}>
+        <path d="M5 12h14M13 6l6 6-6 6" />
+      </svg>
+    );
+  }
+
+  if (name === 'check') {
+    return (
+      <svg {...props}>
+        <path d="m5 12 4 4L19 6" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M8 12h8" />
+    </svg>
+  );
+}
+
 export default function QuizManagement() {
   const { user } = useAuth();
 
-  const [activeTab, setActiveTab] = useState('create');
+  const [activeTab, setActiveTab] = useState('manage');
   const [searchTerm, setSearchTerm] = useState('');
 
   const [quizzes, setQuizzes] = useState([]);
@@ -46,6 +137,7 @@ export default function QuizManagement() {
   const [questionForm, setQuestionForm] = useState(emptyQuestionForm);
   const [editingQuizId, setEditingQuizId] = useState(null);
   const [editingQuestionId, setEditingQuestionId] = useState(null);
+  const [questionEditorOpen, setQuestionEditorOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [questionLoading, setQuestionLoading] = useState(false);
   const [message, setMessage] = useState('');
@@ -82,20 +174,28 @@ export default function QuizManagement() {
     });
   }, [quizzes, searchTerm]);
 
+  const quizStats = useMemo(() => {
+    const active = quizzes.filter((quiz) => quiz.status === 'active').length;
+    const draft = quizzes.filter((quiz) => quiz.status !== 'active').length;
+    const questionTotal = quizzes.reduce(
+      (sum, quiz) => sum + Number(quiz.question_count || 0),
+      0
+    );
+
+    return {
+      total: quizzes.length,
+      active,
+      draft,
+      questionTotal,
+    };
+  }, [quizzes]);
+
   const showSuccessModal = (title, text) => {
-    setSuccessModal({
-      show: true,
-      title,
-      text,
-    });
+    setSuccessModal({ show: true, title, text });
   };
 
   const closeSuccessModal = () => {
-    setSuccessModal({
-      show: false,
-      title: '',
-      text: '',
-    });
+    setSuccessModal({ show: false, title: '', text: '' });
   };
 
   const fetchQuizzes = useCallback(async () => {
@@ -107,9 +207,13 @@ export default function QuizManagement() {
 
       setQuizzes(data);
 
-      setSelectedQuizId((currentId) =>
-        currentId || (data.length > 0 ? data[0].quiz_id : null)
-      );
+      setSelectedQuizId((currentId) => {
+        if (currentId && data.some((quiz) => quiz.quiz_id === currentId)) {
+          return currentId;
+        }
+
+        return data.length > 0 ? data[0].quiz_id : null;
+      });
     } catch (error) {
       console.error('Fetch admin quizzes error:', error.response?.data || error);
       setMessage(
@@ -159,46 +263,44 @@ export default function QuizManagement() {
 
   const handleQuizChange = (event) => {
     const { name, value } = event.target;
-
-    setQuizForm((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
+    setQuizForm((prev) => ({ ...prev, [name]: value }));
   };
 
   const handleQuestionChange = (event) => {
     const { name, value } = event.target;
-
-    setQuestionForm((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
+    setQuestionForm((prev) => ({ ...prev, [name]: value }));
   };
 
   const handleSelectQuiz = (quizId) => {
     setSelectedQuizId(quizId);
     setEditingQuestionId(null);
     setQuestionForm(emptyQuestionForm);
+    setQuestionEditorOpen(false);
     setActiveTab('manage');
-    fetchQuestions(quizId);
   };
 
-  const resetQuizForm = () => {
+  const clearQuizForm = () => {
     setQuizForm(emptyQuizForm);
     setEditingQuizId(null);
+  };
+
+  const startCreateQuiz = () => {
+    clearQuizForm();
+    setMessage('');
     setActiveTab('create');
   };
 
   const resetQuestionForm = () => {
     setQuestionForm(emptyQuestionForm);
     setEditingQuestionId(null);
+    setQuestionEditorOpen(false);
   };
 
   const submitQuiz = async (event) => {
     event.preventDefault();
 
     if (!quizForm.title.trim()) {
-      setMessage('Please enter quiz title.');
+      setMessage('Enter a quiz title.');
       return;
     }
 
@@ -212,27 +314,20 @@ export default function QuizManagement() {
 
       if (editingQuizId) {
         await api.put(`/admin/quizzes/${editingQuizId}`, payload);
-
-        showSuccessModal(
-          'Quiz Updated Successfully',
-          'The selected quiz details have been updated in the system.'
-        );
+        showSuccessModal('Quiz updated', 'Your changes are saved.');
+        setSelectedQuizId(editingQuizId);
       } else {
         const response = await api.post('/admin/quizzes', payload);
-
-        showSuccessModal(
-          'Quiz Created Successfully',
-          'The new quiz has been created and saved into the system.'
-        );
+        showSuccessModal('Quiz created', 'Your quiz is ready to edit.');
 
         if (response.data?.quiz_id) {
           setSelectedQuizId(response.data.quiz_id);
-          setActiveTab('manage');
         }
       }
 
-      resetQuizForm();
-      fetchQuizzes();
+      clearQuizForm();
+      await fetchQuizzes();
+      setActiveTab('manage');
     } catch (error) {
       console.error('Submit quiz error:', error.response?.data || error);
       setMessage(
@@ -256,7 +351,7 @@ export default function QuizManagement() {
 
   const deleteQuiz = async (quizId) => {
     const confirmDelete = window.confirm(
-      'Are you sure you want to delete this quiz? All questions and results under this quiz will also be deleted.'
+      'Delete this quiz and all of its questions and results?'
     );
 
     if (!confirmDelete) return;
@@ -271,8 +366,8 @@ export default function QuizManagement() {
         setQuestions([]);
       }
 
-      setMessage('Quiz deleted successfully.');
-      fetchQuizzes();
+      setMessage('Quiz deleted.');
+      await fetchQuizzes();
     } catch (error) {
       console.error('Delete quiz error:', error.response?.data || error);
       setMessage(
@@ -287,7 +382,7 @@ export default function QuizManagement() {
     event.preventDefault();
 
     if (!selectedQuizId) {
-      setMessage('Please select a quiz first.');
+      setMessage('Select a quiz first.');
       return;
     }
 
@@ -298,7 +393,7 @@ export default function QuizManagement() {
       !questionForm.option_c.trim() ||
       !questionForm.option_d.trim()
     ) {
-      setMessage('Please fill in all question fields.');
+      setMessage('Complete the question and all four options.');
       return;
     }
 
@@ -307,23 +402,20 @@ export default function QuizManagement() {
 
       if (editingQuestionId) {
         await api.put(`/admin/questions/${editingQuestionId}`, questionForm);
-
-        showSuccessModal(
-          'Question Updated Successfully',
-          'The selected quiz question has been updated.'
-        );
+        showSuccessModal('Question updated', 'Your changes are saved.');
       } else {
-        await api.post(`/admin/quizzes/${selectedQuizId}/questions`, questionForm);
-
-        showSuccessModal(
-          'Question Added Successfully',
-          'The new question has been added to the selected quiz.'
+        await api.post(
+          `/admin/quizzes/${selectedQuizId}/questions`,
+          questionForm
         );
+        showSuccessModal('Question added', 'The question is now in this quiz.');
       }
 
       resetQuestionForm();
-      fetchQuestions(selectedQuizId);
-      fetchQuizzes();
+      await Promise.all([
+        fetchQuestions(selectedQuizId),
+        fetchQuizzes(),
+      ]);
     } catch (error) {
       console.error('Submit question error:', error.response?.data || error);
       setMessage(
@@ -346,23 +438,22 @@ export default function QuizManagement() {
       explanation: question.explanation || '',
       points: question.points || 1,
     });
+    setQuestionEditorOpen(true);
   };
 
   const deleteQuestion = async (questionId) => {
-    const confirmDelete = window.confirm(
-      'Are you sure you want to delete this question?'
-    );
-
-    if (!confirmDelete) return;
+    if (!window.confirm('Delete this question?')) return;
 
     try {
       setMessage('');
 
       await api.delete(`/admin/questions/${questionId}`);
 
-      setMessage('Question deleted successfully.');
-      fetchQuestions(selectedQuizId);
-      fetchQuizzes();
+      setMessage('Question deleted.');
+      await Promise.all([
+        fetchQuestions(selectedQuizId),
+        fetchQuizzes(),
+      ]);
     } catch (error) {
       console.error('Delete question error:', error.response?.data || error);
       setMessage(
@@ -375,11 +466,7 @@ export default function QuizManagement() {
 
   const handleAiFormChange = (event) => {
     const { name, value } = event.target;
-
-    setAiForm((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
+    setAiForm((prev) => ({ ...prev, [name]: value }));
   };
 
   const generateAiQuiz = async (event) => {
@@ -391,15 +478,6 @@ export default function QuizManagement() {
     try {
       setAiLoading(true);
 
-      // A real AI provider call (Knowledge Base retrieval + an external LLM
-      // request) can comfortably take longer than the shared API client's
-      // default timeout, so this specific call gets a longer one of its own
-      // -- this does not change the shared axios instance or its baseURL.
-      // Kept comfortably above the backend's own ~90s provider timeout so
-      // the frontend doesn't give up before the backend has a chance to
-      // finish or fall back to the template generator -- otherwise larger
-      // question counts (which take Gemini longer to generate) race the
-      // two timeouts and lose more often than smaller ones.
       const response = await api.post(
         '/admin/quizzes/ai-generate',
         {
@@ -419,7 +497,8 @@ export default function QuizManagement() {
       let fallbackMessage = 'Quiz generation failed. Please try again.';
 
       if (error.code === 'ECONNABORTED' || !error.response) {
-        fallbackMessage = 'AI provider request failed. Please try again, or create the quiz manually.';
+        fallbackMessage =
+          'AI request failed. Try again or create the quiz manually.';
       }
 
       setAiError(error.response?.data?.message || fallbackMessage);
@@ -446,7 +525,7 @@ export default function QuizManagement() {
 
   const saveAiGeneratedQuiz = async () => {
     if (!aiPreview || aiPreview.questions.length === 0) {
-      setAiError('There are no questions left to save.');
+      setAiError('No questions left to save.');
       return;
     }
 
@@ -477,10 +556,7 @@ export default function QuizManagement() {
         });
       }
 
-      showSuccessModal(
-        'AI Quiz Saved Successfully',
-        'The AI generated quiz has been saved and now appears in Manage Quizzes.'
-      );
+      showSuccessModal('AI quiz saved', 'The quiz is ready to manage.');
 
       setAiPreview(null);
       setAiForm(emptyAiForm);
@@ -489,10 +565,13 @@ export default function QuizManagement() {
         setSelectedQuizId(newQuizId);
       }
 
+      await fetchQuizzes();
       setActiveTab('manage');
-      fetchQuizzes();
     } catch (error) {
-      console.error('Save AI generated quiz error:', error.response?.data || error);
+      console.error(
+        'Save AI generated quiz error:',
+        error.response?.data || error
+      );
       setAiError(
         error.response?.data?.error ||
           error.response?.data?.message ||
@@ -504,628 +583,779 @@ export default function QuizManagement() {
   };
 
   return (
-    <div>
-      <PageHeader
-        title="Quiz Management"
-        subtitle="Create and manage training quizzes for Staff and Team Lead."
-      />
+    <div className="qm-page">
+      <div className="qm-heading-row">
+        <PageHeader
+          title="Quiz Management"
+          subtitle="Build and manage training quizzes."
+        />
 
-      {message && (
-        <section className="card-like top-gap-sm">
-          <p className="muted">{message}</p>
-        </section>
-      )}
-
-      <section className="card-like top-gap-sm">
-        <div className="quiz-tab-bar">
+        <div className="qm-heading-actions">
           <button
             type="button"
-            className={`quiz-tab-btn ${activeTab === 'create' ? 'active' : ''}`}
-            onClick={() => setActiveTab('create')}
+            className="qm-btn qm-btn-ai"
+            onClick={() => {
+              setAiError('');
+              setActiveTab('ai-generate');
+            }}
           >
-            Create Quiz
+            <Icon name="sparkles" />
+            AI Generate
           </button>
 
           <button
             type="button"
-            className={`quiz-tab-btn ${activeTab === 'manage' ? 'active' : ''}`}
-            onClick={() => setActiveTab('manage')}
+            className="qm-btn qm-btn-primary"
+            onClick={startCreateQuiz}
           >
-            Manage Quizzes
+            <Icon name="plus" />
+            New Quiz
           </button>
+        </div>
+      </div>
 
-          <button
-            type="button"
-            className={`quiz-tab-btn ${activeTab === 'ai-generate' ? 'active' : ''}`}
-            onClick={() => setActiveTab('ai-generate')}
-          >
-            Auto Generate Quiz
-          </button>
+      <section className="qm-stats">
+        <button
+          type="button"
+          className="qm-stat qm-stat-blue"
+          onClick={() => setActiveTab('manage')}
+        >
+          <span>Total Quizzes</span>
+          <strong>{quizStats.total}</strong>
+        </button>
+
+        <button
+          type="button"
+          className="qm-stat qm-stat-green"
+          onClick={() => setActiveTab('manage')}
+        >
+          <span>Active</span>
+          <strong>{quizStats.active}</strong>
+        </button>
+
+        <button
+          type="button"
+          className="qm-stat qm-stat-amber"
+          onClick={() => setActiveTab('manage')}
+        >
+          <span>Draft</span>
+          <strong>{quizStats.draft}</strong>
+        </button>
+
+        <div className="qm-stat qm-stat-violet">
+          <span>Questions</span>
+          <strong>{quizStats.questionTotal}</strong>
         </div>
       </section>
 
-      {activeTab === 'create' && (
-        <section className="card-like top-gap">
-          <div className="row-between wrap-gap">
-            <div>
-              <h3>{editingQuizId ? 'Edit Quiz' : 'Create New Quiz'}</h3>
-              <p className="muted">
-                Add quiz title, category, description, and status.
-              </p>
-            </div>
+      {message ? <div className="qm-feedback">{message}</div> : null}
 
-            {editingQuizId && (
-              <button className="secondary-btn" onClick={resetQuizForm}>
-                Cancel Edit
-              </button>
-            )}
-          </div>
+      <section className="qm-workspace">
+        <div className="qm-nav">
+          <button
+            type="button"
+            className={activeTab === 'manage' ? 'active' : ''}
+            onClick={() => setActiveTab('manage')}
+          >
+            <Icon name="quiz" size={18} />
+            Quizzes
+          </button>
 
-          <form className="form-stack top-gap" onSubmit={submitQuiz}>
-            <label>
-              Quiz Title
-              <input
-                name="title"
-                value={quizForm.title}
-                onChange={handleQuizChange}
-                placeholder="Example: Pre-Official Interview Training"
-              />
-            </label>
+          <button
+            type="button"
+            className={activeTab === 'create' ? 'active' : ''}
+            onClick={startCreateQuiz}
+          >
+            <Icon name="plus" size={18} />
+            {editingQuizId ? 'Edit Quiz' : 'Create'}
+          </button>
 
-            <label>
-              Description
-              <textarea
-                rows="4"
-                name="description"
-                value={quizForm.description}
-                onChange={handleQuizChange}
-                placeholder="Write a short quiz description"
-              />
-            </label>
+          <button
+            type="button"
+            className={`qm-nav-ai ${activeTab === 'ai-generate' ? 'active' : ''}`}
+            onClick={() => setActiveTab('ai-generate')}
+          >
+            <Icon name="sparkles" size={18} />
+            AI Builder
+          </button>
+        </div>
 
-            <label>
-              Category
-              <input
-                name="category"
-                value={quizForm.category}
-                onChange={handleQuizChange}
-                placeholder="Training"
-              />
-            </label>
-
-            <label>
-              Status
-              <select
-                name="status"
-                value={quizForm.status}
-                onChange={handleQuizChange}
-              >
-                <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
-              </select>
-            </label>
-
-            <button className="primary-btn" type="submit">
-              {editingQuizId ? 'Update Quiz' : 'Create Quiz'}
-            </button>
-          </form>
-        </section>
-      )}
-
-      {activeTab === 'ai-generate' && (
-        <section className="card-like top-gap">
-          <div>
-            <h3>Auto Generate Quiz</h3>
-            <p className="muted">
-              Automatically build multiple-choice questions from the latest
-              published Knowledge Base / SOP articles. Review the preview
-              before saving.
-            </p>
-          </div>
-
-          <form className="form-grid top-gap" onSubmit={generateAiQuiz}>
-            <label className="full-width">
-              Quiz Title
-              <input
-                name="title"
-                value={aiForm.title}
-                onChange={handleAiFormChange}
-                placeholder="Example: Opening SOP Quiz"
-              />
-            </label>
-
-            <label>
-              Category / Source Content
-              <select
-                name="sourceCategory"
-                value={aiForm.sourceCategory}
-                onChange={handleAiFormChange}
-              >
-                {aiSourceCategories.map((category) => (
-                  <option key={category} value={category}>
-                    {category === 'All' ? 'All latest verified articles' : category}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label>
-              Number of Questions
-              <select
-                name="questionCount"
-                value={aiForm.questionCount}
-                onChange={handleAiFormChange}
-              >
-                <option value={5}>5</option>
-                <option value={10}>10</option>
-                <option value={15}>15</option>
-                <option value={20}>20</option>
-              </select>
-            </label>
-
-            <label>
-              Difficulty
-              <select
-                name="difficulty"
-                value={aiForm.difficulty}
-                onChange={handleAiFormChange}
-              >
-                <option value="basic">Basic</option>
-                <option value="intermediate">Intermediate</option>
-                <option value="advanced">Advanced</option>
-              </select>
-            </label>
-
-            <label>
-              Status
-              <select
-                name="status"
-                value={aiForm.status}
-                onChange={handleAiFormChange}
-              >
-                <option value="inactive">Draft</option>
-                <option value="active">Active</option>
-              </select>
-            </label>
-
-            <div className="full-width">
-              <button className="primary-btn" type="submit" disabled={aiLoading}>
-                {aiLoading ? 'Generating quiz from the latest Knowledge Base...' : 'Generate Quiz'}
-              </button>
-            </div>
-          </form>
-
-          {aiError && <p className="error-text top-gap-sm">{aiError}</p>}
-
-          {aiPreview && (
-            <div className="top-gap">
-              <div className="row-between wrap-gap">
+        {activeTab === 'manage' ? (
+          <div className="qm-manage">
+            <aside className="qm-library">
+              <div className="qm-section-head">
                 <div>
-                  <h3>
-                    Preview: {aiPreview.title}{' '}
-                    <span className="role-pill">
-                      {aiPreview.generationMethod === 'ai_provider'
-                        ? 'Generated by AI provider'
-                        : 'Generated from templates'}
-                    </span>
-                  </h3>
-                  <p className="muted">
-                    {aiPreview.questions.length} question(s) generated from{' '}
-                    {aiPreview.category}. Remove any question you don't want,
-                    then save.
-                  </p>
+                  <span className="qm-kicker">Library</span>
+                  <h2>Quizzes</h2>
                 </div>
 
-                <div className="button-group wrap-gap">
-                  <button
-                    type="button"
-                    className="primary-btn"
-                    onClick={saveAiGeneratedQuiz}
-                    disabled={aiSaving || aiPreview.questions.length === 0}
-                  >
-                    {aiSaving ? 'Saving...' : 'Save Quiz'}
-                  </button>
-
-                  <button
-                    type="button"
-                    className="secondary-btn"
-                    onClick={cancelAiPreview}
-                    disabled={aiSaving}
-                  >
-                    Cancel
-                  </button>
-                </div>
+                <span className="qm-count-badge">{filteredQuizzes.length}</span>
               </div>
 
-              <div className="stack-gap top-gap">
-                {aiPreview.questions.map((question, index) => (
-                  <article key={`${question.question}-${index}`} className="card-like">
-                    <div className="row-between wrap-gap">
-                      <div>
-                        <p className="eyebrow">
-                          Question {index + 1} | Source: {question.sourceTitle}
-                        </p>
-                        <h3>{question.question}</h3>
-                      </div>
-
-                      <button
-                        type="button"
-                        className="danger-btn"
-                        onClick={() => removeAiPreviewQuestion(index)}
-                        disabled={aiSaving}
-                      >
-                        Remove
-                      </button>
-                    </div>
-
-                    <div className="cards-grid top-gap-sm">
-                      {question.options.map((option, optionIndex) => (
-                        <p
-                          key={optionIndex}
-                          className={
-                            optionIndex === question.correctAnswerIndex
-                              ? 'success-text'
-                              : 'muted'
-                          }
-                        >
-                          {optionLetters[optionIndex]}. {option}
-                          {optionIndex === question.correctAnswerIndex ? ' (Correct)' : ''}
-                        </p>
-                      ))}
-                    </div>
-
-                    {question.explanation && (
-                      <p className="muted top-gap">
-                        Explanation: {question.explanation}
-                      </p>
-                    )}
-                  </article>
-                ))}
-              </div>
-            </div>
-          )}
-        </section>
-      )}
-
-      {activeTab === 'manage' && (
-        <>
-          <div className="two-column-grid top-gap">
-            <section className="card-like">
-              <div className="row-between wrap-gap">
-                <div>
-                  <h3>Quiz List</h3>
-                  <p className="muted">Select a quiz to manage its questions.</p>
-                </div>
-              </div>
-
-              <div className="top-gap-sm">
+              <div className="qm-search">
+                <Icon name="search" size={17} />
                 <input
                   value={searchTerm}
                   onChange={(event) => setSearchTerm(event.target.value)}
-                  placeholder="Search quiz by title, category, or status"
+                  placeholder="Search quizzes"
                 />
               </div>
 
               {loading ? (
-                <p className="muted top-gap">Loading quizzes...</p>
+                <div className="qm-empty">Loading...</div>
               ) : filteredQuizzes.length === 0 ? (
-                <p className="muted top-gap">No quizzes found.</p>
+                <div className="qm-empty">
+                  <strong>No quizzes found</strong>
+                  <button
+                    type="button"
+                    className="qm-btn qm-btn-primary"
+                    onClick={startCreateQuiz}
+                  >
+                    Create Quiz
+                  </button>
+                </div>
               ) : (
-                <div className="quiz-list-scroll top-gap">
-                  {filteredQuizzes.map((quiz) => (
+                <div className="qm-quiz-list">
+                  {filteredQuizzes.map((quiz, index) => (
                     <article
                       key={quiz.quiz_id}
-                      className={`quiz-list-item ${
+                      className={`qm-quiz-card qm-color-${index % 5} ${
                         selectedQuizId === quiz.quiz_id ? 'selected' : ''
                       }`}
+                      onClick={() => handleSelectQuiz(quiz.quiz_id)}
                     >
-                      <div className="row-between wrap-gap">
-                        <div className="quiz-list-main">
-                          <p className="eyebrow">{quiz.category || 'Quiz'}</p>
-                          <h3>{quiz.title}</h3>
-                          <p className="muted small">
-                            Questions: {quiz.question_count || 0} | Status: {quiz.status}
-                          </p>
+                      <div className="qm-quiz-card-top">
+                        <div className="qm-quiz-icon">
+                          <Icon name="quiz" />
                         </div>
 
-                        <div className="button-group wrap-gap">
-                          <button
-                            className="secondary-btn"
-                            onClick={() => handleSelectQuiz(quiz.quiz_id)}
-                          >
-                            Manage
-                          </button>
+                        <span
+                          className={`qm-status ${
+                            quiz.status === 'active' ? 'active' : 'draft'
+                          }`}
+                        >
+                          {quiz.status === 'active' ? 'Active' : 'Draft'}
+                        </span>
+                      </div>
 
-                          <button
-                            className="secondary-btn"
-                            onClick={() => editQuiz(quiz)}
-                          >
-                            Edit
-                          </button>
+                      <h3>{quiz.title}</h3>
 
-                          <button
-                            className="danger-btn"
-                            onClick={() => deleteQuiz(quiz.quiz_id)}
-                          >
-                            Delete
-                          </button>
-                        </div>
+                      <div className="qm-quiz-meta">
+                        <span>{quiz.category || 'Training'}</span>
+                        <span>{quiz.question_count || 0} questions</span>
+                      </div>
+
+                      <div className="qm-card-actions">
+                        <button
+                          type="button"
+                          className="qm-mini-action"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            editQuiz(quiz);
+                          }}
+                          aria-label={`Edit ${quiz.title}`}
+                        >
+                          <Icon name="edit" size={16} />
+                        </button>
+
+                        <button
+                          type="button"
+                          className="qm-mini-action danger"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            deleteQuiz(quiz.quiz_id);
+                          }}
+                          aria-label={`Delete ${quiz.title}`}
+                        >
+                          <Icon name="trash" size={16} />
+                        </button>
+
+                        <span className="qm-open-link">
+                          Open <Icon name="arrow" size={15} />
+                        </span>
                       </div>
                     </article>
                   ))}
                 </div>
               )}
-            </section>
+            </aside>
 
-            <section className="card-like">
-              <div className="row-between wrap-gap">
-                <div>
-                  <h3>
-                    {selectedQuiz ? selectedQuiz.title : 'Selected Quiz'}
-                  </h3>
-                  <p className="muted">
-                    {selectedQuiz
-                      ? 'Manage the selected quiz questions below.'
-                      : 'Select a quiz from the list to manage it.'}
-                  </p>
-                </div>
-              </div>
-
-              {selectedQuiz ? (
-                <div className="quiz-selected-summary top-gap">
-                  <div className="quiz-summary-chip">
-                    <span className="quiz-summary-label">Category</span>
-                    <strong>{selectedQuiz.category || 'Quiz'}</strong>
+            <main className="qm-detail">
+              {!selectedQuiz ? (
+                <div className="qm-empty qm-empty-large">
+                  <div className="qm-empty-icon">
+                    <Icon name="quiz" size={28} />
                   </div>
-
-                  <div className="quiz-summary-chip">
-                    <span className="quiz-summary-label">Status</span>
-                    <strong>{selectedQuiz.status || 'active'}</strong>
-                  </div>
-
-                  <div className="quiz-summary-chip">
-                    <span className="quiz-summary-label">Questions</span>
-                    <strong>{selectedQuiz.question_count || 0}</strong>
-                  </div>
+                  <strong>Select a quiz</strong>
+                  <span>Choose one from the library.</span>
                 </div>
               ) : (
-                <p className="muted top-gap">No quiz selected yet.</p>
-              )}
-            </section>
-          </div>
+                <>
+                  <div className="qm-detail-hero">
+                    <div>
+                      <div className="qm-detail-tags">
+                        <span className="qm-pill qm-pill-blue">
+                          {selectedQuiz.category || 'Training'}
+                        </span>
+                        <span
+                          className={`qm-pill ${
+                            selectedQuiz.status === 'active'
+                              ? 'qm-pill-green'
+                              : 'qm-pill-amber'
+                          }`}
+                        >
+                          {selectedQuiz.status === 'active' ? 'Active' : 'Draft'}
+                        </span>
+                      </div>
 
-          <section className="card-like top-gap">
-            <div className="row-between wrap-gap">
-              <div>
-                <h3>
-                  {selectedQuiz
-                    ? `Questions for: ${selectedQuiz.title}`
-                    : 'Quiz Questions'}
-                </h3>
-                <p className="muted">
-                  Add, edit, or remove multiple-choice questions for the selected quiz.
-                </p>
+                      <h2>{selectedQuiz.title}</h2>
+
+                      {selectedQuiz.description ? (
+                        <p>{selectedQuiz.description}</p>
+                      ) : null}
+                    </div>
+
+                    <button
+                      type="button"
+                      className="qm-btn qm-btn-primary"
+                      onClick={() => {
+                        setEditingQuestionId(null);
+                        setQuestionForm(emptyQuestionForm);
+                        setQuestionEditorOpen(true);
+                      }}
+                    >
+                      <Icon name="plus" size={17} />
+                      Question
+                    </button>
+                  </div>
+
+                  <div className="qm-mini-stats">
+                    <div>
+                      <span>Questions</span>
+                      <strong>{selectedQuiz.question_count || questions.length || 0}</strong>
+                    </div>
+                    <div>
+                      <span>Category</span>
+                      <strong>{selectedQuiz.category || 'Training'}</strong>
+                    </div>
+                    <div>
+                      <span>Status</span>
+                      <strong>{selectedQuiz.status || 'active'}</strong>
+                    </div>
+                  </div>
+
+                  {questionEditorOpen ? (
+                    <form className="qm-question-editor" onSubmit={submitQuestion}>
+                      <div className="qm-section-head">
+                        <div>
+                          <span className="qm-kicker">
+                            {editingQuestionId ? 'Editing' : 'New'}
+                          </span>
+                          <h3>
+                            {editingQuestionId ? 'Edit Question' : 'Add Question'}
+                          </h3>
+                        </div>
+
+                        <button
+                          type="button"
+                          className="qm-icon-close"
+                          onClick={resetQuestionForm}
+                          aria-label="Close question editor"
+                        >
+                          ×
+                        </button>
+                      </div>
+
+                      <label className="qm-field qm-field-full">
+                        <span>Question</span>
+                        <textarea
+                          rows="3"
+                          name="question_text"
+                          value={questionForm.question_text}
+                          onChange={handleQuestionChange}
+                          placeholder="Enter question"
+                        />
+                      </label>
+
+                      <div className="qm-option-grid">
+                        {optionLetters.map((letter) => (
+                          <label key={letter} className="qm-field">
+                            <span>Option {letter}</span>
+                            <input
+                              name={`option_${letter.toLowerCase()}`}
+                              value={
+                                questionForm[`option_${letter.toLowerCase()}`]
+                              }
+                              onChange={handleQuestionChange}
+                              placeholder={`Option ${letter}`}
+                            />
+                          </label>
+                        ))}
+                      </div>
+
+                      <div className="qm-editor-bottom-grid">
+                        <label className="qm-field">
+                          <span>Correct</span>
+                          <select
+                            name="correct_option"
+                            value={questionForm.correct_option}
+                            onChange={handleQuestionChange}
+                          >
+                            {optionLetters.map((letter) => (
+                              <option key={letter} value={letter}>
+                                {letter}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <label className="qm-field">
+                          <span>Points</span>
+                          <input
+                            type="number"
+                            min="1"
+                            name="points"
+                            value={questionForm.points}
+                            onChange={handleQuestionChange}
+                          />
+                        </label>
+                      </div>
+
+                      <label className="qm-field qm-field-full">
+                        <span>Explanation</span>
+                        <textarea
+                          rows="2"
+                          name="explanation"
+                          value={questionForm.explanation}
+                          onChange={handleQuestionChange}
+                          placeholder="Optional"
+                        />
+                      </label>
+
+                      <div className="qm-form-actions">
+                        <button
+                          type="button"
+                          className="qm-btn qm-btn-soft"
+                          onClick={resetQuestionForm}
+                        >
+                          Cancel
+                        </button>
+
+                        <button
+                          type="submit"
+                          className="qm-btn qm-btn-primary"
+                        >
+                          {editingQuestionId ? 'Save Changes' : 'Add Question'}
+                        </button>
+                      </div>
+                    </form>
+                  ) : null}
+
+                  <div className="qm-question-section">
+                    <div className="qm-section-head">
+                      <div>
+                        <span className="qm-kicker">Question Bank</span>
+                        <h3>{questions.length} Questions</h3>
+                      </div>
+                    </div>
+
+                    {questionLoading ? (
+                      <div className="qm-empty">Loading questions...</div>
+                    ) : questions.length === 0 ? (
+                      <div className="qm-empty qm-empty-soft">
+                        <strong>No questions yet</strong>
+                        <button
+                          type="button"
+                          className="qm-btn qm-btn-primary"
+                          onClick={() => setQuestionEditorOpen(true)}
+                        >
+                          Add Question
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="qm-question-list">
+                        {questions.map((question, index) => (
+                          <article
+                            key={question.question_id || question.id}
+                            className="qm-question-card"
+                          >
+                            <div className="qm-question-number">
+                              {String(index + 1).padStart(2, '0')}
+                            </div>
+
+                            <div className="qm-question-copy">
+                              <h4>
+                                {question.question_text || question.question}
+                              </h4>
+
+                              <div className="qm-question-meta">
+                                <span className="qm-pill qm-pill-green">
+                                  Answer {question.correct_option}
+                                </span>
+                                <span>{question.points || 1} pt</span>
+                              </div>
+                            </div>
+
+                            <div className="qm-question-actions">
+                              <button
+                                type="button"
+                                className="qm-mini-action"
+                                onClick={() => editQuestion(question)}
+                                aria-label="Edit question"
+                              >
+                                <Icon name="edit" size={16} />
+                              </button>
+
+                              <button
+                                type="button"
+                                className="qm-mini-action danger"
+                                onClick={() =>
+                                  deleteQuestion(
+                                    question.question_id || question.id
+                                  )
+                                }
+                                aria-label="Delete question"
+                              >
+                                <Icon name="trash" size={16} />
+                              </button>
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </main>
+          </div>
+        ) : null}
+
+        {activeTab === 'create' ? (
+          <div className="qm-create-layout">
+            <section className="qm-create-card">
+              <div className="qm-section-head">
+                <div>
+                  <span className="qm-kicker">
+                    {editingQuizId ? 'Edit Quiz' : 'New Quiz'}
+                  </span>
+                  <h2>
+                    {editingQuizId ? 'Update quiz' : 'Create quiz'}
+                  </h2>
+                </div>
+
+                <div className="qm-create-icon">
+                  <Icon name="quiz" size={24} />
+                </div>
               </div>
 
-              {editingQuestionId && (
-                <button className="secondary-btn" onClick={resetQuestionForm}>
-                  Cancel Question Edit
-                </button>
-              )}
-            </div>
+              <form className="qm-form" onSubmit={submitQuiz}>
+                <label className="qm-field qm-field-full">
+                  <span>Title</span>
+                  <input
+                    name="title"
+                    value={quizForm.title}
+                    onChange={handleQuizChange}
+                    placeholder="Quiz title"
+                  />
+                </label>
 
-            {!selectedQuizId ? (
-              <p className="muted top-gap">
-                Please select a quiz first before adding questions.
-              </p>
-            ) : (
-              <form className="form-grid top-gap" onSubmit={submitQuestion}>
-                <label className="full-width">
-                  Question
+                <label className="qm-field qm-field-full">
+                  <span>Description</span>
                   <textarea
                     rows="3"
-                    name="question_text"
-                    value={questionForm.question_text}
-                    onChange={handleQuestionChange}
-                    placeholder="Enter the quiz question"
+                    name="description"
+                    value={quizForm.description}
+                    onChange={handleQuizChange}
+                    placeholder="Short description"
                   />
                 </label>
 
-                <label>
-                  Option A
-                  <input
-                    name="option_a"
-                    value={questionForm.option_a}
-                    onChange={handleQuestionChange}
-                    placeholder="Option A"
-                  />
-                </label>
+                <div className="qm-form-grid">
+                  <label className="qm-field">
+                    <span>Category</span>
+                    <input
+                      name="category"
+                      value={quizForm.category}
+                      onChange={handleQuizChange}
+                      placeholder="Training"
+                    />
+                  </label>
 
-                <label>
-                  Option B
-                  <input
-                    name="option_b"
-                    value={questionForm.option_b}
-                    onChange={handleQuestionChange}
-                    placeholder="Option B"
-                  />
-                </label>
+                  <label className="qm-field">
+                    <span>Status</span>
+                    <select
+                      name="status"
+                      value={quizForm.status}
+                      onChange={handleQuizChange}
+                    >
+                      <option value="active">Active</option>
+                      <option value="inactive">Draft</option>
+                    </select>
+                  </label>
+                </div>
 
-                <label>
-                  Option C
-                  <input
-                    name="option_c"
-                    value={questionForm.option_c}
-                    onChange={handleQuestionChange}
-                    placeholder="Option C"
-                  />
-                </label>
+                <div className="qm-form-actions">
+                  {editingQuizId ? (
+                    <button
+                      type="button"
+                      className="qm-btn qm-btn-soft"
+                      onClick={startCreateQuiz}
+                    >
+                      Cancel
+                    </button>
+                  ) : null}
 
-                <label>
-                  Option D
-                  <input
-                    name="option_d"
-                    value={questionForm.option_d}
-                    onChange={handleQuestionChange}
-                    placeholder="Option D"
-                  />
-                </label>
-
-                <label>
-                  Correct Option
-                  <select
-                    name="correct_option"
-                    value={questionForm.correct_option}
-                    onChange={handleQuestionChange}
+                  <button
+                    type="submit"
+                    className="qm-btn qm-btn-primary"
                   >
-                    <option value="A">A</option>
-                    <option value="B">B</option>
-                    <option value="C">C</option>
-                    <option value="D">D</option>
-                  </select>
-                </label>
-
-                <label>
-                  Points
-                  <input
-                    type="number"
-                    min="1"
-                    name="points"
-                    value={questionForm.points}
-                    onChange={handleQuestionChange}
-                  />
-                </label>
-
-                <label className="full-width">
-                  Explanation
-                  <textarea
-                    rows="3"
-                    name="explanation"
-                    value={questionForm.explanation}
-                    onChange={handleQuestionChange}
-                    placeholder="Optional explanation for the correct answer"
-                  />
-                </label>
-
-                <div className="full-width">
-                  <button className="primary-btn" type="submit">
-                    {editingQuestionId ? 'Update Question' : 'Add Question'}
+                    {editingQuizId ? 'Save Changes' : 'Create Quiz'}
                   </button>
                 </div>
               </form>
-            )}
-          </section>
+            </section>
 
-          <section className="card-like top-gap">
-            <h3>Question List</h3>
-
-            {!selectedQuizId ? (
-              <p className="muted">Select a quiz to view questions.</p>
-            ) : questionLoading ? (
-              <p className="muted">Loading questions...</p>
-            ) : questions.length === 0 ? (
-              <p className="muted">No questions added yet.</p>
-            ) : (
-              <div className="stack-gap top-gap">
-                {questions.map((question, index) => (
-                  <article
-                    key={question.question_id || question.id}
-                    className="card-like"
-                  >
-                    <div className="row-between wrap-gap">
-                      <div>
-                        <p className="eyebrow">Question {index + 1}</p>
-                        <h3>{question.question_text || question.question}</h3>
-                        <p className="muted small">
-                          Correct Option: {question.correct_option} | Points:{' '}
-                          {question.points || 1}
-                        </p>
-                      </div>
-
-                      <div className="button-group wrap-gap">
-                        <button
-                          className="secondary-btn"
-                          onClick={() => editQuestion(question)}
-                        >
-                          Edit
-                        </button>
-
-                        <button
-                          className="danger-btn"
-                          onClick={() =>
-                            deleteQuestion(question.question_id || question.id)
-                          }
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="cards-grid top-gap-sm">
-                      <p className="muted">A. {question.option_a}</p>
-                      <p className="muted">B. {question.option_b}</p>
-                      <p className="muted">C. {question.option_c}</p>
-                      <p className="muted">D. {question.option_d}</p>
-                    </div>
-
-                    {question.explanation && (
-                      <p className="muted top-gap">
-                        Explanation: {question.explanation}
-                      </p>
-                    )}
-                  </article>
-                ))}
+            <aside className="qm-create-side">
+              <div className="qm-side-orb qm-side-orb-blue">
+                <Icon name="quiz" size={26} />
               </div>
-            )}
-          </section>
-        </>
-      )}
+              <h3>Manual Builder</h3>
+              <p>Create a quiz, then add questions from the quiz workspace.</p>
 
-      {successModal.show && (
-        <div className="success-modal-overlay">
-          <div className="success-modal-card">
+              <button
+                type="button"
+                className="qm-side-ai"
+                onClick={() => setActiveTab('ai-generate')}
+              >
+                <span className="qm-side-orb qm-side-orb-violet">
+                  <Icon name="sparkles" size={20} />
+                </span>
+                <span>
+                  <strong>Use AI instead</strong>
+                  <small>Generate from Knowledge Base</small>
+                </span>
+                <Icon name="arrow" size={18} />
+              </button>
+            </aside>
+          </div>
+        ) : null}
+
+        {activeTab === 'ai-generate' ? (
+          <div className="qm-ai-layout">
+            <section className="qm-ai-builder">
+              <div className="qm-ai-head">
+                <div className="qm-ai-icon">
+                  <Icon name="sparkles" size={25} />
+                </div>
+
+                <div>
+                  <span>AI Quiz Builder</span>
+                  <h2>Generate from knowledge</h2>
+                </div>
+              </div>
+
+              <form className="qm-ai-form" onSubmit={generateAiQuiz}>
+                <label className="qm-field qm-field-full">
+                  <span>Quiz Title</span>
+                  <input
+                    name="title"
+                    value={aiForm.title}
+                    onChange={handleAiFormChange}
+                    placeholder="Opening SOP Quiz"
+                  />
+                </label>
+
+                <div className="qm-form-grid">
+                  <label className="qm-field">
+                    <span>Source</span>
+                    <select
+                      name="sourceCategory"
+                      value={aiForm.sourceCategory}
+                      onChange={handleAiFormChange}
+                    >
+                      {aiSourceCategories.map((category) => (
+                        <option key={category} value={category}>
+                          {category === 'All' ? 'All Knowledge' : category}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="qm-field">
+                    <span>Questions</span>
+                    <select
+                      name="questionCount"
+                      value={aiForm.questionCount}
+                      onChange={handleAiFormChange}
+                    >
+                      <option value={5}>5</option>
+                      <option value={10}>10</option>
+                      <option value={15}>15</option>
+                      <option value={20}>20</option>
+                    </select>
+                  </label>
+
+                  <label className="qm-field">
+                    <span>Difficulty</span>
+                    <select
+                      name="difficulty"
+                      value={aiForm.difficulty}
+                      onChange={handleAiFormChange}
+                    >
+                      <option value="basic">Basic</option>
+                      <option value="intermediate">Intermediate</option>
+                      <option value="advanced">Advanced</option>
+                    </select>
+                  </label>
+
+                  <label className="qm-field">
+                    <span>Status</span>
+                    <select
+                      name="status"
+                      value={aiForm.status}
+                      onChange={handleAiFormChange}
+                    >
+                      <option value="inactive">Draft</option>
+                      <option value="active">Active</option>
+                    </select>
+                  </label>
+                </div>
+
+                <button
+                  className="qm-btn qm-btn-ai qm-generate-btn"
+                  type="submit"
+                  disabled={aiLoading}
+                >
+                  <Icon name="sparkles" />
+                  {aiLoading ? 'Generating...' : 'Generate Quiz'}
+                </button>
+              </form>
+
+              {aiError ? <div className="qm-ai-error">{aiError}</div> : null}
+            </section>
+
+            <section className="qm-ai-preview">
+              {!aiPreview ? (
+                <div className="qm-ai-empty">
+                  <div className="qm-ai-empty-orb">
+                    <Icon name="sparkles" size={30} />
+                  </div>
+                  <strong>AI preview</strong>
+                  <span>Generated questions appear here.</span>
+                </div>
+              ) : (
+                <>
+                  <div className="qm-ai-preview-head">
+                    <div>
+                      <div className="qm-detail-tags">
+                        <span className="qm-pill qm-pill-violet">
+                          {aiPreview.generationMethod === 'ai_provider'
+                            ? 'AI Generated'
+                            : 'Template Generated'}
+                        </span>
+                        <span className="qm-pill qm-pill-blue">
+                          {aiPreview.category}
+                        </span>
+                      </div>
+
+                      <h2>{aiPreview.title}</h2>
+                      <p>{aiPreview.questions.length} questions</p>
+                    </div>
+
+                    <div className="qm-ai-preview-actions">
+                      <button
+                        type="button"
+                        className="qm-btn qm-btn-soft"
+                        onClick={cancelAiPreview}
+                        disabled={aiSaving}
+                      >
+                        Cancel
+                      </button>
+
+                      <button
+                        type="button"
+                        className="qm-btn qm-btn-primary"
+                        onClick={saveAiGeneratedQuiz}
+                        disabled={aiSaving || aiPreview.questions.length === 0}
+                      >
+                        {aiSaving ? 'Saving...' : 'Save Quiz'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="qm-ai-question-list">
+                    {aiPreview.questions.map((question, index) => (
+                      <article
+                        key={`${question.question}-${index}`}
+                        className="qm-ai-question"
+                      >
+                        <div className="qm-ai-question-head">
+                          <span>Q{index + 1}</span>
+                          <button
+                            type="button"
+                            className="qm-mini-action danger"
+                            onClick={() => removeAiPreviewQuestion(index)}
+                            disabled={aiSaving}
+                            aria-label="Remove generated question"
+                          >
+                            <Icon name="trash" size={15} />
+                          </button>
+                        </div>
+
+                        <h4>{question.question}</h4>
+
+                        <div className="qm-ai-options">
+                          {question.options.map((option, optionIndex) => (
+                            <div
+                              key={`${option}-${optionIndex}`}
+                              className={
+                                optionIndex === question.correctAnswerIndex
+                                  ? 'correct'
+                                  : ''
+                              }
+                            >
+                              <span>{optionLetters[optionIndex]}</span>
+                              <p>{option}</p>
+                              {optionIndex === question.correctAnswerIndex ? (
+                                <Icon name="check" size={15} />
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="qm-ai-source">
+                          {question.sourceTitle || 'Knowledge Base'}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </>
+              )}
+            </section>
+          </div>
+        ) : null}
+      </section>
+
+      {successModal.show ? (
+        <div className="qm-modal-overlay">
+          <div className="qm-modal">
+            <div className="qm-modal-check">
+              <Icon name="check" size={27} />
+            </div>
+
+            <h2>{successModal.title}</h2>
+            <p>{successModal.text}</p>
+
             <button
               type="button"
-              className="success-modal-close"
+              className="qm-btn qm-btn-primary"
               onClick={closeSuccessModal}
             >
-              ×
+              Done
             </button>
-
-            <div className="success-modal-icon-wrap">
-              <div className="success-modal-icon">
-                <svg
-                  width="46"
-                  height="46"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.4"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M20 6L9 17l-5-5" />
-                </svg>
-              </div>
-            </div>
-
-            <div className="success-modal-content">
-              <h2>{successModal.title}</h2>
-              <p>{successModal.text}</p>
-
-              <div className="success-modal-actions">
-                <button
-                  type="button"
-                  className="success-confirm-btn"
-                  onClick={closeSuccessModal}
-                >
-                  OK
-                </button>
-              </div>
-            </div>
           </div>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

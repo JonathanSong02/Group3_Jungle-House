@@ -2,6 +2,12 @@ import { useEffect, useState } from 'react';
 import PageHeader from '../../components/PageHeader';
 import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
+import './styles/NotionSync.css';
+
+// Keep the teammate placeholder behaviour until the Railway Notion OAuth
+// environment variables are ready. Change to true later to use the real
+// backend OAuth start route without redesigning this page again.
+const USE_REAL_NOTION_OAUTH = false;
 
 export default function NotionSync() {
   const { user } = useAuth();
@@ -12,9 +18,7 @@ export default function NotionSync() {
   const [connecting, setConnecting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [checking, setChecking] = useState(false);
-  // Lazy initializer so the OAuth callback's ?connected=1 / ?error=... banner
-  // is derived from the URL on first render, not set synchronously inside a
-  // useEffect body (which would trigger a redundant extra render).
+
   const [message, setMessage] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     const connected = params.get('connected');
@@ -24,6 +28,7 @@ export default function NotionSync() {
     if (error) return `Notion connection failed: ${error.replace(/_/g, ' ')}`;
     return '';
   });
+
   const [checkResult, setCheckResult] = useState(null);
   const [jobs, setJobs] = useState([]);
   const [pending, setPending] = useState([]);
@@ -67,11 +72,12 @@ export default function NotionSync() {
       if (!silent) setMessage('');
       setCheckResult(null);
 
-      const response = await api.post('/notion-sync/check', { user_id: actorId });
+      const response = await api.post('/notion-sync/check', {
+        user_id: actorId,
+      });
 
       setCheckResult(response.data);
-      fetchJobs();
-      fetchPending();
+      await Promise.all([fetchJobs(), fetchPending()]);
     } catch (error) {
       console.error('Check Notion for updates error:', error);
       if (!silent) {
@@ -85,17 +91,12 @@ export default function NotionSync() {
   };
 
   useEffect(() => {
-    // The OAuth callback redirects back here with ?connected=1 or ?error=...
-    // -- the banner text itself is derived once in the message state's lazy
-    // initializer above; this effect only cleans the URL and kicks off data
-    // fetching (the actual "synchronize with an external system" side effects).
     const params = new URLSearchParams(window.location.search);
     const connected = params.get('connected');
     const error = params.get('error');
 
     if (connected || error) {
-      const cleanUrl = window.location.pathname;
-      window.history.replaceState({}, '', cleanUrl);
+      window.history.replaceState({}, '', window.location.pathname);
     }
 
     fetchConfig();
@@ -103,31 +104,20 @@ export default function NotionSync() {
     fetchPending();
 
     if (connected) {
-      // A fresh connection almost certainly has nothing imported yet --
-      // check right away instead of waiting for a manual click.
       handleCheckForUpdates({ silent: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // PLACEHOLDER (temporary): the real OAuth flow is fully built on the
-  // backend (POST /notion-sync/oauth/start builds a real authorize URL with
-  // state/client_id/redirect_uri), but NOTION_OAUTH_CLIENT_ID/SECRET aren't
-  // configured on Railway yet, so that call would currently fail. Until
-  // that's set up, this just sends the browser straight to Notion's login
-  // page as a UI stand-in -- it does NOT authorize anything or import any
-  // content. Swap the button below back to calling _handleConnectReal once
-  // the Notion integration + Railway env vars are ready.
-  const handleConnectPlaceholder = () => {
-    window.location.href = 'https://app.notion.com/login';
-  };
-
-  const _handleConnectReal = async () => {
+  const handleConnectReal = async () => {
     try {
       setConnecting(true);
       setMessage('');
 
-      const response = await api.post('/notion-sync/oauth/start', { user_id: actorId });
+      const response = await api.post('/notion-sync/oauth/start', {
+        user_id: actorId,
+      });
+
       const authorizeUrl = response.data?.authorizeUrl;
 
       if (!authorizeUrl) {
@@ -144,16 +134,29 @@ export default function NotionSync() {
     }
   };
 
+  const handleConnect = async () => {
+    if (!USE_REAL_NOTION_OAUTH) {
+      setConnecting(true);
+      window.location.href = 'https://app.notion.com/login';
+      return;
+    }
+
+    await handleConnectReal();
+  };
+
   const handleDisconnect = async () => {
     try {
       setDisconnecting(true);
       setMessage('');
 
-      const response = await api.post('/notion-sync/disconnect', { user_id: actorId });
+      const response = await api.post('/notion-sync/disconnect', {
+        user_id: actorId,
+      });
 
       setMessage(response.data?.message || 'Notion disconnected.');
       setConfig(null);
       setCheckResult(null);
+      setPending([]);
     } catch (error) {
       console.error('Disconnect Notion error:', error);
       setMessage(
@@ -180,10 +183,13 @@ export default function NotionSync() {
       if (expandedPendingId === pendingId) {
         setExpandedPendingId(null);
       }
+
+      await fetchJobs();
     } catch (error) {
       console.error(`Resolve Notion pending update (${action}) error:`, error);
       setMessage(
-        error.response?.data?.message || 'Failed to resolve this update. It may have already been handled.'
+        error.response?.data?.message ||
+          'Failed to resolve this update. It may have already been handled.'
       );
       fetchPending();
     } finally {
@@ -191,161 +197,227 @@ export default function NotionSync() {
     }
   };
 
+  const latestJob = jobs[0] || null;
+
   return (
-    <div>
+    <div className="ns-page">
       <PageHeader
         title="Notion Sync"
-        subtitle="Connect Notion once, then copy its content into your own Knowledge Base database so it works like normal articles."
+        subtitle="Connect Notion and review updates before publishing them."
       />
 
-      {message && (
-        <section className="card-like top-gap-sm">
-          <p className="muted">{message}</p>
-        </section>
-      )}
+      {message ? <div className="ns-feedback">{message}</div> : null}
 
-      <section className="card-like top-gap-sm">
-        <h3>Connected Notion Workspace</h3>
+      <section className="ns-summary-grid">
+        <div className="ns-summary-card status">
+          <span>Connection</span>
+          <strong>{config?.connected ? 'Connected' : 'Not connected'}</strong>
+        </div>
 
-        {loading ? (
-          <p className="muted top-gap-sm">Loading...</p>
-        ) : config?.connected ? (
-          <div className="cards-grid top-gap-sm">
-            <p className="muted">
-              Workspace: <strong>{config.workspaceName || 'Notion workspace'}</strong>
-            </p>
-            <p className="muted">
-              Connected: <strong>{config.updatedAt || '-'}</strong>
-            </p>
-            <div className="button-group wrap-gap">
-              <button
-                type="button"
-                className="secondary-btn"
-                onClick={handleDisconnect}
-                disabled={disconnecting}
-              >
-                {disconnecting ? 'Disconnecting...' : 'Disconnect'}
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="top-gap-sm">
-            <p className="muted">
-              No Notion workspace connected yet. Click below to sign into Notion
-              and choose which pages/databases to share — nothing is changed on
-              the Notion side, only copied into this Knowledge Base.
-            </p>
-            <div className="button-group wrap-gap top-gap-sm">
-              <button
-                type="button"
-                className="primary-btn"
-                onClick={handleConnectPlaceholder}
-                disabled={connecting}
-              >
-                {connecting ? 'Redirecting to Notion...' : 'Connect Notion'}
-              </button>
-            </div>
-          </div>
-        )}
+        <div className="ns-summary-card pending">
+          <span>Pending Review</span>
+          <strong>{pending.length}</strong>
+        </div>
+
+        <div className="ns-summary-card">
+          <span>Sync Jobs</span>
+          <strong>{jobs.length}</strong>
+        </div>
+
+        <div className="ns-summary-card">
+          <span>Last Check</span>
+          <strong>{latestJob?.completed_at || latestJob?.started_at || '-'}</strong>
+        </div>
       </section>
 
-      <section className="card-like top-gap">
-        <div className="row-between wrap-gap">
-          <div>
-            <h3>Check for Updates</h3>
-            <p className="muted">
-              Imports any new pages shared with your Notion connection, and
-              flags edited pages for your review below instead of overwriting
-              them automatically. Safe to click multiple times.
-            </p>
+      <div className="ns-layout">
+        <section className="ns-card ns-source-card">
+          <div className="ns-section-head">
+            <div>
+              <span className="ns-kicker">Workspace</span>
+              <h2>Notion Connection</h2>
+            </div>
+
+            <span className={`ns-status-pill ${config?.connected ? 'connected' : 'idle'}`}>
+              <i />
+              {config?.connected ? 'Connected' : 'Not connected'}
+            </span>
+          </div>
+
+          {loading ? (
+            <div className="ns-loading">Loading connection...</div>
+          ) : config?.connected ? (
+            <>
+              <div className="ns-source-info">
+                <div>
+                  <span>Workspace</span>
+                  <strong>{config.workspaceName || 'Notion workspace'}</strong>
+                </div>
+
+                <div>
+                  <span>Connected</span>
+                  <strong>{config.updatedAt || '-'}</strong>
+                </div>
+
+                <div>
+                  <span>Status</span>
+                  <strong>Ready</strong>
+                </div>
+              </div>
+
+              <div className="ns-connection-actions">
+                <button
+                  type="button"
+                  className="ns-btn secondary"
+                  onClick={handleDisconnect}
+                  disabled={disconnecting}
+                >
+                  {disconnecting ? 'Disconnecting...' : 'Disconnect'}
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="ns-connect-empty">
+              <div className="ns-notion-icon">N</div>
+              <div>
+                <strong>No workspace connected</strong>
+                <p>
+                  Sign in to Notion and choose the pages or databases you want
+                  to share with this Knowledge Base.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                className="ns-btn primary"
+                onClick={handleConnect}
+                disabled={connecting}
+              >
+                {connecting ? 'Opening Notion...' : 'Connect Notion'}
+              </button>
+            </div>
+          )}
+        </section>
+
+        <section className="ns-card ns-sync-card">
+          <div className="ns-sync-hero">
+            <div className="ns-notion-icon">N</div>
+            <div>
+              <span className="ns-kicker">Knowledge Sync</span>
+              <h2>Check for Updates</h2>
+              <p>Import new pages and flag edited pages for review.</p>
+            </div>
           </div>
 
           <button
-            className="primary-btn"
+            className="ns-sync-btn"
             type="button"
             disabled={checking || !config?.connected}
             onClick={() => handleCheckForUpdates()}
           >
             {checking ? 'Checking Notion...' : 'Check for Updates'}
           </button>
+
+          {checkResult ? (
+            <div className="ns-sync-result-grid">
+              <div>
+                <span>New</span>
+                <strong>{checkResult.new ?? 0}</strong>
+              </div>
+              <div>
+                <span>Flagged</span>
+                <strong>{checkResult.flagged ?? 0}</strong>
+              </div>
+              <div>
+                <span>Unchanged</span>
+                <strong>{checkResult.unchanged ?? 0}</strong>
+              </div>
+              <div className={Number(checkResult.failed) > 0 ? 'failed' : ''}>
+                <span>Failed</span>
+                <strong>{checkResult.failed ?? 0}</strong>
+              </div>
+            </div>
+          ) : (
+            <div className="ns-sync-note">
+              <span>Safe to run again — unchanged pages are skipped.</span>
+            </div>
+          )}
+        </section>
+      </div>
+
+      <section className="ns-card ns-pending-section">
+        <div className="ns-section-head">
+          <div>
+            <span className="ns-kicker">Review Queue</span>
+            <h2>Pending Updates</h2>
+          </div>
+          <span className="ns-count">{pending.length}</span>
         </div>
 
-        {checkResult && (
-          <div className="cards-grid top-gap-sm">
-            <p className="muted">New: <strong>{checkResult.new}</strong></p>
-            <p className="muted">Flagged for review: <strong>{checkResult.flagged}</strong></p>
-            <p className="muted">Unchanged: <strong>{checkResult.unchanged}</strong></p>
-            <p className="muted">Failed: <strong>{checkResult.failed}</strong></p>
-          </div>
-        )}
-      </section>
-
-      <section className="card-like top-gap">
-        <h3>Pending Updates</h3>
-        <p className="muted">
-          These pages changed in Notion since they were last imported. Choose
-          whether to bring in the latest version or keep what's currently
-          published.
+        <p className="ns-section-copy">
+          Changed Notion pages wait here so they do not overwrite published
+          content automatically.
         </p>
 
         {pending.length === 0 ? (
-          <p className="muted top-gap-sm">No pending updates right now.</p>
+          <div className="ns-empty small">
+            <strong>No pending updates</strong>
+            <span>Your published articles are up to date.</span>
+          </div>
         ) : (
-          <div className="cards-grid top-gap-sm" style={{ gap: '12px' }}>
+          <div className="ns-pending-list">
             {pending.map((item) => {
               const isExpanded = expandedPendingId === item.id;
               const isResolving = resolvingId === item.id;
 
               return (
-                <div key={item.id} className="card-like">
-                  <div className="row-between wrap-gap">
+                <article className="ns-pending-card" key={item.id}>
+                  <div className="ns-pending-head">
                     <div>
-                      <p>
-                        <strong>{item.proposed_title || item.previous_title}</strong>
-                      </p>
-                      <p className="muted">
-                        Changed in Notion: {item.notion_last_edited_time || '-'}
-                      </p>
+                      <h3>{item.proposed_title || item.previous_title}</h3>
+                      <p>Changed in Notion: {item.notion_last_edited_time || '-'}</p>
                     </div>
+                    <span className="ns-review-pill">Review</span>
+                  </div>
 
-                    <div className="button-group wrap-gap">
-                      <button
-                        type="button"
-                        className="secondary-btn"
-                        onClick={() => setExpandedPendingId(isExpanded ? null : item.id)}
-                      >
-                        {isExpanded ? 'Hide preview' : 'Review changes'}
-                      </button>
-                      <button
-                        type="button"
-                        className="secondary-btn"
-                        disabled={isResolving}
-                        onClick={() => handleResolvePending(item.id, 'dismiss')}
-                      >
-                        {isResolving ? 'Working...' : 'Keep Current Version'}
-                      </button>
-                      <button
-                        type="button"
-                        className="primary-btn"
-                        disabled={isResolving}
-                        onClick={() => handleResolvePending(item.id, 'apply')}
-                      >
-                        {isResolving ? 'Working...' : 'Update to Latest'}
-                      </button>
-                    </div>
+                  <div className="ns-pending-actions">
+                    <button
+                      type="button"
+                      className="ns-btn secondary"
+                      onClick={() => setExpandedPendingId(isExpanded ? null : item.id)}
+                    >
+                      {isExpanded ? 'Hide Preview' : 'Review Changes'}
+                    </button>
+                    <button
+                      type="button"
+                      className="ns-btn secondary"
+                      disabled={isResolving}
+                      onClick={() => handleResolvePending(item.id, 'dismiss')}
+                    >
+                      {isResolving ? 'Working...' : 'Keep Current'}
+                    </button>
+                    <button
+                      type="button"
+                      className="ns-btn primary"
+                      disabled={isResolving}
+                      onClick={() => handleResolvePending(item.id, 'apply')}
+                    >
+                      {isResolving ? 'Working...' : 'Update to Latest'}
+                    </button>
                   </div>
 
                   {isExpanded && (
-                    <div className="top-gap-sm" style={{ display: 'grid', gap: '16px' }}>
-                      <div>
-                        <p className="muted"><strong>Current (published)</strong></p>
+                    <div className="ns-compare-grid">
+                      <div className="ns-version-card current">
+                        <div className="ns-version-label">Current</div>
                         <div
                           className="article-rich-content"
                           dangerouslySetInnerHTML={{ __html: item.previous_content || '' }}
                         />
                       </div>
-                      <div>
-                        <p className="muted"><strong>Proposed (from Notion)</strong></p>
+
+                      <div className="ns-version-card proposed">
+                        <div className="ns-version-label">From Notion</div>
                         <div
                           className="article-rich-content"
                           dangerouslySetInnerHTML={{ __html: item.proposed_content || '' }}
@@ -353,21 +425,30 @@ export default function NotionSync() {
                       </div>
                     </div>
                   )}
-                </div>
+                </article>
               );
             })}
           </div>
         )}
       </section>
 
-      <section className="card-like top-gap">
-        <h3>Sync History</h3>
+      <section className="ns-card ns-history">
+        <div className="ns-section-head">
+          <div>
+            <span className="ns-kicker">History</span>
+            <h2>Sync History</h2>
+          </div>
+          <span className="ns-count">{jobs.length}</span>
+        </div>
 
         {jobs.length === 0 ? (
-          <p className="muted top-gap-sm">No check has been run yet.</p>
+          <div className="ns-empty small">
+            <strong>No sync history</strong>
+            <span>Run your first Notion update check.</span>
+          </div>
         ) : (
-          <div className="table-card top-gap-sm">
-            <table>
+          <div className="ns-table-wrap">
+            <table className="ns-table">
               <thead>
                 <tr>
                   <th>Date</th>
@@ -383,12 +464,14 @@ export default function NotionSync() {
                   <tr key={job.id}>
                     <td>{job.completed_at || job.started_at || '-'}</td>
                     <td>
-                      <span className="role-pill">{job.status}</span>
+                      <span className={`ns-job-status ${job.status || 'unknown'}`}>
+                        {job.status}
+                      </span>
                     </td>
-                    <td>{job.imported_count}</td>
-                    <td>{job.updated_count}</td>
-                    <td>{job.skipped_count}</td>
-                    <td>{job.failed_count}</td>
+                    <td>{job.imported_count ?? 0}</td>
+                    <td>{job.updated_count ?? 0}</td>
+                    <td>{job.skipped_count ?? 0}</td>
+                    <td>{job.failed_count ?? 0}</td>
                   </tr>
                 ))}
               </tbody>

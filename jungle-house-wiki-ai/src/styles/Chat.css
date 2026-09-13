@@ -1442,3 +1442,655 @@
     animation: none;
   }
 }
+
+/* ==========================================================================
+   FINAL HONEY CONSISTENCY PASS
+   Visual-only polish for FYP demo.
+   Keeps all Chat.jsx/backend logic unchanged.
+   ========================================================================== */
+
+:root {
+  --chat-surface: #fff9ed;
+  --chat-surface-soft: #fff4df;
+  --chat-surface-muted: #f6e8cc;
+
+  --chat-border: rgba(194, 151, 86, 0.42);
+  --chat-border-soft: rgba(194, 151, 86, 0.26);
+
+  --chat-heading: #3d3023;
+  --chat-text: #544330;
+  --chat-muted: #7d6d5a;
+
+  --chat-gold: #c98a25;
+  --chat-gold-dark: #8f5b0f;
+  --chat-gold-soft: #f5ddb0;
+
+  --chat-ai: #7662c6;
+  --chat-ai-dark: #5f4ea8;
+  --chat-ai-soft: #f0edf9;
+
+  --chat-green: #5f8868;
+  --chat-green-soft: #edf5ec;
+
+  --chat-danger: #a94f44;
+  --chat-danger-soft: #fff0ed;
+
+  --chat-shadow-sm: 0 8px 24px rgba(83, 57, 24, 0.06);
+  --chat-shadow-md: 0 15px 38px rgba(83, 57, 24, 0.085);
+}
+
+/* Header / page --------------------------------------------------------- */
+
+.ai-chat-page-kicker {
+  color: var(--chat-gold-dark);
+  font-size: 11px;
+}
+
+.ai-chat-page-heading p {
+  color: var(--chat-muted);
+  font-size: 13px;
+}
+
+.ai-chat-tabs {
+  background: rgba(255, 247, 232, 0.92);
+  border-color: var(--chat-border-soft);
+}
+
+.ai-chat-tabs button {
+  min-height: 40px;
+  font-size: 12px;
+}
+
+/* Main shell ------------------------------------------------------------ */
+
+.ai-chat-panel {
+  background:
+    linear-gradient(180deg, #fffaf0, #fff5e4);
+  border-color: var(--chat-border);
+}
+
+.ai-chat-header {
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 248, 234, 0.99),
+      rgba(248, 235, 209, 0.96)
+    );
+  border-bottom-color: var(--chat-border-soft);
+}
+
+.ai-chat-header h3 {
+  font-size: 15px;
+}
+
+.ai-chat-header .danger-btn {
+  font-size: 11px;
+}
+
+/* Chat area ------------------------------------------------------------- */
+
+.ai-chat-messages {
+  background:
+    radial-gradient(
+      circle at 0% 0%,
+      rgba(201, 138, 37, 0.12),
+      transparent 30%
+    ),
+    radial-gradient(
+      circle at 100% 0%,
+      rgba(118, 98, 198, 0.07),
+      transparent 30%
+    ),
+    linear-gradient(180deg, #fff8eb 0%, #f8ecd6 100%);
+}
+
+.ai-chat-messages .message-bubble {
+  font-size: 13px;
+}
+
+.ai-chat-messages .message-bubble.ai {
+  color: var(--chat-text);
+  background:
+    linear-gradient(
+      145deg,
+      #fffaf2,
+      #f7f1fb
+    );
+  border-color: rgba(151, 126, 190, 0.25);
+  border-left: 3px solid var(--chat-ai);
+  box-shadow: 0 7px 20px rgba(76, 58, 97, 0.055);
+}
+
+.ai-chat-messages .message-bubble.user {
+  color: #513713;
+  background:
+    linear-gradient(
+      135deg,
+      #ffefc8 0%,
+      #f7d996 100%
+    );
+  border-color: rgba(195, 139, 39, 0.35);
+}
+
+.ai-chat-sender-label {
+  color: var(--chat-ai-dark);
+  font-size: 10px;
+}
+
+.ai-chat-sender-label::before {
+  background: var(--chat-ai);
+}
+
+.message-bubble.user .ai-chat-sender-label {
+  color: #795516;
+}
+
+.message-bubble.user .ai-chat-sender-label::before {
+  background: var(--chat-gold);
+}
+
+.ai-chat-messages .message-bubble p {
+  font-size: 13px;
+}
+
+.ai-chat-messages .message-bubble h3 {
+  font-size: 16px;
+}
+
+.ai-chat-messages .message-bubble h4 {
+  font-size: 14px;
+}
+
+/* Response chips -------------------------------------------------------- */
+
+.ai-chat-response-meta > span {
+  min-height: 26px;
+  padding: 5px 8px !important;
+  font-size: 10.5px !important;
+}
+
+/* Rich knowledge / SOP -------------------------------------------------- */
+
+.chat-html-content {
+  color: var(--chat-text);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.chat-html-content h1 {
+  font-size: 21px;
+}
+
+.chat-html-content h2 {
+  font-size: 18px;
+}
+
+.chat-html-content h3 {
+  font-size: 16px;
+}
+
+.chat-html-content h4 {
+  font-size: 14px;
+}
+
+.chat-html-content a,
+.message-bubble a {
+  color: var(--chat-gold-dark);
+}
+
+.chat-html-content img {
+  background: #fffaf0;
+  border-color: var(--chat-border);
+}
+
+.chat-html-content table,
+.message-bubble table {
+  background: #fffaf0;
+}
+
+.chat-html-content th,
+.chat-html-content td,
+.message-bubble table th,
+.message-bubble table td {
+  border-color: #ead2a5;
+  font-size: 11.5px;
+}
+
+.chat-html-content th,
+.message-bubble table th {
+  color: #775014;
+  background: #fff0cf;
+}
+
+/* Loading --------------------------------------------------------------- */
+
+.chat-loading {
+  color: var(--chat-muted);
+  background: #fff8e9;
+  border-color: var(--chat-border-soft);
+  font-size: 11.5px;
+}
+
+.chat-loading::before {
+  background: var(--chat-ai);
+}
+
+/* Upload preview -------------------------------------------------------- */
+
+.chat-upload-preview {
+  background: #fff3db;
+  border-top-color: var(--chat-border-soft);
+}
+
+.chat-upload-preview button {
+  font-size: 10.5px;
+}
+
+/* Composer -------------------------------------------------------------- */
+
+.ai-chat-input-row {
+  background:
+    linear-gradient(
+      180deg,
+      #fff8eb,
+      #f9ecd4
+    );
+  border-top-color: var(--chat-border-soft);
+}
+
+.ai-chat-input-row input {
+  min-height: 46px;
+  color: var(--chat-text);
+  background: #fffaf2;
+  border-color: var(--chat-border);
+  font-size: 13px;
+}
+
+.ai-chat-input-row input::placeholder {
+  color: #97846c;
+}
+
+.ai-chat-input-row input:focus {
+  background: #fffdf8;
+  border-color: rgba(201, 138, 37, 0.6);
+  box-shadow: 0 0 0 3px rgba(201, 138, 37, 0.11);
+}
+
+.ai-chat-tool-btn {
+  min-width: 76px;
+  min-height: 44px;
+
+  color: #68553c;
+  background: #fff4dd;
+  border-color: var(--chat-border);
+
+  font-size: 11px;
+}
+
+.ai-chat-tool-btn:hover {
+  background: #ffe8ba;
+}
+
+.ai-chat-send-btn {
+  min-width: 82px;
+  min-height: 44px;
+  font-size: 11.5px;
+}
+
+/* Recents --------------------------------------------------------------- */
+
+.chat-recents-panel {
+  background:
+    linear-gradient(
+      180deg,
+      #fff7e8,
+      #f5e5c8
+    );
+  border-color: var(--chat-border);
+}
+
+.chat-recents-header h3 {
+  font-size: 14px;
+}
+
+.chat-recents-header .secondary-btn {
+  min-height: 32px;
+  color: var(--chat-gold-dark);
+  background: #fff0cf;
+  font-size: 10.5px;
+}
+
+.chat-recent-item:hover {
+  background: rgba(255, 250, 240, 0.78);
+}
+
+.chat-recent-item.active {
+  background: #fff9ed;
+  border-color: rgba(201, 138, 37, 0.3);
+}
+
+.chat-recent-title {
+  color: #604b32;
+  font-size: 11.5px;
+}
+
+.chat-recent-delete {
+  font-size: 16px;
+}
+
+/* Chat history ---------------------------------------------------------- */
+
+.ai-chat-history-page {
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 250, 240, 0.98),
+      rgba(248, 237, 216, 0.95)
+    );
+  border-color: var(--chat-border);
+}
+
+.ai-chat-history-page h3 {
+  font-size: 20px;
+}
+
+.ai-chat-history-page .form-label {
+  font-size: 11.5px;
+}
+
+.ai-chat-history-page > div:nth-of-type(2) input {
+  min-height: 44px;
+  background: #fffaf2;
+  border-color: var(--chat-border);
+  font-size: 12.5px;
+}
+
+.ai-chat-history-page .stack-gap > .card-like {
+  background: #fff6e7;
+  border-color: var(--chat-border-soft);
+}
+
+.ai-chat-history-page .stack-gap > .card-like h3 {
+  font-size: 14px;
+}
+
+.ai-chat-history-page .stack-gap > .card-like h4 {
+  font-size: 12.5px;
+}
+
+.ai-chat-history-page .stack-gap > .card-like p {
+  font-size: 11.5px;
+}
+
+.ai-chat-history-page .button-group button {
+  min-height: 34px;
+  font-size: 10.5px;
+}
+
+/* Mobile --------------------------------------------------------------- */
+
+@media (max-width: 768px) {
+  .mobile-ai-chat-menu-btn {
+    min-height: 40px;
+    color: var(--chat-gold-dark);
+    background: #fff0d0;
+    font-size: 11px;
+  }
+
+  .ai-chat-header h3 {
+    font-size: 13.5px;
+  }
+
+  .ai-chat-header .danger-btn {
+    font-size: 10px;
+  }
+
+  .ai-chat-messages .message-bubble,
+  .ai-chat-messages .message-bubble.ai {
+    font-size: 12.5px;
+  }
+
+  .ai-chat-sender-label {
+    font-size: 9.5px;
+  }
+
+  .chat-html-content {
+    font-size: 12px;
+  }
+
+  .ai-chat-input-row > input {
+    font-size: 12.5px;
+  }
+
+  .ai-chat-tool-btn,
+  .ai-chat-send-btn {
+    min-height: 38px;
+    font-size: 10.5px;
+  }
+
+  .mobile-ai-chat-menu {
+    background:
+      radial-gradient(
+        circle at 100% 0%,
+        rgba(118, 98, 198, 0.1),
+        transparent 32%
+      ),
+      linear-gradient(180deg, #fff8e8 0%, #f3dfbb 100%);
+  }
+
+  .mobile-ai-chat-menu-header .eyebrow {
+    font-size: 10px;
+  }
+
+  .mobile-ai-chat-menu-actions button {
+    min-height: 38px;
+    font-size: 10.5px;
+  }
+
+  .mobile-ai-chat-recents-title h4 {
+    font-size: 12px;
+  }
+
+  .mobile-ai-chat-recents-title span {
+    font-size: 10px;
+  }
+
+  .mobile-ai-chat-recent-title {
+    font-size: 11px;
+  }
+}
+
+@media (max-width: 480px) {
+  .ai-chat-messages .message-bubble,
+  .ai-chat-messages .message-bubble.ai {
+    font-size: 12px;
+  }
+
+  .ai-chat-input-row {
+    background: #f8e9cf;
+  }
+}
+
+/* ==========================================================================
+   READABILITY SIZE PASS
+   Slightly larger typography and controls for desktop/demo readability.
+   UI only — no Chat.jsx or backend logic changes.
+   ========================================================================== */
+
+@media (min-width: 769px) {
+  .ai-chat-shell {
+    grid-template-columns: minmax(0, 1fr) 280px;
+  }
+
+  .ai-chat-page-heading p {
+    font-size: 14px;
+  }
+
+  .ai-chat-tabs button {
+    min-height: 42px;
+    padding: 9px 15px;
+    font-size: 13px;
+  }
+
+  .ai-chat-header {
+    min-height: 62px;
+    padding: 11px 18px;
+  }
+
+  .ai-chat-header h3 {
+    font-size: 16px;
+  }
+
+  .ai-chat-header .danger-btn {
+    min-height: 38px;
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+
+  .ai-chat-messages {
+    gap: 15px;
+    padding: 24px clamp(20px, 2.4vw, 38px);
+  }
+
+  .ai-chat-messages .message-bubble {
+    padding: 15px 17px;
+    font-size: 14px;
+    line-height: 1.65;
+  }
+
+  .ai-chat-messages .message-bubble p {
+    font-size: 14px;
+    line-height: 1.68;
+  }
+
+  .ai-chat-sender-label {
+    margin-bottom: 8px;
+    font-size: 11px;
+  }
+
+  .ai-chat-response-meta > span {
+    min-height: 28px;
+    padding: 5px 9px !important;
+    font-size: 11.5px !important;
+  }
+
+  .chat-html-content {
+    font-size: 14px;
+  }
+
+  .chat-html-content h1 {
+    font-size: 22px;
+  }
+
+  .chat-html-content h2 {
+    font-size: 19px;
+  }
+
+  .chat-html-content h3 {
+    font-size: 17px;
+  }
+
+  .chat-html-content h4 {
+    font-size: 15px;
+  }
+
+  .chat-html-content th,
+  .chat-html-content td,
+  .message-bubble table th,
+  .message-bubble table td {
+    padding: 10px 11px;
+    font-size: 12px;
+  }
+
+  .chat-loading {
+    padding: 10px 13px;
+    font-size: 12px;
+  }
+
+  .ai-chat-input-row {
+    gap: 9px;
+    padding: 12px 15px;
+  }
+
+  .ai-chat-input-row input {
+    min-height: 50px;
+    padding: 10px 14px;
+    font-size: 14px;
+  }
+
+  .ai-chat-tool-btn {
+    min-width: 84px;
+    min-height: 48px;
+    padding: 9px 11px;
+    font-size: 12px;
+  }
+
+  .ai-chat-tool-btn > span:first-child {
+    font-size: 15px;
+  }
+
+  .ai-chat-send-btn {
+    min-width: 92px;
+    min-height: 48px;
+    padding: 9px 14px;
+    font-size: 12.5px;
+  }
+
+  .chat-recents-panel {
+    padding: 14px;
+  }
+
+  .chat-recents-header h3 {
+    font-size: 15px;
+  }
+
+  .chat-recents-header .secondary-btn {
+    min-height: 34px;
+    padding: 6px 10px;
+    font-size: 11.5px;
+  }
+
+  .chat-recent-item {
+    grid-template-columns: minmax(0, 1fr) 30px;
+    padding: 5px;
+  }
+
+  .chat-recent-title {
+    min-height: 40px;
+    padding: 8px 9px;
+    font-size: 12.5px;
+  }
+
+  .chat-recent-delete {
+    width: 29px;
+    height: 29px;
+    font-size: 17px;
+  }
+
+  .ai-chat-history-page .form-label {
+    font-size: 12px;
+  }
+
+  .ai-chat-history-page > div:nth-of-type(2) input {
+    min-height: 46px;
+    font-size: 13.5px;
+  }
+
+  .ai-chat-history-page .stack-gap > .card-like h3 {
+    font-size: 15px;
+  }
+
+  .ai-chat-history-page .stack-gap > .card-like h4 {
+    font-size: 13.5px;
+  }
+
+  .ai-chat-history-page .stack-gap > .card-like p {
+    font-size: 12.5px;
+  }
+
+  .ai-chat-history-page .button-group button {
+    min-height: 36px;
+    padding: 7px 10px;
+    font-size: 11.5px;
+  }
+}

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import PageHeader from '../../components/PageHeader';
 import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
+import './styles/AISettings.css';
 
 const PROVIDER_OPTIONS = [
   {
@@ -31,6 +32,11 @@ const PROVIDER_OPTIONS = [
 
 const getModelSuggestions = (providerValue) =>
   PROVIDER_OPTIONS.find((option) => option.value === providerValue)?.models || [];
+
+const getProviderLabel = (providerValue) =>
+  PROVIDER_OPTIONS.find((option) => option.value === providerValue)?.label ||
+  providerValue ||
+  'AI Provider';
 
 export default function AISettings() {
   const { user } = useAuth();
@@ -119,10 +125,7 @@ export default function AISettings() {
 
       // The backend's own wait for the AI provider can take up to ~90s
       // (a slow/hanging provider, not just a fast reject), so this call
-      // needs a longer timeout than the shared API client's 10s default --
-      // otherwise the browser gives up and shows a generic "check your API
-      // key" message before the backend's real, specific error/success can
-      // ever come back.
+      // needs a longer timeout than the shared API client's 10s default.
       const response = await api.post(
         '/ai-settings/test',
         {
@@ -139,10 +142,6 @@ export default function AISettings() {
         message: response.data?.message || 'Test completed.',
       });
 
-      // Testing the already-saved config (no new key typed) updates its
-      // test_status in the database, but this page's "Current Active AI
-      // Provider" card was only loaded once on page open -- refetch so it
-      // reflects the result instead of permanently showing "Not tested".
       if (!form.api_key.trim()) {
         fetchSettings();
       }
@@ -203,137 +202,195 @@ export default function AISettings() {
     }
   };
 
+  const currentStatus =
+    currentConfig?.testStatus === 'connected'
+      ? 'Connected'
+      : currentConfig?.testStatus === 'failed'
+      ? 'Failed'
+      : 'Not tested';
+
+  const currentStatusClass =
+    currentConfig?.testStatus === 'connected'
+      ? 'connected'
+      : currentConfig?.testStatus === 'failed'
+      ? 'failed'
+      : 'untested';
+
   return (
-    <div>
+    <div className="ais-page">
       <PageHeader
         title="AI Model Settings"
-        subtitle="Choose which AI provider powers AI features, and connect it with an API key."
+        subtitle="Configure the AI provider and model."
       />
 
-      {message && (
-        <section className="card-like top-gap-sm">
-          <p className="muted">{message}</p>
-        </section>
-      )}
+      {message ? <div className="ais-feedback">{message}</div> : null}
 
-      <section className="card-like top-gap-sm">
-        <h3>Current Active AI Provider</h3>
+      <div className="ais-layout">
+        <section className="ais-status-card">
+          <div className="ais-status-top">
+            <div className="ais-orb">
+              <span>AI</span>
+            </div>
 
-        {loading ? (
-          <p className="muted top-gap-sm">Loading...</p>
-        ) : currentConfig ? (
-          <div className="cards-grid top-gap-sm">
-            <p className="muted">
-              Provider: <strong>{currentConfig.providerLabel}</strong>
-            </p>
-            <p className="muted">
-              Model: <strong>{currentConfig.modelName}</strong>
-            </p>
-            <p className="muted">
-              API Key: <strong>{currentConfig.keyHint || '-'}</strong>
-            </p>
-            <p className="muted">
-              Status:{' '}
-              <strong>
-                {currentConfig.testStatus === 'connected'
-                  ? 'Connected'
-                  : currentConfig.testStatus === 'failed'
-                  ? 'Failed'
-                  : 'Not tested'}
-              </strong>
-            </p>
-            <p className="muted">
-              Last Tested: <strong>{currentConfig.lastTestedAt || '-'}</strong>
-            </p>
+            <div>
+              <span className="ais-kicker">Current Model</span>
+              <h2>
+                {loading
+                  ? 'Loading...'
+                  : currentConfig
+                  ? currentConfig.providerLabel ||
+                    getProviderLabel(currentConfig.provider)
+                  : 'Not configured'}
+              </h2>
+            </div>
+
+            {!loading && currentConfig ? (
+              <span className={`ais-status-pill ${currentStatusClass}`}>
+                <i />
+                {currentStatus}
+              </span>
+            ) : null}
           </div>
-        ) : (
-          <p className="muted top-gap-sm">
-            No AI provider configured yet. AI features that need real AI
-            generation will show a friendly "not configured" message until
-            this is set up.
-          </p>
-        )}
-      </section>
 
-      <section className="card-like top-gap">
-        <h3>Update AI Provider</h3>
-        <p className="muted">
-          Paste the API key once — it is encrypted and stored securely, and
-          is never shown again after saving.
-        </p>
+          {loading ? (
+            <div className="ais-loading-block">
+              <span />
+              <span />
+              <span />
+            </div>
+          ) : currentConfig ? (
+            <>
+              <div className="ais-model-name">
+                <span>Model</span>
+                <strong>{currentConfig.modelName}</strong>
+              </div>
 
-        <form className="form-grid top-gap" onSubmit={handleSave}>
-          <label>
-            Choose AI Provider
-            <select
-              name="provider"
-              value={form.provider}
-              onChange={handleProviderChange}
-            >
-              {PROVIDER_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
+              <div className="ais-config-grid">
+                <div>
+                  <span>API Key</span>
+                  <strong>{currentConfig.keyHint || '-'}</strong>
+                </div>
 
-          <label>
-            Model Name
-            <input
-              list="ai-model-suggestions"
-              name="model_name"
-              value={form.model_name}
-              onChange={handleChange}
-              placeholder="Example: gemini-1.5-flash"
-            />
-            <datalist id="ai-model-suggestions">
-              {getModelSuggestions(form.provider).map((modelName) => (
-                <option key={modelName} value={modelName} />
-              ))}
-            </datalist>
-          </label>
-
-          <label className="full-width">
-            API Key
-            <input
-              type="password"
-              name="api_key"
-              value={form.api_key}
-              onChange={handleChange}
-              placeholder={
-                currentConfig
-                  ? 'Enter a new key to replace the saved one'
-                  : 'Paste API key here'
-              }
-              autoComplete="off"
-            />
-          </label>
-
-          {testResult && (
-            <p
-              className={`full-width ${testResult.success ? 'success-text' : 'error-text'}`}
-            >
-              {testResult.message}
-            </p>
+                <div>
+                  <span>Last Tested</span>
+                  <strong>{currentConfig.lastTestedAt || '-'}</strong>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="ais-empty-config">
+              <strong>No provider connected</strong>
+              <span>Add an API key to enable AI features.</span>
+            </div>
           )}
 
-          <div className="full-width button-group wrap-gap">
-            <button
-              type="button"
-              className="secondary-btn"
-              onClick={handleTestConnection}
-              disabled={testing}
-            >
-              {testing ? 'Testing...' : 'Test Connection'}
-            </button>
-
-            <button className="primary-btn" type="submit" disabled={saving}>
-              {saving ? 'Saving...' : 'Save Settings'}
-            </button>
+          <div className="ais-ai-note">
+            <span className="ais-ai-note-icon">✦</span>
+            <div>
+              <strong>AI Engine</strong>
+              <span>Used by Chat and AI Quiz Generation.</span>
+            </div>
           </div>
-        </form>
-      </section>
+        </section>
+
+        <section className="ais-settings-card">
+          <div className="ais-section-head">
+            <div>
+              <span className="ais-kicker">Configuration</span>
+              <h2>Provider Settings</h2>
+            </div>
+
+            <span className="ais-provider-chip">
+              {getProviderLabel(form.provider)}
+            </span>
+          </div>
+
+          <form className="ais-form" onSubmit={handleSave}>
+            <div className="ais-form-grid">
+              <label className="ais-field">
+                <span>Provider</span>
+                <select
+                  name="provider"
+                  value={form.provider}
+                  onChange={handleProviderChange}
+                >
+                  {PROVIDER_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="ais-field">
+                <span>Model</span>
+                <input
+                  list="ai-model-suggestions"
+                  name="model_name"
+                  value={form.model_name}
+                  onChange={handleChange}
+                  placeholder="Model name"
+                />
+
+                <datalist id="ai-model-suggestions">
+                  {getModelSuggestions(form.provider).map((modelName) => (
+                    <option key={modelName} value={modelName} />
+                  ))}
+                </datalist>
+              </label>
+            </div>
+
+            <label className="ais-field ais-field-full">
+              <span>API Key</span>
+              <div className="ais-key-input">
+                <input
+                  type="password"
+                  name="api_key"
+                  value={form.api_key}
+                  onChange={handleChange}
+                  placeholder={
+                    currentConfig
+                      ? 'Enter a new key to replace the saved one'
+                      : 'Paste API key'
+                  }
+                  autoComplete="off"
+                />
+                <span>Encrypted</span>
+              </div>
+            </label>
+
+            {testResult ? (
+              <div
+                className={`ais-test-result ${
+                  testResult.success ? 'success' : 'error'
+                }`}
+              >
+                <span className="ais-result-dot" />
+                {testResult.message}
+              </div>
+            ) : null}
+
+            <div className="ais-actions">
+              <button
+                type="button"
+                className="ais-btn secondary"
+                onClick={handleTestConnection}
+                disabled={testing}
+              >
+                {testing ? 'Testing...' : 'Test Connection'}
+              </button>
+
+              <button
+                className="ais-btn primary"
+                type="submit"
+                disabled={saving}
+              >
+                {saving ? 'Saving...' : 'Save Settings'}
+              </button>
+            </div>
+          </form>
+        </section>
+      </div>
     </div>
   );
 }

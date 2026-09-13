@@ -4,6 +4,19 @@ import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import '../styles/Notifications.css';
 
+function getNotificationIcon(type) {
+  const value = String(type || 'system').toLowerCase();
+
+  if (value.includes('review')) return '✓';
+  if (value.includes('message')) return '✉';
+  if (value.includes('quiz')) return 'Q';
+  if (value.includes('registration')) return 'U';
+  if (value.includes('escalation')) return '!';
+  if (value.includes('announcement')) return 'A';
+
+  return '•';
+}
+
 export default function Notifications() {
   const { user } = useAuth();
 
@@ -40,6 +53,8 @@ export default function Notifications() {
     return items.filter((item) => !item.isRead).length;
   }, [items]);
 
+  const readCount = items.length - unreadCount;
+
   const filteredItems = useMemo(() => {
     if (filter === 'unread') {
       return items.filter((item) => !item.isRead);
@@ -73,109 +88,144 @@ export default function Notifications() {
     <div className="notifications-page">
       <PageHeader
         title="Notifications"
-        subtitle="System alerts for escalations, reviews, reminders, and announcements."
+        subtitle="Your latest system updates and alerts."
       />
 
-      <section className="card-like notification-toolbar">
-        <div>
-          <h3>Notification Centre</h3>
-          <p className="muted">
-            You have <strong>{unreadCount}</strong> unread notification
-            {unreadCount === 1 ? '' : 's'}.
-          </p>
+      <section className="notifications-summary-grid">
+        <div className="notifications-summary-card total">
+          <span>Total</span>
+          <strong>{items.length}</strong>
         </div>
 
-        <div className="button-group notification-actions">
-          <button
-            className={filter === 'all' ? 'primary-btn' : 'secondary-btn'}
-            onClick={() => setFilter('all')}
-          >
-            All
-          </button>
+        <div className="notifications-summary-card unread">
+          <span>Unread</span>
+          <strong>{unreadCount}</strong>
+        </div>
 
-          <button
-            className={filter === 'unread' ? 'primary-btn' : 'secondary-btn'}
-            onClick={() => setFilter('unread')}
-          >
-            Unread
-          </button>
-
-          <button
-            className={filter === 'read' ? 'primary-btn' : 'secondary-btn'}
-            onClick={() => setFilter('read')}
-          >
-            Read
-          </button>
-
-          <button className="secondary-btn" onClick={fetchNotifications}>
-            Refresh
-          </button>
+        <div className="notifications-summary-card read">
+          <span>Read</span>
+          <strong>{readCount}</strong>
         </div>
       </section>
 
-      {loading && (
-        <section className="card-like top-gap-sm">
-          <p className="muted">Loading notifications...</p>
-        </section>
-      )}
+      <section className="notifications-workspace">
+        <div className="notifications-toolbar">
+          <div className="notifications-toolbar-title">
+            <span className="notifications-kicker">Activity Centre</span>
+            <h2>Recent Updates</h2>
+          </div>
 
-      {error && (
-        <section className="card-like danger-soft top-gap-sm">
-          <p>{error}</p>
-        </section>
-      )}
+          <div className="notification-actions">
+            <div className="notification-filter-tabs">
+              <button
+                type="button"
+                className={filter === 'all' ? 'active' : ''}
+                onClick={() => setFilter('all')}
+              >
+                All
+                <span>{items.length}</span>
+              </button>
 
-      {!loading && !error && filteredItems.length === 0 && (
-        <section className="card-like top-gap-sm empty-state-card">
-          <h3>No notifications found</h3>
-          <p className="muted">There are no notifications under this filter.</p>
-        </section>
-      )}
+              <button
+                type="button"
+                className={filter === 'unread' ? 'active' : ''}
+                onClick={() => setFilter('unread')}
+              >
+                Unread
+                <span>{unreadCount}</span>
+              </button>
 
-      <div className="stack-gap top-gap-sm">
-        {filteredItems.map((item) => (
-          <article
-            key={item.id}
-            className={
-              item.isRead
-                ? 'card-like notification-card'
-                : 'card-like notification-card unread'
-            }
-          >
-            <div className="notification-card-main">
-              <div>
-                <div className="notification-meta-row">
-                  <span className={item.isRead ? 'status-badge resolved' : 'status-badge pending'}>
-                    {item.isRead ? 'Read' : 'Unread'}
-                  </span>
+              <button
+                type="button"
+                className={filter === 'read' ? 'active' : ''}
+                onClick={() => setFilter('read')}
+              >
+                Read
+                <span>{readCount}</span>
+              </button>
+            </div>
 
-                  <span className="role-pill">
-                    {item.type || 'system'}
-                  </span>
+            <button
+              type="button"
+              className="notification-refresh-btn"
+              onClick={fetchNotifications}
+            >
+              Refresh
+            </button>
+          </div>
+        </div>
+
+        {loading && (
+          <div className="notifications-state-card">
+            <div className="notifications-state-icon">•••</div>
+            <strong>Loading notifications</strong>
+          </div>
+        )}
+
+        {error && (
+          <div className="notifications-state-card error" role="alert">
+            <div className="notifications-state-icon">!</div>
+            <strong>Unable to load notifications</strong>
+            <p>{error}</p>
+          </div>
+        )}
+
+        {!loading && !error && filteredItems.length === 0 && (
+          <div className="notifications-state-card">
+            <div className="notifications-state-icon">✓</div>
+            <strong>No notifications found</strong>
+            <p>Nothing to show under this filter.</p>
+          </div>
+        )}
+
+        {!loading && !error && filteredItems.length > 0 && (
+          <div className="notifications-list">
+            {filteredItems.map((item) => (
+              <article
+                key={item.id}
+                className={`notification-card ${item.isRead ? 'read' : 'unread'}`}
+              >
+                <div className={`notification-icon ${item.isRead ? 'read' : 'unread'}`}>
+                  {getNotificationIcon(item.type)}
                 </div>
 
-                <h3>{item.title}</h3>
-                <p className="muted">{item.detail}</p>
+                <div className="notification-content">
+                  <div className="notification-top-row">
+                    <div className="notification-meta-row">
+                      <span className={`notification-status ${item.isRead ? 'read' : 'unread'}`}>
+                        {item.isRead ? 'Read' : 'New'}
+                      </span>
 
-                {item.created_at && (
-                  <p className="muted small">
-                    {new Date(item.created_at).toLocaleString()}
-                  </p>
+                      <span className="notification-type">
+                        {item.type || 'system'}
+                      </span>
+                    </div>
+
+                    {item.created_at && (
+                      <time className="notification-time">
+                        {new Date(item.created_at).toLocaleString()}
+                      </time>
+                    )}
+                  </div>
+
+                  <h3>{item.title}</h3>
+                  <p>{item.detail}</p>
+                </div>
+
+                {!item.isRead && (
+                  <button
+                    type="button"
+                    className="notification-mark-btn"
+                    onClick={() => markAsRead(item.id)}
+                  >
+                    Mark read
+                  </button>
                 )}
-              </div>
-
-              {!item.isRead && (
-                <button
-                  className="secondary-btn"
-                  onClick={() => markAsRead(item.id)}
-                >
-                  Mark as read
-                </button>
-              )}
-            </div>
-          </article>
-        ))}
-      </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
