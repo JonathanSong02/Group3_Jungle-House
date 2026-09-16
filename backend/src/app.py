@@ -1353,14 +1353,24 @@ def debug_uploads():
 # DATABASE CONNECTION
 # =========================
 def get_db_connection():
-    """Use Railway Variables (or local .env); never embed production secrets."""
+    """Connect using local DB_ or Railway MySQL environment variables.
+
+    Prefer the existing DB_ configuration, then support the Railway service's
+    MYSQL_ names, Railway's standard MYSQL names, and finally DATABASE_URL.
+    No credentials are embedded in source code.
+    """
     raw_url = os.getenv("DATABASE_URL", "").strip()
     parsed = urlsplit(raw_url) if raw_url else None
-    host = os.getenv("DB_HOST") or os.getenv("MYSQLHOST") or (parsed.hostname if parsed else None)
-    username = os.getenv("DB_USER") or os.getenv("MYSQLUSER") or (unquote(parsed.username) if parsed and parsed.username else None)
-    password = os.getenv("DB_PASSWORD") or os.getenv("MYSQLPASSWORD") or (unquote(parsed.password) if parsed and parsed.password else None)
-    database = os.getenv("DB_NAME") or os.getenv("MYSQLDATABASE") or (parsed.path.lstrip("/") if parsed else None)
-    port = os.getenv("DB_PORT") or os.getenv("MYSQLPORT") or (parsed.port if parsed else 3306)
+    host = (os.getenv("DB_HOST") or os.getenv("MYSQL_HOST") or os.getenv("MYSQLHOST")
+            or (parsed.hostname if parsed else None))
+    username = (os.getenv("DB_USER") or os.getenv("MYSQL_USER") or os.getenv("MYSQLUSER")
+                or (unquote(parsed.username) if parsed and parsed.username else None))
+    password = (os.getenv("DB_PASSWORD") or os.getenv("MYSQL_PASSWORD") or os.getenv("MYSQLPASSWORD")
+                or (unquote(parsed.password) if parsed and parsed.password else None))
+    database = (os.getenv("DB_NAME") or os.getenv("MYSQL_DATABASE") or os.getenv("MYSQLDATABASE")
+                or (parsed.path.lstrip("/") if parsed else None))
+    port = (os.getenv("DB_PORT") or os.getenv("MYSQL_PORT") or os.getenv("MYSQLPORT")
+            or (parsed.port if parsed else 3306))
     if not all((host, username, password, database)):
         raise RuntimeError("Database connection variables are not configured.")
     return mysql.connector.connect(
@@ -4886,9 +4896,21 @@ def get_dashboard():
         cursor = conn.cursor(dictionary=True)
 
         articles = safe_count_query(cursor, "SELECT COUNT(*) AS total FROM wiki_article")
-        questions = safe_count_query(
+        # AI Chat records questions in ai_chat_log; the legacy question table
+        # does not exist in the current database. On a fresh installation the
+        # chat log may not exist until the first interaction is recorded.
+        chat_log_exists = safe_count_query(
             cursor,
-            "SELECT COUNT(*) AS total FROM question WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)"
+            """SELECT COUNT(*) AS total FROM information_schema.tables
+               WHERE table_schema = DATABASE() AND table_name = 'ai_chat_log'"""
+        )
+        questions = (
+            safe_count_query(
+                cursor,
+                """SELECT COUNT(*) AS total FROM ai_chat_log
+                   WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+                     AND question IS NOT NULL AND TRIM(question) <> ''"""
+            ) if chat_log_exists else 0
         )
         escalations = safe_count_query(
             cursor,
