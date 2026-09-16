@@ -17,7 +17,6 @@ export default function Register() {
   const [loading, setLoading] = useState(false);
   const [showPasswords, setShowPasswords] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
-  const [registrationResult, setRegistrationResult] = useState(null);
 
   const handleChange = (event) => {
     const { name, value } = event.target;
@@ -74,7 +73,12 @@ export default function Register() {
         role: 'staff',
       });
 
-      setRegistrationResult(response.data || {});
+      // Only show success after the backend confirms a pending registration.
+      // A failed HTTP response must not display the success popup.
+      if (response.status !== 201 || response.data?.account_status !== 'pending') {
+        throw new Error('The server did not confirm your pending registration.');
+      }
+
       setShowSuccessModal(true);
     } catch (requestError) {
       setError(
@@ -107,15 +111,15 @@ export default function Register() {
         <div className="auth-heading">
           <h1>Create your account</h1>
           <p>
-            Register using your own email. Your account will be reviewed by a
-            Manager or Team Leader before one-time key activation.
+            Submit your details for Manager or Team Leader approval. You can
+            sign in once your account is approved.
           </p>
         </div>
 
         <div className="auth-registration-flow" aria-label="Registration steps">
           <span className="current">1. Register</span>
           <span>2. Approval</span>
-          <span>3. Activation Key</span>
+          <span>3. Sign In</span>
         </div>
 
         <form onSubmit={handleSubmit} className="form-stack auth-form">
@@ -230,9 +234,9 @@ export default function Register() {
             <h2 id="registration-success-title">Registration received</h2>
 
             <p>
-              Your registration was submitted successfully. A confirmation email
-              has been sent to <strong>{form.email.trim().toLowerCase()}</strong>.
-              Your account is now waiting for Manager / Team Leader approval.
+              Your registration request has been received successfully.
+              Please allow up to 24 hours for a Manager or Team Leader to
+              review your account.
             </p>
 
             <div className="auth-success-steps">
@@ -246,14 +250,13 @@ export default function Register() {
               </div>
               <div>
                 <strong>3</strong>
-                <span>If approved, receive and enter the one-time registration key</span>
+                <span>Once approved, sign in with your email and password</span>
               </div>
             </div>
 
-            <div className="auth-email-status">
-              {registrationResult?.email_sent === true
-                ? 'System email sent successfully. You will receive another email after the Manager / Team Leader approves or declines your registration.'
-                : 'The server did not confirm email delivery. Registration should not be treated as complete; please contact the system administrator.'}
+            <div className="auth-email-status" role="status">
+              Account status: Awaiting approval. You can try signing in after
+              your Manager or Team Leader has approved your registration.
             </div>
 
             <button
