@@ -6,30 +6,35 @@ import { useAuth } from '../../context/AuthContext';
 const NAV_ITEMS = [
   { key: 'all', label: 'All Users' },
   { key: 'pending', label: 'Pending' },
+  { key: 'activation', label: 'Activation' },
   { key: 'active', label: 'Active' },
-  { key: 'inactive', label: 'Inactive' },
+  { key: 'keys', label: 'Keys' },
+  { key: 'email', label: 'Email Test' },
 ];
-
-const getStage = (item) => String(item?.status || 'unknown').trim().toLowerCase();
-const normaliseRole = (role) => String(role || '').trim().toLowerCase().replace(/[\s_-]/g, '');
 
 export default function UserManagement() {
   const { user } = useAuth();
 
-  const actorId = user?.id ?? user?.user_id ?? null;
-  const actorRole = normaliseRole(user?.role);
+  const actorId = user?.id || user?.user_id || null;
+  const actorRole = String(user?.role || '').toLowerCase().replace(/[\s_-]/g, '');
   const isManagerActor = actorRole === 'manager' || actorRole === 'admin';
-  const isApproverActor = isManagerActor || actorRole === 'teamlead';
 
   const [users, setUsers] = useState([]);
+  const [registrationKeys, setRegistrationKeys] = useState([]);
+
   const [loading, setLoading] = useState(true);
+  const [keysLoading, setKeysLoading] = useState(true);
   const [actionLoadingId, setActionLoadingId] = useState(null);
+
   const [activeView, setActiveView] = useState('all');
   const [search, setSearch] = useState('');
+
   const [message, setMessage] = useState('');
-  // This is an explicit declaration by the reviewer, NOT identity verification
-  // performed by the browser. The backend remains responsible for enforcement.
-  const [verifiedUserIds, setVerifiedUserIds] = useState(() => new Set());
+  const [keyMessage, setKeyMessage] = useState('');
+  const [emailTestMessage, setEmailTestMessage] = useState('');
+
+  const [emailTestLoading, setEmailTestLoading] = useState(false);
+  const [testRecipient, setTestRecipient] = useState(user?.email || '');
 
   const fetchUsers = async () => {
     try {
@@ -44,18 +49,46 @@ export default function UserManagement() {
     }
   };
 
-  // Preserve the original load-on-mount behavior. The protected route and
-  // backend session/role checks control access; this page does not trust an ID
-  // from a browser storage object to authorize a request.
+  const fetchRegistrationKeys = async () => {
+    if (!actorId) return;
+
+    try {
+      setKeysLoading(true);
+      const response = await api.get('/registration-keys', {
+        params: { actor_id: actorId },
+      });
+      setRegistrationKeys(Array.isArray(response.data) ? response.data : []);
+    } catch (error) {
+      console.error('Fetch registration keys error:', error);
+      setKeyMessage(error.response?.data?.message || 'Unable to load activation keys.');
+    } finally {
+      setKeysLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchUsers();
   }, []);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    fetchRegistrationKeys();
+  }, [actorId]);
+
+  const getStage = (item) => {
+    if (item.status === 'pending' && item.awaiting_activation) return 'activation';
+    if (item.status === 'pending') return 'pending';
+    if (item.status === 'active') return 'active';
+    if (item.status === 'inactive') return 'inactive';
+    if (item.status === 'declined') return 'declined';
+    return String(item.status || 'unknown').toLowerCase();
+  };
+
   const counts = useMemo(() => ({
     all: users.length,
     pending: users.filter((item) => getStage(item) === 'pending').length,
+    activation: users.filter((item) => getStage(item) === 'activation').length,
     active: users.filter((item) => getStage(item) === 'active').length,
-    inactive: users.filter((item) => getStage(item) === 'inactive').length,
   }), [users]);
 
   const filteredUsers = useMemo(() => {
@@ -63,7 +96,14 @@ export default function UserManagement() {
 
     return users.filter((item) => {
       const stage = getStage(item);
-      if (activeView !== 'all' && stage !== activeView) return false;
+
+      const viewMatches =
+        activeView === 'all' ||
+        (activeView === 'pending' && stage === 'pending') ||
+        (activeView === 'activation' && stage === 'activation') ||
+        (activeView === 'active' && stage === 'active');
+
+      if (!viewMatches) return false;
       if (!keyword) return true;
 
       return [item.full_name, item.email, item.role_name, stage]
@@ -72,25 +112,11 @@ export default function UserManagement() {
     });
   }, [users, activeView, search]);
 
-  const setIdentityVerified = (userId, checked) => {
-    setVerifiedUserIds((previous) => {
-      const next = new Set(previous);
-      if (checked) next.add(String(userId));
-      else next.delete(String(userId));
-      return next;
-    });
-  };
-
   const updateUserStatus = async (userId, currentStatus) => {
-    if (!isManagerActor || actorId == null) return;
-    const newStatus = getStage({ status: currentStatus }) === 'active' ? 'inactive' : 'active';
+    const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
 
     try {
       setActionLoadingId(userId);
-      setMessage('');
-      // Compatibility with the CURRENT Flask route, which still requires
-      // actor_id. The server verifies it matches the signed-in session;
-      // this value must never be treated as proof of authorization.
       await api.put(`/admin/users/${userId}/status`, {
         status: newStatus,
         actor_id: actorId,
@@ -105,13 +131,8 @@ export default function UserManagement() {
   };
 
   const updateUserRole = async (userId, newRole) => {
-    if (!isManagerActor || actorId == null) return;
-
     try {
       setActionLoadingId(userId);
-      setMessage('');
-      // Required for compatibility with the uploaded backend until its role
-      // endpoint is refactored to derive the actor exclusively from session.
       await api.put(`/admin/users/${userId}/role`, {
         role: newRole,
         actor_id: actorId,
@@ -125,87 +146,128 @@ export default function UserManagement() {
     }
   };
 
-  const approveUser = async (item) => {
-    if (!isApproverActor || actorId == null) return;
-    const userId = item.user_id;
-    if (!verifiedUserIds.has(String(userId))) {
-      setMessage('Verify the applicant’s identity using a trusted staff record or independent contact first.');
-      return;
-    }
-
-    const approvedRole = normaliseRole(item.role_name) === 'teamlead' ? 'teamlead' : 'staff';
-    if (approvedRole === 'teamlead' && !isManagerActor) {
-      setMessage('Only a Manager can approve an account with the Team Lead role.');
-      return;
-    }
-
-    if (!window.confirm(
-      `Confirm you independently verified ${item.full_name || item.email} and approve this account? The user will be able to sign in immediately.`
-    )) return;
+  const approveUser = async (userId, roleName) => {
+    if (!window.confirm('Approve this registration and send the activation key?')) return;
 
     try {
       setActionLoadingId(userId);
-      setMessage('');
-      // The backend reads the approver from the signed Flask session. Never
-      // send approved_by or another identity supplied by the browser.
+
       const response = await api.put(
         `/admin/registration-requests/${userId}/approve`,
-        { role: approvedRole, identity_verified: true }
+        {
+          role:
+            String(roleName || 'staff').toLowerCase() === 'teamlead'
+              ? 'teamlead'
+              : 'staff',
+          approved_by: actorId,
+        }
       );
-      setIdentityVerified(userId, false);
-      setMessage(response.data?.message || 'Registration approved. The user can now sign in.');
-      await fetchUsers();
+
+      setMessage(response.data?.message || 'Registration approved.');
+      await Promise.all([fetchUsers(), fetchRegistrationKeys()]);
     } catch (error) {
       setMessage(error.response?.data?.message || 'Approval failed.');
-      // A parallel reviewer may have changed this record in the meantime.
-      await fetchUsers();
+      await Promise.all([fetchUsers(), fetchRegistrationKeys()]);
     } finally {
       setActionLoadingId(null);
     }
   };
 
-  const declineUser = async (item) => {
-    if (!isApproverActor || actorId == null) return;
+  const declineUser = async (userId) => {
     const reason = window.prompt('Decline reason (optional)');
     if (reason === null) return;
 
-    if (!window.confirm(
-      `Decline and permanently remove the pending registration for ${item.full_name || item.email}? This cannot be undone.`
-    )) return;
+    if (!window.confirm('Remove this pending registration?')) return;
 
-    const userId = item.user_id;
     try {
       setActionLoadingId(userId);
-      setMessage('');
+
       const response = await api.put(
         `/admin/registration-requests/${userId}/decline`,
-        { reason: reason.trim().slice(0, 500) }
+        {
+          reason,
+          declined_by: actorId,
+        }
       );
-      setIdentityVerified(userId, false);
+
       setMessage(response.data?.message || 'Registration declined.');
-      await fetchUsers();
+      await Promise.all([fetchUsers(), fetchRegistrationKeys()]);
     } catch (error) {
       setMessage(error.response?.data?.message || 'Decline failed.');
-      await fetchUsers();
     } finally {
       setActionLoadingId(null);
     }
   };
 
-  const getInitials = (name) => String(name || 'U')
-    .split(' ')
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join('');
+  const testSystemEmail = async () => {
+    if (!actorId || !testRecipient.trim()) return;
+
+    try {
+      setEmailTestLoading(true);
+      setEmailTestMessage('');
+
+      const response = await api.post('/admin/email/test', {
+        actor_id: actorId,
+        email: testRecipient.trim().toLowerCase(),
+      });
+
+      setEmailTestMessage(response.data?.message || 'Test email sent.');
+    } catch (error) {
+      setEmailTestMessage(error.response?.data?.message || 'Email test failed.');
+    } finally {
+      setEmailTestLoading(false);
+    }
+  };
+
+  const resendKey = async (keyId) => {
+    try {
+      setKeyMessage('');
+
+      const response = await api.post(`/registration-keys/${keyId}/resend`, {
+        actor_id: actorId,
+      });
+
+      setKeyMessage(response.data?.message || 'Activation key resent.');
+      await fetchRegistrationKeys();
+    } catch (error) {
+      setKeyMessage(error.response?.data?.message || 'Resend failed.');
+    }
+  };
+
+  const revokeKey = async (keyId) => {
+    if (!window.confirm('Revoke this activation key?')) return;
+
+    try {
+      const response = await api.put(`/registration-keys/${keyId}/revoke`, {
+        actor_id: actorId,
+      });
+
+      setKeyMessage(response.data?.message || 'Activation key revoked.');
+      await Promise.all([fetchUsers(), fetchRegistrationKeys()]);
+    } catch (error) {
+      setKeyMessage(error.response?.data?.message || 'Revoke failed.');
+    }
+  };
+
+  const getInitials = (name) => {
+    return String(name || 'U')
+      .split(' ')
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase())
+      .join('');
+  };
 
   const stageLabel = (stage) => {
+    if (stage === 'activation') return 'Awaiting Key';
     if (stage === 'pending') return 'Pending';
     if (stage === 'active') return 'Active';
     if (stage === 'inactive') return 'Inactive';
     if (stage === 'declined') return 'Declined';
     return stage;
   };
+
+  const isUserView = ['all', 'pending', 'activation', 'active'].includes(activeView);
 
   return (
     <div className="user-management-page professional">
@@ -224,12 +286,12 @@ export default function UserManagement() {
 
         <button
           type="button"
-          className={`um-summary-card ${activeView === 'inactive' ? 'active' : ''}`}
-          onClick={() => setActiveView('inactive')}
+          className={`um-summary-card ${activeView === 'activation' ? 'active' : ''}`}
+          onClick={() => setActiveView('activation')}
         >
-          <span className="um-summary-label">Inactive</span>
-          <strong>{counts.inactive}</strong>
-          <span className="um-summary-meta">Access disabled</span>
+          <span className="um-summary-label">Activation</span>
+          <strong>{counts.activation}</strong>
+          <span className="um-summary-meta">Waiting for key</span>
         </button>
 
         <button
@@ -264,6 +326,8 @@ export default function UserManagement() {
                 onClick={() => {
                   setActiveView(item.key);
                   setMessage('');
+                  setKeyMessage('');
+                  setEmailTestMessage('');
                 }}
               >
                 {item.label}
@@ -274,146 +338,277 @@ export default function UserManagement() {
             ))}
           </nav>
 
-          <input
-            className="um-search"
-            type="search"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search name or email"
-            aria-label="Search users"
-          />
+          {isUserView ? (
+            <input
+              className="um-search"
+              type="search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search name or email"
+              aria-label="Search users"
+            />
+          ) : null}
         </div>
 
-        {message ? <div className="um-feedback" role="status">{message}</div> : null}
+        {message && isUserView ? (
+          <div className="um-feedback">{message}</div>
+        ) : null}
 
-        {loading ? (
-          <div className="um-empty-state">Loading users...</div>
-        ) : filteredUsers.length === 0 ? (
-          <div className="um-empty-state">
-            <strong>No users found</strong>
-            <span>Try another filter or search.</span>
-          </div>
-        ) : (
-          <div className="um-table-wrap">
-            <table className="um-table">
-              <thead>
-                <tr>
-                  <th>User</th>
-                  <th>Role</th>
-                  <th>Status</th>
-                  <th>Joined</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
+        {isUserView ? (
+          <>
+            {loading ? (
+              <div className="um-empty-state">Loading users...</div>
+            ) : filteredUsers.length === 0 ? (
+              <div className="um-empty-state">
+                <strong>No users found</strong>
+                <span>Try another filter or search.</span>
+              </div>
+            ) : (
+              <div className="um-table-wrap">
+                <table className="um-table">
+                  <thead>
+                    <tr>
+                      <th>User</th>
+                      <th>Role</th>
+                      <th>Status</th>
+                      <th>Joined</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
 
-              <tbody>
-                {filteredUsers.map((item) => {
-                  const isManager = ['manager', 'admin'].includes(normaliseRole(item.role_name));
-                  const isPending = getStage(item) === 'pending';
-                  const isBusy = actionLoadingId !== null;
-                  const stage = getStage(item);
-                  const isVerified = verifiedUserIds.has(String(item.user_id));
-                  const roleIsTeamLead = normaliseRole(item.role_name) === 'teamlead';
+                  <tbody>
+                    {filteredUsers.map((item) => {
+                      const isManager =
+                        String(item.role_name || '').toLowerCase() === 'manager';
+                      const isPending = item.status === 'pending';
+                      const awaitingActivation =
+                        isPending && item.awaiting_activation;
+                      const isBusy = actionLoadingId === item.user_id;
+                      const stage = getStage(item);
 
-                  return (
-                    <tr key={item.user_id}>
-                      <td>
-                        <div className="um-user">
-                          <div className="um-avatar">{getInitials(item.full_name)}</div>
-                          <div className="um-user-copy">
-                            <strong>{item.full_name}</strong>
-                            <span>{item.email}</span>
-                          </div>
-                        </div>
-                      </td>
+                      return (
+                        <tr key={item.user_id}>
+                          <td>
+                            <div className="um-user">
+                              <div className="um-avatar">{getInitials(item.full_name)}</div>
+                              <div className="um-user-copy">
+                                <strong>{item.full_name}</strong>
+                                <span>{item.email}</span>
+                              </div>
+                            </div>
+                          </td>
 
-                      <td>
-                        {isManager ? (
-                          <span className="um-role-tag manager">{item.role_name}</span>
-                        ) : isManagerActor ? (
-                          <select
-                            className="um-role-select"
-                            value={roleIsTeamLead ? 'teamlead' : 'staff'}
-                            onChange={(event) => updateUserRole(item.user_id, event.target.value)}
-                            disabled={isBusy}
-                            aria-label={`Role for ${item.full_name || item.email}`}
-                          >
-                            <option value="staff">Staff</option>
-                            <option value="teamlead">Team Lead</option>
-                          </select>
-                        ) : (
-                          <span className="um-role-tag">{item.role_name}</span>
-                        )}
-                      </td>
+                          <td>
+                            {isManager ? (
+                              <span className="um-role-tag manager">Manager</span>
+                            ) : isManagerActor ? (
+                              <select
+                                className="um-role-select"
+                                value={item.role_name}
+                                onChange={(event) =>
+                                  updateUserRole(item.user_id, event.target.value)
+                                }
+                                disabled={isBusy}
+                              >
+                                <option value="staff">Staff</option>
+                                <option value="teamlead">Team Lead</option>
+                              </select>
+                            ) : (
+                              <span className="um-role-tag">{item.role_name}</span>
+                            )}
+                          </td>
 
-                      <td>
-                        <span className={`um-status-tag ${stage}`}>
-                          <i />
-                          {stageLabel(stage)}
-                        </span>
-                      </td>
+                          <td>
+                            <span className={`um-status-tag ${stage}`}>
+                              <i />
+                              {stageLabel(stage)}
+                            </span>
+                          </td>
 
-                      <td>
-                        <span className="um-date">{item.created_at || '-'}</span>
-                      </td>
+                          <td>
+                            <span className="um-date">{item.created_at || '-'}</span>
+                          </td>
 
-                      <td>
-                        <div className="um-row-actions">
-                          {isManager ? (
-                            <span className="um-protected">Protected</span>
-                          ) : isPending && isApproverActor ? (
-                            <>
-                              <label className="um-verify-label" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                                <input
-                                  type="checkbox"
-                                  checked={isVerified}
-                                  onChange={(event) => setIdentityVerified(item.user_id, event.target.checked)}
+                          <td>
+                            <div className="um-row-actions">
+                              {isManager ? (
+                                <span className="um-protected">Protected</span>
+                              ) : isPending ? (
+                                <>
+                                  {!awaitingActivation ? (
+                                    <button
+                                      type="button"
+                                      className="um-action-btn primary"
+                                      disabled={isBusy}
+                                      onClick={() =>
+                                        approveUser(item.user_id, item.role_name)
+                                      }
+                                    >
+                                      {isBusy ? 'Working...' : 'Approve'}
+                                    </button>
+                                  ) : (
+                                    <span className="um-key-state">Key sent</span>
+                                  )}
+
+                                  <button
+                                    type="button"
+                                    className="um-action-btn danger"
+                                    disabled={isBusy}
+                                    onClick={() => declineUser(item.user_id)}
+                                  >
+                                    Decline
+                                  </button>
+                                </>
+                              ) : item.status === 'declined' ? (
+                                <span className="um-muted">—</span>
+                              ) : isManagerActor ? (
+                                <button
+                                  type="button"
+                                  className={`um-action-btn ${
+                                    item.status === 'active' ? 'danger-soft' : 'secondary'
+                                  }`}
                                   disabled={isBusy}
-                                  aria-label={`I independently verified the identity of ${item.full_name || item.email}`}
-                                />
-                                Identity verified
-                              </label>
+                                  onClick={() =>
+                                    updateUserStatus(item.user_id, item.status)
+                                  }
+                                >
+                                  {item.status === 'active' ? 'Deactivate' : 'Activate'}
+                                </button>
+                              ) : (
+                                <span className="um-muted">—</span>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        ) : null}
+
+        {activeView === 'email' ? (
+          <div className="um-tool-panel">
+            <div className="um-tool-head">
+              <div>
+                <span className="um-tool-kicker">System Email</span>
+                <h3>Send test email</h3>
+              </div>
+            </div>
+
+            <div className="um-email-form">
+              <input
+                type="email"
+                value={testRecipient}
+                onChange={(event) => {
+                  setTestRecipient(event.target.value);
+                  setEmailTestMessage('');
+                }}
+                placeholder="Recipient email"
+              />
+
+              <button
+                type="button"
+                className="um-action-btn primary"
+                onClick={testSystemEmail}
+                disabled={
+                  emailTestLoading || !actorId || !testRecipient.trim()
+                }
+              >
+                {emailTestLoading ? 'Sending...' : 'Send Test'}
+              </button>
+            </div>
+
+            {emailTestMessage ? (
+              <div className="um-feedback">{emailTestMessage}</div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {activeView === 'keys' ? (
+          <div className="um-tool-panel">
+            <div className="um-tool-head">
+              <div>
+                <span className="um-tool-kicker">Security</span>
+                <h3>Activation keys</h3>
+              </div>
+              <span className="um-record-count">{registrationKeys.length} records</span>
+            </div>
+
+            {keyMessage ? (
+              <div className="um-feedback">{keyMessage}</div>
+            ) : null}
+
+            {keysLoading ? (
+              <div className="um-empty-state">Loading keys...</div>
+            ) : registrationKeys.length === 0 ? (
+              <div className="um-empty-state">
+                <strong>No activation keys</strong>
+                <span>Keys appear after account approval.</span>
+              </div>
+            ) : (
+              <div className="um-table-wrap">
+                <table className="um-table um-key-table">
+                  <thead>
+                    <tr>
+                      <th>Key</th>
+                      <th>Email</th>
+                      <th>Status</th>
+                      <th>Attempts</th>
+                      <th>Sent</th>
+                      <th>Used</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {registrationKeys.map((key) => (
+                      <tr key={key.key_id}>
+                        <td>
+                          <code className="um-key-code">{key.key_preview || '-'}</code>
+                        </td>
+                        <td>{key.assigned_email || key.used_by_email || '-'}</td>
+                        <td>
+                          <span className={`um-status-tag ${String(key.status || '').toLowerCase()}`}>
+                            <i />
+                            {key.status || '-'}
+                          </span>
+                        </td>
+                        <td>{key.failed_attempts || 0}/3</td>
+                        <td><span className="um-date">{key.email_sent_at || 'Not sent'}</span></td>
+                        <td><span className="um-date">{key.used_at || '-'}</span></td>
+                        <td>
+                          {key.status === 'unused' ? (
+                            <div className="um-row-actions">
                               <button
                                 type="button"
-                                className="um-action-btn primary"
-                                disabled={isBusy || !isVerified || (roleIsTeamLead && !isManagerActor)}
-                                title={roleIsTeamLead && !isManagerActor ? 'Only Managers can approve Team Lead accounts' : undefined}
-                                onClick={() => approveUser(item)}
+                                className="um-action-btn secondary"
+                                onClick={() => resendKey(key.key_id)}
                               >
-                                {actionLoadingId === item.user_id ? 'Working...' : 'Approve'}
+                                Resend
                               </button>
                               <button
                                 type="button"
                                 className="um-action-btn danger"
-                                disabled={isBusy}
-                                onClick={() => declineUser(item)}
+                                onClick={() => revokeKey(key.key_id)}
                               >
-                                Decline
+                                Revoke
                               </button>
-                            </>
-                          ) : stage === 'declined' || isPending ? (
-                            <span className="um-muted">—</span>
-                          ) : isManagerActor ? (
-                            <button
-                              type="button"
-                              className={`um-action-btn ${stage === 'active' ? 'danger-soft' : 'secondary'}`}
-                              disabled={isBusy}
-                              onClick={() => updateUserStatus(item.user_id, stage)}
-                            >
-                              {stage === 'active' ? 'Deactivate' : 'Activate'}
-                            </button>
+                            </div>
                           ) : (
                             <span className="um-muted">—</span>
                           )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
-        )}
+        ) : null}
       </section>
     </div>
   );
