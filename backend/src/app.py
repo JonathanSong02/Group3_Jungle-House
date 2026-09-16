@@ -14,6 +14,8 @@ import traceback
 import smtplib
 import secrets
 import hashlib
+import math
+import html as html_lib
 import requests
 
 from email.message import EmailMessage
@@ -64,17 +66,6 @@ def load_local_env_file():
 
 
 load_local_env_file()
-
-# ============================================================
-# PRESENTATION DEMO MODE
-# ============================================================
-# Tomorrow's presentation can run the complete registration -> approval ->
-# one-time-key -> activation flow without a live SMTP connection.
-# Keep this TRUE only for the presentation build. Set the Railway variable
-# PRESENTATION_DEMO_MODE=false (or replace this file with the production
-# version) when real email delivery is ready.
-PRESENTATION_DEMO_MODE = os.getenv("PRESENTATION_DEMO_MODE", "true").strip().lower() != "false"
-
 from db_helper import (
     save_qa_to_db,
     search_similar_question,
@@ -212,6 +203,14 @@ REAL_JH_TEST_QUESTIONS = []
 AI_CHAT_MEMORY = {}
 AI_FAIL_MEMORY = {}
 AI_LAST_ANSWER_MEMORY = {}
+
+# Remembers the last work-related image's vision analysis per user/session,
+# so a follow-up TEXT-ONLY message in the same conversation (e.g. "which
+# article should I refer", "where do I store this") can still resolve "this"
+# to the photo sent a message earlier, instead of only working when the
+# image and the question arrive in the exact same request.
+LAST_IMAGE_CONTEXT_MEMORY = {}
+LAST_IMAGE_CONTEXT_TTL_SECONDS = 900
 
 app = Flask(__name__, static_folder=None)
 
@@ -845,8 +844,8 @@ Return ONLY valid JSON. No markdown, no code fences, no extra text.
 Fields:
 - isWorkRelated: boolean
 - confidence: number between 0 and 1
-- detectedObjects: array of strings
-- possibleAliases: array of strings
+- detectedObjects: array of strings (at most 4)
+- possibleAliases: array of strings (at most 3)
 - imageSummary: string
 - irrelevantReason: string or null
 
@@ -854,7 +853,13 @@ Important:
 - Detect objects even if shown from front, back, side, tilted, close-up, far away, or a different angle.
 - If the image is random, personal, unclear, a meme, a selfie, food unrelated to work, or otherwise not related to work, set isWorkRelated to false.
 - Do not answer the user's question here.
-- Only describe the image and whether it is work-related."""
+- Only describe the image and whether it is work-related.
+- detectedObjects and possibleAliases will be used as search keywords against a
+  Knowledge Base, so they must be SHORT, SPECIFIC, and DISTINCTIVE: the actual
+  object/product/equipment/document name (e.g. "iPad", "ice cooler", "bottle
+  return point sign", "petty cash log"). Do NOT include generic scene-description
+  words that could apply to almost any photo, such as "hand", "text", "sign"
+  alone, "label", "screen", "notice", "sleeve", "plastic", "paper", or "photo"."""
 
 GEMINI_VISION_CACHE = {}  # file_hash -> (timestamp, result_dict or None)
 GEMINI_VISION_CACHE_MAX = 200
@@ -874,8 +879,8 @@ def _parse_vision_json_reply(raw_text):
     return {
         "isWorkRelated": bool(parsed.get("isWorkRelated", False)),
         "confidence": float(parsed.get("confidence", 0.0) or 0.0),
-        "detectedObjects": [str(item) for item in (parsed.get("detectedObjects") or [])][:10],
-        "possibleAliases": [str(item) for item in (parsed.get("possibleAliases") or [])][:10],
+        "detectedObjects": [str(item) for item in (parsed.get("detectedObjects") or [])][:4],
+        "possibleAliases": [str(item) for item in (parsed.get("possibleAliases") or [])][:3],
         "imageSummary": str(parsed.get("imageSummary") or ""),
         "irrelevantReason": parsed.get("irrelevantReason"),
     }
@@ -988,6 +993,26 @@ def build_image_only_clarification_response(vision_result, kb_hint=None):
     })
 
 
+# Generic scene-description words Gemini sometimes still returns despite the
+# prompt asking for specific object/product names. These describe almost any
+# photo and never meaningfully distinguish one Knowledge Base article from
+# another, so they get dropped before the term is used as search context --
+# otherwise they dilute/outweigh the one or two genuinely distinctive words
+# (e.g. "bottle", "return") in both the strict and related-knowledge search.
+VISION_TERM_STOPWORDS = {
+    "hand", "hands", "finger", "fingers", "text", "sign", "signs", "label",
+    "labels", "screen", "notice", "sleeve", "plastic", "paper", "photo",
+    "picture", "image", "object", "item", "device", "background", "table",
+    "counter", "floor", "wall", "surface", "close", "closeup", "person",
+}
+
+
+def _clean_vision_term(term):
+    term = str(term or "").strip().lower()
+    words = [w for w in re.findall(r"[a-z0-9]+", term) if w not in VISION_TERM_STOPWORDS]
+    return " ".join(words)
+
+
 def build_vision_augmented_question(question, vision_result):
     """
     Combine the detected object(s) with the staff member's own question so
@@ -998,7 +1023,12 @@ def build_vision_augmented_question(question, vision_result):
     detected = list((vision_result or {}).get("detectedObjects") or [])
     aliases = list((vision_result or {}).get("possibleAliases") or [])
 
-    object_terms = " ".join(dict.fromkeys(detected + aliases))
+    cleaned_terms = [
+        cleaned
+        for cleaned in (_clean_vision_term(term) for term in (detected + aliases))
+        if cleaned
+    ]
+    object_terms = " ".join(dict.fromkeys(cleaned_terms))
     question = str(question or "").strip()
 
     if object_terms and question:
@@ -1328,23 +1358,6 @@ def send_email_safe(to_email, subject, body):
     SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM_EMAIL
     """
     to_email = str(to_email or "").strip()
-
-    # Presentation-only hardcoded email simulation. This deliberately does
-    # not contact Gmail/SMTP. The rest of the application still receives a
-    # successful delivery result so the real registration workflow can be
-    # demonstrated end-to-end.
-    if PRESENTATION_DEMO_MODE:
-        if not to_email:
-            print("DEMO EMAIL SKIPPED: Recipient email is empty.")
-            return False
-        print("\n" + "=" * 72)
-        print("PRESENTATION DEMO EMAIL (SIMULATED - NOT ACTUALLY SENT)")
-        print(f"TO: {to_email}")
-        print(f"SUBJECT: {subject}")
-        print("-" * 72)
-        print(body)
-        print("=" * 72 + "\n")
-        return True
 
     # Gmail-compatible defaults. For local use, only the sender email and
     # app password must be placed in backend/src/.env once.
@@ -2218,6 +2231,38 @@ def should_escalate_generic_answer(question: str, result: dict | None) -> bool:
     return False
 
 
+def get_last_image_context_key(data: dict | None = None) -> str:
+    data = data or {}
+    user_id = data.get("user_id") or data.get("userId")
+
+    if user_id:
+        return f"user:{user_id}:last_image_context"
+
+    return f"ip:{request.remote_addr or 'local'}:last_image_context"
+
+
+def remember_last_image_context(data: dict | None, vision_result: dict | None) -> None:
+    if not vision_result:
+        return
+
+    LAST_IMAGE_CONTEXT_MEMORY[get_last_image_context_key(data)] = {
+        "vision_result": vision_result,
+        "timestamp": time.time(),
+    }
+
+
+def get_remembered_image_context(data: dict | None) -> dict | None:
+    entry = LAST_IMAGE_CONTEXT_MEMORY.get(get_last_image_context_key(data))
+
+    if not entry:
+        return None
+
+    if (time.time() - entry.get("timestamp", 0)) > LAST_IMAGE_CONTEXT_TTL_SECONDS:
+        return None
+
+    return entry.get("vision_result")
+
+
 def remember_last_ai_answer(data: dict | None, question: str, result: dict | None) -> None:
     if not result:
         return
@@ -2321,6 +2366,42 @@ def get_confidence_label(score: float) -> str:
     if score >= 0.72:
         return "medium"
     return "low"
+
+
+def build_related_knowledge_message(question: str, related_options: list) -> str:
+    """
+    Level-2 "related knowledge" response text. With 2+ candidates, phrase it
+    as an explicit disambiguation question naming each verified procedure
+    (e.g. "When you say 'settlement', which of these verified procedures do
+    you mean: Payment Un-tally Process, SOP: Ice Receiving, or Petty Cash
+    Operation SOP?"), matching the pattern requested: confirm which specific
+    source the crew member means before they click one, not just a passive
+    "these might help" list. With only one candidate there's nothing to
+    disambiguate, so it keeps the softer single-suggestion phrasing.
+    """
+    titles = [
+        str(option.get("title") or "").strip()
+        for option in (related_options or [])
+        if str(option.get("title") or "").strip()
+    ]
+
+    question_text = str(question or "").strip()
+
+    if len(titles) >= 2:
+        if len(titles) == 2:
+            title_list = f"{titles[0]} or {titles[1]}"
+        else:
+            title_list = ", ".join(titles[:-1]) + f", or {titles[-1]}"
+
+        if question_text:
+            return f'When you say "{question_text}", which of these verified procedures do you mean: {title_list}?'
+
+        return f"Which of these verified procedures do you mean: {title_list}?"
+
+    return (
+        "I couldn't confirm the exact procedure from the information provided, "
+        "but this verified Knowledge Base article may help:"
+    )
 
 
 def is_fallback_result(result: dict | None) -> bool:
@@ -2982,7 +3063,19 @@ def tokenize_for_knowledge_match(value):
         if len(token) <= 1:
             continue
 
-        tokens.add(word_map.get(token, token))
+        mapped = word_map.get(token)
+
+        if mapped is None:
+            # Light plural -> singular normalisation so e.g. "bottle" (a
+            # vision-detected object) and "bottles" (how an article's
+            # content happens to word it) count as the same token. word_map
+            # above still takes priority for irregular cases.
+            if len(token) > 3 and token.endswith("s") and not token.endswith(("ss", "us", "is")):
+                mapped = token[:-1]
+            else:
+                mapped = token
+
+        tokens.add(mapped)
 
     return tokens
 
@@ -3026,7 +3119,7 @@ def calculate_article_match_score(question, article):
     title = str(article.get("title") or "").lower()
     category = str(article.get("category") or "").lower()
     sub_category = str(article.get("sub_category") or "").lower()
-    content = str(article.get("content") or "").lower()
+    content = normalize_article_html_for_parsing(article.get("content")).lower()
 
     title_tokens = tokenize_for_knowledge_match(title)
     category_tokens = tokenize_for_knowledge_match(category)
@@ -3070,8 +3163,44 @@ def calculate_article_match_score(question, article):
     return weak_score
 
 
+def normalize_article_html_for_parsing(content):
+    """
+    Article content is authored in a Jodit rich-text editor and stored as
+    HTML (see AddArticle.jsx/EditArticle.jsx). Block-level tags like </p>,
+    <br>, </li> don't contain literal newline characters, so a numbered list
+    typed as "<p>1. Restock...</p><p>2. Click...</p>" has NO \n between "1."
+    and "2." -- silently breaking any line-based regex parsing (e.g.
+    parse_article_steps() below, or the KB search token overlap functions
+    tokenizing raw HTML tag noise like "li"/"div"/"href" as if they were
+    real words).
+
+    Converts the HTML into plain text the way a person reading it would see
+    it: inline <img> tags become the [IMAGE]url marker parse_article_steps()
+    already knows how to extract (done BEFORE the generic tag-strip so it
+    isn't lost), block-level boundaries become real newlines, everything
+    else is stripped, and HTML entities (&nbsp;, &amp;, ...) are unescaped.
+    """
+    text = str(content or "")
+
+    text = re.sub(
+        r'<img[^>]*\bsrc=["\']([^"\']+)["\'][^>]*>',
+        lambda m: f"[IMAGE]{m.group(1)}",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    text = re.sub(r'<\s*br\s*/?>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'</\s*(p|div|li|h[1-6]|tr)\s*>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'<\s*li[^>]*>', '\n', text, flags=re.IGNORECASE)
+
+    text = re.sub(r'<[^>]+>', ' ', text)
+    text = html_lib.unescape(text)
+
+    return text
+
+
 def parse_article_steps(content):
-    text = str(content or "").strip()
+    text = normalize_article_html_for_parsing(content).strip()
     if not text:
         return []
 
@@ -3247,17 +3376,54 @@ def search_knowledge_base_articles(question, limit=1):
     return scored_results[:limit]
 
 
-def search_related_knowledge_base_articles(question, limit=3, min_score=0.34):
+def search_related_knowledge_base_articles(question, limit=3, min_score=0.08, min_overlap=2):
     """
     Level-2 retrieval: articles that are topically related but do not clear
     the strict 100%-confidence bar used by search_knowledge_base_articles().
     Used to show clickable "related knowledge" cards before escalating,
     instead of jumping straight from "not confident" to a team lead ticket.
 
-    min_score=0.34 is a tunable heuristic (roughly: at least a third of the
-    question's meaningful tokens appear somewhere in the article's
-    title/category/subcategory/content) chosen to avoid surfacing dozens of
-    low-quality/noisy matches.
+    Scored with IDF-weighted cosine similarity (bag-of-words, binary term
+    presence), not a plain token-overlap ratio:
+    - A plain ratio (overlap_count / len(q_tokens)) badly under-scores
+      image+text questions, since build_vision_augmented_question() appends
+      several vision-detected words that may not appear in ANY article,
+      diluting a real match (e.g. "bottle", "return") toward zero just
+      because the combined question+image search text is long.
+    - Scoring plain overlap COUNT against a capped denominator instead (an
+      earlier version of this function) overcorrects: any article sharing a
+      handful of tokens with the query maxes out near 99% regardless of how
+      generic those tokens are, so a long, broad document (e.g. a general
+      onboarding checklist) that incidentally touches lots of everyday
+      vocabulary outranks the actual specific article just by sheer size.
+    - Weighting overlap by rarity (IDF) alone still doesn't fully fix that:
+      an article matching many moderately-common words can still out-sum an
+      article matching fewer highly-specific ones.
+    - Cosine similarity fixes both at once: each article is also treated as
+      a vector over ITS OWN full token set (not just the overlapping terms),
+      so a broad/long document has a larger vector norm -- a few incidental
+      matches then count for less of that document's total "mass" -- while a
+      document that is mostly ABOUT the matched terms scores highly even if
+      it only shares a couple of very distinctive words with the query.
+    - But whole-document cosine has its own failure mode on THIS Knowledge
+      Base: articles here are often one long multi-step SOP covering several
+      distinct procedures (e.g. "Kiosk Closing Check List" covers stocktake,
+      cash counting, equipment shutdown... all in one article). A query
+      matching ONE step gets diluted by every OTHER unrelated step in that
+      same document's vector norm, even though the article genuinely
+      contains the right answer. So each article is scored per SEGMENT
+      (title/category/subcategory as one segment, then each numbered step
+      parsed by parse_article_steps() as its own segment) and the article's
+      score is the BEST segment match, not the whole document at once.
+
+    NOTE ON SCALE: cosine similarity over sparse bag-of-words vectors sits
+    much lower than the old overlap-ratio score -- a genuinely correct match
+    typically lands around 0.08-0.15, not 0.3+. min_score=0.08 is a starting
+    point simulated against representative sample data, not this KB's real
+    content/size; min_overlap (>=2 real overlapping tokens) is the primary
+    noise guard, so treat min_score mainly as a floor against near-zero
+    coincidental matches, and re-tune both against real usage if related
+    results are consistently too sparse or too noisy.
     """
     conn = None
     cursor = None
@@ -3291,16 +3457,112 @@ def search_related_knowledge_base_articles(question, limit=3, min_score=0.34):
         if conn:
             conn.close()
 
-    scored_results = []
-    for article in articles:
-        score = calculate_article_match_score(question, article)
+    question_text = clean_question(question).lower()
+    q_tokens = tokenize_for_knowledge_match(question_text)
 
-        if min_score <= score < 1.0:
+    if not q_tokens or not articles:
+        return []
+
+    article_token_sets = []
+    for article in articles:
+        tokens = (
+            tokenize_for_knowledge_match(str(article.get("title") or ""))
+            | tokenize_for_knowledge_match(str(article.get("category") or ""))
+            | tokenize_for_knowledge_match(str(article.get("sub_category") or ""))
+            | tokenize_for_knowledge_match(normalize_article_html_for_parsing(article.get("content")))
+        )
+        article_token_sets.append((article, tokens))
+
+    total_articles = len(article_token_sets)
+
+    # Document frequency across the WHOLE Knowledge Base vocabulary (every
+    # article's tokens, not just the question's), so IDF weight -- and each
+    # article's own vector norm below -- reflect true rarity/commonness.
+    global_doc_frequency = {}
+    for _, tokens in article_token_sets:
+        for token in tokens:
+            global_doc_frequency[token] = global_doc_frequency.get(token, 0) + 1
+    for token in q_tokens:
+        global_doc_frequency.setdefault(token, 0)
+
+    def idf(token):
+        return math.log((total_articles + 1) / (global_doc_frequency[token] + 1)) + 1.0
+
+    query_norm = math.sqrt(sum(idf(token) ** 2 for token in q_tokens)) or 1.0
+
+    # Image-only searches (just the cleaned detected-object terms, e.g.
+    # "bottle return") are inherently short -- requiring the full min_overlap
+    # on a 1-2 token query is an unreasonably high bar (it would demand every
+    # single word literally appear in the article). Only enforce the stricter
+    # floor once the query has enough tokens for it to mean something.
+    required_overlap = 1 if len(q_tokens) <= 2 else min(min_overlap, len(q_tokens))
+
+    scored_results = []
+    for article, _ in article_token_sets:
+        best_score = 0.0
+
+        for segment_text in build_article_search_segments(article):
+            segment_tokens = tokenize_for_knowledge_match(segment_text)
+            overlap = q_tokens & segment_tokens
+
+            if len(overlap) < required_overlap:
+                continue
+
+            dot_product = sum(idf(token) ** 2 for token in overlap)
+            segment_norm = math.sqrt(sum(idf(token) ** 2 for token in segment_tokens)) or 1.0
+            cosine = dot_product / (query_norm * segment_norm)
+
+            if cosine > best_score:
+                best_score = cosine
+
+        score = round(min(best_score, 0.99), 4)
+
+        if score >= min_score:
             scored_results.append(build_article_ai_result(article, question, score))
 
     scored_results = sorted(scored_results, key=lambda item: item.get("score", 0.0), reverse=True)
 
     return scored_results[:limit]
+
+
+def build_article_search_segments(article):
+    """
+    Split an article into independently-scorable text segments for the
+    related-knowledge search above: title/category/subcategory as one
+    segment, then each numbered step (parsed the same way parse_article_steps
+    already does for rendering) as its own segment, plus any free-text lead-in
+    before the first numbered step (e.g. a "Stocktake:" sub-heading). A query
+    is scored against whichever ONE segment matches best, so a long multi-step
+    SOP isn't penalized for containing many OTHER unrelated steps.
+    """
+    title = str(article.get("title") or "")
+    category = str(article.get("category") or "")
+    sub_category = str(article.get("sub_category") or "")
+    raw_content = article.get("content")
+    plain_content = normalize_article_html_for_parsing(raw_content)
+
+    segments = [f"{title} {category} {sub_category}"]
+
+    # parse_article_steps() normalizes internally too (redundant but
+    # idempotent/harmless); the lead-in slice below needs to search the SAME
+    # normalized plain text so its offsets line up with real content.
+    steps = parse_article_steps(raw_content)
+
+    if steps:
+        first_step_match = re.search(
+            r"(?:^|\n)\s*(?:step\s*)?\d+\s*[\).:-]", plain_content, re.IGNORECASE
+        )
+        if first_step_match and first_step_match.start() > 0:
+            lead_in = plain_content[:first_step_match.start()].strip()
+            if lead_in:
+                segments.append(lead_in)
+
+        for step in steps:
+            segments.append(str(step.get("answer") or step.get("content") or ""))
+    else:
+        segments.append(plain_content)
+
+    return segments
 
 def process_question(question, context=None):
     question = clean_question(question)
@@ -3812,18 +4074,10 @@ def register():
 
         return jsonify({
             "message": (
-                (
-                    "Registration submitted successfully. Presentation demo email #1 was simulated. "
-                    "Your account is pending Manager / Team Leader review."
-                )
-                if PRESENTATION_DEMO_MODE
-                else (
-                    "Registration submitted successfully. A confirmation email has been sent. "
-                    "Your account is pending Manager / Team Leader review, normally within "
-                    f"{REGISTRATION_REVIEW_HOURS} hours."
-                )
+                "Registration submitted successfully. A confirmation email has been sent. "
+                "Your account is pending Manager / Team Leader review, normally within "
+                f"{REGISTRATION_REVIEW_HOURS} hours."
             ),
-            "presentation_demo_mode": PRESENTATION_DEMO_MODE,
             "account_status": "pending",
             "review_within_hours": REGISTRATION_REVIEW_HOURS,
             "email_sent": True,
@@ -4207,8 +4461,6 @@ def list_registration_keys():
         for item in keys:
             raw_key = str(item.pop("key_code", "") or "")
             item["key_preview"] = ("••••••" + raw_key[-4:]) if raw_key else "-"
-            if PRESENTATION_DEMO_MODE:
-                item["demo_key"] = raw_key
             item["failed_attempts"] = int(item.get("failed_attempts") or 0)
             for field in ["assigned_at", "email_sent_at", "last_failed_at", "created_at", "used_at", "revoked_at"]:
                 item[field] = format_datetime_value(item.get(field))
@@ -4465,13 +4717,7 @@ def login():
                     "account_status": "pending",
                     "registration_key_required": True,
                     "attempts_remaining": max(0, 3 - failed_attempts),
-                    "message": (
-                        "Your registration has been approved. Presentation demo mode is active: "
-                        "enter the one-time key shown in User Management to activate your account."
-                        if PRESENTATION_DEMO_MODE
-                        else "Your registration has been approved. Enter the one-time registration key sent to your email to activate your account."
-                    ),
-                    "presentation_demo_mode": PRESENTATION_DEMO_MODE
+                    "message": "Your registration has been approved. Enter the one-time registration key sent to your email to activate your account."
                 }), 403
 
             return jsonify({
@@ -4837,16 +5083,10 @@ def resend_activation_key():
 
         return jsonify({
             "message": (
-                "Presentation demo email simulated. Use the demo activation key shown in User Management."
-                if PRESENTATION_DEMO_MODE and email_sent
-                else (
-                    "The registration key has been resent to your email."
-                    if email_sent
-                    else "The registration key could not be emailed right now. Please contact your manager or team leader."
-                )
+                "The registration key has been resent to your email."
+                if email_sent
+                else "The registration key could not be emailed right now. Please contact your manager or team leader."
             ),
-            "presentation_demo_mode": PRESENTATION_DEMO_MODE,
-            "demo_registration_key": key_row["key_code"] if PRESENTATION_DEMO_MODE else None,
             "email_sent": bool(email_sent)
         }), 200 if email_sent else 503
 
@@ -6059,13 +6299,38 @@ def test_ai_settings():
 
 
 # =========================
-# NOTION SYNC ROUTES
+# NOTION SYNC ROUTES (OAuth "Connect Notion" flow)
 #
 # Reuses the exact same encryption service already built for AI provider
 # keys (ai_provider_service.encrypt_api_key/decrypt_api_key/mask_api_key)
 # instead of a second encryption scheme, and the same manager-only access
-# check pattern used everywhere else in this file.
+# check pattern used everywhere else in this file. The OAuth callback is the
+# one exception: Notion redirects the browser there directly (no auth
+# header, no JSON body possible), so it authenticates via possession of the
+# one-time `state` token instead -- that state was only ever handed out to
+# an already-manager-authenticated actor by /oauth/start.
 # =========================
+def _notify_managers_of_notion_update(cursor, title, article_id, actor_id):
+    cursor.execute("""
+        SELECT u.user_id
+        FROM users u
+        JOIN roles r ON u.role_id = r.role_id
+        WHERE r.role_name = 'manager' AND u.status = 'active'
+    """)
+    managers = cursor.fetchall() or []
+
+    for manager in managers:
+        manager_id = manager["user_id"] if isinstance(manager, dict) else manager[0]
+        create_notification_safe(
+            user_id=manager_id,
+            title="Notion content changed",
+            detail=f'"{title}" was edited in Notion. Review it in Notion Sync to update or keep the current version.',
+            notification_type="system",
+            related_id=article_id,
+            created_by=actor_id,
+        )
+
+
 @app.route("/api/notion-sync/config", methods=["GET"])
 def get_notion_sync_config():
     if not NOTION_SYNC_SERVICE_AVAILABLE:
@@ -6094,27 +6359,29 @@ def get_notion_sync_config():
             conn.close()
 
 
-@app.route("/api/notion-sync/config", methods=["POST"])
-def save_notion_sync_config():
+@app.route("/api/notion-sync/oauth/start", methods=["POST"])
+def start_notion_oauth():
     if not NOTION_SYNC_SERVICE_AVAILABLE:
         return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
 
     data = request.get_json(silent=True) or {}
+    actor_id = data.get("user_id")
 
-    actor_id = data.get("updated_by") or data.get("user_id")
-    raw_token = str(data.get("token", "")).strip()
-    raw_source = str(data.get("source", "")).strip()
+    # Fail here with a clear message instead of silently building an
+    # authorize URL with an empty client_id and letting Notion's own API
+    # return a cryptic "client_id should be a string" error after the
+    # browser has already navigated away.
+    if not os.getenv("NOTION_OAUTH_CLIENT_ID"):
+        return jsonify({
+            "success": False,
+            "message": "Notion OAuth is not configured on this server yet (NOTION_OAUTH_CLIENT_ID is missing). Set it in Railway's Variables tab for this exact service, then redeploy."
+        }), 500
 
-    if not raw_token:
-        return jsonify({"success": False, "message": "Notion integration token is required."}), 400
-
-    if not raw_source:
-        return jsonify({"success": False, "message": "Notion page/database URL or ID is required."}), 400
-
-    source_id = notion_sync_service.extract_notion_id(raw_source)
-
-    if not source_id:
-        return jsonify({"success": False, "message": "Could not read a valid Notion ID from that URL/ID."}), 400
+    if not os.getenv("NOTION_OAUTH_CLIENT_SECRET"):
+        return jsonify({
+            "success": False,
+            "message": "Notion OAuth is not configured on this server yet (NOTION_OAUTH_CLIENT_SECRET is missing). Set it in Railway's Variables tab for this exact service, then redeploy."
+        }), 500
 
     conn = None
     cursor = None
@@ -6128,28 +6395,22 @@ def save_notion_sync_config():
 
         if not is_ai_settings_manager(cursor, actor_id):
             conn.rollback()
-            return jsonify({"success": False, "message": "Only managers can update Notion sync settings."}), 403
+            return jsonify({"success": False, "message": "Only managers can connect Notion."}), 403
 
-        notion_sync_service.save_notion_config(cursor, raw_token, source_id, raw_source, actor_id)
+        state = notion_sync_service.create_oauth_state(cursor, actor_id)
         conn.commit()
 
-        add_audit_log(
-            actor_id=actor_id,
-            action="Updated Notion sync settings",
-            module="Notion Sync",
-            description=f"Notion source set to {source_id}."
-        )
+        redirect_uri = f"{notion_sync_service.get_public_base_url()}/api/notion-sync/oauth/callback"
+        authorize_url = notion_sync_service.build_authorize_url(redirect_uri, state)
 
-        config = notion_sync_service.get_notion_public_config(cursor)
-
-        return jsonify({"success": True, "message": "Notion sync settings saved successfully.", "config": config}), 200
+        return jsonify({"success": True, "authorizeUrl": authorize_url}), 200
 
     except Exception as error:
         if conn:
             conn.rollback()
 
-        print("SAVE NOTION SYNC CONFIG ERROR:", error)
-        return jsonify({"success": False, "message": "Failed to save Notion sync settings."}), 500
+        print("START NOTION OAUTH ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to start Notion connection."}), 500
 
     finally:
         if cursor:
@@ -6158,16 +6419,165 @@ def save_notion_sync_config():
             conn.close()
 
 
-@app.route("/api/notion-sync/test", methods=["POST"])
-def test_notion_sync():
+@app.route("/api/notion-sync/oauth/diagnostics", methods=["GET"])
+def notion_oauth_diagnostics():
+    """
+    Lets an admin confirm the OAuth env vars are actually visible to THIS
+    running server process -- never returns the secret values themselves,
+    only whether they're set, plus the exact redirect_uri this server will
+    send to Notion (must match a Redirect URI registered on the Notion
+    integration EXACTLY, or Notion rejects the request).
+    """
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
+
+    redirect_uri = f"{notion_sync_service.get_public_base_url()}/api/notion-sync/oauth/callback"
+
+    return jsonify({
+        "success": True,
+        "clientIdSet": bool(os.getenv("NOTION_OAUTH_CLIENT_ID")),
+        "clientSecretSet": bool(os.getenv("NOTION_OAUTH_CLIENT_SECRET")),
+        "frontendPublicUrlSet": bool(os.getenv("FRONTEND_PUBLIC_URL")),
+        "redirectUriThisServerWillUse": redirect_uri,
+    }), 200
+
+
+@app.route("/api/notion-sync/oauth/callback", methods=["GET"])
+def notion_oauth_callback():
+    frontend_url = os.getenv("FRONTEND_PUBLIC_URL", "").rstrip("/")
+    notion_sync_page = f"{frontend_url}/admin/notion-sync" if frontend_url else None
+
+    def redirect_with(status_param):
+        if notion_sync_page:
+            return redirect(f"{notion_sync_page}?{status_param}")
+        # No FRONTEND_PUBLIC_URL configured -- fall back to a plain response
+        # rather than a broken redirect to an empty URL.
+        return jsonify({"success": "connected" in status_param, "message": status_param}), 200
+
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return redirect_with("error=service_unavailable")
+
+    code = request.args.get("code")
+    state = request.args.get("state")
+
+    if not code or not state:
+        return redirect_with("error=missing_code_or_state")
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = notion_sync_service.get_db_connection()
+        conn.start_transaction()
+        cursor = conn.cursor(dictionary=True)
+
+        notion_sync_service.ensure_notion_sync_tables(cursor)
+
+        actor_id = notion_sync_service.consume_oauth_state(cursor, state)
+        conn.commit()
+
+        if not actor_id:
+            return redirect_with("error=invalid_or_expired_state")
+
+        redirect_uri = f"{notion_sync_service.get_public_base_url()}/api/notion-sync/oauth/callback"
+        token_response = notion_sync_service.exchange_oauth_code_for_token(code, redirect_uri)
+
+        access_token = token_response.get("access_token")
+        workspace_id = token_response.get("workspace_id")
+        workspace_name = token_response.get("workspace_name") or "Notion workspace"
+        workspace_icon = token_response.get("workspace_icon")
+        bot_id = token_response.get("bot_id")
+
+        if not access_token:
+            return redirect_with("error=token_exchange_failed")
+
+        conn2 = notion_sync_service.get_db_connection()
+        cursor2 = conn2.cursor(dictionary=True)
+        notion_sync_service.save_notion_oauth_config(
+            cursor2, access_token, workspace_id, workspace_name, workspace_icon, bot_id, actor_id
+        )
+        conn2.commit()
+        cursor2.close()
+        conn2.close()
+
+        add_audit_log(
+            actor_id=actor_id,
+            action="Connected Notion workspace",
+            module="Notion Sync",
+            description=f"Connected workspace: {workspace_name}."
+        )
+
+        return redirect_with("connected=1")
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("NOTION OAUTH CALLBACK ERROR:", error)
+        return redirect_with("error=connection_failed")
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/notion-sync/disconnect", methods=["POST"])
+def disconnect_notion_sync():
     if not NOTION_SYNC_SERVICE_AVAILABLE:
         return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
 
     data = request.get_json(silent=True) or {}
-
     actor_id = data.get("user_id")
-    raw_token = str(data.get("token", "")).strip()
-    raw_source = str(data.get("source", "")).strip()
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = notion_sync_service.get_db_connection()
+        conn.start_transaction()
+        cursor = conn.cursor(dictionary=True)
+
+        notion_sync_service.ensure_notion_sync_tables(cursor)
+
+        if not is_ai_settings_manager(cursor, actor_id):
+            conn.rollback()
+            return jsonify({"success": False, "message": "Only managers can disconnect Notion."}), 403
+
+        notion_sync_service.disconnect_notion(cursor)
+        conn.commit()
+
+        add_audit_log(
+            actor_id=actor_id,
+            action="Disconnected Notion workspace",
+            module="Notion Sync",
+            description="Notion workspace disconnected."
+        )
+
+        return jsonify({"success": True, "message": "Notion disconnected."}), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("DISCONNECT NOTION SYNC ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to disconnect Notion."}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/notion-sync/check", methods=["POST"])
+def check_notion_sync():
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
+
+    data = request.get_json(silent=True) or {}
+    actor_id = data.get("user_id")
 
     conn = None
     cursor = None
@@ -6179,95 +6589,186 @@ def test_notion_sync():
         notion_sync_service.ensure_notion_sync_tables(cursor)
 
         if not is_ai_settings_manager(cursor, actor_id):
-            return jsonify({"success": False, "message": "Only managers can test Notion sync."}), 403
+            return jsonify({"success": False, "message": "Only managers can check for Notion updates."}), 403
 
-        if not raw_token or not raw_source:
-            existing = notion_sync_service.get_active_notion_config(cursor)
+        raw_token = notion_sync_service.get_active_notion_access_token(cursor)
 
-            if not existing:
-                return jsonify({"success": False, "message": "No Notion sync source is configured yet."}), 400
+        if not raw_token:
+            return jsonify({"success": False, "message": "No Notion workspace is connected yet."}), 400
 
-            raw_token = ai_provider_service.decrypt_api_key(existing["encrypted_notion_token"])
-            source_id = existing["source_id"]
-        else:
-            source_id = notion_sync_service.extract_notion_id(raw_source)
+    except Exception as error:
+        print("CHECK NOTION SYNC SETUP ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to start checking Notion for updates."}), 500
 
-            if not source_id:
-                return jsonify({"success": False, "message": "Could not read a valid Notion ID from that URL/ID."}), 400
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
+    result = notion_sync_service.check_for_notion_updates(raw_token, actor_id, UPLOAD_FOLDER)
+
+    if result.get("flaggedItems"):
+        notify_conn = None
+        notify_cursor = None
         try:
-            pages = notion_sync_service.list_notion_pages(raw_token, source_id)
-            return jsonify({
-                "success": True,
-                "message": f"Notion connected successfully. Found {len(pages)} page(s)."
-            }), 200
-        except Exception as call_error:
-            print("NOTION TEST CALL ERROR:", call_error)
-            return jsonify({
-                "success": False,
-                "message": "Notion connection failed. Please make sure the page/database is shared with your integration, and the token is correct."
-            }), 400
-
-    except Exception as error:
-        print("TEST NOTION SYNC ERROR:", error)
-        return jsonify({"success": False, "message": "Notion connection failed."}), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-
-@app.route("/api/notion-sync/run", methods=["POST"])
-def run_notion_sync():
-    if not NOTION_SYNC_SERVICE_AVAILABLE:
-        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
-
-    data = request.get_json(silent=True) or {}
-    actor_id = data.get("user_id")
-
-    conn = None
-    cursor = None
-
-    try:
-        conn = notion_sync_service.get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-
-        notion_sync_service.ensure_notion_sync_tables(cursor)
-
-        if not is_ai_settings_manager(cursor, actor_id):
-            return jsonify({"success": False, "message": "Only managers can run Notion sync."}), 403
-
-        config = notion_sync_service.get_active_notion_config(cursor)
-
-        if not config:
-            return jsonify({"success": False, "message": "No Notion sync source is configured yet."}), 400
-
-        raw_token = ai_provider_service.decrypt_api_key(config["encrypted_notion_token"])
-
-    except Exception as error:
-        print("RUN NOTION SYNC SETUP ERROR:", error)
-        return jsonify({"success": False, "message": "Failed to start Notion sync."}), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-    result = notion_sync_service.sync_notion_source(
-        raw_token, config["source_id"], actor_id, UPLOAD_FOLDER
-    )
+            notify_conn = notion_sync_service.get_db_connection()
+            notify_cursor = notify_conn.cursor(dictionary=True)
+            for item in result["flaggedItems"]:
+                _notify_managers_of_notion_update(
+                    notify_cursor, item["title"], item["article_id"], actor_id
+                )
+            notify_conn.commit()
+        except Exception as notify_error:
+            print("NOTION UPDATE NOTIFICATION ERROR:", notify_error)
+        finally:
+            if notify_cursor:
+                notify_cursor.close()
+            if notify_conn:
+                notify_conn.close()
 
     add_audit_log(
         actor_id=actor_id,
-        action="Ran Notion sync",
+        action="Checked Notion for updates",
         module="Notion Sync",
-        description=f"Imported {result['imported']}, updated {result['updated']}, skipped {result['skipped']}, failed {result['failed']}."
+        description=f"New {result['new']}, flagged {result['flagged']}, unchanged {result['unchanged']}, failed {result['failed']}."
     )
 
     return jsonify({"success": result["status"] == "completed", **result}), 200
+
+
+@app.route("/api/notion-sync/pending-updates", methods=["GET"])
+def get_notion_pending_updates():
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = notion_sync_service.get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        notion_sync_service.ensure_notion_sync_tables(cursor)
+        pending = notion_sync_service.list_pending_updates(cursor)
+
+        return jsonify({"success": True, "pending": pending}), 200
+
+    except Exception as error:
+        print("GET NOTION PENDING UPDATES ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to load pending Notion updates."}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/notion-sync/pending-updates/<int:pending_id>/apply", methods=["POST"])
+def apply_notion_pending_update(pending_id):
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
+
+    data = request.get_json(silent=True) or {}
+    actor_id = data.get("user_id")
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = notion_sync_service.get_db_connection()
+        conn.start_transaction()
+        cursor = conn.cursor(dictionary=True)
+
+        notion_sync_service.ensure_notion_sync_tables(cursor)
+
+        if not is_ai_settings_manager(cursor, actor_id):
+            conn.rollback()
+            return jsonify({"success": False, "message": "Only managers can approve Notion updates."}), 403
+
+        applied = notion_sync_service.apply_pending_update(cursor, pending_id, actor_id)
+
+        if not applied:
+            conn.rollback()
+            return jsonify({"success": False, "message": "This update was already resolved."}), 409
+
+        conn.commit()
+
+        add_audit_log(
+            actor_id=actor_id,
+            action="Applied Notion update",
+            module="Notion Sync",
+            description=f"Applied pending Notion update #{pending_id}."
+        )
+
+        return jsonify({"success": True, "message": "Article updated to the latest Notion version."}), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("APPLY NOTION PENDING UPDATE ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to apply this update."}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/notion-sync/pending-updates/<int:pending_id>/dismiss", methods=["POST"])
+def dismiss_notion_pending_update(pending_id):
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
+
+    data = request.get_json(silent=True) or {}
+    actor_id = data.get("user_id")
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = notion_sync_service.get_db_connection()
+        conn.start_transaction()
+        cursor = conn.cursor(dictionary=True)
+
+        notion_sync_service.ensure_notion_sync_tables(cursor)
+
+        if not is_ai_settings_manager(cursor, actor_id):
+            conn.rollback()
+            return jsonify({"success": False, "message": "Only managers can dismiss Notion updates."}), 403
+
+        dismissed = notion_sync_service.dismiss_pending_update(cursor, pending_id, actor_id)
+
+        if not dismissed:
+            conn.rollback()
+            return jsonify({"success": False, "message": "This update was already resolved."}), 409
+
+        conn.commit()
+
+        add_audit_log(
+            actor_id=actor_id,
+            action="Dismissed Notion update",
+            module="Notion Sync",
+            description=f"Kept current version over pending Notion update #{pending_id}."
+        )
+
+        return jsonify({"success": True, "message": "Kept the current version."}), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("DISMISS NOTION PENDING UPDATE ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to dismiss this update."}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 
 @app.route("/api/notion-sync/jobs", methods=["GET"])
@@ -6480,8 +6981,11 @@ def chat():
     uploaded_chat_image_filename = ""
 
     try:
+        original_question = ""
+
         if request.content_type and request.content_type.startswith("multipart/form-data"):
             question = request.form.get("question", "")
+            original_question = question
             uploaded_chat_image = request.files.get("image") or request.files.get("attachment")
             uploaded_chat_image_filename = uploaded_chat_image.filename if uploaded_chat_image else ""
 
@@ -6547,6 +7051,12 @@ def chat():
                         vision_result = analyze_uploaded_image_with_vision(local_image_path, file_hash)
                         used_vision = vision_result is not None
 
+                        if used_vision and vision_result.get("isWorkRelated"):
+                            # So a later text-only follow-up in this same
+                            # conversation ("which article should I refer")
+                            # can still resolve "this" to this photo.
+                            remember_last_image_context(data, vision_result)
+
                     if used_vision and not vision_result.get("isWorkRelated") and vision_result.get("confidence", 0) >= 0.55:
                         rejection_result = build_image_irrelevant_response(vision_result)
 
@@ -6567,13 +7077,84 @@ def chat():
                     # pipeline (which only escalates every plain photo, since
                     # it never finds an exact text match for "").
                     if not had_real_question and (not used_vision or vision_result.get("isWorkRelated")):
+                        # Image-only upload: the image itself IS the query.
+                        # Use the same cleaned/deduped detected-object terms
+                        # as the text+image path (build_vision_augmented_question
+                        # with an empty question just returns those terms) and
+                        # run it through the same 3-tier retrieval used for a
+                        # typed question -- confident match answers directly,
+                        # related-but-uncertain shows clickable cards, and only
+                        # when NEITHER exists do we fall back to asking what
+                        # the crew member wants to know. Per spec, a bare
+                        # image with no useful match never auto-escalates.
+                        detected_terms = build_vision_augmented_question("", vision_result)
+
                         kb_hint = None
-                        detected_terms = " ".join((vision_result or {}).get("detectedObjects") or [])
+                        related_options = []
 
                         if detected_terms:
                             kb_hint = search_knowledge_base_articles(detected_terms, limit=1)
 
-                        clarification_result = build_image_only_clarification_response(vision_result, kb_hint)
+                            if not kb_hint:
+                                related_articles = search_related_knowledge_base_articles(detected_terms, limit=3)
+                                seen_related_titles = set()
+
+                                for item in related_articles:
+                                    for option in build_answer_options(detected_terms, None, item):
+                                        title_key = str(option.get("title", "")).lower().strip()
+                                        if title_key and title_key not in seen_related_titles:
+                                            seen_related_titles.add(title_key)
+                                            related_options.append(option)
+
+                        if kb_hint:
+                            # Level 1: confident match -- answer directly,
+                            # same as a typed question would.
+                            clear_ai_fail_count(data, question)
+                            remember_chat_context(data, kb_hint)
+                            log_request(
+                                detected_terms,
+                                result=kb_hint,
+                                user_id=data.get("user_id") or data.get("userId")
+                            )
+
+                            kb_hint["final_source"] = kb_hint.get("source")
+                            kb_hint["served_by"] = "image_only_knowledge_base"
+
+                            return jsonify(kb_hint), 200
+
+                        if related_options:
+                            # Level 2: related but not 100% confident.
+                            related_message = build_related_knowledge_message(question, related_options)
+
+                            related_result = standardize_ai_response({
+                                "question": detected_terms,
+                                "type": "options",
+                                "reply": related_message,
+                                "answer": related_message,
+                                "score": related_options[0].get("confidence", 0.0),
+                                "confidence": related_options[0].get("confidence", 0.0),
+                                "confidence_label": get_confidence_label(related_options[0].get("confidence", 0.0)),
+                                "source": "related_knowledge",
+                                "fallback": False,
+                                "escalation_ready": False,
+                                "escalation_required": False,
+                                "options": related_options,
+                            })
+
+                            log_request(
+                                detected_terms,
+                                result=related_result,
+                                user_id=data.get("user_id") or data.get("userId")
+                            )
+
+                            related_result["final_source"] = "related_knowledge"
+                            related_result["served_by"] = "related_knowledge"
+
+                            return jsonify(related_result), 200
+
+                        # Level 3: nothing found. Ask what they want to know
+                        # instead of escalating a bare, unmatched image.
+                        clarification_result = build_image_only_clarification_response(vision_result, None)
 
                         log_request(
                             question,
@@ -6604,6 +7185,19 @@ def chat():
         else:
             data = request.get_json(silent=True) or {}
             question = data.get("question", "")
+            original_question = question
+
+            # No new image on THIS request, but if one was uploaded earlier
+            # in this same conversation (within the TTL), a follow-up like
+            # "which article should I refer" or "where do I store this"
+            # should still resolve "this" to that photo, not just when the
+            # image and question arrive together in one request.
+            if question and question.strip():
+                remembered_vision_result = get_remembered_image_context(data)
+
+                if remembered_vision_result:
+                    question = build_vision_augmented_question(question, remembered_vision_result)
+                    print("REUSED LAST IMAGE CONTEXT FOR FOLLOW-UP QUESTION:", question)
 
         question = clean_question(question)
         q_lower = question.lower()
@@ -7005,10 +7599,7 @@ def chat():
                         related_options.append(option)
 
             if related_options:
-                related_message = (
-                    "I couldn't confirm the exact procedure from the information "
-                    "provided, but these Knowledge Base articles may help:"
-                )
+                related_message = build_related_knowledge_message(original_question, related_options)
 
                 result = standardize_ai_response({
                     "question": question,
@@ -11102,14 +11693,7 @@ def approve_registration_request(user_id):
         )
 
         return jsonify({
-            "message": (
-                "Registration approved. Presentation demo email #2 was simulated. "
-                "Use the demo key shown below to continue the activation flow."
-                if PRESENTATION_DEMO_MODE
-                else "Registration approved. The one-time registration key was generated and emailed to the user."
-            ),
-            "presentation_demo_mode": PRESENTATION_DEMO_MODE,
-            "demo_registration_key": key_code if PRESENTATION_DEMO_MODE else None,
+            "message": "Registration approved. The one-time registration key was generated and emailed to the user.",
             "account_status": "pending",
             "activation_key_issued": True,
             "key_id": key_id,
@@ -11247,19 +11831,6 @@ def test_system_email():
 
         if not recipient or not is_valid_email_format(recipient):
             return jsonify({"message": "A valid test recipient email is required."}), 400
-
-        if PRESENTATION_DEMO_MODE:
-            send_email_safe(
-                recipient,
-                "Jungle House AI Wiki - Presentation demo email",
-                "This is a simulated presentation email. No real SMTP message is sent in demo mode.",
-            )
-            return jsonify({
-                "message": f"Presentation demo email simulated successfully for {recipient}.",
-                "configured": True,
-                "email_sent": True,
-                "presentation_demo_mode": True,
-            }), 200
 
         smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com").strip()
         smtp_user = os.getenv("SMTP_USER", "").strip()
