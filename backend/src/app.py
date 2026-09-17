@@ -127,12 +127,28 @@ except Exception as error:
 
 import re
 
+CJK_CHAR_RE = re.compile(r'[一-鿿㐀-䶿豈-﫿]')
+
+
 def is_nonsense(text):
     text = text.strip().lower()
 
     whitelist = ["hi", "hello", "hey", "ok", "thanks"]
 
     if text in whitelist:
+        return False
+
+    # The heuristics below (vowels, a-z letters, "asdf"/"qwer" keyboard-smash
+    # patterns) all assume Latin-alphabet input. Chinese text has no Latin
+    # vowels/letters at all by design, so without this bypass EVERY Chinese
+    # question would be wrongly flagged as nonsense before it ever reached
+    # KB search. Only keep the script-agnostic checks (too-short, spam
+    # repeated characters) for CJK text.
+    if CJK_CHAR_RE.search(text):
+        if len(text) < 2:
+            return True
+        if re.fullmatch(r'(.)\1{3,}', text):
+            return True
         return False
 
     # ❌ too short
@@ -2156,6 +2172,113 @@ def ensure_log_files() -> None:
     except Exception as error:
         print("AI log header migration skipped:", error)
 
+
+# =========================
+# CROSS-LINGUAL RETRIEVAL BRIDGE
+#
+# The Knowledge Base (wiki_article) is English-only, and KB search
+# (search_knowledge_base_articles / search_related_knowledge_base_articles /
+# build_ai_chat_context) matches on English word/token overlap. A Chinese or
+# Bahasa Melayu question has zero token overlap with English article text no
+# matter how relevant the article is, so retrieval silently finds nothing.
+#
+# The functions below detect a non-English question and derive a short
+# English keyword string from it (via the already-configured AI provider)
+# used ONLY to drive retrieval -- the staff member's original question is
+# still what gets logged, escalated, and answered. Everything here fails
+# soft: if detection/translation isn't possible for any reason, callers fall
+# back to the raw original question, which is exactly today's behavior.
+# =========================
+MALAY_MARKER_WORDS = {
+    "yang", "adalah", "ialah", "bagaimana", "macam", "mana", "apa", "apakah",
+    "bila", "bilakah", "kenapa", "mengapa", "kalau", "jika", "boleh", "tak",
+    "tidak", "nak", "mahu", "saya", "awak", "kami", "kita", "dengan", "untuk",
+    "daripada", "cara", "langkah", "tolong", "sila", "di", "ke", "pada",
+    "ini", "itu", "siapa", "berapa",
+}
+
+
+def detect_question_language(text: str) -> str:
+    """
+    Lightweight, dependency-free language guess -- just enough to decide
+    whether the cross-lingual retrieval bridge should run. Not a general
+    purpose language detector.
+
+    Returns "zh" (Chinese, Simplified or Traditional), "ms" (Bahasa
+    Melayu), or "en" (English / anything else / undetermined).
+    """
+    text = str(text or "")
+
+    if CJK_CHAR_RE.search(text):
+        return "zh"
+
+    lowered = re.sub(r"[^a-z\s']", " ", text.lower())
+    tokens = set(lowered.split())
+
+    if not tokens:
+        return "en"
+
+    english_stopwords = {
+        "the", "is", "are", "a", "an", "to", "of", "and", "for", "how",
+        "what", "where", "when", "why", "do", "does", "i", "you", "we",
+        "please", "can",
+    }
+
+    malay_hits = tokens & MALAY_MARKER_WORDS
+
+    # Require at least one distinctive Malay marker word AND no English
+    # stopwords, to avoid false-positives on ordinary short English
+    # questions (many Malay markers, e.g. "di"/"ini", are also short enough
+    # to collide by chance).
+    if malay_hits and not (tokens & english_stopwords):
+        return "ms"
+
+    return "en"
+
+
+def translate_query_to_english_keywords(question: str, detected_language: str) -> str:
+    """
+    Asks the already-configured AI provider for 2-4 short English search
+    keywords capturing the intent of a non-English question -- a cheap,
+    lightweight call, not a full translation. Used only to drive KB
+    retrieval (search_knowledge_base_articles / search_related_knowledge_base_articles /
+    build_ai_chat_context); never shown to the user and never stored as the
+    logged/escalated question.
+
+    Falls back to the raw original question on ANY failure (no AI provider
+    configured, timeout, malformed output) so retrieval still runs the same
+    way it did before this feature existed.
+    """
+    question = str(question or "").strip()
+
+    if not question or detected_language == "en":
+        return question
+
+    if not AI_PROVIDER_SERVICE_AVAILABLE or not ai_provider_service:
+        return question
+
+    try:
+        prompt = (
+            "A retail staff member asked a question in a non-English "
+            "language. Give 2 to 4 short ENGLISH keywords that capture "
+            "what they are asking about, for searching an English-only "
+            "knowledge base. Reply with ONLY the keywords separated by "
+            "spaces -- no punctuation, no explanation, no translation of "
+            "the whole sentence.\n\n"
+            f"Question: {question}"
+        )
+        raw_reply = ai_provider_service.generate_ai_reply(prompt, timeout=8)
+        keywords = re.sub(r"[^\w\s]", " ", str(raw_reply or ""))
+        keywords = " ".join(keywords.split())
+
+        if keywords:
+            return keywords
+    except Exception as error:
+        print("CROSS-LINGUAL KEYWORD BRIDGE ERROR:", error)
+
+    return question
+
+
 def get_last_answer_key(data: dict | None = None) -> str:
     data = data or {}
     user_id = data.get("user_id") or data.get("userId")
@@ -3564,9 +3687,18 @@ def build_article_search_segments(article):
 
     return segments
 
-def process_question(question, context=None):
+def process_question(question, context=None, search_question=None):
+    """
+    `search_question` optionally overrides what drives KB/database/model
+    retrieval below (e.g. English keywords derived from a Chinese/Malay
+    `question` by translate_query_to_english_keywords()), while `question`
+    itself is still what's echoed back, logged, and used to build/rank the
+    selectable answer options. Defaults to `question` when not given, so
+    existing callers behave exactly as before.
+    """
     question = clean_question(question)
     context = normalize_context(context or {})
+    search_term = clean_question(search_question) if search_question else question
 
     if not question:
         return standardize_ai_response({
@@ -3589,26 +3721,26 @@ def process_question(question, context=None):
             "escalation_required": False,
         }), 400
 
-    kb_result = search_knowledge_base_articles(question, limit=1)
-    kb_options = search_knowledge_base_articles(question, limit=10)
+    kb_result = search_knowledge_base_articles(search_term, limit=1)
+    kb_options = search_knowledge_base_articles(search_term, limit=10)
 
-    image_retrieval_result = search_image_retrieval(question, limit=1)
+    image_retrieval_result = search_image_retrieval(search_term, limit=1)
 
     if image_retrieval_result:
         image_retrieval_result = normalize_result(image_retrieval_result, "image_retrieval")
 
-    image_retrieval_options = search_image_retrieval(question, limit=10)
+    image_retrieval_options = search_image_retrieval(search_term, limit=10)
     image_retrieval_options = [
         normalize_result(item, "image_retrieval")
         for item in image_retrieval_options
     ]
 
-    retrieval_result = search_similar_question(question)
+    retrieval_result = search_similar_question(search_term)
 
     if retrieval_result:
         retrieval_result = normalize_result(retrieval_result, "database")
 
-    retrieval_options = search_similar_questions(question, team_lead_only=False, limit=10)
+    retrieval_options = search_similar_questions(search_term, team_lead_only=False, limit=10)
     retrieval_options = [
         normalize_result(item, "database")
         for item in retrieval_options
@@ -3619,7 +3751,7 @@ def process_question(question, context=None):
     if MODEL_AVAILABLE and get_model_answer is not None:
         try:
             model_result = normalize_result(
-                call_model_answer(question, context=context),
+                call_model_answer(search_term, context=context),
                 default_source="pytorch_model"
             )
         except Exception as error:
@@ -6819,7 +6951,14 @@ def get_notion_sync_jobs():
 # confident answer, none of this runs -- zero change to already-working
 # behavior.
 # =========================
-def build_ai_chat_context(question, limit=5, max_chars=6000):
+def build_ai_chat_context(question, limit=5, max_chars=6000, search_question=None):
+    """
+    `search_question` optionally overrides what's used to SCORE/select
+    articles (e.g. the English keywords derived from a Chinese/Malay
+    question by translate_query_to_english_keywords()), while `question`
+    stays whatever the caller wants echoed/logged. Defaults to `question`
+    when not given, so existing callers are unaffected.
+    """
     conn = None
     cursor = None
 
@@ -6839,10 +6978,12 @@ def build_ai_chat_context(question, limit=5, max_chars=6000):
         if conn:
             conn.close()
 
+    scoring_question = search_question if search_question else question
+
     scored_articles = []
 
     for article in articles:
-        score = calculate_article_match_score(question, article)
+        score = calculate_article_match_score(scoring_question, article)
 
         if score > 0:
             scored_articles.append((score, article))
@@ -6886,13 +7027,25 @@ def build_ai_chat_context(question, limit=5, max_chars=6000):
     return "\n".join(chunks), candidate_articles
 
 
-def answer_question_with_ai_provider(question, timeout=25):
+def answer_question_with_ai_provider(question, timeout=25, search_question=None, user_language="en"):
     """
-    Returns {"answer": str, "sourceTitle": str, "article_id": int|None} if
-    the AI provider found a grounded answer in the Knowledge Base, or None
-    if it couldn't (in which case the caller should fall through to the
-    normal escalation flow -- this function never forces an answer that
-    isn't grounded).
+    Returns {"answer": str, "sourceTitle": str, "article_id": int|None,
+    "off_topic": bool} if the AI provider produced a usable reply (either a
+    KB-grounded answer, or -- for non-English questions only -- a polite
+    decline for off-topic banter), or None if it couldn't (in which case the
+    caller should fall through to the normal escalation flow -- this
+    function never forces an answer that isn't grounded, and never forces an
+    escalation either).
+
+    `search_question` is the English keyword string derived from a
+    Chinese/Malay `question` by translate_query_to_english_keywords() --
+    used only to look up Knowledge Base articles, since KB content and its
+    matcher are English-only. Defaults to `question` when not given.
+
+    `user_language` ("en" / "zh" / "ms") controls what language the final
+    answer text is written in, and gives non-English off-topic questions
+    (jokes, small talk) a path to a same-language decline instead of
+    silently escalating to a Team Lead just because nothing matched.
 
     Uses a shorter timeout (25s) than generate_ai_reply()'s own 90s
     default on purpose: this runs inline while a staff member is actively
@@ -6902,20 +7055,45 @@ def answer_question_with_ai_provider(question, timeout=25):
     (a manager clicking a button, not a live conversation) keeps the
     longer default since waiting there is far less disruptive.
     """
-    context_text, candidate_articles = build_ai_chat_context(question)
+    context_text, candidate_articles = build_ai_chat_context(question, search_question=search_question)
 
-    if not context_text.strip():
+    # English behavior is unchanged from before: no KB context at all means
+    # there's nothing to ground an answer in, so skip the AI call and let
+    # the caller fall straight through to normal escalation. Non-English
+    # questions still make this call even with empty context, purely so the
+    # AI can tell -- in the user's own language -- genuine unanswered work
+    # questions (still escalate) apart from off-topic banter (should not).
+    if not context_text.strip() and user_language == "en":
         return None
+
+    language_labels = {
+        "zh": "Chinese (use the SAME Chinese variant -- Simplified or Traditional -- as the staff question)",
+        "ms": "Bahasa Melayu",
+        "en": "English",
+    }
+    language_label = language_labels.get(user_language, "the same language as the staff question")
 
     prompt = f"""You are Jungle House's internal AI Wiki Assistant.
 
 Answer the staff question using ONLY the provided Knowledge Base context
-below. Do not invent company rules or information that isn't in the
-context.
+below. Do not invent company rules, procedures, or information that is not
+written in the context.
 
-If the answer is not clearly found in the context, respond with ONLY this
-exact JSON and nothing else:
-{{"answered": false}}
+The staff question may be written in Chinese, Bahasa Melayu, or English.
+You MUST reply strictly in {language_label} -- the same language the staff
+question below is written in. Never switch languages, and never answer in
+English if the question is not in English.
+
+If the question is unrelated to Jungle House work (e.g. jokes, small talk,
+greetings, general trivia -- something no Knowledge Base article could ever
+answer), respond with ONLY this exact JSON and nothing else:
+{{"answered": false, "off_topic": true, "declineMessage": "..."}}
+("declineMessage" must be a short, polite decline written in {language_label}
+that invites them to ask a work-related question instead.)
+
+If the question IS a genuine work-related question but the answer is not
+clearly found in the context, respond with ONLY this exact JSON:
+{{"answered": false, "off_topic": false}}
 
 If you can answer from the context, respond with ONLY valid JSON in this
 exact shape (no markdown, no text outside the JSON):
@@ -6924,12 +7102,13 @@ exact shape (no markdown, no text outside the JSON):
 Keep the answer SHORT and direct -- one or two sentences maximum, stating
 only the specific fact/step asked for. Do not add extra explanation,
 preamble, or restate the question. "sourceTitle" must be copied exactly
-from one of the "###" headings in the context below.
+from one of the "###" headings in the context below (empty string if there
+is no context).
 
 Staff question: {question}
 
 Knowledge Base context:
-{context_text}
+{context_text if context_text.strip() else "(no matching Knowledge Base articles found)"}
 """
 
     raw_reply = ai_provider_service.generate_ai_reply(prompt, timeout=timeout)
@@ -6940,7 +7119,20 @@ Knowledge Base context:
 
     parsed = json.loads(json_text)
 
-    if not isinstance(parsed, dict) or not parsed.get("answered"):
+    if not isinstance(parsed, dict):
+        return None
+
+    if not parsed.get("answered"):
+        decline_message = str(parsed.get("declineMessage") or "").strip()
+
+        if parsed.get("off_topic") and decline_message:
+            return {
+                "answer": decline_message,
+                "sourceTitle": "",
+                "article_id": None,
+                "off_topic": True,
+            }
+
         return None
 
     answer_text = str(parsed.get("answer") or "").strip()
@@ -6965,6 +7157,7 @@ Knowledge Base context:
         "answer": answer_text,
         "sourceTitle": source_title,
         "article_id": article_id,
+        "off_topic": False,
     }
 
 
@@ -7202,6 +7395,20 @@ def chat():
         question = clean_question(question)
         q_lower = question.lower()
 
+        # =========================
+        # CROSS-LINGUAL RETRIEVAL BRIDGE
+        # The Knowledge Base is English-only. For a Chinese/Malay question,
+        # derive a short English keyword string (question_for_search) used
+        # ONLY to drive KB retrieval further down -- `question` itself stays
+        # exactly what the staff member typed for logging/escalation/replies.
+        # Falls back to `question` unchanged on any detection/AI failure.
+        # =========================
+        detected_language = detect_question_language(question)
+        question_for_search = question
+
+        if detected_language != "en":
+            question_for_search = translate_query_to_english_keywords(question, detected_language)
+
         greetings = ["hi", "hello", "hey", "morning", "afternoon", "evening", "good morning", "good afternoon", "good evening"]
 
         # =========================
@@ -7434,6 +7641,7 @@ def chat():
         result, status_code = process_question(
             question=question,
             context=prepare_chat_context(data),
+            search_question=question_for_search,
         )
 
         # =========================
@@ -7561,7 +7769,11 @@ def chat():
         # about to happen.
         if should_escalate and AI_PROVIDER_SERVICE_AVAILABLE:
             try:
-                ai_answer = answer_question_with_ai_provider(question)
+                ai_answer = answer_question_with_ai_provider(
+                    question,
+                    search_question=question_for_search,
+                    user_language=detected_language,
+                )
             except ai_provider_service.AIProviderNotConfiguredError:
                 ai_answer = None
             except Exception as error:
@@ -7573,7 +7785,7 @@ def chat():
                 result["answer"] = ai_answer["answer"]
                 result["message"] = ai_answer["answer"]
                 result["title"] = ai_answer["sourceTitle"] or result.get("title")
-                result["source"] = "ai_provider_answer"
+                result["source"] = "ai_provider_decline" if ai_answer.get("off_topic") else "ai_provider_answer"
                 result["fallback"] = False
                 result["fallback_message"] = ""
                 result["escalation_ready"] = False
@@ -7587,7 +7799,7 @@ def chat():
                     result["context"]["article_id"] = ai_answer["article_id"]
 
         if should_escalate:
-            related_articles = search_related_knowledge_base_articles(question, limit=3)
+            related_articles = search_related_knowledge_base_articles(question_for_search, limit=3)
 
             related_options = []
             seen_related_titles = set()

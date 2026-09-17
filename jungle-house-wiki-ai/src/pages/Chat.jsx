@@ -2447,6 +2447,15 @@ const removeSelectedImage = () => {
               placeholder="Ask product knowledge, SOP, sales, or paste/upload a photo..."
               disabled={loading}
               onKeyDown={(event) => {
+                // While an IME (e.g. Pinyin for Chinese) composition is in
+                // progress, Enter confirms the selected candidate rather
+                // than submitting the message. event.isComposing covers
+                // most browsers; keyCode === 229 is the fallback some
+                // browsers (older Safari/Edge) use during composition
+                // instead of setting isComposing.
+                if (event.isComposing || event.keyCode === 229) {
+                  return;
+                }
                 if (event.key === 'Enter') {
                   event.preventDefault();
                   handleSend();
