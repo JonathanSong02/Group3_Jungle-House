@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import api from '../services/api';
-import { useAuth } from '../context/AuthContext';
 import './FloatingAIChat.css';
 
 // Backend answers sometimes embed raw "Image: /static/..." path lines as
@@ -128,7 +127,6 @@ function clampPosition(position, width, height) {
 
 export default function FloatingAIChat() {
   const location = useLocation();
-  const { user } = useAuth();
 
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState([]);
@@ -274,10 +272,11 @@ export default function FloatingAIChat() {
     setLoading(true);
 
     try {
+      // The Flask endpoint derives the user ID from the verified session.
+      // Do not send a component-controlled user_id in the request payload.
       const response = await api.post('/chat', {
         question: trimmedQuestion,
         context: {},
-        user_id: user?.id || user?.user_id || null,
       });
 
       const data = response.data || {};
@@ -304,7 +303,14 @@ export default function FloatingAIChat() {
       ]);
     } catch (requestError) {
       console.error('Floating AI chat request failed:', requestError);
-      setError('Unable to get AI response right now. Please try again.');
+      const code = requestError.response?.data?.code;
+      if (requestError.response?.status === 401 || code === 'SESSION_EXPIRED' || code === 'ACCOUNT_INACTIVE') {
+        setError('Your session has expired or your account is inactive. Please sign in again.');
+      } else if (code === 'CSRF_INVALID') {
+        setError('Your security token has expired. Refresh the page and try again.');
+      } else {
+        setError(requestError.response?.data?.message || 'Unable to get AI response right now. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
