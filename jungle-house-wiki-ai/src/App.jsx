@@ -33,20 +33,18 @@ import SecurityMonitoring from './pages/admin/SecurityMonitoring';
 
 import SOPSelection from './pages/SOPSelection';
 
-// Everyone gets the same core workspace. Extra routes remain role-restricted.
-const WORKSPACE_ROLES = ['staff', 'teamlead', 'manager', 'admin'];
-const MANAGEMENT_ROLES = ['teamlead', 'manager', 'admin'];
-const MANAGER_ROLES = ['manager', 'admin'];
-
-function StaffDashboardRedirect() {
-  const { user } = useAuth();
-  const role = String(user?.role || '').trim().toLowerCase().replace(/[\s_-]/g, '');
-  return role === 'staff' ? <Navigate to="/chat" replace /> : <Dashboard />;
-}
-
 function HomeRedirect() {
-  // A common entry point for Staff, Team Leader and Manager/Admin.
-  return <Navigate to="/chat" replace />;
+  const { user } = useAuth();
+
+  if (user?.role === 'manager') {
+    return <Navigate to="/admin/dashboard" replace />;
+  }
+
+  if (user?.role === 'teamlead') {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  return <Navigate to="/dashboard" replace />;
 }
 
 export default function App() {
@@ -79,8 +77,8 @@ export default function App() {
         <Route
           path="dashboard"
           element={
-            <RoleRoute allowedRoles={WORKSPACE_ROLES}>
-              <StaffDashboardRedirect />
+            <RoleRoute allowedRoles={['staff', 'teamlead']}>
+              <Dashboard />
             </RoleRoute>
           }
         />
@@ -88,7 +86,7 @@ export default function App() {
         <Route
           path="knowledge"
           element={
-            <RoleRoute allowedRoles={WORKSPACE_ROLES}>
+            <RoleRoute allowedRoles={['staff', 'teamlead']}>
               <KnowledgeBase />
             </RoleRoute>
           }
@@ -97,7 +95,7 @@ export default function App() {
         <Route
           path="knowledge/:id"
           element={
-            <RoleRoute allowedRoles={WORKSPACE_ROLES}>
+            <RoleRoute allowedRoles={['staff', 'teamlead']}>
               <ArticleDetail />
             </RoleRoute>
           }
@@ -106,7 +104,7 @@ export default function App() {
         <Route
           path="notifications"
           element={
-            <RoleRoute allowedRoles={WORKSPACE_ROLES}>
+            <RoleRoute allowedRoles={['staff', 'teamlead']}>
               <Notifications />
             </RoleRoute>
           }
@@ -115,7 +113,7 @@ export default function App() {
         <Route
           path="quiz"
           element={
-            <RoleRoute allowedRoles={WORKSPACE_ROLES}>
+            <RoleRoute allowedRoles={['staff', 'teamlead']}>
               <QuizList />
             </RoleRoute>
           }
@@ -124,7 +122,7 @@ export default function App() {
         <Route
           path="sop-selection"
           element={
-            <RoleRoute allowedRoles={WORKSPACE_ROLES}>
+            <RoleRoute allowedRoles={['staff', 'teamlead']}>
               <SOPSelection />
             </RoleRoute>
           }
@@ -133,7 +131,7 @@ export default function App() {
         <Route
           path="chat"
           element={
-            <RoleRoute allowedRoles={WORKSPACE_ROLES}>
+            <RoleRoute allowedRoles={['staff', 'teamlead', 'manager']}>
               <Chat />
             </RoleRoute>
           }
@@ -144,7 +142,7 @@ export default function App() {
         <Route
           path="escalation"
           element={
-            <RoleRoute allowedRoles={MANAGEMENT_ROLES}>
+            <RoleRoute allowedRoles={['teamlead', 'manager']}>
               <Escalation />
             </RoleRoute>
           }
@@ -153,7 +151,7 @@ export default function App() {
         <Route
           path="admin/dashboard"
           element={
-            <RoleRoute allowedRoles={MANAGER_ROLES}>
+            <RoleRoute allowedRoles={['manager']}>
               <AdminDashboard />
             </RoleRoute>
           }
@@ -162,7 +160,7 @@ export default function App() {
         <Route
           path="admin/content"
           element={
-            <RoleRoute allowedRoles={MANAGEMENT_ROLES}>
+            <RoleRoute allowedRoles={['teamlead', 'manager']}>
               <ContentManagement />
             </RoleRoute>
           }
@@ -171,7 +169,7 @@ export default function App() {
         <Route
           path="admin/content/add"
           element={
-            <RoleRoute allowedRoles={MANAGEMENT_ROLES}>
+            <RoleRoute allowedRoles={['teamlead', 'manager']}>
               <AddArticle />
             </RoleRoute>
           }
@@ -180,7 +178,7 @@ export default function App() {
         <Route
           path="admin/content/edit/:id"
           element={
-            <RoleRoute allowedRoles={MANAGEMENT_ROLES}>
+            <RoleRoute allowedRoles={['teamlead', 'manager']}>
               <EditArticle />
             </RoleRoute>
           }
@@ -189,7 +187,7 @@ export default function App() {
         <Route
           path="admin/quiz-management"
           element={
-            <RoleRoute allowedRoles={MANAGEMENT_ROLES}>
+            <RoleRoute allowedRoles={['teamlead', 'manager']}>
               <QuizManagement />
             </RoleRoute>
           }
@@ -198,7 +196,7 @@ export default function App() {
         <Route
           path="admin/review"
           element={
-            <RoleRoute allowedRoles={MANAGEMENT_ROLES}>
+            <RoleRoute allowedRoles={['manager']}>
               <ReviewManagement />
             </RoleRoute>
           }
@@ -207,7 +205,7 @@ export default function App() {
         <Route
           path="admin/users"
           element={
-            <RoleRoute allowedRoles={MANAGEMENT_ROLES}>
+            <RoleRoute allowedRoles={['teamlead', 'manager']}>
               <UserManagement />
             </RoleRoute>
           }
@@ -216,7 +214,7 @@ export default function App() {
         <Route
           path="admin/ai-settings"
           element={
-            <RoleRoute allowedRoles={MANAGER_ROLES}>
+            <RoleRoute allowedRoles={['manager']}>
               <AISettings />
             </RoleRoute>
           }
@@ -225,7 +223,7 @@ export default function App() {
         <Route
           path="admin/notion-sync"
           element={
-            <RoleRoute allowedRoles={MANAGER_ROLES}>
+            <RoleRoute allowedRoles={['manager']}>
               <NotionSync />
             </RoleRoute>
           }
@@ -234,7 +232,7 @@ export default function App() {
         <Route
           path="admin/analytics"
           element={
-            <RoleRoute allowedRoles={MANAGEMENT_ROLES}>
+            <RoleRoute allowedRoles={['teamlead', 'manager']}>
               <Analytics />
             </RoleRoute>
           }
@@ -243,15 +241,14 @@ export default function App() {
         <Route
           path="admin/security"
           element={
-            <RoleRoute allowedRoles={MANAGEMENT_ROLES}>
+            <RoleRoute allowedRoles={['teamlead', 'manager']}>
               <SecurityMonitoring />
             </RoleRoute>
           }
         />
       </Route>
 
-      {/* Return unknown URLs to the home route, where ProtectedRoute verifies the session. */}
-      <Route path="*" element={<Navigate to="/" replace />} />
+      <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>
   );
 }
