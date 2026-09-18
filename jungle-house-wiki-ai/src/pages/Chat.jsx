@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import api, { API_BASE_URL } from '../services/api';
+import { useAuth } from '../context/AuthContext';
+import { useStaffChat } from '../context/StaffChatContext';
 import '../styles/Chat.css';
 
 
@@ -15,52 +18,64 @@ const starterMessages = [
   },
 ];
 
-const API_BASE_URL = 'https://group3jungle-house-production.up.railway.app';
-const CHAT_ENDPOINT = `${API_BASE_URL}/api/chat`;
+// Production serves private files through the same-origin Vercel /static proxy.
+// Local development serves them from the local Flask host selected by api.js.
+// Do not use VITE_STATIC_BASE_URL / VITE_BACKEND_PUBLIC_URL for private assets:
+// a direct Railway request cannot access the session cookie on Vercel.
+const STATIC_ASSET_BASE_URL = API_BASE_URL.startsWith('http')
+  ? API_BASE_URL.replace(/\/api\/?$/, '').replace(/\/+$/, '')
+  : '';
 
-function getCurrentUserForChat() {
-  try {
-    const possibleKeys = ['user', 'currentUser', 'authUser', 'jh_user'];
+// Some saved chat messages and Notion-imported HTML contain absolute URLs
+// created before /static was secured. Only rewrite our OWN static URLs;
+// external Notion/document links must keep their original destinations.
+const INTERNAL_STATIC_HOSTS = new Set([
+  'group3jungle-house-production.up.railway.app',
+  'ai-powered-wiki-training-assistant.vercel.app',
+  'jhgroup3.com',
+  'www.jhgroup3.com',
+]);
 
-    for (const key of possibleKeys) {
-      const saved = localStorage.getItem(key);
+function rewritePrivateStaticUrl(value) {
+  const url = String(value || '').trim();
+  if (!url) return url;
 
-      if (!saved) continue;
-
-      const parsed = JSON.parse(saved);
-
-      if (parsed?.id || parsed?.user_id || parsed?.email) {
-        return parsed;
+  if (/^https?:\/\//i.test(url)) {
+    try {
+      const parsed = new URL(url);
+      const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
+      if (
+        parsed.pathname.startsWith('/static/') &&
+        (INTERNAL_STATIC_HOSTS.has(parsed.hostname.toLowerCase()) || parsed.origin === currentOrigin)
+      ) {
+        return `${STATIC_ASSET_BASE_URL}${parsed.pathname}${parsed.search}${parsed.hash}`;
       }
-
-      if (parsed?.user?.id || parsed?.user?.user_id || parsed?.user?.email) {
-        return parsed.user;
-      }
+    } catch {
+      // Leave an unrecognised/malformed external link unchanged.
     }
-  } catch (error) {
-    console.error('Unable to read current user for chat:', error);
+    return url;
   }
 
-  return null;
+  if (url.startsWith('/static/')) return `${STATIC_ASSET_BASE_URL}${url}`;
+  if (url.startsWith('static/')) return `${STATIC_ASSET_BASE_URL}/${url}`;
+  // Preserve legacy upload/SOP paths embedded in rich-editor HTML.
+  if (/^\/?(?:uploads\/(?:articles|chat)\/|sop_images\/)/.test(url)) {
+    return `${STATIC_ASSET_BASE_URL}/static/${url.replace(/^\/+/, '')}`;
+  }
+  return url;
 }
 
-function getCurrentChatOwnerKey() {
-  const user = getCurrentUserForChat();
-
-  const userIdentity =
-    user?.id ||
-    user?.user_id ||
-    user?.email ||
-    'guest';
-
-  return String(userIdentity).replace(/[^a-zA-Z0-9_-]/g, '_');
+// The session-verified user ID is only used to partition *local UI history*.
+// Flask independently identifies the user for API calls from its cookie.
+function getChatStorageKeys(user) {
+  if (!user || user.status !== 'active' || user.id == null) return null;
+  const owner = String(user.id).replace(/[^a-zA-Z0-9_-]/g, '_');
+  return {
+    history: `jh_ai_chat_history_${owner}`,
+    sessions: `jh_ai_chat_sessions_${owner}`,
+    active: `jh_active_chat_session_${owner}`,
+  };
 }
-
-const CHAT_OWNER_KEY = getCurrentChatOwnerKey();
-
-const CHAT_HISTORY_KEY = `jh_ai_chat_history_${CHAT_OWNER_KEY}`;
-const CHAT_SESSIONS_KEY = `jh_ai_chat_sessions_${CHAT_OWNER_KEY}`;
-const ACTIVE_CHAT_SESSION_KEY = `jh_active_chat_session_${CHAT_OWNER_KEY}`;
 
 function normalizeText(text) {
   return String(text || '')
@@ -219,46 +234,49 @@ function buildImageUrl(imageUrl) {
 
     if (cleanUrl.startsWith('blob:') || cleanUrl.startsWith('data:')) {
       return cleanUrl;
-    } 
+    }
 
   // Remove repeated slashes in paths, but keep https:// unchanged.
   if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
     cleanUrl = cleanUrl.replace(/\/+/g, '/');
   }
 
-  if (cleanUrl.startsWith('http://') || cleanUrl.startsWith('https://')) {
-    return cleanUrl;
+  // Rewrite legacy Railway /static URLs as well as relative file paths.
+  // Leave third-party URLs, blob previews and data previews unchanged.
+  if (cleanUrl.startsWith('http://') || cleanUrl.startsWith('https://') ||
+      cleanUrl.startsWith('/static/') || cleanUrl.startsWith('static/')) {
+    return rewritePrivateStaticUrl(cleanUrl);
   }
 
-  if (cleanUrl.startsWith('/static/')) {
-    return `${API_BASE_URL}${cleanUrl}`;
+  if (cleanUrl.startsWith('/uploads/chat/')) {
+    return `${STATIC_ASSET_BASE_URL}/static${cleanUrl}`;
   }
 
-  if (cleanUrl.startsWith('static/')) {
-    return `${API_BASE_URL}/${cleanUrl}`;
+  if (cleanUrl.startsWith('uploads/chat/')) {
+    return `${STATIC_ASSET_BASE_URL}/static/${cleanUrl}`;
   }
 
   if (cleanUrl.startsWith('/uploads/articles/')) {
-    return `${API_BASE_URL}/static${cleanUrl}`;
+    return `${STATIC_ASSET_BASE_URL}/static${cleanUrl}`;
   }
 
   if (cleanUrl.startsWith('uploads/articles/')) {
-    return `${API_BASE_URL}/static/${cleanUrl}`;
+    return `${STATIC_ASSET_BASE_URL}/static/${cleanUrl}`;
   }
 
   if (cleanUrl.startsWith('/sop_images/')) {
-    return `${API_BASE_URL}/static${cleanUrl}`;
+    return `${STATIC_ASSET_BASE_URL}/static${cleanUrl}`;
   }
 
   if (cleanUrl.startsWith('sop_images/')) {
-    return `${API_BASE_URL}/static/${cleanUrl}`;
+    return `${STATIC_ASSET_BASE_URL}/static/${cleanUrl}`;
   }
 
   if (cleanUrl.startsWith('/')) {
-    return `${API_BASE_URL}${cleanUrl}`;
+    return `${STATIC_ASSET_BASE_URL}${cleanUrl}`;
   }
 
-  return `${API_BASE_URL}/static/${cleanUrl}`;
+  return `${STATIC_ASSET_BASE_URL}/static/${cleanUrl}`;
 }
 
 function extractImagePathsFromText(text) {
@@ -617,7 +635,7 @@ function renderKnowledgeLink(link) {
 
   return (
     <a
-      href={cleanLink}
+      href={rewritePrivateStaticUrl(cleanLink)}
       target="_blank"
       rel="noreferrer"
       style={{
@@ -662,7 +680,7 @@ function renderTextWithClickableLinks(text, fallbackLink = '') {
         <span key={`line-${lineIndex}`}>
           {clickMatch[1]}
           <a
-            href={cleanFallbackLink}
+            href={rewritePrivateStaticUrl(cleanFallbackLink)}
             target="_blank"
             rel="noreferrer"
             style={{
@@ -699,7 +717,7 @@ function renderTextWithClickableLinks(text, fallbackLink = '') {
       parts.push(
         <a
           key={`link-${lineIndex}-${match.index}`}
-          href={url}
+          href={rewritePrivateStaticUrl(url)}
           target="_blank"
           rel="noreferrer"
           style={{
@@ -780,6 +798,27 @@ function sanitizeChatHtml(html) {
         element.removeAttribute(attribute.name);
       }
     });
+  });
+
+  // Rich-editor HTML bypasses ChatImage / DocumentLink. Fix its embedded
+  // images and file links too, including old absolute Railway URLs.
+  wrapper.querySelectorAll('img[src], source[src], a[href]').forEach((element) => {
+    const attribute = element.tagName.toLowerCase() === 'a' ? 'href' : 'src';
+    const original = element.getAttribute(attribute);
+    const rewritten = rewritePrivateStaticUrl(original);
+    if (rewritten !== original) element.setAttribute(attribute, rewritten);
+  });
+  wrapper.querySelectorAll('img[srcset], source[srcset]').forEach((element) => {
+    const original = element.getAttribute('srcset');
+    if (!original || original.includes('data:') || !original.includes('static/')) return;
+    const rewritten = original.split(',').map((candidate) => {
+      const item = candidate.trim();
+      const boundary = item.search(/\s/);
+      return boundary < 0
+        ? rewritePrivateStaticUrl(item)
+        : `${rewritePrivateStaticUrl(item.slice(0, boundary))}${item.slice(boundary)}`;
+    }).join(', ');
+    if (rewritten !== original) element.setAttribute('srcset', rewritten);
   });
 
   return wrapper.innerHTML;
@@ -1247,9 +1286,9 @@ function createNewSession() {
   };
 }
 
-function getChatSessionsFromStorage() {
+function getChatSessionsFromStorage(storageKeys) {
   try {
-    const saved = localStorage.getItem(CHAT_SESSIONS_KEY);
+    const saved = localStorage.getItem(storageKeys.sessions);
     const sessions = saved ? JSON.parse(saved) : [];
 
     if (Array.isArray(sessions) && sessions.length > 0) {
@@ -1257,8 +1296,8 @@ function getChatSessionsFromStorage() {
     }
 
     const firstSession = createNewSession();
-    localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify([firstSession]));
-    localStorage.setItem(ACTIVE_CHAT_SESSION_KEY, String(firstSession.id));
+    localStorage.setItem(storageKeys.sessions, JSON.stringify([firstSession]));
+    localStorage.setItem(storageKeys.active, String(firstSession.id));
 
     return [firstSession];
   } catch (error) {
@@ -1267,17 +1306,17 @@ function getChatSessionsFromStorage() {
   }
 }
 
-function saveChatSessionsToStorage(sessions) {
+function saveChatSessionsToStorage(storageKeys, sessions) {
   try {
-    localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify(sessions));
+    localStorage.setItem(storageKeys.sessions, JSON.stringify(sessions));
   } catch (error) {
     console.error('Unable to save chat sessions:', error);
   }
 }
 
-function getActiveSessionIdFromStorage(sessions) {
+function getActiveSessionIdFromStorage(storageKeys, sessions) {
   try {
-    const savedId = localStorage.getItem(ACTIVE_CHAT_SESSION_KEY);
+    const savedId = localStorage.getItem(storageKeys.active);
 
     if (savedId && sessions.some((session) => String(session.id) === String(savedId))) {
       return Number(savedId);
@@ -1290,9 +1329,9 @@ function getActiveSessionIdFromStorage(sessions) {
   }
 }
 
-function saveActiveSessionId(sessionId) {
+function saveActiveSessionId(storageKeys, sessionId) {
   try {
-    localStorage.setItem(ACTIVE_CHAT_SESSION_KEY, String(sessionId));
+    localStorage.setItem(storageKeys.active, String(sessionId));
   } catch (error) {
     console.error('Unable to save active chat session:', error);
   }
@@ -1310,19 +1349,20 @@ function makeSessionTitle(questionText) {
   return `${cleanTitle.slice(0, 35)}...`;
 }
 
-function getHistoryFromStorage() {
+function getHistoryFromStorage(storageKeys) {
   try {
-    const saved = localStorage.getItem(CHAT_HISTORY_KEY);
-    return saved ? JSON.parse(saved) : [];
+    const saved = localStorage.getItem(storageKeys.history);
+    const history = saved ? JSON.parse(saved) : [];
+    return Array.isArray(history) ? history : [];
   } catch (error) {
     console.error('Unable to read chat history:', error);
     return [];
   }
 }
 
-function saveHistoryToStorage(history) {
+function saveHistoryToStorage(storageKeys, history) {
   try {
-    localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(history));
+    localStorage.setItem(storageKeys.history, JSON.stringify(history));
   } catch (error) {
     console.error('Unable to save chat history:', error);
   }
@@ -1442,14 +1482,18 @@ function buildSelectedOptionMessage(option, optionIndex = 0) {
   };
 }
 
-export default function Chat() {
-  const initialSessions = getChatSessionsFromStorage();
-
+function ChatContent({ storageKeys }) {
+  const staffChat = useStaffChat();
+  const staffMode = Boolean(staffChat);
+  const publishStaffChat = staffChat?.publish;
+  const { user } = useAuth();
+  const firstName = String(user?.full_name || user?.name || 'there').trim().split(/\s+/)[0];
+  const staffInputRef = useRef(null);
   const [activeTab, setActiveTab] = useState('ask');
   const [mobileChatMenuOpen, setMobileChatMenuOpen] = useState(false);
-  const [chatSessions, setChatSessions] = useState(initialSessions);
+  const [chatSessions, setChatSessions] = useState(() => getChatSessionsFromStorage(storageKeys));
   const [activeSessionId, setActiveSessionId] = useState(() =>
-    getActiveSessionIdFromStorage(initialSessions)
+    getActiveSessionIdFromStorage(storageKeys, chatSessions)
   );
 
   const activeSession =
@@ -1457,7 +1501,7 @@ export default function Chat() {
 
   const messages = activeSession?.messages || starterMessages;
 
-  const [history, setHistory] = useState(() => getHistoryFromStorage());
+  const [history, setHistory] = useState(() => getHistoryFromStorage(storageKeys));
   const [historySearch, setHistorySearch] = useState('');
   const [question, setQuestion] = useState('');
   const [loading, setLoading] = useState(false);
@@ -1535,7 +1579,7 @@ export default function Chat() {
         };
       });
 
-      saveChatSessionsToStorage(updatedSessions);
+      saveChatSessionsToStorage(storageKeys, updatedSessions);
       return updatedSessions;
     });
   };
@@ -1557,14 +1601,14 @@ export default function Chat() {
 
     setHistory((prev) => {
       const updatedHistory = [newRecord, ...prev].slice(0, 100);
-      saveHistoryToStorage(updatedHistory);
+      saveHistoryToStorage(storageKeys, updatedHistory);
       return updatedHistory;
     });
   };
 
   const handleSelectSession = (sessionId) => {
     setActiveSessionId(sessionId);
-    saveActiveSessionId(sessionId);
+    saveActiveSessionId(storageKeys, sessionId);
     setActiveTab('ask');
     setMobileChatMenuOpen(false);
   };
@@ -1576,13 +1620,43 @@ export default function Chat() {
     setChatSessions(updatedSessions);
     setActiveSessionId(newSession.id);
 
-    saveChatSessionsToStorage(updatedSessions);
-    saveActiveSessionId(newSession.id);
+    saveChatSessionsToStorage(storageKeys, updatedSessions);
+    saveActiveSessionId(storageKeys, newSession.id);
 
     setQuestion('');
     setActiveTab('ask');
     setMobileChatMenuOpen(false);
   };
+
+  // Keep Chat.jsx as the single owner of conversations; the staff sidebar only
+  // receives the lightweight index and issues commands. No new chat API exists.
+  useEffect(() => {
+    if (staffMode) publishStaffChat(chatSessions, activeSessionId);
+  }, [staffMode, publishStaffChat, chatSessions, activeSessionId]);
+
+  useEffect(() => {
+    const command = staffChat?.command;
+    if (!command) return;
+    if (command.type === 'new') {
+      // Avoid creating two empty sessions when opening Chat for the first time.
+      const current = chatSessions.find((session) => session.id === activeSessionId);
+      const pristine = current?.title === 'New Chat' && current.messages?.length <= 1;
+      if (!pristine) handleNewChat();
+      else { setActiveTab('ask'); setQuestion(''); }
+    } else if (command.type === 'select') {
+      if (chatSessions.some((session) => String(session.id) === String(command.sessionId))) {
+        handleSelectSession(Number(command.sessionId));
+      }
+    } else if (command.type === 'delete') {
+      const target = chatSessions.find((session) => String(session.id) === String(command.sessionId));
+      if (target) openDeleteSessionModal(target.id, target.title);
+    } else if (command.type === 'history') {
+      handleTabChange('history');
+    }
+    staffChat.acknowledge(command.id);
+  // These event handlers intentionally execute only once per distinct command id.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [staffChat?.command?.id]);
 
   const closeConfirmModal = () => {
     setConfirmModal({
@@ -1641,8 +1715,8 @@ export default function Chat() {
       setChatSessions([newSession]);
       setActiveSessionId(newSession.id);
 
-      saveChatSessionsToStorage([newSession]);
-      saveActiveSessionId(newSession.id);
+      saveChatSessionsToStorage(storageKeys, [newSession]);
+      saveActiveSessionId(storageKeys, newSession.id);
 
       return;
     }
@@ -1653,8 +1727,8 @@ export default function Chat() {
     setChatSessions(remainingSessions);
     setActiveSessionId(nextActiveSessionId);
 
-    saveChatSessionsToStorage(remainingSessions);
-    saveActiveSessionId(nextActiveSessionId);
+    saveChatSessionsToStorage(storageKeys, remainingSessions);
+    saveActiveSessionId(storageKeys, nextActiveSessionId);
   };
 
   const handleConfirmModalAction = () => {
@@ -1668,7 +1742,7 @@ export default function Chat() {
 
     if (confirmModal.type === 'clear-history') {
       setHistory([]);
-      saveHistoryToStorage([]);
+      saveHistoryToStorage(storageKeys, []);
     }
 
     closeConfirmModal();
@@ -1685,7 +1759,7 @@ export default function Chat() {
   const handleDeleteHistory = (historyId) => {
     const updatedHistory = history.filter((item) => item.id !== historyId);
     setHistory(updatedHistory);
-    saveHistoryToStorage(updatedHistory);
+    saveHistoryToStorage(storageKeys, updatedHistory);
   };
 
   const handleClearHistory = () => {
@@ -1777,9 +1851,6 @@ const removeSelectedImage = () => {
       image_files: selectedImagePreview ? [selectedImagePreview] : [],
     };
 
-    const currentUser = getCurrentUserForChat();
-    const currentUserId = currentUser?.id || currentUser?.user_id || null;
-
     const context = extractLatestSopContext(messages, displayQuestion);
     const messagesAfterUserQuestion = [...messages, userMessage];
 
@@ -1795,46 +1866,19 @@ const removeSelectedImage = () => {
         const formData = new FormData();
         formData.append('question', trimmedQuestion);
         formData.append('context', JSON.stringify(context));
-        formData.append('user_id', currentUserId || '');
         formData.append('attachment', selectedImage);
-
-        response = await fetch(CHAT_ENDPOINT, {
-          method: 'POST',
-          body: formData,
-        });
+        // Do not set multipart Content-Type by hand: the browser must supply
+        // the boundary. The shared client adds credentials and X-CSRF-Token.
+        response = await api.post('/chat', formData);
       } else {
-        response = await fetch(CHAT_ENDPOINT, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            question: trimmedQuestion,
-            context,
-            user_id: currentUserId,
-          }),
-        });
+        response = await api.post('/chat', { question: trimmedQuestion, context });
       }
 
-      const contentType = response.headers.get('content-type') || '';
-      let data;
-
-      if (contentType.includes('application/json')) {
-        data = await response.json();
-      } else {
-        const rawText = await response.text();
-        data = { answer: rawText, type: 'text' };
-      }
-
-      if (!response.ok) {
-        throw new Error(
-          data?.answer ||
-            data?.reply ||
-            data?.error ||
-            data?.message ||
-            `Backend request failed with status ${response.status}.`
-        );
-      }
+      // Axios already validates HTTP status and decodes JSON responses.
+      // Retain the original text-response fallback for existing AI behavior.
+      const data = typeof response.data === 'string'
+        ? { answer: response.data, type: 'text' }
+        : (response.data || {});
 
       const aiMessage = buildAiMessage(data);
 
@@ -1856,9 +1900,6 @@ const removeSelectedImage = () => {
 
       const messagesAfterAiResponse = [...finalMessagesAfterUserQuestion, aiMessage];
 
-      console.log('Backend data:', data);
-      console.log('AI message:', aiMessage);
-
       updateCurrentSessionMessages(messagesAfterAiResponse, displayQuestion);
       addChatHistory(displayQuestion, aiMessage);
 
@@ -1868,13 +1909,23 @@ const removeSelectedImage = () => {
     } catch (error) {
       console.error('Chat request failed:', error);
 
+      const errorCode = error?.response?.data?.code;
+      const requestMessage =
+        error?.response?.status === 401 ||
+        errorCode === 'SESSION_EXPIRED' ||
+        errorCode === 'ACCOUNT_INACTIVE'
+          ? 'Your session has expired or your account is inactive. Please sign in again.'
+          : errorCode === 'CSRF_INVALID'
+            ? 'Security verification failed. Refresh the page and try again.'
+            : error?.response?.data?.message ||
+              error?.message ||
+              'Failed to connect to backend. Please check whether Flask is running.';
+
       const errorMessage = {
         id: Date.now() + 1,
         sender: 'ai',
         type: 'text',
-        text:
-          error.message ||
-          'Failed to connect to backend. Please check whether Flask is running.',
+        text: requestMessage,
         context: {
           unclear_count: 0,
         },
@@ -1885,12 +1936,8 @@ const removeSelectedImage = () => {
         confidence_label: 'low',
         source: 'frontend_request_error',
         fallback: true,
-        fallback_message:
-          error.message ||
-          'Failed to connect to backend. Please check whether Flask is running.',
-        message:
-          error.message ||
-          'Failed to connect to backend. Please check whether Flask is running.',
+        fallback_message: requestMessage,
+        message: requestMessage,
       };
 
       const messagesAfterError = [...messagesAfterUserQuestion, errorMessage];
@@ -2499,6 +2546,69 @@ const removeSelectedImage = () => {
     );
   };
 
+  // Staff-only ChatGPT-style presentation. All send, history, attachment,
+  // SOP rendering and error handlers above are reused without API changes.
+  const renderStaffAskQuestion = () => {
+    const hasConversation = messages.some((message) => message.sender === 'user');
+    const starters = [
+      { icon: '▤', title: 'Find SOPs', detail: 'Step-by-step procedures', prompt: 'Find the SOP for outlet opening' },
+      { icon: '◇', title: 'Product information', detail: 'Products and shelf life', prompt: 'Where can I find product information and shelf life?' },
+      { icon: '♧', title: 'Sales & policies', detail: 'Sales and customer guidance', prompt: 'Where can I find the return and refund policy?' },
+      { icon: '✳', title: 'Troubleshooting', detail: 'Help with common issues', prompt: 'Find troubleshooting SOPs for POS and receipt printers' },
+    ];
+    return (
+      <div className={`staff-chat-experience ${hasConversation ? 'has-conversation' : 'staff-chat-home'}`}>
+        <div className="staff-chat-toolbar">
+          <div className="staff-chat-toolbar-title"><span className="staff-chat-mode-dot"/> <span>{hasConversation ? (activeSession?.title || 'Conversation') : 'AI Assistant'}</span></div>
+          <div className="staff-chat-toolbar-actions">
+            <button type="button" onClick={() => handleTabChange('history')}>Chat history</button>
+            {hasConversation && <button type="button" onClick={handleClearCurrentChat}>Clear chat</button>}
+          </div>
+        </div>
+        <div className="staff-chat-scroll" role="log" aria-label="AI conversation" aria-live="polite">
+          {!hasConversation ? (
+            <div className="staff-chat-welcome">
+              <span className="staff-welcome-icon" aria-hidden="true">✦</span>
+              <h1>Good to see you, {firstName}.</h1>
+              <p>What can I help you find today?</p>
+            </div>
+          ) : (
+            <div className="staff-chat-transcript">
+              {messages.filter((message) => !(message.id === 1 && message.sender === 'ai' && message.text === starterMessages[0].text)).map((message) => renderMessageContent(message))}
+              {loading && <div className="staff-thinking" role="status"><span className="staff-pulse"/> Finding the best answer for you…</div>}
+              <div ref={messagesEndRef}/>
+            </div>
+          )}
+        </div>
+        <div className="staff-chat-bottom">
+          <div className="staff-chat-composer" role="group" aria-label="Ask the knowledge assistant">
+            {selectedImage && <div className="staff-attachment-preview">
+              {selectedImagePreview ? <img src={selectedImagePreview} alt="Selected attachment"/> : <span className="staff-file-icon">FILE</span>}
+              <div><strong>{selectedImage.name || 'Attachment'}</strong><small>{selectedImage.type || 'Selected file'}</small></div>
+              <button type="button" onClick={removeSelectedImage} aria-label="Remove attachment">×</button>
+            </div>}
+            <textarea ref={staffInputRef} rows={2} value={question} onChange={(event) => setQuestion(event.target.value)}
+              onPaste={handleQuestionPaste} placeholder="Ask anything about Jungle House…" disabled={loading}
+              aria-label="Your question"
+              onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); handleSend(); } }} />
+            <div className="staff-composer-actions">
+              <div className="staff-upload-actions">
+                <label className="staff-composer-upload" title="Upload photo or document"><span aria-hidden="true">＋</span><span>Attach file</span><input type="file" accept="image/*,.pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={handleImageSelect} disabled={loading} hidden /></label>
+                <label className="staff-composer-upload staff-camera-action" title="Take a photo"><span aria-hidden="true">◎</span><span>Camera</span><input type="file" accept="image/*" capture="environment" onChange={handleImageSelect} disabled={loading} hidden /></label>
+                <span className="staff-knowledge-source"><span aria-hidden="true">▤</span> Knowledge Base</span>
+              </div>
+              <button className="staff-send-button" type="button" title="Send message" aria-label="Send message" onClick={handleSend} disabled={loading || (!question.trim() && !selectedImage)}>{loading ? '…' : '↑'}</button>
+            </div>
+          </div>
+          {!hasConversation && <div className="staff-suggested-prompts" aria-label="Suggested questions">
+            {starters.map((item) => <button key={item.title} type="button" className="staff-prompt-card" onClick={() => { setQuestion(item.prompt); staffInputRef.current?.focus(); }}><span className="staff-prompt-icon">{item.icon}</span><strong>{item.title}</strong><small>{item.detail}</small><span className="staff-prompt-arrow" aria-hidden="true">↗</span></button>)}
+          </div>}
+          <p className="staff-ai-disclaimer">Answers use the Jungle House knowledge base. Check important procedures with your supervisor.</p>
+        </div>
+      </div>
+    );
+  };
+
   const renderChatHistory = () => {
     return (
       <section className="card-like ai-chat-history-page">
@@ -2681,7 +2791,13 @@ const removeSelectedImage = () => {
     );
   };
 
-  return (
+  return staffMode ? (
+    <div className="staff-chat-page">
+      {activeTab === 'ask' ? renderStaffAskQuestion() : <div className="staff-history-wrap"><div className="staff-history-top"><button type="button" onClick={() => handleTabChange('ask')}>← Back to chat</button><h1>Chat history</h1></div>{renderChatHistory()}</div>}
+      {previewImage && <div className="staff-image-overlay" role="dialog" aria-modal="true" aria-label="Image preview" onClick={() => setPreviewImage(null)}><button type="button" onClick={() => setPreviewImage(null)} aria-label="Close image preview">×</button><img src={previewImage} alt="Attachment preview" onClick={(event) => event.stopPropagation()}/></div>}
+      {renderConfirmModal()}
+    </div>
+  ) : (
     <div className="ai-chat-page">
       <div className="ai-chat-top-row">
         <div className="ai-chat-page-heading">
@@ -2779,4 +2895,14 @@ const removeSelectedImage = () => {
       {renderConfirmModal()}
     </div>
   );
+}
+
+// The layout is protected, but this guard also protects local chat history if
+// the component is used independently. Changing accounts remounts ChatContent
+// and keeps one user's UI history out of another user's screen.
+export default function Chat() {
+  const { user } = useAuth();
+  const storageKeys = getChatStorageKeys(user);
+  if (!storageKeys) return null;
+  return <ChatContent key={storageKeys.sessions} storageKeys={storageKeys} />;
 }

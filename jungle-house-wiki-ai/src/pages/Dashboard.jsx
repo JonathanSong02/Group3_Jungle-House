@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
 import api from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 function DashboardIcon({ name }) {
   const props = {
@@ -77,7 +78,7 @@ const QUICK_ACTIONS = [
   },
   {
     title: 'Notifications',
-    description: 'Review updates, approvals, escalations, and reminders.',
+    description: 'Check account updates and reminders.',
     route: '/notifications',
     icon: 'notifications',
     tone: 'neutral',
@@ -98,6 +99,10 @@ function formatDateTime(value) {
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const role = String(user?.role || '').toLowerCase().replace(/[\s_-]/g, '');
+  const viewerId = user?.id ?? user?.user_id ?? null;
+  const canSeeManagementMetrics = ['manager', 'admin', 'teamlead'].includes(role);
 
   const [stats, setStats] = useState([]);
   const [notifications, setNotifications] = useState([]);
@@ -109,19 +114,42 @@ export default function Dashboard() {
   useEffect(() => {
     let cancelled = false;
 
+    // Recheck account-scoped data when the signed-in identity or role changes.
+    setLoading(true);
+    setStats([]);
+    setNotifications([]);
+    setActivities([]);
+    setAi({ accuracy: '0%' });
+
     const fetchDashboard = async () => {
       try {
         setError('');
 
-        const response = await api.get('/dashboard');
-        const data = response.data;
+        if (viewerId == null) {
+          throw new Error('Unable to identify your account. Please sign in again.');
+        }
 
+        // The Notifications page uses this same endpoint. Derive the badge and
+        // preview from these actual account-scoped rows, not a separate counter.
+        const [dashboardResponse, notificationResponse] = await Promise.all([
+          api.get('/dashboard'),
+          api.get(`/notifications/${viewerId}`),
+        ]);
         if (cancelled) return;
 
-        setStats(Array.isArray(data.stats) ? data.stats : []);
-        setNotifications(
-          Array.isArray(data.notifications) ? data.notifications : []
-        );
+        const data = dashboardResponse.data;
+        const notificationItems = Array.isArray(notificationResponse.data)
+          ? notificationResponse.data : [];
+        const unreadCount = notificationItems.filter(
+          (item) => !(item.isRead === true || item.isRead === 1 || item.isRead === '1')
+        ).length;
+
+        setStats((Array.isArray(data.stats) ? data.stats : []).map((item) =>
+          item.label === 'Unread Notifications'
+            ? { ...item, value: unreadCount }
+            : item
+        ));
+        setNotifications(notificationItems.slice(0, 3));
         setActivities(Array.isArray(data.activities) ? data.activities : []);
         setAi(data.ai || { accuracy: '0%' });
       } catch (err) {
@@ -146,10 +174,15 @@ export default function Dashboard() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [viewerId, role]);
 
-  const pendingEscalations =
-    stats.find((item) => item.label === 'Pending Escalations')?.value || 0;
+  // Filter legacy API responses too; the backend separately enforces what each role receives.
+  const visibleStats = canSeeManagementMetrics
+    ? stats
+    : stats.filter((item) => ['Knowledge Articles', 'Unread Notifications'].includes(item.label));
+  const pendingEscalations = canSeeManagementMetrics
+    ? stats.find((item) => item.label === 'Pending Escalations')?.value || 0
+    : 0;
 
   return (
     <div className="dashboard-page">
@@ -162,7 +195,9 @@ export default function Dashboard() {
 
           <PageHeader
             title="Dashboard"
-            subtitle="Your central workspace for AI assistance, company knowledge, alerts, and training updates."
+            subtitle={canSeeManagementMetrics
+              ? "Your central workspace for AI assistance, company knowledge, alerts, and training updates."
+              : "Access Jungle House knowledge, AI assistance and your updates."}
           />
         </div>
 
@@ -231,8 +266,11 @@ export default function Dashboard() {
               <p>Live information from your Jungle House workspace.</p>
             </div>
 
-            <div className="dashboard-stats-grid">
-              {stats.map((item, index) => (
+            <div
+              className="dashboard-stats-grid"
+              style={!canSeeManagementMetrics ? { gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 280px), 1fr))" } : undefined}
+            >
+              {visibleStats.map((item, index) => (
                 <article
                   key={item.label}
                   className="dashboard-stat-card"
@@ -250,7 +288,8 @@ export default function Dashboard() {
                 </article>
               ))}
 
-              <article className="dashboard-stat-card dashboard-stat-card-ai">
+              {canSeeManagementMetrics ? (
+                <article className="dashboard-stat-card dashboard-stat-card-ai">
                 <div className="dashboard-stat-top">
                   <span className="dashboard-stat-ai-icon">
                     <DashboardIcon name="sparkle" />
@@ -263,11 +302,12 @@ export default function Dashboard() {
                 <span className="dashboard-stat-caption">
                   Current AI performance
                 </span>
-              </article>
+                </article>
+              ) : null}
             </div>
           </section>
 
-          {Number(pendingEscalations) > 0 ? (
+          {canSeeManagementMetrics && Number(pendingEscalations) > 0 ? (
             <div className="dashboard-alert" role="status">
               <span className="dashboard-alert-icon" aria-hidden="true">
                 <DashboardIcon name="alert" />
@@ -276,7 +316,7 @@ export default function Dashboard() {
               <div className="dashboard-alert-copy">
                 <strong>Escalations need attention</strong>
                 <p>
-                  You have {pendingEscalations} pending escalation
+                  There are {pendingEscalations} pending escalation
                   {Number(pendingEscalations) === 1 ? '' : 's'} requiring attention.
                 </p>
               </div>
@@ -374,7 +414,7 @@ export default function Dashboard() {
               <div className="dashboard-feed-header">
                 <div>
                   <span className="dashboard-section-kicker">Activity</span>
-                  <h2>Recent activity</h2>
+                  <h2>{role === "manager" || role === "admin" ? "Recent activity" : "My recent activity"}</h2>
                 </div>
               </div>
 

@@ -1,9 +1,22 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
+import api, { API_BASE_URL } from "../services/api";
 import "../styles/ArticleDetail.css";
 
-const API_BASE_URL = "https://group3jungle-house-production.up.railway.app";
+// Article JSON uses the same cookie-aware API client as login and Knowledge Base.
+// Static uploads are served outside /api. Set VITE_STATIC_BASE_URL when their
+// origin differs from the API origin (e.g. localhost /static files).
+const STATIC_ASSET_BASE_URL = String(
+  import.meta.env.VITE_STATIC_BASE_URL ||
+  import.meta.env.VITE_BACKEND_PUBLIC_URL ||
+  (API_BASE_URL.startsWith("http")
+    ? API_BASE_URL.replace(/\/api\/?$/, "")
+    : (typeof window !== "undefined" &&
+        ["localhost", "127.0.0.1"].includes(window.location.hostname)
+        ? "http://127.0.0.1:5000"
+        : "https://group3jungle-house-production.up.railway.app"))
+).replace(/\/+$/, "");
 
 export default function ArticleDetail() {
   const { id } = useParams();
@@ -18,15 +31,20 @@ export default function ArticleDetail() {
   function getFileUrl(url) {
     if (!url) return "";
 
-    if (url.startsWith("http://") || url.startsWith("https://")) {
-      return url;
-    }
+    const path = String(url).trim();
+    if (/^(https?:|blob:|data:)/i.test(path)) return path;
 
-    if (url.startsWith("/")) {
-      return `${API_BASE_URL}${url}`;
+    // API downloads use the configured API client route; ordinary upload
+    // files use the static origin rather than the /api proxy.
+    if (path.startsWith("/api/")) {
+      const apiOrigin = API_BASE_URL.replace(/\/api\/?$/, "");
+      return `${apiOrigin}${path}`;
     }
-
-    return `${API_BASE_URL}/${url}`;
+    if (path.startsWith("api/")) {
+      const apiOrigin = API_BASE_URL.replace(/\/api\/?$/, "");
+      return `${apiOrigin}/${path}`;
+    }
+    return `${STATIC_ASSET_BASE_URL}/${path.replace(/^\/+/, "")}`;
   }
 
   function isImageFile(url, type) {
@@ -210,40 +228,32 @@ export default function ArticleDetail() {
 
     const loadArticle = async () => {
       try {
-        const articleResponse = await fetch(
-          `${API_BASE_URL}/api/articles/${id}`,
-          { signal: controller.signal }
-        );
-
-        if (!articleResponse.ok) {
-          throw new Error("Article not found");
-        }
-
-        const articleData = await articleResponse.json();
-
+        // The shared client uses /api on localhost (Vite proxy) and Vercel.
+        // It also supplies Flask's session cookie automatically.
+        const articleResponse = await api.get(`/articles/${encodeURIComponent(id)}`, {
+          signal: controller.signal,
+        });
         if (controller.signal.aborted) return;
 
-        console.log("Article detail data:", articleData);
+        const articleData = articleResponse.data;
         setOpenAttachmentIndex(null);
         setArticle(articleData?.article_id ? articleData : null);
 
-        const linksResponse = await fetch(
-          `${API_BASE_URL}/api/article-links/${id}`,
-          { signal: controller.signal }
-        );
-
-        if (controller.signal.aborted) return;
-
-        const linksData = linksResponse.ok
-          ? await linksResponse.json()
-          : [];
-
-        if (controller.signal.aborted) return;
-
-        setLinks(Array.isArray(linksData) ? linksData : []);
+        // Related links are optional. A failure here must not erase an
+        // article that was loaded successfully.
+        try {
+          const linksResponse = await api.get(`/article-links/${encodeURIComponent(id)}`, {
+            signal: controller.signal,
+          });
+          if (controller.signal.aborted) return;
+          setLinks(Array.isArray(linksResponse.data) ? linksResponse.data : []);
+        } catch (linksError) {
+          if (controller.signal.aborted) return;
+          console.warn("Related links could not be loaded:", linksError);
+          setLinks([]);
+        }
       } catch (err) {
-        if (err.name === "AbortError") return;
-
+        if (controller.signal.aborted) return;
         console.error("Failed to load article detail:", err);
         setArticle(null);
         setLinks([]);
@@ -255,7 +265,6 @@ export default function ArticleDetail() {
     };
 
     loadArticle();
-
     return () => controller.abort();
   }, [id]);
 
