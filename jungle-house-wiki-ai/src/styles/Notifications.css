@@ -547,3 +547,455 @@
     transition: none;
   }
 }
+
+
+/* ==========================================================================
+   STEP 12C — NOTIFICATIONS | STAFF WORKSPACE ONLY
+   Append to END of src/styles/Notifications.css (after your existing rules).
+   Uses Step 8.5 light/dark/accent/contrast preferences; no JSX/API changes.
+   Single scrolling region: the staff-content element, not a nested card.
+   ========================================================================== */
+
+/* Palette belongs to this page, never to the manager / team-lead views. */
+.staff-workspace .notifications-page {
+  --nt-ink: #1f3829;
+  --nt-text: #345341;
+  --nt-muted: #52695a;
+  --nt-line: #d4e0d5;
+  --nt-surface: #ffffff;
+  --nt-surface-soft: #f3f8f2;
+  --nt-card: #ffffff;
+  --nt-card-hover: #f5faf4;
+  --nt-unread: #eaf5e9;
+  --nt-chip: #e9f2e9;
+  --nt-action: var(--jh-accent, #176244);
+  --nt-action-hover: var(--jh-accent-hover, #104a33);
+  --nt-action-ink: #ffffff;
+  --nt-action-soft: var(--jh-accent-tint, #def2e5);
+  --nt-positive: #236c42;
+  --nt-positive-soft: #e5f4e8;
+  --nt-danger: #a92e31;
+  --nt-danger-soft: #fff0ef;
+  color: var(--nt-ink);
+  max-width: 1500px;
+  min-width: 0;
+  padding-bottom: max(36px, env(safe-area-inset-bottom));
+}
+
+/* Fix the ancestor's missing height constraint: wheel/touch scrolls the PAGE.
+   The staff top bar remains the 66px fixed-height row of .staff-main. */
+.staff-workspace .staff-main:has(> .staff-content > .notifications-page) {
+  box-sizing: border-box;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+.staff-workspace .staff-main > .staff-content:not(.staff-content-chat):has(> .notifications-page) {
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  overscroll-behavior-y: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: var(--nt-line) transparent;
+}
+.staff-workspace .staff-main > .staff-content > .notifications-page {
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  overflow: visible !important;
+}
+.staff-workspace .notifications-page .notifications-workspace,
+.staff-workspace .notifications-page .notifications-list {
+  height: auto;
+  min-height: 0;
+  max-height: none;
+}
+.staff-workspace .notifications-page .notifications-list {
+  overflow: visible; /* Avoid a second competing scroll area. */
+}
+
+/* Counts: same typography on all three tiles, balanced and readable. */
+.staff-workspace .notifications-page .notifications-summary-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 16px;
+}
+.staff-workspace .notifications-page .notifications-summary-card {
+  --accent: var(--nt-action);
+  --soft: var(--nt-action-soft);
+  min-width: 0;
+  min-height: 112px;
+  padding: 19px 21px;
+  color: var(--nt-ink);
+  background: var(--nt-surface) !important;
+  border: 1px solid var(--nt-line);
+  border-radius: 18px;
+  box-shadow: 0 5px 22px rgba(24, 58, 33, .05);
+}
+.staff-workspace .notifications-page .notifications-summary-card::after {
+  width: 96px;
+  height: 96px;
+  right: -34px;
+  bottom: -40px;
+  background: var(--nt-action-soft);
+  opacity: .75;
+}
+.staff-workspace .notifications-page .notifications-summary-card.unread {
+  --accent: var(--nt-action);
+  --soft: var(--nt-action-soft);
+  background: var(--nt-unread) !important;
+}
+.staff-workspace .notifications-page .notifications-summary-card.read {
+  --accent: var(--nt-positive);
+  --soft: var(--nt-positive-soft);
+}
+.staff-workspace .notifications-page .notifications-summary-card span {
+  color: var(--nt-muted);
+  font-size: 14px;
+  font-weight: 700;
+}
+.staff-workspace .notifications-page .notifications-summary-card strong {
+  color: var(--accent);
+  font-size: clamp(29px, 2.7vw, 37px);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Workspace and its header; no hard-coded cream backgrounds. */
+.staff-workspace .notifications-page .notifications-workspace {
+  margin-top: 18px;
+  background: var(--nt-surface) !important;
+  color: var(--nt-ink);
+  border: 1px solid var(--nt-line);
+  border-radius: 20px;
+  box-shadow: 0 8px 30px rgba(24, 58, 33, .06);
+}
+.staff-workspace .notifications-page .notifications-toolbar {
+  gap: 16px;
+  padding: 20px clamp(16px, 2vw, 26px);
+  background: var(--nt-surface-soft);
+  border-color: var(--nt-line);
+}
+.staff-workspace .notifications-page .notifications-kicker {
+  color: var(--nt-action);
+  font-size: 12px;
+  letter-spacing: .055em;
+  font-weight: 750;
+}
+.staff-workspace .notifications-page .notifications-toolbar h2 {
+  color: var(--nt-ink);
+  font-size: clamp(20px, 1.9vw, 25px);
+  font-weight: 800;
+}
+.staff-workspace .notifications-page .notification-actions {
+  min-width: 0;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.staff-workspace .notifications-page .notification-filter-tabs {
+  min-width: 0;
+  background: var(--nt-chip);
+  border: 1px solid var(--nt-line);
+  border-radius: 13px;
+  gap: 4px;
+}
+.staff-workspace .notifications-page .notification-filter-tabs button {
+  min-height: 40px;
+  color: var(--nt-text);
+  border-radius: 9px;
+  padding: 8px 11px;
+  font-size: 14px;
+  font-weight: 750;
+}
+.staff-workspace .notifications-page .notification-filter-tabs button:hover:not(.active) {
+  color: var(--nt-ink);
+  background: var(--nt-card-hover);
+}
+.staff-workspace .notifications-page .notification-filter-tabs button.active {
+  color: var(--nt-action-ink);
+  background: var(--nt-action);
+  box-shadow: none;
+}
+.staff-workspace .notifications-page .notification-filter-tabs button span {
+  min-width: 24px;
+  height: 24px;
+  color: var(--nt-text);
+  background: var(--nt-surface);
+  font-size: 12px;
+}
+.staff-workspace .notifications-page .notification-filter-tabs button.active span {
+  color: var(--nt-action);
+  background: var(--nt-surface);
+}
+.staff-workspace .notifications-page .notification-refresh-btn {
+  min-height: 44px;
+  color: var(--nt-ink);
+  background: var(--nt-surface);
+  border: 1px solid var(--nt-line);
+  border-radius: 11px;
+  padding: 9px 15px;
+  font-size: 14px;
+  font-weight: 750;
+}
+.staff-workspace .notifications-page .notification-refresh-btn:hover:not(:disabled) {
+  background: var(--nt-action-soft);
+  border-color: var(--nt-action);
+}
+.staff-workspace .notifications-page button:disabled { opacity: .6; cursor: not-allowed; }
+
+/* Notification cards: long details wrap and action buttons remain visible. */
+.staff-workspace .notifications-page .notifications-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: clamp(12px, 1.7vw, 22px);
+}
+.staff-workspace .notifications-page .notification-card {
+  min-width: 0;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  gap: 15px;
+  padding: 19px;
+  color: var(--nt-ink);
+  background: var(--nt-card);
+  border: 1px solid var(--nt-line);
+  border-radius: 16px;
+  box-shadow: none;
+}
+.staff-workspace .notifications-page .notification-card.unread {
+  background: var(--nt-unread);
+  border-color: var(--nt-action);
+  border-left: 4px solid var(--nt-action);
+}
+.staff-workspace .notifications-page .notification-card:hover {
+  background: var(--nt-card-hover);
+  border-color: var(--nt-action);
+  transform: none;
+  box-shadow: 0 5px 16px rgba(17, 50, 30, .07);
+}
+.staff-workspace .notifications-page .notification-card.unread:hover { background: var(--nt-unread); }
+.staff-workspace .notifications-page .notification-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  font-size: 18px;
+}
+.staff-workspace .notifications-page .notification-icon.unread {
+  color: var(--nt-action-ink);
+  background: var(--nt-action);
+  box-shadow: none;
+}
+.staff-workspace .notifications-page .notification-icon.read {
+  color: var(--nt-positive);
+  background: var(--nt-positive-soft);
+  border: 1px solid var(--nt-line);
+}
+.staff-workspace .notifications-page .notification-content { min-width: 0; overflow-wrap: anywhere; }
+.staff-workspace .notifications-page .notification-top-row {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px 14px;
+  margin-bottom: 9px;
+}
+.staff-workspace .notifications-page .notification-meta-row { gap: 7px; }
+.staff-workspace .notifications-page .notification-status,
+.staff-workspace .notifications-page .notification-type {
+  min-height: 26px;
+  padding: 5px 9px;
+  font-size: 12px;
+  font-weight: 750;
+}
+.staff-workspace .notifications-page .notification-status.unread {
+  color: var(--nt-action);
+  background: var(--nt-action-soft);
+  border: 1px solid var(--nt-line);
+}
+.staff-workspace .notifications-page .notification-status.read {
+  color: var(--nt-positive);
+  background: var(--nt-positive-soft);
+  border: 1px solid var(--nt-line);
+}
+.staff-workspace .notifications-page .notification-type {
+  color: var(--nt-text);
+  background: var(--nt-chip);
+  border: 1px solid var(--nt-line);
+}
+.staff-workspace .notifications-page .notification-time {
+  color: var(--nt-muted);
+  font-size: 12px;
+  white-space: normal;
+}
+.staff-workspace .notifications-page .notification-card h3 {
+  color: var(--nt-ink);
+  font-size: 16px;
+  line-height: 1.5;
+  font-weight: 800;
+}
+.staff-workspace .notifications-page .notification-card p {
+  color: var(--nt-text);
+  font-size: 14px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.staff-workspace .notifications-page .notification-mark-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
+  min-height: 42px;
+  padding: 10px 14px;
+  color: var(--nt-action);
+  background: var(--nt-surface);
+  border: 1px solid var(--nt-action);
+  border-radius: 11px;
+  font-size: 13px;
+  font-weight: 750;
+  text-align: center;
+  text-decoration: none;
+  white-space: normal;
+}
+.staff-workspace .notifications-page .notification-mark-btn:hover:not(:disabled) {
+  color: var(--nt-action-ink);
+  background: var(--nt-action);
+}
+
+/* Loading/empty/error placeholders in both themes. */
+.staff-workspace .notifications-page .notifications-state-card {
+  padding: 32px 20px;
+  color: var(--nt-muted);
+}
+.staff-workspace .notifications-page .notifications-state-icon {
+  color: var(--nt-action);
+  background: var(--nt-action-soft);
+  border: 1px solid var(--nt-line);
+}
+.staff-workspace .notifications-page .notifications-state-card strong {
+  color: var(--nt-ink);
+  font-size: 16px;
+}
+.staff-workspace .notifications-page .notifications-state-card p {
+  color: var(--nt-text);
+  font-size: 14px;
+}
+.staff-workspace .notifications-page .notifications-state-card.error {
+  color: var(--nt-danger);
+}
+.staff-workspace .notifications-page .notifications-state-card.error .notifications-state-icon {
+  color: var(--nt-danger);
+  background: var(--nt-danger-soft);
+  border-color: var(--nt-danger);
+}
+.staff-workspace .notifications-page :is(button, a):focus-visible {
+  outline: 3px solid var(--nt-action);
+  outline-offset: 3px;
+}
+
+/* Explicit preference, not @media prefers-color-scheme: users control theme. */
+.staff-workspace[data-jh-theme="dark"] .notifications-page {
+  --nt-ink: #f3fcf4;
+  --nt-text: #e2f2e6;
+  --nt-muted: #c4dacb;
+  --nt-line: #4d715b;
+  --nt-surface: #1b382b;
+  --nt-surface-soft: #163126;
+  --nt-card: #234332;
+  --nt-card-hover: #2b503c;
+  --nt-unread: #2a4933;
+  --nt-chip: #2a4a38;
+  --nt-action: var(--jh-accent-bright, #83d9a3);
+  --nt-action-hover: var(--jh-accent-bright, #83d9a3);
+  --nt-action-ink: #112619;
+  --nt-action-soft: #31553f;
+  --nt-positive: #a3f0bc;
+  --nt-positive-soft: #315540;
+  --nt-danger: #ffc0b7;
+  --nt-danger-soft: #5a2d2c;
+}
+.staff-workspace[data-jh-theme="dark"] .notifications-page .notification-filter-tabs button.active span,
+.staff-workspace[data-jh-theme="dark"] .notifications-page .notification-filter-tabs button span {
+  color: #193627;
+  background: #e2f4e5;
+}
+.staff-workspace[data-jh-theme="dark"] .notifications-page .notification-icon.unread {
+  color: #112619;
+}
+
+/* Increased contrast: borders and muted text are visibly stronger. */
+.staff-workspace[data-jh-contrast="increased"] .notifications-page {
+  --nt-muted: var(--nt-ink);
+  --nt-text: var(--nt-ink);
+  --nt-line: var(--nt-ink);
+}
+.staff-workspace[data-jh-contrast="increased"] .notifications-page :is(
+  .notifications-summary-card, .notifications-workspace, .notification-card,
+  .notification-filter-tabs, .notification-refresh-btn, .notification-mark-btn
+) {
+  border-width: 2px;
+}
+
+/* Intermediate screens: toolbar wraps rather than clipping a tab/button. */
+@media (max-width: 1050px) {
+  .staff-workspace .notifications-page .notifications-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .staff-workspace .notifications-page .notification-actions { width: 100%; }
+  .staff-workspace .notifications-page .notification-filter-tabs { flex: 1 1 auto; }
+  .staff-workspace .notifications-page .notification-filter-tabs button { flex: 1; }
+}
+
+@media (max-width: 680px) {
+  .staff-workspace .notifications-page .notifications-summary-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .staff-workspace .notifications-page .notifications-summary-card {
+    min-height: 91px;
+    padding: 13px 12px;
+    border-radius: 13px;
+  }
+  .staff-workspace .notifications-page .notifications-summary-card span { font-size: 12px; }
+  .staff-workspace .notifications-page .notifications-summary-card strong { font-size: 27px; }
+  .staff-workspace .notifications-page .notifications-toolbar { padding: 17px 14px; }
+  .staff-workspace .notifications-page .notification-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .staff-workspace .notifications-page .notification-filter-tabs { width: 100%; }
+  .staff-workspace .notifications-page .notification-filter-tabs button {
+    min-width: 0;
+    padding: 7px 5px;
+    font-size: 12px;
+  }
+  .staff-workspace .notifications-page .notification-refresh-btn { width: 100%; }
+  .staff-workspace .notifications-page .notifications-list { padding: 10px; gap: 10px; }
+  .staff-workspace .notifications-page .notification-card {
+    grid-template-columns: 39px minmax(0, 1fr);
+    align-items: start;
+    gap: 10px;
+    padding: 14px;
+  }
+  .staff-workspace .notifications-page .notification-icon {
+    width: 39px;
+    height: 39px;
+    font-size: 16px;
+  }
+  .staff-workspace .notifications-page .notification-mark-btn {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+  .staff-workspace .notifications-page .notification-top-row { align-items: flex-start; }
+  .staff-workspace .notifications-page .notification-card h3 { font-size: 15px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .staff-workspace .notifications-page .notification-card,
+  .staff-workspace .notifications-page .notification-mark-btn {
+    transition: none;
+    transform: none;
+  }
+}

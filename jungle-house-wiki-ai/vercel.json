@@ -6,6 +6,10 @@
       "destination": "https://group3jungle-house-production.up.railway.app/api/:path*"
     },
     {
+      "source": "/static/:path*",
+      "destination": "https://group3jungle-house-production.up.railway.app/static/:path*"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }
