@@ -1124,3 +1124,130 @@
     font-size: 10.5px;
   }
 }
+
+/* STEP 8B.3 — append at the VERY END of src/styles/KnowledgeBase.css.
+   Staff-only scroll and page-number controls; do not touch chat/admin. */
+
+/* Give the Knowledge Base its own REAL scrolling viewport. The fixed topbar is
+   66px tall in the existing staff layout. Works even when the document itself
+   has overflow:hidden from another screen. */
+.staff-workspace .staff-content:not(.staff-content-chat):has(.kb-compact-page) {
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  height: calc(100dvh - 66px) !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  scrollbar-width: thin;
+}
+
+.staff-workspace .staff-content .kb-compact-page {
+  height: auto !important;
+  min-height: min-content;
+  max-height: none !important;
+  overflow: visible !important;
+  padding-bottom: max(38px, env(safe-area-inset-bottom));
+}
+
+.staff-workspace .kb-compact-page .kb-section-header {
+  scroll-margin-top: 14px;
+}
+
+/* Numbered pages replace the six cards, rather than adding more beneath them. */
+.staff-workspace[data-jh-theme] .kb-compact-page .kb-pagination {
+  width: 100%;
+  margin-top: 18px;
+  padding: 15px 0 26px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  border-top: 1px solid var(--kb8-outline, var(--staff-border));
+}
+
+.staff-workspace[data-jh-theme] .kb-compact-page .kb-pagination-summary {
+  margin: 0;
+  color: var(--kb8-secondary, var(--staff-muted));
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.staff-workspace[data-jh-theme] .kb-compact-page .kb-pagination-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+}
+
+.staff-workspace[data-jh-theme] .kb-compact-page .kb-pagination-controls button {
+  min-width: 36px;
+  min-height: 38px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  color: var(--kb8-page-ink, var(--staff-text));
+  background: var(--kb8-surface, var(--staff-card));
+  border: 1px solid var(--kb8-outline, var(--staff-border));
+  box-shadow: none;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.staff-workspace[data-jh-theme] .kb-compact-page .kb-pagination-controls button:hover:not(:disabled) {
+  border-color: var(--kb8-accent, var(--jh-accent));
+}
+
+.staff-workspace[data-jh-theme] .kb-compact-page .kb-pagination-controls button.active {
+  color: #fff;
+  background: var(--jh-accent, #176244);
+  border-color: var(--jh-accent, #176244);
+}
+
+.staff-workspace[data-jh-theme] .kb-compact-page .kb-pagination-controls button:disabled {
+  opacity: .42;
+  cursor: not-allowed;
+}
+
+.staff-workspace[data-jh-theme] .kb-compact-page .kb-pagination-ellipsis {
+  min-width: 14px;
+  color: var(--kb8-secondary, var(--staff-muted));
+  text-align: center;
+}
+
+.staff-workspace[data-jh-contrast="increased"] .kb-compact-page .kb-pagination-controls button {
+  border-width: 2px;
+}
+
+@media (max-width: 600px) {
+  .staff-workspace .staff-content:not(.staff-content-chat):has(.kb-compact-page) {
+    padding: 12px;
+  }
+  .staff-workspace[data-jh-theme] .kb-compact-page .kb-pagination {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .staff-workspace[data-jh-theme] .kb-compact-page .kb-pagination-summary {
+    text-align: center;
+  }
+  .staff-workspace[data-jh-theme] .kb-compact-page .kb-pagination-controls {
+    gap: 4px;
+  }
+  .staff-workspace[data-jh-theme] .kb-compact-page .kb-pagination-controls button {
+    min-width: 34px;
+    min-height: 44px;
+    padding: 7px;
+    font-size: 12px;
+  }
+  .staff-workspace[data-jh-theme] .kb-compact-page .kb-pagination-controls button span {
+    display: none;
+  }
+}

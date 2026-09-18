@@ -1,12 +1,23 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import '../styles/Notifications.css';
 
-function getNotificationIcon(type) {
-  const value = String(type || 'system').toLowerCase();
+function formatNotificationDate(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return { label: date.toLocaleString(), iso: date.toISOString() };
+}
 
+function getNotificationIcon(type, title = '') {
+  const value = String(type || 'system').toLowerCase();
+  const heading = String(title || '').toLowerCase();
+
+  // The backend stores registration alerts as type=system.
+  if (heading.includes('account approval') || heading.includes('registration')) return 'U';
   if (value.includes('review')) return '✓';
   if (value.includes('message')) return '✉';
   if (value.includes('quiz')) return 'Q';
@@ -19,34 +30,71 @@ function getNotificationIcon(type) {
 
 export default function Notifications() {
   const { user } = useAuth();
+  const userId = user?.id ?? user?.user_id ?? null;
+  const role = String(user?.role || user?.role_name || '').toLowerCase().replace(/[\s_-]/g, '');
+  const canReviewRegistrations = ['manager', 'admin', 'teamlead'].includes(role);
 
-  const [items, setItems] = useState([]);
+  // Keep notifications tied to the session account, not a previous login.
+  const [notificationData, setNotificationData] = useState({ userId: null, items: [] });
+  const items = notificationData.userId === userId ? notificationData.items : [];
   const [filter, setFilter] = useState('all');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [actionError, setActionError] = useState('');
+  const [markingId, setMarkingId] = useState(null);
+  const requestVersionRef = useRef(0);
+  const currentUserIdRef = useRef(userId);
+  const markInFlightRef = useRef(null);
+  currentUserIdRef.current = userId;
 
   const fetchNotifications = useCallback(async () => {
-    if (!user?.id) {
+    const requestVersion = ++requestVersionRef.current;
+    if (userId == null) {
+      setNotificationData({ userId: null, items: [] });
+      setError('');
       setLoading(false);
       return;
     }
 
-    try {
-      setLoading(true);
-      setError('');
+    setLoading(true);
+    setError('');
 
-      const response = await api.get(`/notifications/${user.id}`);
-      setItems(Array.isArray(response.data) ? response.data : []);
+    try {
+      // Flask enforces that this URL's user ID matches the verified session.
+      const response = await api.get(`/notifications/${userId}`);
+      if (requestVersion !== requestVersionRef.current || currentUserIdRef.current !== userId) return;
+      const receivedItems = Array.isArray(response.data) ? response.data : [];
+      setNotificationData({
+        userId,
+        items: receivedItems.map((item) => ({
+          ...item,
+          isRead: item.isRead === true || item.isRead === 1 || item.isRead === '1',
+        })),
+      });
     } catch (err) {
+      if (requestVersion !== requestVersionRef.current || currentUserIdRef.current !== userId) return;
       console.error('Fetch notifications error:', err);
-      setError(err.response?.data?.message || 'Unable to load notifications.');
+      const code = err.response?.data?.code;
+      setError(
+        code === 'SESSION_EXPIRED' || err.response?.status === 401
+          ? 'Your session has expired. Please sign in again.'
+          : err.response?.data?.message || 'Unable to load notifications.'
+      );
+      // Do not display outdated summary counts after a failed reload.
+      setNotificationData((prev) => prev.userId === userId ? { userId, items: [] } : prev);
     } finally {
-      setLoading(false);
+      if (requestVersion === requestVersionRef.current && currentUserIdRef.current === userId) {
+        setLoading(false);
+      }
     }
-  }, [user?.id]);
+  }, [userId]);
 
   useEffect(() => {
+    setActionError('');
+    setMarkingId(null);
+    markInFlightRef.current = null;
     fetchNotifications();
+    return () => { requestVersionRef.current += 1; };
   }, [fetchNotifications]);
 
   const unreadCount = useMemo(() => {
@@ -68,19 +116,35 @@ export default function Notifications() {
   }, [items, filter]);
 
   const markAsRead = async (id) => {
+    if (userId == null || markInFlightRef.current?.userId === userId) return;
+    const requestUserId = userId;
+    const operation = { userId, id };
+    markInFlightRef.current = operation;
+    setMarkingId(id);
+    setActionError('');
+
     try {
-      setError('');
-
       await api.put(`/notifications/read/${id}`);
-
-      setItems((prev) =>
-        prev.map((item) =>
-          item.id === id ? { ...item, isRead: true } : item
-        )
+      if (currentUserIdRef.current !== requestUserId || markInFlightRef.current !== operation) return;
+      // A GET started before this PUT must never overwrite the confirmed read state.
+      requestVersionRef.current += 1;
+      setLoading(false);
+      setNotificationData((prev) => prev.userId === requestUserId
+        ? {
+            ...prev,
+            items: prev.items.map((item) => String(item.id) === String(id) ? { ...item, isRead: true } : item),
+          }
+        : prev
       );
     } catch (err) {
+      if (currentUserIdRef.current !== requestUserId || markInFlightRef.current !== operation) return;
       console.error('Mark notification error:', err);
-      setError(err.response?.data?.message || 'Unable to mark notification as read.');
+      setActionError(err.response?.data?.message || 'Unable to mark notification as read.');
+    } finally {
+      if (markInFlightRef.current === operation) {
+        markInFlightRef.current = null;
+        if (currentUserIdRef.current === requestUserId) setMarkingId(null);
+      }
     }
   };
 
@@ -121,6 +185,7 @@ export default function Notifications() {
                 type="button"
                 className={filter === 'all' ? 'active' : ''}
                 onClick={() => setFilter('all')}
+                aria-pressed={filter === 'all'}
               >
                 All
                 <span>{items.length}</span>
@@ -130,6 +195,7 @@ export default function Notifications() {
                 type="button"
                 className={filter === 'unread' ? 'active' : ''}
                 onClick={() => setFilter('unread')}
+                aria-pressed={filter === 'unread'}
               >
                 Unread
                 <span>{unreadCount}</span>
@@ -139,6 +205,7 @@ export default function Notifications() {
                 type="button"
                 className={filter === 'read' ? 'active' : ''}
                 onClick={() => setFilter('read')}
+                aria-pressed={filter === 'read'}
               >
                 Read
                 <span>{readCount}</span>
@@ -149,6 +216,8 @@ export default function Notifications() {
               type="button"
               className="notification-refresh-btn"
               onClick={fetchNotifications}
+              disabled={loading || markingId !== null || userId == null}
+              aria-label="Refresh notifications"
             >
               Refresh
             </button>
@@ -156,17 +225,23 @@ export default function Notifications() {
         </div>
 
         {loading && (
-          <div className="notifications-state-card">
+          <div className="notifications-state-card" role="status">
             <div className="notifications-state-icon">•••</div>
             <strong>Loading notifications</strong>
           </div>
         )}
 
-        {error && (
+        {!loading && error && (
           <div className="notifications-state-card error" role="alert">
             <div className="notifications-state-icon">!</div>
             <strong>Unable to load notifications</strong>
             <p>{error}</p>
+          </div>
+        )}
+
+        {actionError && (
+          <div className="notifications-state-card error" role="alert">
+            <p>{actionError}</p>
           </div>
         )}
 
@@ -186,7 +261,7 @@ export default function Notifications() {
                 className={`notification-card ${item.isRead ? 'read' : 'unread'}`}
               >
                 <div className={`notification-icon ${item.isRead ? 'read' : 'unread'}`}>
-                  {getNotificationIcon(item.type)}
+                  {getNotificationIcon(item.type, item.title)}
                 </div>
 
                 <div className="notification-content">
@@ -201,24 +276,34 @@ export default function Notifications() {
                       </span>
                     </div>
 
-                    {item.created_at && (
-                      <time className="notification-time">
-                        {new Date(item.created_at).toLocaleString()}
+                    {formatNotificationDate(item.created_at) && (
+                      <time
+                        className="notification-time"
+                        dateTime={formatNotificationDate(item.created_at).iso}
+                      >
+                        {formatNotificationDate(item.created_at).label}
                       </time>
                     )}
                   </div>
 
-                  <h3>{item.title}</h3>
-                  <p>{item.detail}</p>
+                  <h3>{item.title || 'Notification'}</h3>
+                  <p>{item.detail || ''}</p>
                 </div>
+
+                {canReviewRegistrations && item.title === 'New account approval needed' ? (
+                  <Link to="/admin/users" className="notification-mark-btn">
+                    Review account
+                  </Link>
+                ) : null}
 
                 {!item.isRead && (
                   <button
                     type="button"
                     className="notification-mark-btn"
                     onClick={() => markAsRead(item.id)}
+                    disabled={markingId !== null}
                   >
-                    Mark read
+                    {markingId === item.id ? 'Saving...' : 'Mark read'}
                   </button>
                 )}
               </article>

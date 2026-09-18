@@ -1080,3 +1080,254 @@
     font-size: 11px;
   }
 }
+
+
+/* STEP 9.1 — APPEND to src/styles/ArticleDetail.css (staff only).
+   Works with Step 8.5 data-jh-theme / data-jh-contrast / data-jh-accent.
+   No React, API, admin or team-leader changes. */
+
+/* Use the existing staff layout's theme attributes as the single source of truth. */
+.staff-workspace[data-jh-theme] .article-detail-page {
+  --ad-page: #f6f8f4;
+  --ad-surface: #fffefa;
+  --ad-subtle: #eef5ed;
+  --ad-heading: #183727;
+  --ad-body: #294333;
+  --ad-muted: #506856;
+  --ad-outline: #ccddce;
+  --ad-link: var(--jh-accent, #176244);
+  --ad-link-hover: var(--jh-accent-hover, #104a33);
+  --ad-highlight: var(--jh-accent-tint, #def2e5);
+  --ad-image-bg: #fff;
+  max-width: 980px;
+  width: 100%;
+  min-width: 0;
+  height: auto !important;
+  max-height: none !important;
+  overflow: visible !important;
+  padding-bottom: max(46px, env(safe-area-inset-bottom));
+  color: var(--ad-body);
+}
+
+.staff-workspace[data-jh-theme="dark"] .article-detail-page {
+  --ad-page: #121e17;
+  --ad-surface: #202e24;
+  --ad-subtle: #293e30;
+  --ad-heading: #f0fcf2;
+  --ad-body: #e0f0e4;
+  --ad-muted: #b9d3c0;
+  --ad-outline: #526d59;
+  --ad-link: var(--jh-accent-bright, #78dca2);
+  --ad-link-hover: #e5ffec;
+  --ad-highlight: #304b38;
+  --ad-image-bg: #f8faf7;
+}
+
+/* Article pages scroll; chat's separate fixed-height viewport stays untouched. */
+.staff-workspace .staff-content:not(.staff-content-chat):has(.article-detail-page) {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  height: calc(100dvh - 66px) !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+}
+
+/* Branded, uncluttered reading surface, without overwhelming page copy. */
+.staff-workspace[data-jh-theme] .article-detail-page .article-container {
+  margin-top: 15px;
+  padding: clamp(22px, 3.5vw, 42px);
+  border: 1px solid var(--ad-outline);
+  border-radius: 22px;
+  background: var(--ad-surface);
+  color: var(--ad-body);
+  box-shadow: 0 12px 32px rgba(23, 55, 34, .055);
+  overflow: hidden;
+}
+.staff-workspace[data-jh-theme] .article-detail-page .article-container::before {
+  height: 4px;
+  background: linear-gradient(90deg, var(--jh-accent, #176244), #a7c991 68%, transparent);
+}
+.staff-workspace[data-jh-theme] .article-detail-page .article-detail-back {
+  min-height: 42px;
+  padding: 9px 13px;
+  color: var(--ad-link);
+  background: var(--ad-surface);
+  border: 1px solid var(--ad-outline);
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.staff-workspace[data-jh-theme] .article-detail-page .article-detail-back:hover {
+  color: var(--ad-link-hover);
+  background: var(--ad-subtle);
+  border-color: var(--ad-link);
+}
+.staff-workspace[data-jh-theme] .article-detail-page :is(.page-header h1, .page-header h2) {
+  color: var(--ad-heading);
+  font-size: clamp(23px, 3vw, 34px);
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.staff-workspace[data-jh-theme] .article-detail-page .page-header p { color: var(--ad-muted); }
+
+/* Rich HTML, imported Notion text, legacy SOPs: readable on both themes. */
+.staff-workspace[data-jh-theme] .article-detail-page :is(.article-content, .article-rich-content) {
+  color: var(--ad-body);
+  font-size: 15px;
+  line-height: 1.78;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.staff-workspace[data-jh-theme] .article-detail-page :is(
+  .article-rich-content p, .article-rich-content li, .article-rich-content span,
+  .article-rich-content strong, .article-rich-content blockquote,
+  .article-content .sop-paragraph, .article-content .sop-step-sub
+) { color: var(--ad-body); }
+.staff-workspace[data-jh-theme] .article-detail-page :is(
+  .article-rich-content h1, .article-rich-content h2, .article-rich-content h3,
+  .article-rich-content h4, .article-rich-content h5, .article-rich-content h6,
+  .sop-section-header, .article-attachment-section > h3, .related-links-section > h3
+) { color: var(--ad-heading); }
+.staff-workspace[data-jh-theme] .article-detail-page .sop-section-header {
+  border-bottom-color: var(--ad-outline);
+  font-size: 19px;
+}
+.staff-workspace[data-jh-theme] .article-detail-page .sop-step-main {
+  color: var(--ad-heading);
+  background: var(--ad-subtle);
+  border: 1px solid var(--ad-outline);
+  border-left: 4px solid var(--jh-accent, #176244);
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 750;
+}
+.staff-workspace[data-jh-theme] .article-detail-page .sop-step-sub::before {
+  background: var(--ad-link);
+}
+.staff-workspace[data-jh-theme] .article-detail-page :is(
+  .sop-inline-link, .article-rich-content a:not(.article-inline-file),
+  .related-links-section a
+) { color: var(--ad-link); }
+.staff-workspace[data-jh-theme] .article-detail-page :is(
+  .sop-inline-link, .article-rich-content a:not(.article-inline-file),
+  .related-links-section a
+):hover { color: var(--ad-link-hover); }
+.staff-workspace[data-jh-theme] .article-detail-page :is(
+  .article-inline-file, .related-links-section a
+) {
+  background: var(--ad-subtle);
+  border-color: var(--ad-outline);
+  font-size: 13px;
+}
+
+/* Keep SOP imagery crisp; no forced crops or fixed widths. */
+.staff-workspace[data-jh-theme] .article-detail-page .sop-image-wrapper {
+  max-width: 100%;
+  background: var(--ad-subtle);
+  border-color: var(--ad-outline);
+}
+.staff-workspace[data-jh-theme] .article-detail-page :is(.sop-image, .article-rich-content img) {
+  max-width: 100%;
+  height: auto;
+  background: var(--ad-image-bg);
+  border-color: var(--ad-outline);
+  object-fit: contain;
+}
+
+/* Rich tables scroll sideways on narrow screens without widening the page. */
+.staff-workspace[data-jh-theme] .article-detail-page :is(.article-content, .article-rich-content) {
+  overflow-x: auto;
+}
+.staff-workspace[data-jh-theme] .article-detail-page .article-table-wrapper {
+  max-width: 100%;
+  overflow-x: auto;
+  border-color: var(--ad-outline);
+}
+.staff-workspace[data-jh-theme] .article-detail-page :is(.article-data-table, .article-rich-content table) {
+  color: var(--ad-body);
+  background: var(--ad-surface);
+}
+.staff-workspace[data-jh-theme] .article-detail-page :is(
+  .article-data-table td, .article-data-table th,
+  .article-rich-content table td, .article-rich-content table th
+) { color: var(--ad-body); border-color: var(--ad-outline); font-size: 13px; }
+.staff-workspace[data-jh-theme] .article-detail-page :is(
+  .article-data-table th, .article-rich-content table th
+) { color: var(--ad-heading); background: var(--ad-subtle); }
+.staff-workspace[data-jh-theme] .article-detail-page :is(
+  .article-data-table tr:nth-child(even) td, .article-rich-content table tr:nth-child(even) td
+) { background: var(--ad-subtle); }
+
+/* Attachment expansion, PDF frames, and related links remain interactive. */
+.staff-workspace[data-jh-theme] .article-detail-page :is(
+  .article-attachment-section, .related-links-section
+) { border-top-color: var(--ad-outline); }
+.staff-workspace[data-jh-theme] .article-detail-page :is(
+  .article-attachment-file-item, .article-file-preview, .article-inline-file-preview,
+  .article-file-preview-header, .article-file-download-card, .article-detail-state
+) {
+  color: var(--ad-body);
+  background: var(--ad-surface);
+  border-color: var(--ad-outline);
+}
+.staff-workspace[data-jh-theme] .article-detail-page :is(
+  .article-attachment-file-link, .article-attachment-file-name,
+  .article-file-preview-header > span, .article-file-download-card p,
+  .article-detail-state p
+) { color: var(--ad-body); }
+.staff-workspace[data-jh-theme] .article-detail-page :is(
+  .article-attachment-file-link:hover, .article-file-preview-header .text-link:hover
+) { background: var(--ad-subtle); }
+.staff-workspace[data-jh-theme] .article-detail-page :is(
+  .article-attachment-file-icon, .article-file-preview-frame
+) { background: var(--ad-image-bg); border-color: var(--ad-outline); }
+.staff-workspace[data-jh-theme] .article-detail-page .article-file-preview-header .text-link {
+  color: var(--ad-link);
+  font-size: 12px;
+}
+.staff-workspace[data-jh-theme] .article-detail-page .article-detail-state strong {
+  color: var(--ad-heading);
+}
+.staff-workspace[data-jh-theme] .article-detail-page .article-detail-state-error strong {
+  color: #b84237;
+}
+.staff-workspace[data-jh-theme="dark"] .article-detail-page .article-detail-state-error strong {
+  color: #ffaaa0;
+}
+
+/* Increased contrast is scoped to the article reader only. */
+.staff-workspace[data-jh-contrast="increased"] .article-detail-page {
+  --ad-outline: var(--ad-link);
+  --ad-muted: var(--ad-body);
+}
+.staff-workspace[data-jh-contrast="increased"] .article-detail-page :is(
+  .article-container, .sop-step-main, .article-attachment-file-item
+) { border-width: 2px; }
+.staff-workspace[data-jh-theme] .article-detail-page :focus-visible {
+  outline: 3px solid var(--ad-link);
+  outline-offset: 3px;
+}
+
+@media (max-width: 640px) {
+  .staff-workspace .staff-content:not(.staff-content-chat):has(.article-detail-page) {
+    padding: 14px 12px;
+  }
+  .staff-workspace[data-jh-theme] .article-detail-page .article-container {
+    padding: 19px 15px;
+    border-radius: 16px;
+  }
+  .staff-workspace[data-jh-theme] .article-detail-page :is(
+    .article-content, .article-rich-content
+  ) { font-size: 14px; line-height: 1.72; }
+  .staff-workspace[data-jh-theme] .article-detail-page .article-attachment-file-link {
+    min-height: 48px;
+  }
+  .staff-workspace[data-jh-theme] .article-detail-page .article-file-preview-frame {
+    height: min(65dvh, 620px);
+  }
+}

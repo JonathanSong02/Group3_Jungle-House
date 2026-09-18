@@ -32,3 +32,6 @@
    src/pages/admin/styles/AdminDashboard.css
    Do not restore old 07-admin-dashboard.css / 31-admin-dashboard-fix.css.
 */
+
+/* Staff-only ChatGPT-style responsive web workspace, loaded after legacy CSS. */
+@import './styles/StaffWorkspace.css';

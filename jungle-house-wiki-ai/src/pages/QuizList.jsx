@@ -1,9 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import api from '../services/api';
+import { useAuth } from '../context/AuthContext';
 import '../styles/Quiz.css';
 
 export default function QuizList() {
+  const { user } = useAuth();
+  const staffMode = String(user?.role || '').toLowerCase() === 'staff';
+  const [categoryFilter, setCategoryFilter] = useState('All');
+  const [quizError, setQuizError] = useState('');
+  const [questionError, setQuestionError] = useState('');
+  const [saveStatus, setSaveStatus] = useState('idle');
+  const [saveError, setSaveError] = useState('');
+  const [serverResult, setServerResult] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
   const [quizItems, setQuizItems] = useState([]);
   const [activeQuizId, setActiveQuizId] = useState(null);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
@@ -33,6 +43,7 @@ export default function QuizList() {
   const fetchQuizzes = async () => {
     try {
       setLoadingQuizzes(true);
+      setQuizError('');
 
       const response = await api.get('/quizzes');
       const data = response.data;
@@ -44,7 +55,6 @@ export default function QuizList() {
           description: quiz.description,
           category: quiz.category,
           questionCount: quiz.question_count,
-          lastScore: 0,
           questions: [],
         }));
 
@@ -55,6 +65,7 @@ export default function QuizList() {
     } catch (err) {
       console.error('Failed to load quizzes:', err);
       setQuizItems([]);
+      setQuizError(err.response?.data?.message || 'Could not load quizzes. Please try again.');
     } finally {
       setLoadingQuizzes(false);
     }
@@ -63,9 +74,14 @@ export default function QuizList() {
   const fetchQuizQuestions = async (quizId) => {
     try {
       setLoadingQuestions(true);
+      setQuestionError('');
 
       const response = await api.get(`/quizzes/${quizId}/questions`);
       const data = response.data;
+
+      if (!Array.isArray(data)) {
+        throw new Error('Invalid quiz question response.');
+      }
 
       if (Array.isArray(data)) {
         setQuizItems((prev) =>
@@ -81,6 +97,7 @@ export default function QuizList() {
       }
     } catch (err) {
       console.error('Failed to load quiz questions:', err);
+      setQuestionError(err.response?.data?.message || 'Questions could not be loaded. Try again.');
     } finally {
       setLoadingQuestions(false);
     }
@@ -91,37 +108,22 @@ export default function QuizList() {
     [quizItems, activeQuizId]
   );
 
+  const categories = useMemo(() =>
+    ['All', ...new Set(quizItems.map((quiz) => quiz.category || 'Training'))],
+    [quizItems]
+  );
+  const visibleQuizzes = staffMode && categoryFilter !== 'All'
+    ? quizItems.filter((quiz) => (quiz.category || 'Training') === categoryFilter)
+    : quizItems;
+
   const questions = activeQuiz?.questions || [];
   const currentQuestion = questions[currentQuestionIndex];
   const totalQuestions = questions.length;
 
-  const score = useMemo(() => {
-    if (!activeQuiz) return 0;
-
-    let correctCount = 0;
-
-    activeQuiz.questions.forEach((question) => {
-      if (selectedAnswers[question.id] === question.correctAnswer) {
-        correctCount += 1;
-      }
-    });
-
-    return totalQuestions > 0 ? Math.round((correctCount / totalQuestions) * 100) : 0;
-  }, [activeQuiz, selectedAnswers, totalQuestions]);
-
-  const correctCount = useMemo(() => {
-    if (!activeQuiz) return 0;
-
-    let count = 0;
-
-    activeQuiz.questions.forEach((question) => {
-      if (selectedAnswers[question.id] === question.correctAnswer) {
-        count += 1;
-      }
-    });
-
-    return count;
-  }, [activeQuiz, selectedAnswers]);
+  // Results are authoritative only after Flask marks and saves the attempt.
+  // The pre-submission questions API intentionally does not expose answer keys.
+  const score = serverResult?.percentage ?? 0;
+  const correctCount = serverResult?.score ?? 0;
 
   const handleStartQuiz = async (quizId) => {
     clearAutoNextTimer();
@@ -131,17 +133,22 @@ export default function QuizList() {
     setSelectedAnswers({});
     setSubmitted(false);
     setShowWelcome(true);
+    setSaveStatus('idle');
+    setSaveError('');
+    setServerResult(null);
+    setQuestionError('');
 
     await fetchQuizQuestions(quizId);
   };
 
   const handleBeginQuestions = () => {
     clearAutoNextTimer();
+    if (loadingQuestions || questionError || totalQuestions === 0) return;
     setShowWelcome(false);
   };
 
   const handleSelectAnswer = (questionId, optionValue) => {
-    if (submitted) return;
+    if (submitted || submitting) return;
 
     clearAutoNextTimer();
 
@@ -150,7 +157,9 @@ export default function QuizList() {
       [questionId]: optionValue,
     }));
 
-    if (currentQuestionIndex < totalQuestions - 1) {
+    // Staff can review an answer before moving on; automatic advance is too
+    // quick for mobile touch screens. Keep the established non-staff flow.
+    if (!staffMode && currentQuestionIndex < totalQuestions - 1) {
       autoNextTimerRef.current = setTimeout(() => {
         setCurrentQuestionIndex((prev) =>
           Math.min(prev + 1, totalQuestions - 1)
@@ -176,79 +185,40 @@ export default function QuizList() {
     }
   };
 
-  const getStoredUser = () => {
-    const possibleKeys = ['user', 'currentUser', 'authUser', 'loggedInUser'];
-
-    for (const key of possibleKeys) {
-      try {
-        const value = localStorage.getItem(key);
-
-        if (!value) continue;
-
-        const parsed = JSON.parse(value);
-
-        if (parsed?.user) return parsed.user;
-        if (parsed?.id || parsed?.user_id || parsed?.userId) return parsed;
-      } catch (error) {
-        console.warn(`Unable to read localStorage key: ${key}`, error);
-      }
-    }
-
-    for (let index = 0; index < localStorage.length; index += 1) {
-      try {
-        const key = localStorage.key(index);
-        const value = localStorage.getItem(key);
-
-        if (!value) continue;
-
-        const parsed = JSON.parse(value);
-
-        if (parsed?.user?.id || parsed?.user?.user_id || parsed?.user?.userId) {
-          return parsed.user;
-        }
-
-        if (parsed?.id || parsed?.user_id || parsed?.userId) {
-          return parsed;
-        }
-      } catch {
-        // Ignore non-JSON localStorage values.
-      }
-    }
-
-    return null;
-  };
-
   const handleSubmit = async () => {
+    if (submitting || submitted || !activeQuizId || !totalQuestions || answeredCount !== totalQuestions) {
+      return;
+    }
+
+    clearAutoNextTimer();
+    setSubmitting(true);
+    setSaveStatus('idle');
+    setSaveError('');
+
     try {
-      clearAutoNextTimer();
-
-      const user = getStoredUser();
-      const userId = user?.id || user?.user_id || user?.userId || null;
-
-      const payload = {
-        user_id: userId,
-        userId: userId,
-        score: correctCount,
-        total_questions: totalQuestions,
-        percentage: score,
-      };
-
-      console.log('QUIZ RESULT SUBMIT PAYLOAD:', payload);
-
-      try {
-        const response = await api.post(`/quizzes/${activeQuizId}/submit`, payload);
-        console.log('QUIZ RESULT SUBMIT RESPONSE:', response.data);
-      } catch (submitError) {
-        console.warn(
-          'Quiz result save failed, but quiz will still show result:',
-          submitError
-        );
+      // Send option LETTERS only. Flask determines user ID from the session,
+      // recalculates the score using MySQL and inserts the quiz_result row.
+      const response = await api.post(`/quizzes/${activeQuizId}/submit`, {
+        answers: selectedAnswers,
+      });
+      const result = response.data;
+      if (result?.saved !== true || !Number.isFinite(Number(result.score)) ||
+          !Number.isFinite(Number(result.percentage)) || !Number.isFinite(Number(result.total_questions))) {
+        throw new Error('Server did not confirm a saved result.');
       }
-
+      setServerResult(result);
+      setSaveStatus('saved');
       setSubmitted(true);
-    } catch (err) {
-      console.error('Failed to submit quiz:', err);
-      alert('Failed to submit quiz. Please check Browser Console.');
+    } catch (submitError) {
+      console.warn('Quiz result save was not confirmed:', submitError);
+      setSaveStatus('unsaved');
+      setSaveError(
+        submitError.response?.data?.message ||
+        'Could not confirm that your attempt was saved. Check your training record before submitting again to avoid duplicates.'
+      );
+      // Keep answers and the quiz visible. Never show a fabricated score.
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -259,6 +229,9 @@ export default function QuizList() {
     setSelectedAnswers({});
     setSubmitted(false);
     setShowWelcome(true);
+    setSaveStatus('idle');
+    setSaveError('');
+    setServerResult(null);
   };
 
   const handleBackToList = () => {
@@ -269,24 +242,47 @@ export default function QuizList() {
     setSelectedAnswers({});
     setSubmitted(false);
     setShowWelcome(false);
+    setSaveStatus('idle');
+    setSaveError('');
+    setServerResult(null);
+    setQuestionError('');
   };
 
   const answeredCount = Object.keys(selectedAnswers).length;
 
   return (
-    <div className="quiz-page">
+    <div className={`quiz-page ${staffMode ? 'staff-quiz-page' : ''}`}>
       <PageHeader
-        title="Quiz / Training"
-        subtitle="Support onboarding with basic quizzes and learning reinforcement."
+        title={staffMode ? 'Training' : 'Quiz / Training'}
+        subtitle={staffMode ? 'Learn. Practise. Grow.' : 'Support onboarding with basic quizzes and learning reinforcement.'}
       />
 
+      {staffMode && !activeQuiz && !loadingQuizzes && quizItems.length > 0 ? (
+        <div className="staff-quiz-filters" role="group" aria-label="Filter training quizzes"
+          style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+          {categories.map((category) => (
+            <button key={category} type="button"
+              className={categoryFilter === category ? 'primary-btn' : 'secondary-btn'}
+              aria-pressed={categoryFilter === category}
+              onClick={() => setCategoryFilter(category)}>{category}</button>
+          ))}
+        </div>
+      ) : null}
+
       {!activeQuiz ? (
-        <div className="cards-grid quiz-list-grid">
+        <div className="cards-grid quiz-list-grid"
+          style={staffMode ? { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 260px), 1fr))', gap: 16 } : undefined}>
           {loadingQuizzes ? (
             <div className="quiz-state-card" aria-live="polite">
               <span className="quiz-loading-spinner" aria-hidden="true" />
               <strong>Loading training quizzes</strong>
               <p>Preparing the available learning activities...</p>
+            </div>
+          ) : quizError ? (
+            <div className="quiz-state-card" role="alert">
+              <strong>Unable to load training</strong>
+              <p>{quizError}</p>
+              <button type="button" className="secondary-btn" onClick={fetchQuizzes}>Retry</button>
             </div>
           ) : quizItems.length === 0 ? (
             <div className="quiz-state-card">
@@ -295,7 +291,7 @@ export default function QuizList() {
               <p>Training quizzes will appear here when they are published.</p>
             </div>
           ) : (
-            quizItems.map((quiz) => (
+            visibleQuizzes.map((quiz) => (
               <article key={quiz.id} className="card-like quiz-card">
                 <div className="quiz-card-top">
                   <div className="quiz-card-heading">
@@ -308,13 +304,13 @@ export default function QuizList() {
                     </div>
                   </div>
 
-                  <span className="status-badge pending">Training Quiz</span>
+                  {!staffMode && <span className="status-badge pending">Training Quiz</span>}
                 </div>
 
                 {quiz.description ? (
-                  <p className="quiz-card-description">{quiz.description}</p>
+                  <p className="quiz-card-description">{staffMode && quiz.description.length > 100 ? `${quiz.description.slice(0, 97).trim()}…` : quiz.description}</p>
                 ) : (
-                  <p className="quiz-card-description">
+                  !staffMode && <p className="quiz-card-description">
                     Complete this quiz to reinforce your Jungle House knowledge.
                   </p>
                 )}
@@ -324,17 +320,16 @@ export default function QuizList() {
                     <strong>{quiz.questionCount ?? 0}</strong>
                     Questions
                   </span>
-                  <span>
-                    <strong>{quiz.lastScore ?? 0}%</strong>
-                    Last score
-                  </span>
+                  {/* The current /quizzes API provides no previous score. Do not show a fabricated 0%. */}
                 </div>
 
                 <button
+                  type="button"
                   className="primary-btn quiz-card-action"
                   onClick={() => handleStartQuiz(quiz.id)}
+                  disabled={!quiz.questionCount}
                 >
-                  Attempt Quiz
+                  {staffMode ? 'Start' : 'Attempt Quiz'}
                   <span aria-hidden="true">→</span>
                 </button>
               </article>
@@ -366,7 +361,25 @@ export default function QuizList() {
             </div>
           </div>
 
-          {showWelcome ? (
+          {showWelcome ? staffMode ? (
+            <div className="card-like quiz-welcome-card staff-quiz-welcome">
+              <span className="eyebrow">Ready?</span>
+              <h2>{activeQuiz.title}</h2>
+              <p>{totalQuestions} questions · Choose one answer per question.</p>
+              {loadingQuestions && <p role="status">Loading questions…</p>}
+              {questionError && <p role="alert">{questionError}</p>}
+              {!loadingQuestions && !questionError && totalQuestions === 0 && <p>No questions available.</p>}
+              <div className="button-group wrap-gap top-gap">
+                <button type="button" className="secondary-btn" onClick={handleBackToList}>Back</button>
+                {questionError ? (
+                  <button type="button" className="primary-btn" onClick={() => fetchQuizQuestions(activeQuizId)}>Retry</button>
+                ) : (
+                  <button type="button" className="primary-btn"
+                    onClick={handleBeginQuestions} disabled={loadingQuestions || totalQuestions === 0}>Begin →</button>
+                )}
+              </div>
+            </div>
+          ) : (
             <div className="card-like quiz-welcome-card">
               <p className="eyebrow">Welcome</p>
               <h2 style={{ marginBottom: '10px' }}>
@@ -426,6 +439,21 @@ export default function QuizList() {
             </div>
           ) : !submitted ? (
             <>
+              {staffMode && totalQuestions > 0 && (
+                <nav className="staff-quiz-question-nav" aria-label="Quiz questions"
+                  style={{ display: 'flex', flexWrap: 'nowrap', overflowX: 'auto', gap: 8, marginBottom: 12, paddingBottom: 4, maxWidth: '100%' }}>
+                  {questions.map((item, index) => (
+                    <button key={item.id} type="button"
+                      className={index === currentQuestionIndex ? 'primary-btn' : 'secondary-btn'}
+                      aria-label={`Question ${index + 1}${selectedAnswers[item.id] !== undefined ? ', answered' : ''}`}
+                      aria-current={index === currentQuestionIndex ? 'step' : undefined}
+                      onClick={() => { clearAutoNextTimer(); setCurrentQuestionIndex(index); }}
+                      style={{ minWidth: 42, minHeight: 42, padding: '8px 12px', flex: '0 0 auto' }}>
+                      {index + 1}{selectedAnswers[item.id] !== undefined && index !== currentQuestionIndex ? ' ✓' : ''}
+                    </button>
+                  ))}
+                </nav>
+              )}
               <div className="card-like quiz-progress-card">
                 <div className="quiz-progress-row">
                   <div className="quiz-progress-bar">
@@ -445,6 +473,13 @@ export default function QuizList() {
                 </div>
               </div>
 
+              {saveError && (
+                <div className="quiz-state-card" role="alert" style={{ marginBottom: 12 }}>
+                  <strong>Result not confirmed</strong>
+                  <p>{saveError}</p>
+                </div>
+              )}
+
               {currentQuestion ? (
                 <div className="card-like quiz-question-card">
                   <div className="quiz-question-label">
@@ -454,10 +489,10 @@ export default function QuizList() {
                   <h3 className="quiz-question-title">{currentQuestion.question}</h3>
 
                   <div className="quiz-options">
-                    {currentQuestion.options.map((option, index) => {
+                    {(Array.isArray(currentQuestion.options) ? currentQuestion.options : []).map((option, index) => {
                       const optionLetter = String.fromCharCode(65 + index);
                       const isSelected =
-                        selectedAnswers[currentQuestion.id] === option;
+                        selectedAnswers[currentQuestion.id] === optionLetter;
 
                       return (
                         <label
@@ -467,10 +502,10 @@ export default function QuizList() {
                           <input
                             type="radio"
                             name={`question-${currentQuestion.id}`}
-                            value={option}
+                            value={optionLetter}
                             checked={isSelected}
                             onChange={() =>
-                              handleSelectAnswer(currentQuestion.id, option)
+                              handleSelectAnswer(currentQuestion.id, optionLetter)
                             }
                           />
                           <span className="quiz-option-badge">{optionLetter}</span>
@@ -494,7 +529,7 @@ export default function QuizList() {
                         <button
                           className="primary-btn"
                           onClick={handleNext}
-                          disabled={!selectedAnswers[currentQuestion.id]}
+                          disabled={selectedAnswers[currentQuestion.id] === undefined}
                         >
                           Next
                         </button>
@@ -502,9 +537,9 @@ export default function QuizList() {
                         <button
                           className="primary-btn"
                           onClick={handleSubmit}
-                          disabled={answeredCount !== totalQuestions}
+                          disabled={answeredCount !== totalQuestions || submitting}
                         >
-                          Submit Quiz
+                          {submitting ? 'Submitting…' : 'Submit Quiz'}
                         </button>
                       )}
                     </div>
@@ -521,6 +556,9 @@ export default function QuizList() {
           ) : (
             <div className="card-like quiz-result-card">
               <div className="quiz-result-summary">
+                <p role="status" className="quiz-save-status">
+                  {saveStatus === 'saved' ? 'Result saved to system.' : 'Saving not confirmed.'}
+                </p>
                 <span className="quiz-result-kicker">Quiz Result</span>
                 <div className="quiz-result-score">{score}%</div>
                 <strong>
@@ -531,28 +569,22 @@ export default function QuizList() {
                       : 'Keep practising'}
                 </strong>
                 <p>
-                  You answered {correctCount} out of {totalQuestions} questions correctly.
+                  You answered {correctCount} out of {serverResult?.total_questions ?? totalQuestions} questions correctly.
                 </p>
               </div>
 
               <div className="stack-gap top-gap">
+                <p className="muted small">Your submitted answers are shown below. Individual correct answers are not provided by this API.</p>
                 {questions.map((question, index) => {
-                  const selected = selectedAnswers[question.id];
-                  const isCorrect = selected === question.correctAnswer;
-
+                  const selectedLetter = selectedAnswers[question.id];
+                  const selectedIndex = selectedLetter ? selectedLetter.charCodeAt(0) - 65 : -1;
+                  const selectedText = question.options?.[selectedIndex] || 'No answer';
                   return (
                     <div key={question.id} className="quiz-review-card">
-                      <h4 style={{ marginBottom: '8px' }}>
-                        {index + 1}. {question.question}
-                      </h4>
-                      <p className={isCorrect ? 'success-text' : 'error-text'}>
-                        Your answer: {selected || 'No answer'}
+                      <h4 style={{ marginBottom: '8px' }}>{index + 1}. {question.question}</h4>
+                      <p className="muted" style={{ marginBottom: 0 }}>
+                        Your answer: {selectedLetter ? `${selectedLetter}. ` : ''}{selectedText}
                       </p>
-                      {!isCorrect ? (
-                        <p className="muted" style={{ marginBottom: 0 }}>
-                          Correct answer: {question.correctAnswer}
-                        </p>
-                      ) : null}
                     </div>
                   );
                 })}

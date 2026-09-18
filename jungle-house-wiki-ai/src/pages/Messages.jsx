@@ -4,7 +4,7 @@ import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import '../styles/Messages.css';
 
-// TEMPORARY UI/demo rule until the teammate backend adds the same server-side rule.
+// UI hint only: the backend independently enforces the five-minute rule using MySQL time.
 const MESSAGE_ACTION_WINDOW_MS = 5 * 60 * 1000;
 
 const getInitials = (value = '') => {
@@ -413,13 +413,8 @@ export default function Messages() {
       return;
     }
 
-    const receiverId =
-      Number(item.sender_id) === Number(currentUserId)
-        ? item.receiver_id
-        : item.sender_id;
-
-    if (!receiverId) {
-      setMessageText('Unable to identify the other participant.');
+    if (Number(item.sender_id) !== Number(currentUserId)) {
+      setMessageText('You can only delete your own messages for everyone.');
       setOpenMenuId(null);
       return;
     }
@@ -434,21 +429,9 @@ export default function Messages() {
       setMessageText('');
       setOpenMenuId(null);
 
-      // TEMPORARY FRONTEND-ONLY DEMO WORKAROUND:
-      // The current backend already supports "delete from my view" using
-      // /messages/delete/:id and the supplied user_id. Calling it once for
-      // each participant hides the same message from both views without
-      // changing app.py.
-      //
-      // This is intentionally temporary until the teammate backend adds a
-      // dedicated server-side "delete for everyone" endpoint.
-      await api.put(`/messages/delete/${item.message_id}`, {
-        user_id: currentUserId,
-      });
-
-      await api.put(`/messages/delete/${item.message_id}`, {
-        user_id: Number(receiverId),
-      });
+      // One authenticated request; Flask atomically hides the message for
+      // both participants and enforces sender ownership and the 5-minute limit.
+      await api.put(`/messages/delete-for-everyone/${item.message_id}`);
 
       if (selectedThread) {
         await openThread(selectedThread);
@@ -456,7 +439,7 @@ export default function Messages() {
 
       await fetchData();
     } catch (error) {
-      console.error('Temporary delete for everyone error:', error);
+      console.error('Delete for everyone error:', error);
       setMessageText(
         error.response?.data?.message ||
           'Unable to delete this message for everyone.'
