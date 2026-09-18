@@ -189,7 +189,10 @@ export default function Sidebar() {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isMobileOpen, setIsMobileOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [logoutError, setLogoutError] = useState('');
   const userMenuRef = useRef(null);
+  const logoutInFlightRef = useRef(false);
 
   useEffect(() => {
     document.body.classList.toggle('sidebar-is-collapsed', isCollapsed);
@@ -215,9 +218,25 @@ export default function Sidebar() {
     };
   }, []);
 
-  const handleLogout = () => {
-    logout();
-    navigate('/login');
+  const handleLogout = async () => {
+    // Do not redirect until Flask confirms that the session cookie is cleared.
+    // A network or CSRF error must leave the user on the current page.
+    if (logoutInFlightRef.current) return;
+    logoutInFlightRef.current = true;
+    setIsLoggingOut(true);
+    setLogoutError('');
+
+    try {
+      await logout();
+      setIsUserMenuOpen(false);
+      navigate('/login', { replace: true });
+    } catch (error) {
+      setLogoutError(error?.message || 'Unable to log out. Please try again.');
+      setIsUserMenuOpen(true);
+    } finally {
+      logoutInFlightRef.current = false;
+      setIsLoggingOut(false);
+    }
   };
 
   const getInitial = () => {
@@ -369,6 +388,13 @@ export default function Sidebar() {
                   )}
 
                   {isManager && (
+                    <NavLink className={linkClass} to="/notifications" onClick={closeMobileAfterClick}>
+                      <SidebarIcon name="notifications" />
+                      <span className="sidebar-link-text">Notifications</span>
+                    </NavLink>
+                  )}
+
+                  {isManager && (
                     <NavLink className={linkClass} to="/admin/review" onClick={closeMobileAfterClick}>
                       <SidebarIcon name="review" />
                       <span className="sidebar-link-text">Review Management</span>
@@ -438,6 +464,7 @@ export default function Sidebar() {
               onClick={() => setIsUserMenuOpen((prev) => !prev)}
               aria-label="Open user menu"
               aria-expanded={isUserMenuOpen}
+              disabled={isLoggingOut}
             >
               <span className="sidebar-user-avatar sidebar-user-toggle">{getInitial()}</span>
 
@@ -479,12 +506,23 @@ export default function Sidebar() {
                   type="button"
                   className="sidebar-user-menu-item"
                   onClick={handleLogout}
+                  disabled={isLoggingOut}
+                  aria-busy={isLoggingOut}
                 >
                   <span className="sidebar-user-menu-icon">
                     <Icon name="logout" />
                   </span>
-                  <strong>Log out</strong>
+                  <strong>{isLoggingOut ? 'Logging out...' : 'Log out'}</strong>
                 </button>
+                {logoutError ? (
+                  <p
+                    className="sidebar-logout-error"
+                    role="alert"
+                    style={{ color: '#b42318', padding: '0 12px 12px', margin: 0 }}
+                  >
+                    {logoutError}
+                  </p>
+                ) : null}
               </div>
             ) : null}
           </div>

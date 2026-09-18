@@ -1,5 +1,5 @@
 # Trigger redeploy to verify the persistent uploads volume survives a restart.
-from flask import Flask, request, jsonify, send_from_directory, redirect, g
+from flask import Flask, request, jsonify, send_from_directory, redirect, g, session
 from flask_cors import CORS
 import os
 import time
@@ -14,8 +14,7 @@ import traceback
 import smtplib
 import secrets
 import hashlib
-import math
-import html as html_lib
+import hmac
 import requests
 
 from email.message import EmailMessage
@@ -66,6 +65,15 @@ def load_local_env_file():
 
 
 load_local_env_file()
+
+# ============================================================
+# PRESENTATION DEMO MODE
+# ============================================================
+# Legacy toggle retained only for the separate system email-test screen.
+# The new registration and approval flow NEVER sends emails or activation keys.
+# Demo mode defaults off and disables password-recovery email attempts.
+PRESENTATION_DEMO_MODE = os.getenv("PRESENTATION_DEMO_MODE", "false").strip().lower() == "true"
+
 from db_helper import (
     save_qa_to_db,
     search_similar_question,
@@ -220,15 +228,23 @@ AI_CHAT_MEMORY = {}
 AI_FAIL_MEMORY = {}
 AI_LAST_ANSWER_MEMORY = {}
 
-# Remembers the last work-related image's vision analysis per user/session,
-# so a follow-up TEXT-ONLY message in the same conversation (e.g. "which
-# article should I refer", "where do I store this") can still resolve "this"
-# to the photo sent a message earlier, instead of only working when the
-# image and the question arrive in the exact same request.
-LAST_IMAGE_CONTEXT_MEMORY = {}
-LAST_IMAGE_CONTEXT_TTL_SECONDS = 900
-
 app = Flask(__name__, static_folder=None)
+# A stable, private key is mandatory for signed, HttpOnly Flask session cookies.
+# Set FLASK_SECRET_KEY (at least 32 random bytes) in Railway and backend/src/.env.
+_session_secret = os.getenv("FLASK_SECRET_KEY") or os.getenv("SECRET_KEY")
+if not _session_secret or len(_session_secret) < 32:
+    raise RuntimeError("Configure a stable FLASK_SECRET_KEY of at least 32 characters.")
+app.config.update(
+    SECRET_KEY=_session_secret,
+    SESSION_COOKIE_NAME="jh_wiki_session",
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SECURE=(
+        os.getenv("SESSION_COOKIE_SECURE", "true" if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_ENVIRONMENT_NAME") else "false")
+        .strip().lower() == "true"
+    ),
+    SESSION_COOKIE_SAMESITE="Lax",  # Production /api must go through the Vercel same-origin proxy.
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=8),
+)
 
 # Reject oversized uploads before they hit disk/AI providers (cost control +
 # Requirement 13 "file too large" handling). 8MB covers a normal phone photo
@@ -286,6 +302,8 @@ _cors_origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "https://ai-powered-wiki-training-assistant.vercel.app",
+    "https://jhgroup3.com",
+    "https://www.jhgroup3.com",
 ]
 _configured_frontend_origin = os.getenv("FRONTEND_URL", "").strip().rstrip("/")
 if _configured_frontend_origin and _configured_frontend_origin not in _cors_origins:
@@ -296,7 +314,7 @@ CORS(
     resources={r"/*": {"origins": _cors_origins}},
     supports_credentials=True,
     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization"],
+    allow_headers=["Content-Type", "Authorization", "X-CSRF-Token"],
 )
 
 # =========================
@@ -860,8 +878,8 @@ Return ONLY valid JSON. No markdown, no code fences, no extra text.
 Fields:
 - isWorkRelated: boolean
 - confidence: number between 0 and 1
-- detectedObjects: array of strings (at most 4)
-- possibleAliases: array of strings (at most 3)
+- detectedObjects: array of strings
+- possibleAliases: array of strings
 - imageSummary: string
 - irrelevantReason: string or null
 
@@ -869,13 +887,7 @@ Important:
 - Detect objects even if shown from front, back, side, tilted, close-up, far away, or a different angle.
 - If the image is random, personal, unclear, a meme, a selfie, food unrelated to work, or otherwise not related to work, set isWorkRelated to false.
 - Do not answer the user's question here.
-- Only describe the image and whether it is work-related.
-- detectedObjects and possibleAliases will be used as search keywords against a
-  Knowledge Base, so they must be SHORT, SPECIFIC, and DISTINCTIVE: the actual
-  object/product/equipment/document name (e.g. "iPad", "ice cooler", "bottle
-  return point sign", "petty cash log"). Do NOT include generic scene-description
-  words that could apply to almost any photo, such as "hand", "text", "sign"
-  alone, "label", "screen", "notice", "sleeve", "plastic", "paper", or "photo"."""
+- Only describe the image and whether it is work-related."""
 
 GEMINI_VISION_CACHE = {}  # file_hash -> (timestamp, result_dict or None)
 GEMINI_VISION_CACHE_MAX = 200
@@ -895,8 +907,8 @@ def _parse_vision_json_reply(raw_text):
     return {
         "isWorkRelated": bool(parsed.get("isWorkRelated", False)),
         "confidence": float(parsed.get("confidence", 0.0) or 0.0),
-        "detectedObjects": [str(item) for item in (parsed.get("detectedObjects") or [])][:4],
-        "possibleAliases": [str(item) for item in (parsed.get("possibleAliases") or [])][:3],
+        "detectedObjects": [str(item) for item in (parsed.get("detectedObjects") or [])][:10],
+        "possibleAliases": [str(item) for item in (parsed.get("possibleAliases") or [])][:10],
         "imageSummary": str(parsed.get("imageSummary") or ""),
         "irrelevantReason": parsed.get("irrelevantReason"),
     }
@@ -1009,26 +1021,6 @@ def build_image_only_clarification_response(vision_result, kb_hint=None):
     })
 
 
-# Generic scene-description words Gemini sometimes still returns despite the
-# prompt asking for specific object/product names. These describe almost any
-# photo and never meaningfully distinguish one Knowledge Base article from
-# another, so they get dropped before the term is used as search context --
-# otherwise they dilute/outweigh the one or two genuinely distinctive words
-# (e.g. "bottle", "return") in both the strict and related-knowledge search.
-VISION_TERM_STOPWORDS = {
-    "hand", "hands", "finger", "fingers", "text", "sign", "signs", "label",
-    "labels", "screen", "notice", "sleeve", "plastic", "paper", "photo",
-    "picture", "image", "object", "item", "device", "background", "table",
-    "counter", "floor", "wall", "surface", "close", "closeup", "person",
-}
-
-
-def _clean_vision_term(term):
-    term = str(term or "").strip().lower()
-    words = [w for w in re.findall(r"[a-z0-9]+", term) if w not in VISION_TERM_STOPWORDS]
-    return " ".join(words)
-
-
 def build_vision_augmented_question(question, vision_result):
     """
     Combine the detected object(s) with the staff member's own question so
@@ -1039,12 +1031,7 @@ def build_vision_augmented_question(question, vision_result):
     detected = list((vision_result or {}).get("detectedObjects") or [])
     aliases = list((vision_result or {}).get("possibleAliases") or [])
 
-    cleaned_terms = [
-        cleaned
-        for cleaned in (_clean_vision_term(term) for term in (detected + aliases))
-        if cleaned
-    ]
-    object_terms = " ".join(dict.fromkeys(cleaned_terms))
+    object_terms = " ".join(dict.fromkeys(detected + aliases))
     question = str(question or "").strip()
 
     if object_terms and question:
@@ -1053,41 +1040,33 @@ def build_vision_augmented_question(question, vision_result):
     return object_terms or question
 
 
+def send_private_static_file(directory, filename):
+    """Serve only an exact file inside its expected directory; never search other folders."""
+    relative_name = str(filename or "").replace("\\", "/")
+    if (not relative_name or relative_name.startswith("/") or
+            any(part in {"", ".", ".."} for part in relative_name.split("/"))):
+        return jsonify({"message": "File not found."}), 404
+
+    root = Path(directory).resolve()
+    try:
+        resolved_file = (root / relative_name).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return jsonify({"message": "File not found."}), 404
+
+    # Reject symlinks leading outside the upload directory and directories themselves.
+    if not resolved_file.is_relative_to(root) or not resolved_file.is_file():
+        return jsonify({"message": "File not found."}), 404
+    return send_from_directory(str(root), relative_name)
+
+
 @app.route("/static/uploads/articles/<path:filename>", methods=["GET"])
 def serve_article_attachment(filename):
-    file_path = UPLOAD_FOLDER / filename
+    return send_private_static_file(UPLOAD_FOLDER, filename)
 
-    print("REQUESTED ARTICLE ATTACHMENT:", filename)
-    print("UPLOAD_FOLDER:", UPLOAD_FOLDER)
-    print("FILE EXISTS:", file_path.exists())
-
-    if not file_path.exists():
-        return jsonify({
-            "message": "Attachment file not found on server.",
-            "filename": filename,
-            "upload_folder": str(UPLOAD_FOLDER),
-            "expected_path": str(file_path)
-        }), 404
-
-    return send_from_directory(str(UPLOAD_FOLDER), filename)
 
 @app.route("/static/uploads/chat/<path:filename>", methods=["GET"])
 def serve_chat_upload(filename):
-    file_path = CHAT_UPLOAD_FOLDER / filename
-
-    print("REQUESTED CHAT IMAGE:", filename)
-    print("CHAT_UPLOAD_FOLDER:", CHAT_UPLOAD_FOLDER)
-    print("FILE EXISTS:", file_path.exists())
-
-    if not file_path.exists():
-        return jsonify({
-            "message": "Chat uploaded image not found on server.",
-            "filename": filename,
-            "chat_upload_folder": str(CHAT_UPLOAD_FOLDER),
-            "expected_path": str(file_path)
-        }), 404
-
-    return send_from_directory(str(CHAT_UPLOAD_FOLDER), filename)
+    return send_private_static_file(CHAT_UPLOAD_FOLDER, filename)
 
 @app.route("/api/debug/chat-uploads", methods=["GET"])
 def debug_chat_uploads():
@@ -1104,38 +1083,7 @@ def debug_chat_uploads():
 
 @app.route("/static/sop_images/<path:filename>", methods=["GET"])
 def serve_sop_image(filename):
-    clean_filename = str(filename or "").replace("\\", "/").strip().lstrip("/")
-    file_path = SOP_IMAGE_FOLDER / clean_filename
-
-    print("REQUESTED SOP IMAGE:", clean_filename)
-    print("SOP_IMAGE_FOLDER:", SOP_IMAGE_FOLDER)
-    print("EXACT FILE EXISTS:", file_path.exists())
-
-    if file_path.exists() and file_path.is_file():
-        return send_from_directory(str(file_path.parent), file_path.name)
-
-    # Fallback: sometimes the AI dataset stores only sop_images/kiosk_opening/step3_1.jpg,
-    # while the server path differs slightly. Search by basename inside sop_images.
-    basename = Path(clean_filename).name
-    matched_file = None
-
-    if basename and SOP_IMAGE_FOLDER.exists():
-        for candidate in SOP_IMAGE_FOLDER.rglob(basename):
-            if candidate.exists() and candidate.is_file():
-                matched_file = candidate
-                break
-
-    print("MATCHED SOP IMAGE:", matched_file)
-
-    if matched_file:
-        return send_from_directory(str(matched_file.parent), matched_file.name)
-
-    return jsonify({
-        "message": "SOP image file not found on server.",
-        "filename": clean_filename,
-        "sop_image_folder": str(SOP_IMAGE_FOLDER),
-        "expected_path": str(file_path)
-    }), 404
+    return send_private_static_file(SOP_IMAGE_FOLDER, filename)
 
 
 @app.route("/api/debug/sop-images", methods=["GET"])
@@ -1183,17 +1131,21 @@ def debug_uploads():
 # DATABASE CONNECTION
 # =========================
 def get_db_connection():
+    """Connect using Railway Variables or backend/src/.env, never embedded credentials."""
+    host = os.getenv("DB_HOST") or os.getenv("MYSQL_HOST") or os.getenv("MYSQLHOST")
+    port = os.getenv("DB_PORT") or os.getenv("MYSQL_PORT") or os.getenv("MYSQLPORT") or "3306"
+    username = os.getenv("DB_USER") or os.getenv("MYSQL_USER") or os.getenv("MYSQLUSER")
+    password = os.getenv("DB_PASSWORD") or os.getenv("MYSQL_PASSWORD") or os.getenv("MYSQLPASSWORD")
+    database = os.getenv("DB_NAME") or os.getenv("MYSQL_DATABASE") or os.getenv("MYSQLDATABASE")
+    if not all((host, username, password, database)):
+        raise RuntimeError("Missing MySQL environment configuration (DB_* or MYSQL*).")
     try:
-        conn = mysql.connector.connect(
-            host="shuttle.proxy.rlwy.net",
-            port=26909,
-            user="root",
-            password="zzUtzEvBsOnHpeUqaHCIJOdilqfoHxHI",
-            database="railway",
+        return mysql.connector.connect(
+            host=host, port=int(port), user=username,
+            password=password, database=database,
         )
-        return conn
-    except mysql.connector.Error as err:
-        print("DATABASE CONNECTION ERROR:", err)
+    except mysql.connector.Error:
+        print("DATABASE CONNECTION ERROR: Check MySQL connectivity and Railway Variables.")
         raise
 
 
@@ -1309,6 +1261,172 @@ def add_audit_log(actor_id=None, actor_name="System", action="", module="", desc
 
 
 # =========================
+# SESSION AUTHENTICATION / AUTHORIZATION
+# =========================
+def password_session_fingerprint(password_hash):
+    """Password changes invalidate older signed sessions on their next request."""
+    return hashlib.sha256(str(password_hash or "").encode("utf-8")).hexdigest()
+
+
+def current_auth_user_id():
+    return int(g.auth_user["user_id"])
+
+
+@app.route("/api/auth/csrf", methods=["GET"])
+def auth_csrf():
+    """Initialize a browser session before register/login and return its CSRF token."""
+    if not session.get("csrf_token"):
+        session["csrf_token"] = secrets.token_urlsafe(32)
+    response = jsonify({"csrf_token": session["csrf_token"]})
+    response.headers["Cache-Control"] = "no-store"
+    return response, 200
+
+
+@app.route("/api/auth/me", methods=["GET"])
+def auth_me():
+    response = jsonify({
+        "user": get_user_profile_payload(g.auth_user),
+        "csrf_token": session["csrf_token"],
+    })
+    response.headers["Cache-Control"] = "no-store"
+    return response, 200
+
+
+@app.route("/api/auth/logout", methods=["POST"])
+def auth_logout():
+    session.clear()
+    response = jsonify({"message": "Logged out successfully."})
+    response.headers["Cache-Control"] = "no-store"
+    return response, 200
+
+
+_AUTH_PUBLIC = {
+    "auth_csrf", "register", "login", "forgot_password",
+    "validate_password_reset_token", "reset_password", "health",
+}
+_LEGACY_REGISTRATION_ENDPOINTS = {
+    "generate_registration_key", "list_registration_keys", "resend_registration_key",
+    "revoke_registration_key", "activate_registration_key", "resend_activation_key",
+}
+_APPROVER_ENDPOINTS = {
+    "get_registration_requests", "get_registration_history", "approve_registration_request", "decline_registration_request",
+    "get_admin_users", "test_system_email", "get_admin_quizzes",
+    "create_admin_quiz", "update_admin_quiz", "delete_admin_quiz",
+    "get_admin_quiz_questions", "create_quiz_question", "update_admin_quiz_question",
+    "delete_admin_quiz_question", "ai_generate_quiz",
+    "get_reviews", "approve_review", "reject_review", "publish_review",
+    "get_analytics",
+    # Team Leaders may view Security Monitoring reports, but cannot manage
+    # user roles/statuses or change privileged system configuration.
+    "get_login_history", "get_audit_logs",
+    "get_escalations", "submit_escalation_answer", "approve_escalation_answer",
+    "reject_escalation_answer", "bulk_delete_escalations",
+    "bulk_permanent_delete_escalations", "delete_escalation",
+    "restore_escalation", "permanent_delete_escalation",
+    "add_article", "upload_article_editor_image", "edit_article", "delete_article",
+    "restore_article", "bulk_permanent_delete_articles", "permanent_delete_article",
+}
+_MANAGER_ENDPOINTS = {
+    "get_ai_settings", "save_ai_settings", "test_ai_settings",
+    "get_notion_sync_config", "save_notion_sync_config", "test_notion_sync",
+    "run_notion_sync", "get_notion_sync_jobs",
+    "update_admin_user_role", "update_admin_user_status", "test_db",
+    "debug_chat_uploads", "debug_sop_images", "debug_static_files", "debug_uploads",
+}
+_SELF_PROFILE_ENDPOINTS = {"get_profile", "update_profile", "change_password"}
+_SELF_MESSAGE_ENDPOINTS = {"get_message_threads", "get_thread_messages"}
+
+
+@app.before_request
+def require_authenticated_api():
+    """Enforce active DB-backed identities for every private API request.
+
+    Frontend role, actor_id and localStorage values are NEVER authentication.
+    """
+    if request.method == "OPTIONS":
+        return None  # CORS preflight has no signed cookie or CSRF header.
+    path = request.path
+    endpoint = request.endpoint or ""
+    if endpoint in {"serve_static", "serve_article_attachment", "serve_chat_upload", "serve_sop_image"}:
+        filename = str((request.view_args or {}).get("filename") or "").replace("\\", "/")
+        if not filename or any(segment in {".", ".."} for segment in filename.split("/")):
+            return jsonify({"message": "File not found."}), 404
+    # The session cookie is shared with /static via the Vercel same-origin rewrite.
+    # Protect both the Vercel proxy path and direct requests to Railway.
+    if not (path.startswith("/api/") or path == "/chat" or path.startswith("/static/")):
+        return None
+    if endpoint in _LEGACY_REGISTRATION_ENDPOINTS:
+        return jsonify({
+            "code": "REGISTRATION_KEYS_REMOVED",
+            "message": "Registration keys are no longer supported. Contact your Manager for approval."
+        }), 410
+    if endpoint in _AUTH_PUBLIC:
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+            expected = str(session.get("csrf_token") or "")
+            provided = request.headers.get("X-CSRF-Token", "")
+            if not expected or not hmac.compare_digest(expected, provided):
+                return jsonify({"code": "CSRF_INVALID", "message": "Security token missing or expired. Refresh the page and retry."}), 403
+        return None
+    if endpoint == "auth_logout":
+        expected = str(session.get("csrf_token") or "")
+        provided = request.headers.get("X-CSRF-Token", "")
+        if not expected or not hmac.compare_digest(expected, provided):
+            return jsonify({"code": "CSRF_INVALID", "message": "Security token missing or expired."}), 403
+        return None
+
+    stored_id = session.get("user_id")
+    fingerprint = session.get("password_fingerprint")
+    if not isinstance(stored_id, int) or not fingerprint:
+        session.clear()
+        return jsonify({"code": "SESSION_EXPIRED", "message": "Please log in to continue."}), 401
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT u.user_id, u.full_name, u.email, u.password_hash,
+                   u.status, u.created_at, r.role_name
+            FROM users u JOIN roles r ON u.role_id = r.role_id
+            WHERE u.user_id = %s LIMIT 1
+        """, (stored_id,))
+        user = cursor.fetchone()
+    except Exception:
+        print("SESSION CHECK ERROR: Could not validate session against database.")
+        return jsonify({"code": "AUTH_UNAVAILABLE", "message": "Authentication service unavailable. Please retry."}), 503
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+    if not user:
+        session.clear()
+        return jsonify({"code": "SESSION_EXPIRED", "message": "Your session has expired. Please log in."}), 401
+    if str(user.get("status") or "").lower() != "active":
+        session.clear()
+        return jsonify({"code": "ACCOUNT_INACTIVE", "message": "This account is not active."}), 403
+    if not hmac.compare_digest(str(fingerprint), password_session_fingerprint(user["password_hash"])):
+        session.clear()
+        return jsonify({"code": "SESSION_EXPIRED", "message": "Your account credentials have changed. Please log in again."}), 401
+    g.auth_user = user
+    role = str(user.get("role_name") or "").strip().lower()
+    if endpoint in _MANAGER_ENDPOINTS and role not in {"manager", "admin"}:
+        return jsonify({"code": "FORBIDDEN", "message": "Manager access required."}), 403
+    if endpoint in _APPROVER_ENDPOINTS and role not in APPROVER_ROLES:
+        return jsonify({"code": "FORBIDDEN", "message": "Manager or Team Leader access required."}), 403
+    if endpoint in _SELF_PROFILE_ENDPOINTS | _SELF_MESSAGE_ENDPOINTS | {"get_notifications"}:
+        requested_user_id = (request.view_args or {}).get("user_id")
+        if requested_user_id != stored_id:
+            return jsonify({"code": "FORBIDDEN", "message": "You can only access your own account."}), 403
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        expected = str(session.get("csrf_token") or "")
+        provided = request.headers.get("X-CSRF-Token", "")
+        if not expected or not hmac.compare_digest(expected, provided):
+            return jsonify({"code": "CSRF_INVALID", "message": "Security token missing or expired. Refresh the page and retry."}), 403
+    return None
+
+
+# =========================
 # REGISTRATION APPROVAL HELPERS
 # =========================
 APPROVER_ROLES = {"manager", "admin", "teamlead", "team lead"}
@@ -1374,6 +1492,23 @@ def send_email_safe(to_email, subject, body):
     SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM_EMAIL
     """
     to_email = str(to_email or "").strip()
+
+    # Presentation-only hardcoded email simulation. This deliberately does
+    # not contact Gmail/SMTP. The rest of the application still receives a
+    # successful delivery result so the real registration workflow can be
+    # demonstrated end-to-end.
+    if PRESENTATION_DEMO_MODE:
+        if not to_email:
+            print("DEMO EMAIL SKIPPED: Recipient email is empty.")
+            return False
+        print("\n" + "=" * 72)
+        print("PRESENTATION DEMO EMAIL (SIMULATED - NOT ACTUALLY SENT)")
+        print(f"TO: {to_email}")
+        print(f"SUBJECT: {subject}")
+        print("-" * 72)
+        print(body)
+        print("=" * 72 + "\n")
+        return True
 
     # Gmail-compatible defaults. For local use, only the sender email and
     # app password must be placed in backend/src/.env once.
@@ -1456,57 +1591,18 @@ def get_public_request_base_url():
 
 
 def send_registration_received_email(full_name, email):
-    """Send the automatic acknowledgement immediately after registration."""
-    subject = "Jungle House AI Wiki - Registration received"
-    body = f"""Hi {full_name},
-
-Your Jungle House AI Wiki registration has been submitted successfully.
-
-Your account is currently pending review by a Manager or Team Leader. The review will normally be completed within {REGISTRATION_REVIEW_HOURS} hours.
-
-You do not need to take any action now. You will receive another email after your registration is approved or declined.
-
-If approved, the approval email will contain a one-time registration key. You will enter that key after signing in with your email and password to activate your account.
-
-Thank you,
-Jungle House AI Wiki Team
-"""
-    return send_email_safe(email, subject, body)
+    """Legacy compatibility only: registration acknowledgment emails are disabled."""
+    return False
 
 
 def send_registration_declined_email(full_name, email, reason=""):
-    subject = "Jungle House AI Wiki - Registration declined"
-    reason_line = f"\nReason: {reason}" if str(reason or "").strip() else ""
-    body = f"""Hi {full_name or 'there'},
-
-Your Jungle House AI Wiki registration request was not approved.{reason_line}
-
-Your pending registration record has been removed from the system. If you need access in the future, you may submit a new registration using the same email address.
-
-Please contact your Manager or Team Leader if you need clarification.
-
-Thank you,
-Jungle House AI Wiki Team
-"""
-    return send_email_safe(email, subject, body)
+    """Legacy compatibility only: registration-decision emails are disabled."""
+    return False
 
 
 def send_activation_cancelled_email(full_name, email):
-    subject = "Jungle House AI Wiki - Registration activation cancelled"
-    body = f"""Hi {full_name or 'there'},
-
-Your registration activation was cancelled after 3 incorrect one-time registration key attempts.
-
-The previous registration key has been revoked and cannot be used again.
-
-If you still need access, please submit a new registration using the same email address. Your new registration will return to Manager / Team Leader approval.
-
-If you did not make these attempts, please contact your Manager or Team Leader.
-
-Thank you,
-Jungle House AI Wiki Team
-"""
-    return send_email_safe(email, subject, body)
+    """Legacy compatibility only: registration-key emails are disabled."""
+    return False
 
 
 
@@ -1701,7 +1797,7 @@ def is_ai_settings_manager(cursor, actor_id):
     role_name = str(actor.get("role_name", "")).strip().lower()
     status = str(actor.get("status", "")).strip().lower()
 
-    return role_name == "manager" and status == "active"
+    return role_name in {"manager", "admin"} and status == "active"
 
 
 def ensure_registration_keys_table(cursor):
@@ -1943,56 +2039,15 @@ def get_user_contact_safe(user_id):
 
 
 def notify_registration_decision(user_id, approved=True, reason=""):
-    user_contact = get_user_contact_safe(user_id) or {}
-    full_name = user_contact.get("full_name") or "there"
-    email = user_contact.get("email")
-
-    if approved:
-        title = "Account approved - activation required"
-        detail = (
-            "Your account has been approved. Use the one-time registration key "
-            "sent to your email to activate access after signing in."
-        )
-        subject = "Jungle House AI Wiki - Account approved"
-        body = f"""Hi {full_name},
-
-Your Jungle House AI Wiki account has been approved.
-
-Please sign in using your registered email address and password, then enter the one-time registration key sent to your email to activate access.
-
-Thank you,
-Jungle House AI Wiki Team
-"""
-    else:
-        title = "Account registration declined"
-        detail = "Your account registration was declined."
-
-        if reason:
-            detail += f" Reason: {reason}"
-
-        subject = "Jungle House AI Wiki - Registration declined"
-        body = f"""Hi {full_name},
-
-Your Jungle House AI Wiki account registration was declined.
-
-Reason: {reason or 'No reason was provided.'}
-
-Please contact your manager or team lead if you think this is a mistake.
-
-Thank you,
-Jungle House AI Wiki Team
-"""
-
+    """In-app decision notification only; no registration emails or keys."""
+    detail = ("Your account was approved. Sign in with your email and password."
+              if approved else "Your registration was declined. Contact your Manager for assistance.")
+    if not approved and reason:
+        detail += f" Reason: {reason}"
     create_notification_safe(
-        user_id=user_id,
-        title=title,
-        detail=detail,
-        notification_type="system",
-        related_id=user_id
+        user_id=user_id, title="Account approved" if approved else "Registration declined",
+        detail=detail, notification_type="system", related_id=user_id,
     )
-
-    if email:
-        send_email_safe(email, subject, body)
 
 
 # =========================
@@ -2053,6 +2108,7 @@ def wipe_pending_registration(cursor, user_id, email):
         ("login_history", [("user_id", user_id)]),
         ("audit_log", [("actor_id", user_id)]),
         ("notification", [("user_id", user_id), ("created_by", user_id)]),
+        ("notification_user_reads", [("user_id", user_id)]),
         ("user_message", [("sender_id", user_id), ("receiver_id", user_id)]),
         ("quiz_result", [("user_id", user_id)]),
         ("escalation", [("asked_by", user_id), ("handled_by", user_id), ("deleted_by", user_id)]),
@@ -2077,6 +2133,38 @@ def wipe_pending_registration(cursor, user_id, email):
     cursor.execute("DELETE FROM users WHERE user_id = %s AND status = 'pending'", (user_id,))
     if cursor.rowcount != 1:
         raise RuntimeError("Pending user could not be removed.")
+
+
+def revoke_legacy_unused_registration_keys(cursor, email):
+    """Retain all historical keys; revoke only unused keys bound to this account.
+
+    Older deployments may lack this table or the assigned_email column. Do not
+    create or migrate any table as part of the new approval workflow.
+    """
+    cursor.execute("SHOW TABLES LIKE 'staff_registration_keys'")
+    if not cursor.fetchone():
+        return
+    columns = get_table_columns_safe(cursor, "staff_registration_keys")
+    if not {"assigned_email", "status"}.issubset(columns):
+        return
+    cursor.execute("SHOW COLUMNS FROM staff_registration_keys LIKE 'status'")
+    status_column = cursor.fetchone()
+    type_definition = (str(status_column.get("Type") or "") if isinstance(status_column, dict)
+                       else str(status_column[1] if status_column and len(status_column) > 1 else ""))
+    if "revoked" not in type_definition.lower():
+        # Key endpoints are disabled. Historical data must not block approval.
+        return
+    if "revoked_at" in columns:
+        cursor.execute("""
+            UPDATE staff_registration_keys
+            SET status = 'revoked', revoked_at = NOW()
+            WHERE LOWER(assigned_email) = %s AND status = 'unused'
+        """, (email,))
+    else:
+        cursor.execute("""
+            UPDATE staff_registration_keys SET status = 'revoked'
+            WHERE LOWER(assigned_email) = %s AND status = 'unused'
+        """, (email,))
 
 
 # =========================
@@ -2354,38 +2442,6 @@ def should_escalate_generic_answer(question: str, result: dict | None) -> bool:
     return False
 
 
-def get_last_image_context_key(data: dict | None = None) -> str:
-    data = data or {}
-    user_id = data.get("user_id") or data.get("userId")
-
-    if user_id:
-        return f"user:{user_id}:last_image_context"
-
-    return f"ip:{request.remote_addr or 'local'}:last_image_context"
-
-
-def remember_last_image_context(data: dict | None, vision_result: dict | None) -> None:
-    if not vision_result:
-        return
-
-    LAST_IMAGE_CONTEXT_MEMORY[get_last_image_context_key(data)] = {
-        "vision_result": vision_result,
-        "timestamp": time.time(),
-    }
-
-
-def get_remembered_image_context(data: dict | None) -> dict | None:
-    entry = LAST_IMAGE_CONTEXT_MEMORY.get(get_last_image_context_key(data))
-
-    if not entry:
-        return None
-
-    if (time.time() - entry.get("timestamp", 0)) > LAST_IMAGE_CONTEXT_TTL_SECONDS:
-        return None
-
-    return entry.get("vision_result")
-
-
 def remember_last_ai_answer(data: dict | None, question: str, result: dict | None) -> None:
     if not result:
         return
@@ -2489,42 +2545,6 @@ def get_confidence_label(score: float) -> str:
     if score >= 0.72:
         return "medium"
     return "low"
-
-
-def build_related_knowledge_message(question: str, related_options: list) -> str:
-    """
-    Level-2 "related knowledge" response text. With 2+ candidates, phrase it
-    as an explicit disambiguation question naming each verified procedure
-    (e.g. "When you say 'settlement', which of these verified procedures do
-    you mean: Payment Un-tally Process, SOP: Ice Receiving, or Petty Cash
-    Operation SOP?"), matching the pattern requested: confirm which specific
-    source the crew member means before they click one, not just a passive
-    "these might help" list. With only one candidate there's nothing to
-    disambiguate, so it keeps the softer single-suggestion phrasing.
-    """
-    titles = [
-        str(option.get("title") or "").strip()
-        for option in (related_options or [])
-        if str(option.get("title") or "").strip()
-    ]
-
-    question_text = str(question or "").strip()
-
-    if len(titles) >= 2:
-        if len(titles) == 2:
-            title_list = f"{titles[0]} or {titles[1]}"
-        else:
-            title_list = ", ".join(titles[:-1]) + f", or {titles[-1]}"
-
-        if question_text:
-            return f'When you say "{question_text}", which of these verified procedures do you mean: {title_list}?'
-
-        return f"Which of these verified procedures do you mean: {title_list}?"
-
-    return (
-        "I couldn't confirm the exact procedure from the information provided, "
-        "but this verified Knowledge Base article may help:"
-    )
 
 
 def is_fallback_result(result: dict | None) -> bool:
@@ -3186,19 +3206,7 @@ def tokenize_for_knowledge_match(value):
         if len(token) <= 1:
             continue
 
-        mapped = word_map.get(token)
-
-        if mapped is None:
-            # Light plural -> singular normalisation so e.g. "bottle" (a
-            # vision-detected object) and "bottles" (how an article's
-            # content happens to word it) count as the same token. word_map
-            # above still takes priority for irregular cases.
-            if len(token) > 3 and token.endswith("s") and not token.endswith(("ss", "us", "is")):
-                mapped = token[:-1]
-            else:
-                mapped = token
-
-        tokens.add(mapped)
+        tokens.add(word_map.get(token, token))
 
     return tokens
 
@@ -3242,7 +3250,7 @@ def calculate_article_match_score(question, article):
     title = str(article.get("title") or "").lower()
     category = str(article.get("category") or "").lower()
     sub_category = str(article.get("sub_category") or "").lower()
-    content = normalize_article_html_for_parsing(article.get("content")).lower()
+    content = str(article.get("content") or "").lower()
 
     title_tokens = tokenize_for_knowledge_match(title)
     category_tokens = tokenize_for_knowledge_match(category)
@@ -3286,44 +3294,8 @@ def calculate_article_match_score(question, article):
     return weak_score
 
 
-def normalize_article_html_for_parsing(content):
-    """
-    Article content is authored in a Jodit rich-text editor and stored as
-    HTML (see AddArticle.jsx/EditArticle.jsx). Block-level tags like </p>,
-    <br>, </li> don't contain literal newline characters, so a numbered list
-    typed as "<p>1. Restock...</p><p>2. Click...</p>" has NO \n between "1."
-    and "2." -- silently breaking any line-based regex parsing (e.g.
-    parse_article_steps() below, or the KB search token overlap functions
-    tokenizing raw HTML tag noise like "li"/"div"/"href" as if they were
-    real words).
-
-    Converts the HTML into plain text the way a person reading it would see
-    it: inline <img> tags become the [IMAGE]url marker parse_article_steps()
-    already knows how to extract (done BEFORE the generic tag-strip so it
-    isn't lost), block-level boundaries become real newlines, everything
-    else is stripped, and HTML entities (&nbsp;, &amp;, ...) are unescaped.
-    """
-    text = str(content or "")
-
-    text = re.sub(
-        r'<img[^>]*\bsrc=["\']([^"\']+)["\'][^>]*>',
-        lambda m: f"[IMAGE]{m.group(1)}",
-        text,
-        flags=re.IGNORECASE,
-    )
-
-    text = re.sub(r'<\s*br\s*/?>', '\n', text, flags=re.IGNORECASE)
-    text = re.sub(r'</\s*(p|div|li|h[1-6]|tr)\s*>', '\n', text, flags=re.IGNORECASE)
-    text = re.sub(r'<\s*li[^>]*>', '\n', text, flags=re.IGNORECASE)
-
-    text = re.sub(r'<[^>]+>', ' ', text)
-    text = html_lib.unescape(text)
-
-    return text
-
-
 def parse_article_steps(content):
-    text = normalize_article_html_for_parsing(content).strip()
+    text = str(content or "").strip()
     if not text:
         return []
 
@@ -3499,54 +3471,17 @@ def search_knowledge_base_articles(question, limit=1):
     return scored_results[:limit]
 
 
-def search_related_knowledge_base_articles(question, limit=3, min_score=0.08, min_overlap=2):
+def search_related_knowledge_base_articles(question, limit=3, min_score=0.34):
     """
     Level-2 retrieval: articles that are topically related but do not clear
     the strict 100%-confidence bar used by search_knowledge_base_articles().
     Used to show clickable "related knowledge" cards before escalating,
     instead of jumping straight from "not confident" to a team lead ticket.
 
-    Scored with IDF-weighted cosine similarity (bag-of-words, binary term
-    presence), not a plain token-overlap ratio:
-    - A plain ratio (overlap_count / len(q_tokens)) badly under-scores
-      image+text questions, since build_vision_augmented_question() appends
-      several vision-detected words that may not appear in ANY article,
-      diluting a real match (e.g. "bottle", "return") toward zero just
-      because the combined question+image search text is long.
-    - Scoring plain overlap COUNT against a capped denominator instead (an
-      earlier version of this function) overcorrects: any article sharing a
-      handful of tokens with the query maxes out near 99% regardless of how
-      generic those tokens are, so a long, broad document (e.g. a general
-      onboarding checklist) that incidentally touches lots of everyday
-      vocabulary outranks the actual specific article just by sheer size.
-    - Weighting overlap by rarity (IDF) alone still doesn't fully fix that:
-      an article matching many moderately-common words can still out-sum an
-      article matching fewer highly-specific ones.
-    - Cosine similarity fixes both at once: each article is also treated as
-      a vector over ITS OWN full token set (not just the overlapping terms),
-      so a broad/long document has a larger vector norm -- a few incidental
-      matches then count for less of that document's total "mass" -- while a
-      document that is mostly ABOUT the matched terms scores highly even if
-      it only shares a couple of very distinctive words with the query.
-    - But whole-document cosine has its own failure mode on THIS Knowledge
-      Base: articles here are often one long multi-step SOP covering several
-      distinct procedures (e.g. "Kiosk Closing Check List" covers stocktake,
-      cash counting, equipment shutdown... all in one article). A query
-      matching ONE step gets diluted by every OTHER unrelated step in that
-      same document's vector norm, even though the article genuinely
-      contains the right answer. So each article is scored per SEGMENT
-      (title/category/subcategory as one segment, then each numbered step
-      parsed by parse_article_steps() as its own segment) and the article's
-      score is the BEST segment match, not the whole document at once.
-
-    NOTE ON SCALE: cosine similarity over sparse bag-of-words vectors sits
-    much lower than the old overlap-ratio score -- a genuinely correct match
-    typically lands around 0.08-0.15, not 0.3+. min_score=0.08 is a starting
-    point simulated against representative sample data, not this KB's real
-    content/size; min_overlap (>=2 real overlapping tokens) is the primary
-    noise guard, so treat min_score mainly as a floor against near-zero
-    coincidental matches, and re-tune both against real usage if related
-    results are consistently too sparse or too noisy.
+    min_score=0.34 is a tunable heuristic (roughly: at least a third of the
+    question's meaningful tokens appear somewhere in the article's
+    title/category/subcategory/content) chosen to avoid surfacing dozens of
+    low-quality/noisy matches.
     """
     conn = None
     cursor = None
@@ -3580,67 +3515,11 @@ def search_related_knowledge_base_articles(question, limit=3, min_score=0.08, mi
         if conn:
             conn.close()
 
-    question_text = clean_question(question).lower()
-    q_tokens = tokenize_for_knowledge_match(question_text)
-
-    if not q_tokens or not articles:
-        return []
-
-    article_token_sets = []
-    for article in articles:
-        tokens = (
-            tokenize_for_knowledge_match(str(article.get("title") or ""))
-            | tokenize_for_knowledge_match(str(article.get("category") or ""))
-            | tokenize_for_knowledge_match(str(article.get("sub_category") or ""))
-            | tokenize_for_knowledge_match(normalize_article_html_for_parsing(article.get("content")))
-        )
-        article_token_sets.append((article, tokens))
-
-    total_articles = len(article_token_sets)
-
-    # Document frequency across the WHOLE Knowledge Base vocabulary (every
-    # article's tokens, not just the question's), so IDF weight -- and each
-    # article's own vector norm below -- reflect true rarity/commonness.
-    global_doc_frequency = {}
-    for _, tokens in article_token_sets:
-        for token in tokens:
-            global_doc_frequency[token] = global_doc_frequency.get(token, 0) + 1
-    for token in q_tokens:
-        global_doc_frequency.setdefault(token, 0)
-
-    def idf(token):
-        return math.log((total_articles + 1) / (global_doc_frequency[token] + 1)) + 1.0
-
-    query_norm = math.sqrt(sum(idf(token) ** 2 for token in q_tokens)) or 1.0
-
-    # Image-only searches (just the cleaned detected-object terms, e.g.
-    # "bottle return") are inherently short -- requiring the full min_overlap
-    # on a 1-2 token query is an unreasonably high bar (it would demand every
-    # single word literally appear in the article). Only enforce the stricter
-    # floor once the query has enough tokens for it to mean something.
-    required_overlap = 1 if len(q_tokens) <= 2 else min(min_overlap, len(q_tokens))
-
     scored_results = []
-    for article, _ in article_token_sets:
-        best_score = 0.0
+    for article in articles:
+        score = calculate_article_match_score(question, article)
 
-        for segment_text in build_article_search_segments(article):
-            segment_tokens = tokenize_for_knowledge_match(segment_text)
-            overlap = q_tokens & segment_tokens
-
-            if len(overlap) < required_overlap:
-                continue
-
-            dot_product = sum(idf(token) ** 2 for token in overlap)
-            segment_norm = math.sqrt(sum(idf(token) ** 2 for token in segment_tokens)) or 1.0
-            cosine = dot_product / (query_norm * segment_norm)
-
-            if cosine > best_score:
-                best_score = cosine
-
-        score = round(min(best_score, 0.99), 4)
-
-        if score >= min_score:
+        if min_score <= score < 1.0:
             scored_results.append(build_article_ai_result(article, question, score))
 
     scored_results = sorted(scored_results, key=lambda item: item.get("score", 0.0), reverse=True)
@@ -3947,46 +3826,8 @@ def process_question(question, context=None, search_question=None):
 # STARTUP CHECKS
 # =========================
 def verify_manager_account():
-    """
-    If the manager password is still plain text in DB, hash it once on startup.
-    Default manager password used here: admin1234567
-    """
-    conn = None
-    cursor = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-
-        cursor.execute("""
-            SELECT password_hash
-            FROM users
-            WHERE email = 'manager@junglehouse.com'
-            LIMIT 1
-        """)
-        user = cursor.fetchone()
-
-        if user and user["password_hash"] == "admin1234567":
-            print("Fixing plain-text manager password on startup...")
-
-            new_hash = generate_password_hash("admin1234567")
-
-            cursor.execute("""
-                UPDATE users
-                SET password_hash = %s
-                WHERE email = 'manager@junglehouse.com'
-            """, (new_hash,))
-            conn.commit()
-
-            print("Manager password successfully hashed.")
-
-    except Exception as e:
-        print(f"Could not verify manager password on startup: {e}")
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
+    """Legacy no-op: password migration occurs only after successful login."""
+    return None
 
 
 # =========================
@@ -4045,189 +3886,153 @@ def test_db():
 # =========================
 # AUTH - REGISTER
 # =========================
+def ensure_declined_registration_history_table(cursor):
+    """Keep a permanent application snapshot without duplicating users or passwords.
+
+    Called *before* starting the registration transaction: MySQL DDL commits
+    implicitly, so CREATE TABLE must never run between the account row lock
+    and the final UPDATE/INSERT.
+    """
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS declined_registration_history (
+            history_id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            full_name VARCHAR(255) NOT NULL,
+            email VARCHAR(255) NOT NULL,
+            originally_registered_at DATETIME NULL,
+            declined_at DATETIME NULL,
+            declined_by_user_id INT NULL,
+            declined_by_name VARCHAR(255) NULL,
+            decision_description TEXT NULL,
+            archived_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_declined_history_user (user_id),
+            INDEX idx_declined_history_email (email)
+        ) ENGINE=InnoDB
+    """)
+
+
 @app.route("/api/auth/register", methods=["POST"])
 def register():
+    """Create a pending account, or accept a fresh application after a decline.
+
+    A declined attempt is archived before its existing user row is reused.
+    Active, pending and inactive accounts still cannot register duplicates.
+    """
     data = request.get_json(silent=True) or {}
+    full_name = str(data.get("full_name") or "").strip()
+    email = str(data.get("email") or "").strip().lower()
+    password = str(data.get("password") or "")
+    confirm_password = str(data.get("confirm_password") or "")
 
-    full_name = str(data.get("full_name", "")).strip()
-    email = str(data.get("email", "")).strip().lower()
-    password = str(data.get("password", ""))
-    confirm_password = str(data.get("confirm_password", ""))
-    role = "staff"
-
-    if not all([full_name, email, password, confirm_password]):
+    if not all((full_name, email, password, confirm_password)):
         return jsonify({"message": "Please fill in all required fields."}), 400
-
     if len(full_name) < 3:
         return jsonify({"message": "Full name must be at least 3 characters."}), 400
-
     if not is_valid_email_format(email):
         return jsonify({"message": "Please enter a valid email address."}), 400
-
     if password != confirm_password:
         return jsonify({"message": "Passwords do not match."}), 400
-
-    if len(password) < 8:
-        return jsonify({"message": "Password must be at least 8 characters."}), 400
-
-    if not re.search(r"[A-Z]", password):
-        return jsonify({"message": "Password must include at least one uppercase letter."}), 400
-
-    if not re.search(r"\d", password):
-        return jsonify({"message": "Password must include at least one number."}), 400
+    if len(password) < 8 or not re.search(r"[A-Z]", password) or not re.search(r"\d", password):
+        return jsonify({"message": "Password must contain at least 8 characters, an uppercase letter and a number."}), 400
 
     conn = None
     cursor = None
-    user_id = None
-    registration_restarted = False
-
     try:
         conn = get_db_connection()
-        conn.start_transaction()
         cursor = conn.cursor(dictionary=True)
-
-        ensure_registration_keys_table(cursor)
-
-        cursor.execute("""
-            SELECT role_id
-            FROM roles
-            WHERE LOWER(role_name) = %s
-            LIMIT 1
-        """, (role,))
+        # Only a registration-specific table is created. Do this before BEGIN
+        # because CREATE TABLE causes an implicit commit in MySQL.
+        ensure_declined_registration_history_table(cursor)
+        conn.start_transaction()
+        cursor.execute("SELECT role_id FROM roles WHERE LOWER(role_name) = 'staff' LIMIT 1")
         role_row = cursor.fetchone()
-
         if not role_row:
             conn.rollback()
-            return jsonify({"message": "Staff role does not exist in database."}), 400
+            return jsonify({"message": "Staff role does not exist in database."}), 500
 
         cursor.execute("""
-            SELECT user_id, status
-            FROM users
-            WHERE LOWER(email) = %s
-            LIMIT 1
-            FOR UPDATE
+            SELECT user_id, full_name, email, status, created_at
+            FROM users WHERE LOWER(email) = %s LIMIT 1 FOR UPDATE
         """, (email,))
-        existing_user = cursor.fetchone()
+        existing = cursor.fetchone()
+        new_password_hash = generate_password_hash(password)
 
-        password_hash = generate_password_hash(password)
+        if existing and str(existing.get("status") or "").strip().lower() != "declined":
+            conn.rollback()
+            return jsonify({"message": "Email is already registered. Contact your Manager if you need assistance."}), 409
 
-        if existing_user:
-            # A user may register again with the same email only when the
-            # previous activation was automatically cancelled after 3 wrong
-            # one-time-key attempts. Manager-declined/inactive/active accounts
-            # are NOT silently recycled.
-            can_restart = False
-            if str(existing_user.get("status", "")).strip().lower() == "declined":
-                cursor.execute("""
-                    SELECT key_id
-                    FROM staff_registration_keys
-                    WHERE LOWER(assigned_email) = %s
-                      AND status = 'revoked'
-                      AND COALESCE(failed_attempts, 0) >= 3
-                    ORDER BY revoked_at DESC, key_id DESC
-                    LIMIT 1
-                """, (email,))
-                can_restart = bool(cursor.fetchone())
-
-            if not can_restart:
-                conn.rollback()
-                return jsonify({"message": "Email is already registered."}), 409
-
-            # Restart the same database user instead of deleting/recreating it,
-            # preserving foreign-key audit history while giving the staff member
-            # a clean new registration request.
+        if existing:
+            # Preserve the actual earlier declined application BEFORE resetting
+            # the one unique users row. Do not copy or retain old password hashes.
+            user_id = existing["user_id"]
             cursor.execute("""
-                UPDATE staff_registration_keys
-                SET status = 'revoked',
-                    revoked_at = COALESCE(revoked_at, NOW())
-                WHERE LOWER(assigned_email) = %s
-                  AND status = 'unused'
-            """, (email,))
-
+                SELECT actor_id, actor_name, description, created_at
+                FROM audit_log
+                WHERE action = 'Declined account registration'
+                  AND module = 'User Management'
+                  AND description LIKE %s
+                ORDER BY created_at DESC, audit_id DESC LIMIT 1
+            """, (f"User ID {user_id} registration declined.%",))
+            decision = cursor.fetchone() or {}
+            cursor.execute("""
+                INSERT INTO declined_registration_history
+                    (user_id, full_name, email, originally_registered_at,
+                     declined_at, declined_by_user_id, declined_by_name,
+                     decision_description)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                user_id, existing["full_name"], existing["email"],
+                existing.get("created_at"), decision.get("created_at"),
+                decision.get("actor_id"), decision.get("actor_name"),
+                decision.get("description") or "Legacy decline; see audit history.",
+            ))
+            # An old reset link issued before the original decline must not
+            # reset the fresh password after this person is later approved.
+            cursor.execute("SHOW TABLES LIKE 'password_reset_tokens'")
+            if cursor.fetchone():
+                cursor.execute("""
+                    UPDATE password_reset_tokens SET used_at = NOW()
+                    WHERE user_id = %s AND used_at IS NULL
+                """, (user_id,))
             cursor.execute("""
                 UPDATE users
-                SET full_name = %s,
-                    password_hash = %s,
-                    role_id = %s,
-                    status = 'pending',
-                    created_at = NOW()
-                WHERE user_id = %s
-            """, (full_name, password_hash, role_row["role_id"], existing_user["user_id"]))
-
-            user_id = existing_user["user_id"]
-            registration_restarted = True
+                SET full_name = %s, email = %s, password_hash = %s,
+                    role_id = %s, status = 'pending', created_at = NOW()
+                WHERE user_id = %s AND status = 'declined'
+            """, (full_name, email, new_password_hash, role_row["role_id"], user_id))
+            if cursor.rowcount != 1:
+                conn.rollback()
+                return jsonify({"message": "Registration changed while processing. Please try again."}), 409
         else:
             cursor.execute("""
                 INSERT INTO users (full_name, email, password_hash, role_id, status)
                 VALUES (%s, %s, %s, %s, 'pending')
-            """, (full_name, email, password_hash, role_row["role_id"]))
+            """, (full_name, email, new_password_hash, role_row["role_id"]))
             user_id = cursor.lastrowid
 
+        # The historical record and new pending application commit together.
         conn.commit()
-
-        # Final registration flow: there is NO extra mailbox-link step.
-        # A registration is considered successfully submitted only when the
-        # automatic "Registration received" email is accepted by SMTP. This
-        # prevents a ghost pending account from remaining when email delivery
-        # fails during registration.
-        email_sent = send_registration_received_email(full_name, email)
-
-        if not email_sent:
-            try:
-                conn.start_transaction()
-                wipe_pending_registration(cursor, user_id, email)
-                conn.commit()
-            except Exception as cleanup_error:
-                conn.rollback()
-                print("REGISTER EMAIL FAILURE CLEANUP ERROR:", cleanup_error)
-
-            return jsonify({
-                "code": "REGISTRATION_EMAIL_FAILED",
-                "message": (
-                    "Registration could not be completed because the system email "
-                    "could not be delivered. No pending account was kept. Please "
-                    "try again after the email service is available."
-                ),
-                "account_status": "not_created",
-                "email_sent": False,
-            }), 503
-
-        # Only notify approvers after the user has successfully received the
-        # registration acknowledgement through the configured system mailbox.
+        # Notifications and audit logging run after commit. A notification failure
+        # must never erase a successfully submitted pending registration.
         notify_registration_approvers(user_id, full_name, email)
-
         add_audit_log(
-            actor_id=user_id,
-            actor_name=full_name,
-            action="Restarted account registration" if registration_restarted else "Submitted account registration",
-            module="Authentication",
-            description=f"Pending staff registration submitted for {email}; acknowledgement email sent."
+            actor_id=user_id, actor_name=full_name,
+            action="Submitted account registration", module="Authentication",
+            description=f"Pending staff registration submitted for {email}; awaiting manager review."
         )
-
         return jsonify({
-            "message": (
-                "Registration submitted successfully. A confirmation email has been sent. "
-                "Your account is pending Manager / Team Leader review, normally within "
-                f"{REGISTRATION_REVIEW_HOURS} hours."
-            ),
-            "account_status": "pending",
-            "review_within_hours": REGISTRATION_REVIEW_HOURS,
-            "email_sent": True,
-            "registration_restarted": registration_restarted,
+            "message": "Registration submitted. Please allow up to 24 hours for a Manager or Team Leader to review your request.",
+            "account_status": "pending", "review_within_hours": 24,
         }), 201
-
-    except mysql.connector.Error as err:
+    except mysql.connector.IntegrityError:
         if conn:
             conn.rollback()
-        print("REGISTER MYSQL ERROR:", err)
-        return jsonify({"message": "Unable to complete registration right now."}), 500
-
-    except Exception as error:
+        return jsonify({"message": "Email is already registered."}), 409
+    except Exception:
         if conn:
             conn.rollback()
-        print("REGISTER GENERAL ERROR:", error)
+        print("REGISTER ERROR: Registration transaction failed.")
         return jsonify({"message": "Unable to complete registration right now."}), 500
-
     finally:
         if cursor:
             cursor.close()
@@ -4235,12 +4040,19 @@ def register():
             conn.close()
 
 
-
 # =========================
 # AUTH - FORGOT / RESET PASSWORD
 # =========================
 @app.route("/api/auth/forgot-password", methods=["POST"])
 def forgot_password():
+    # Email-based recovery is still supported only where the mailbox is real.
+    # Do not simulate delivery or silently issue an unusable reset token.
+    if (PRESENTATION_DEMO_MODE or not os.getenv("SMTP_USER", "").strip()
+            or not os.getenv("SMTP_PASSWORD", "").strip()):
+        return jsonify({
+            "code": "PASSWORD_RECOVERY_UNAVAILABLE",
+            "message": "Password recovery is currently unavailable. Please contact your Manager."
+        }), 503
     data = request.get_json(silent=True) or {}
     email = str(data.get("email", "")).strip().lower()
 
@@ -4504,264 +4316,28 @@ def reset_password():
 # =========================
 
 def send_registration_activation_email(full_name, email, key_code):
-    login_url = f"{FRONTEND_URL}/login" if FRONTEND_URL else "the Jungle House login page"
-    subject = "Jungle House AI Wiki - Account approved"
-    body = f"""Hi {full_name or 'there'},
-
-Your Jungle House AI Wiki account request has been approved by a manager or team leader.
-
-Your one-time registration key is:
-
-{key_code}
-
-Sign in using your registered email address and password:
-{login_url}
-
-After your email and password are accepted, the system will ask you to enter this registration key.
-
-Security notes:
-- This key is assigned only to {email}.
-- This key can be used only once.
-- Do not share this key with anyone.
-- Jungle House staff will never ask you to send your password by email.
-
-After the key is verified, your account will be activated and you can enter the system.
-
-Thank you,
-Jungle House AI Wiki Team
-"""
-    return send_email_safe(email, subject, body)
+    """Legacy compatibility only: activation-key emails are permanently disabled."""
+    return False
 
 @app.route("/api/registration-keys/generate", methods=["POST"])
 def generate_registration_key():
-    """
-    Manual pre-registration key generation is intentionally disabled.
-
-    Security flow now is:
-    register -> pending review -> manager/team lead approval -> automatic
-    one-time activation key email -> first-login key verification -> active account.
-
-    Keeping this route avoids breaking an older frontend with a 404, while
-    preventing a key issued before approval from bypassing the approval gate.
-    """
-    return jsonify({
-        "code": "MANUAL_REGISTRATION_KEY_DISABLED",
-        "message": (
-            "Manual registration-key generation is disabled. Approve a pending "
-            "registration to generate and email the one-time activation key."
-        )
-    }), 409
+    return jsonify({"code": "REGISTRATION_KEYS_REMOVED", "message": "Registration keys are no longer required. Contact your Manager for account approval."}), 410
 
 @app.route("/api/registration-keys", methods=["GET"])
 def list_registration_keys():
-    actor_id = request.args.get("actor_id") or request.args.get("user_id") or request.args.get("userId")
-
-    conn = None
-    cursor = None
-
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-        ensure_registration_keys_table(cursor)
-
-        if not is_registration_key_manager(cursor, actor_id):
-            return jsonify({"message": "Only a Manager or Team Leader can view registration activation keys."}), 403
-
-        cursor.execute("""
-            SELECT
-                rk.key_id,
-                rk.key_code,
-                rk.status,
-                rk.assigned_email,
-                rk.assigned_at,
-                rk.email_sent_at,
-                rk.failed_attempts,
-                rk.last_failed_at,
-                rk.used_by_email,
-                rk.created_at,
-                rk.used_at,
-                rk.revoked_at,
-                creator.full_name AS created_by_name
-            FROM staff_registration_keys rk
-            LEFT JOIN users creator ON rk.created_by_user_id = creator.user_id
-            WHERE rk.assigned_email IS NOT NULL
-              AND TRIM(rk.assigned_email) <> ''
-            ORDER BY rk.created_at DESC, rk.key_id DESC
-        """)
-
-        keys = cursor.fetchall() or []
-        for item in keys:
-            raw_key = str(item.pop("key_code", "") or "")
-            item["key_preview"] = ("••••••" + raw_key[-4:]) if raw_key else "-"
-            item["failed_attempts"] = int(item.get("failed_attempts") or 0)
-            for field in ["assigned_at", "email_sent_at", "last_failed_at", "created_at", "used_at", "revoked_at"]:
-                item[field] = format_datetime_value(item.get(field))
-
-        return jsonify(keys), 200
-
-    except Exception as error:
-        print("LIST REGISTRATION KEYS ERROR:", error)
-        return jsonify({"message": "Failed to load registration keys."}), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
+    return jsonify({"code": "REGISTRATION_KEYS_REMOVED", "message": "Registration keys are no longer required. Contact your Manager for account approval."}), 410
 
 
 
 @app.route("/api/registration-keys/<int:key_id>/resend", methods=["POST"])
 def resend_registration_key(key_id):
-    data = request.get_json(silent=True) or {}
-    actor_id = data.get("actor_id") or data.get("user_id") or data.get("created_by")
-
-    conn = None
-    cursor = None
-
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-        ensure_registration_keys_table(cursor)
-
-        if not is_registration_key_manager(cursor, actor_id):
-            return jsonify({"message": "Only a Manager or Team Leader can resend activation keys."}), 403
-
-        cursor.execute("""
-            SELECT key_code, status, assigned_email
-            FROM staff_registration_keys
-            WHERE key_id = %s
-            LIMIT 1
-        """, (key_id,))
-        key_row = cursor.fetchone()
-
-        if not key_row:
-            return jsonify({"message": "Activation key not found."}), 404
-
-        if str(key_row.get("status", "")).lower() != "unused":
-            return jsonify({"message": "Only unused activation keys can be resent."}), 400
-
-        assigned_email = str(key_row.get("assigned_email") or "").strip().lower()
-        if not assigned_email:
-            return jsonify({"message": "This legacy key is not assigned to an email and cannot be resent."}), 400
-
-        cursor.execute("""
-            SELECT user_id, full_name, email, status
-            FROM users
-            WHERE LOWER(email) = %s
-            LIMIT 1
-        """, (assigned_email,))
-        target_user = cursor.fetchone()
-
-        if not target_user or str(target_user.get("status", "")).strip().lower() != "pending":
-            return jsonify({"message": "This key is not linked to a pending registration."}), 409
-
-        email_sent = send_registration_activation_email(
-            target_user.get("full_name"),
-            assigned_email,
-            key_row["key_code"]
-        )
-
-        if email_sent:
-            cursor.execute("""
-                UPDATE staff_registration_keys
-                SET email_sent_at = NOW()
-                WHERE key_id = %s
-            """, (key_id,))
-            conn.commit()
-
-        add_audit_log(
-            actor_id=actor_id,
-            action="Resent registration activation key",
-            module="User Management",
-            description=f"Activation key resend requested for {assigned_email}."
-        )
-
-        return jsonify({
-            "message": (
-                "Activation key email sent successfully."
-                if email_sent
-                else "The activation key exists, but the email could not be sent."
-            ),
-            "email_sent": bool(email_sent),
-        }), (200 if email_sent else 503)
-
-    except Exception as error:
-        if conn:
-            conn.rollback()
-        print("RESEND REGISTRATION KEY ERROR:", error)
-        return jsonify({"message": "Failed to resend activation key."}), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
+    return jsonify({"code": "REGISTRATION_KEYS_REMOVED", "message": "Registration keys are no longer required. Contact your Manager for account approval."}), 410
 
 
 
 @app.route("/api/registration-keys/<int:key_id>/revoke", methods=["PUT"])
 def revoke_registration_key(key_id):
-    data = request.get_json(silent=True) or {}
-    actor_id = data.get("actor_id") or data.get("user_id") or data.get("created_by")
-
-    conn = None
-    cursor = None
-
-    try:
-        conn = get_db_connection()
-        conn.start_transaction()
-        cursor = conn.cursor(dictionary=True)
-        ensure_registration_keys_table(cursor)
-
-        if not is_registration_key_manager(cursor, actor_id):
-            conn.rollback()
-            return jsonify({"message": "Only a Manager or Team Leader can revoke registration activation keys."}), 403
-
-        cursor.execute("""
-            SELECT status, assigned_email
-            FROM staff_registration_keys
-            WHERE key_id = %s
-            LIMIT 1
-            FOR UPDATE
-        """, (key_id,))
-        key_row = cursor.fetchone()
-
-        if not key_row:
-            conn.rollback()
-            return jsonify({"message": "Activation key not found."}), 404
-
-        if str(key_row.get("status", "")).lower() != "unused":
-            conn.rollback()
-            return jsonify({"message": "Only unused activation keys can be revoked."}), 400
-
-        cursor.execute("""
-            UPDATE staff_registration_keys
-            SET status = 'revoked', revoked_at = NOW()
-            WHERE key_id = %s AND status = 'unused'
-        """, (key_id,))
-        conn.commit()
-
-        add_audit_log(
-            actor_id=actor_id,
-            action="Revoked registration activation key",
-            module="User Management",
-            description=f"Unused registration activation key revoked for {key_row.get('assigned_email') or 'legacy unassigned key'}."
-        )
-
-        return jsonify({"message": "Activation key revoked successfully."}), 200
-
-    except Exception as error:
-        if conn:
-            conn.rollback()
-        print("REVOKE REGISTRATION KEY ERROR:", error)
-        return jsonify({"message": "Failed to revoke registration activation key."}), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
+    return jsonify({"code": "REGISTRATION_KEYS_REMOVED", "message": "Registration keys are no longer required. Contact your Manager for account approval."}), 410
 
 # =========================
 # AUTH - LOGIN
@@ -4769,136 +4345,66 @@ def revoke_registration_key(key_id):
 @app.route("/api/auth/login", methods=["POST"])
 def login():
     data = request.get_json(silent=True) or {}
-
-    email = str(data.get("email", "")).strip().lower()
-    password = str(data.get("password", ""))
-
+    email = str(data.get("email") or "").strip().lower()
+    password = str(data.get("password") or "")
     if not email or not password:
         return jsonify({"message": "Email and password are required."}), 400
-
     conn = None
     cursor = None
-
     try:
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
-
         cursor.execute("""
-            SELECT
-                u.user_id,
-                u.full_name,
-                u.email,
-                u.password_hash,
-                u.status,
-                u.created_at,
-                r.role_name
-            FROM users u
-            JOIN roles r ON u.role_id = r.role_id
-            WHERE LOWER(u.email) = %s
-            LIMIT 1
+            SELECT u.user_id, u.full_name, u.email, u.password_hash,
+                   u.status, u.created_at, r.role_name
+            FROM users u JOIN roles r ON u.role_id = r.role_id
+            WHERE LOWER(u.email) = %s LIMIT 1
         """, (email,))
         user = cursor.fetchone()
-
         if not user:
-            record_login_history(cursor, user_id=None, email=email, full_name="Unknown", status="failed")
+            record_login_history(cursor, email=email, full_name="Unknown", status="failed")
             conn.commit()
             return jsonify({"message": "Invalid email or password."}), 401
-
-        stored_password = str(user.get("password_hash", "")).strip()
-        password_ok = False
-
+        stored = str(user.get("password_hash") or "")
         try:
-            password_ok = check_password_hash(stored_password, password)
+            password_ok = check_password_hash(stored, password)
         except Exception:
             password_ok = False
-
-        if not password_ok and stored_password == password:
-            cursor.execute("""
-                UPDATE users
-                SET password_hash = %s
-                WHERE user_id = %s
-            """, (generate_password_hash(password), user["user_id"]))
+        if not password_ok and hmac.compare_digest(stored, password):
+            stored = generate_password_hash(password)  # Upgrade legacy plaintext on login.
+            cursor.execute("UPDATE users SET password_hash = %s WHERE user_id = %s", (stored, user["user_id"]))
             password_ok = True
-
         if not password_ok:
             record_login_history(cursor, user["user_id"], user["email"], user["full_name"], "failed")
             conn.commit()
             return jsonify({"message": "Invalid email or password."}), 401
-
-        user_status = str(user.get("status", "")).strip().lower()
-
-        if user_status == "pending":
-            ensure_registration_keys_table(cursor)
-            cursor.execute("""
-                SELECT key_id, failed_attempts
-                FROM staff_registration_keys
-                WHERE LOWER(assigned_email) = %s
-                  AND status = 'unused'
-                ORDER BY assigned_at DESC, key_id DESC
-                LIMIT 1
-            """, (email,))
-            activation_key = cursor.fetchone()
-
+        status = str(user.get("status") or "").lower()
+        if status != "active":
             record_login_history(cursor, user["user_id"], user["email"], user["full_name"], "failed")
             conn.commit()
-
-            if activation_key:
-                failed_attempts = int(activation_key.get("failed_attempts") or 0)
-                return jsonify({
-                    "code": "REGISTRATION_KEY_REQUIRED",
-                    "account_status": "pending",
-                    "registration_key_required": True,
-                    "attempts_remaining": max(0, 3 - failed_attempts),
-                    "message": "Your registration has been approved. Enter the one-time registration key sent to your email to activate your account."
-                }), 403
-
-            return jsonify({
-                "code": "ACCOUNT_PENDING_APPROVAL",
-                "account_status": "pending",
-                "registration_key_required": False,
-                "message": f"Your registration is awaiting Manager / Team Leader approval. Reviews are normally completed within {REGISTRATION_REVIEW_HOURS} hours."
-            }), 403
-
-        if user_status == "declined":
-            record_login_history(cursor, user["user_id"], user["email"], user["full_name"], "failed")
-            conn.commit()
-            return jsonify({
-                "code": "ACCOUNT_DECLINED",
-                "account_status": "declined",
-                "message": "Your registration is not active. If it was declined by management, please contact your Manager / Team Leader. If activation was cancelled after 3 incorrect key attempts, please register again."
-            }), 403
-
-        if user_status != "active":
-            record_login_history(cursor, user["user_id"], user["email"], user["full_name"], "failed")
-            conn.commit()
-            return jsonify({
-                "code": "ACCOUNT_INACTIVE",
-                "account_status": user_status or "inactive",
-                "message": "This account is inactive. Please contact the Manager / Team Leader."
-            }), 403
-
+            code = "ACCOUNT_PENDING_APPROVAL" if status == "pending" else "ACCOUNT_INACTIVE"
+            message = ("Your registration is awaiting Manager / Team Leader approval. Please allow up to 24 hours."
+                       if status == "pending" else "This account is not active. Please contact your Manager or Team Leader.")
+            return jsonify({"code": code, "account_status": status, "message": message}), 403
         record_login_history(cursor, user["user_id"], user["email"], user["full_name"], "success")
         conn.commit()
-
-        user_payload = get_user_profile_payload({
-            "user_id": user["user_id"],
-            "full_name": user["full_name"],
-            "email": user["email"],
-            "role_name": user["role_name"],
-            "status": user_status,
-            "created_at": user.get("created_at"),
+        session.clear()  # Rotate the session on login; prevent session fixation.
+        session.permanent = True
+        session["user_id"] = int(user["user_id"])
+        session["password_fingerprint"] = password_session_fingerprint(stored)
+        session["csrf_token"] = secrets.token_urlsafe(32)
+        payload = get_user_profile_payload(user)
+        response = jsonify({
+            "message": "Login successful.", "user": payload,
+            "csrf_token": session["csrf_token"],
         })
-
-        return jsonify({"message": "Login successful.", "user": user_payload}), 200
-
-    except mysql.connector.Error as err:
-        print("LOGIN MYSQL ERROR:", err)
+        response.headers["Cache-Control"] = "no-store"
+        return response, 200
+    except Exception:
+        if conn:
+            conn.rollback()
+        print("LOGIN ERROR: Sign-in transaction failed.")
         return jsonify({"message": "Unable to sign in right now."}), 500
-
-    except Exception as error:
-        print("LOGIN GENERAL ERROR:", error)
-        return jsonify({"message": "Unable to sign in right now."}), 500
-
     finally:
         if cursor:
             cursor.close()
@@ -4911,330 +4417,13 @@ def login():
 # =========================
 @app.route("/api/auth/activate-registration-key", methods=["POST"])
 def activate_registration_key():
-    data = request.get_json(silent=True) or {}
-
-    email = str(data.get("email", "")).strip().lower()
-    password = str(data.get("password", ""))
-    registration_key = str(data.get("registration_key", "")).strip().lower()
-
-    if not email or not password or not registration_key:
-        return jsonify({"message": "Email, password, and registration key are required."}), 400
-
-    conn = None
-    cursor = None
-
-    try:
-        conn = get_db_connection()
-        conn.start_transaction()
-        cursor = conn.cursor(dictionary=True)
-
-        ensure_registration_keys_table(cursor)
-
-        cursor.execute("""
-            SELECT
-                u.user_id,
-                u.full_name,
-                u.email,
-                u.password_hash,
-                u.status,
-                u.created_at,
-                r.role_name
-            FROM users u
-            JOIN roles r ON u.role_id = r.role_id
-            WHERE LOWER(u.email) = %s
-            LIMIT 1
-            FOR UPDATE
-        """, (email,))
-        user = cursor.fetchone()
-
-        if not user:
-            conn.rollback()
-            return jsonify({"message": "Invalid email, password, or registration key."}), 401
-
-        stored_password = str(user.get("password_hash", "")).strip()
-        password_ok = False
-        try:
-            password_ok = check_password_hash(stored_password, password)
-        except Exception:
-            password_ok = False
-
-        if not password_ok and stored_password == password:
-            cursor.execute("UPDATE users SET password_hash = %s WHERE user_id = %s", (generate_password_hash(password), user["user_id"]))
-            password_ok = True
-
-        if not password_ok:
-            conn.rollback()
-            return jsonify({"message": "Invalid email, password, or registration key."}), 401
-
-        user_status = str(user.get("status", "")).strip().lower()
-
-        if user_status == "active":
-            conn.rollback()
-            return jsonify({"code": "ACCOUNT_ALREADY_ACTIVE", "message": "This account is already active. Please sign in normally."}), 409
-
-        if user_status == "declined":
-            conn.rollback()
-            return jsonify({"code": "ACCOUNT_DECLINED", "message": "This registration is no longer active. Please register again or contact your Manager / Team Leader."}), 403
-
-        if user_status != "pending":
-            conn.rollback()
-            return jsonify({"code": "ACCOUNT_INACTIVE", "message": "This account cannot be activated. Please contact a Manager or Team Leader."}), 403
-
-        # Lock the user's CURRENT unused activation key. Comparing against the
-        # submitted text afterwards means a key belonging to another account
-        # never leaks information and still counts as a wrong attempt here.
-        cursor.execute("""
-            SELECT key_id, key_code, status, assigned_email, failed_attempts
-            FROM staff_registration_keys
-            WHERE LOWER(assigned_email) = %s
-              AND status = 'unused'
-            ORDER BY assigned_at DESC, key_id DESC
-            LIMIT 1
-            FOR UPDATE
-        """, (email,))
-        key_row = cursor.fetchone()
-
-        if not key_row:
-            conn.rollback()
-            return jsonify({
-                "code": "ACCOUNT_PENDING_APPROVAL",
-                "message": "No active registration key is available. Your registration may still be awaiting approval."
-            }), 403
-
-        key_matches = secrets.compare_digest(
-            str(key_row.get("key_code") or "").strip().lower(),
-            registration_key
-        )
-
-        if not key_matches:
-            failed_attempts = int(key_row.get("failed_attempts") or 0) + 1
-            attempts_remaining = max(0, 3 - failed_attempts)
-
-            if failed_attempts >= 3:
-                cursor.execute("""
-                    UPDATE staff_registration_keys
-                    SET failed_attempts = 3,
-                        last_failed_at = NOW(),
-                        status = 'revoked',
-                        revoked_at = NOW()
-                    WHERE key_id = %s
-                      AND status = 'unused'
-                """, (key_row["key_id"],))
-
-                cursor.execute("""
-                    UPDATE users
-                    SET status = 'declined'
-                    WHERE user_id = %s
-                      AND status = 'pending'
-                """, (user["user_id"],))
-
-                conn.commit()
-
-                send_activation_cancelled_email(user.get("full_name"), user.get("email"))
-
-                add_audit_log(
-                    actor_id=user["user_id"],
-                    actor_name=user.get("full_name") or "User",
-                    action="Registration activation cancelled",
-                    module="Authentication",
-                    description=f"Registration key revoked after 3 incorrect activation attempts for {email}."
-                )
-
-                return jsonify({
-                    "code": "ACTIVATION_KEY_LOCKED",
-                    "message": "The registration key was entered incorrectly 3 times. This registration has been cancelled and the key has been revoked. Please register again.",
-                    "attempts_remaining": 0,
-                    "registration_cancelled": True
-                }), 403
-
-            cursor.execute("""
-                UPDATE staff_registration_keys
-                SET failed_attempts = %s,
-                    last_failed_at = NOW()
-                WHERE key_id = %s
-                  AND status = 'unused'
-            """, (failed_attempts, key_row["key_id"]))
-            conn.commit()
-
-            return jsonify({
-                "code": "INVALID_REGISTRATION_KEY",
-                "message": f"Incorrect registration key. {attempts_remaining} attempt{'s' if attempts_remaining != 1 else ''} remaining.",
-                "attempts_remaining": attempts_remaining
-            }), 403
-
-        cursor.execute("""
-            UPDATE staff_registration_keys
-            SET status = 'used',
-                used_by_user_id = %s,
-                used_by_email = %s,
-                used_at = NOW()
-            WHERE key_id = %s
-              AND status = 'unused'
-        """, (user["user_id"], email, key_row["key_id"]))
-
-        if cursor.rowcount != 1:
-            conn.rollback()
-            return jsonify({"message": "This registration key is no longer available."}), 409
-
-        cursor.execute("""
-            UPDATE users
-            SET status = 'active'
-            WHERE user_id = %s
-              AND status = 'pending'
-        """, (user["user_id"],))
-
-        if cursor.rowcount != 1:
-            conn.rollback()
-            return jsonify({"message": "Unable to activate this account."}), 409
-
-        conn.commit()
-
-        user_payload = get_user_profile_payload({
-            "user_id": user["user_id"],
-            "full_name": user["full_name"],
-            "email": user["email"],
-            "role_name": user["role_name"],
-            "status": "active",
-            "created_at": user.get("created_at"),
-        })
-
-        create_notification_safe(
-            user_id=user["user_id"],
-            title="Account activated",
-            detail="Your one-time registration key was accepted and your Jungle House account is now active.",
-            notification_type="system",
-            related_id=user["user_id"]
-        )
-
-        add_audit_log(
-            actor_id=user["user_id"],
-            actor_name=user.get("full_name") or "User",
-            action="Activated account with registration key",
-            module="Authentication",
-            description=f"One-time registration key consumed for {email}."
-        )
-
-        return jsonify({
-            "message": "Registration key verified. Your account is now active.",
-            "account_status": "active",
-            "activation_complete": True,
-            "user": user_payload
-        }), 200
-
-    except Exception as error:
-        if conn:
-            conn.rollback()
-        print("ACTIVATE REGISTRATION KEY ERROR:", error)
-        return jsonify({"message": "Unable to verify the registration key right now."}), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
+    return jsonify({"code": "REGISTRATION_KEYS_REMOVED", "message": "Registration keys are no longer required. Contact your Manager for account approval."}), 410
 
 
 
 @app.route("/api/auth/resend-activation-key", methods=["POST"])
 def resend_activation_key():
-    data = request.get_json(silent=True) or {}
-
-    email = str(data.get("email", "")).strip().lower()
-    password = str(data.get("password", ""))
-
-    if not email or not password:
-        return jsonify({"message": "Email and password are required."}), 400
-
-    conn = None
-    cursor = None
-
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-
-        ensure_registration_keys_table(cursor)
-
-        cursor.execute("""
-            SELECT user_id, full_name, email, password_hash, status
-            FROM users
-            WHERE LOWER(email) = %s
-            LIMIT 1
-        """, (email,))
-        user = cursor.fetchone()
-
-        if not user:
-            return jsonify({"message": "Unable to resend the activation key."}), 401
-
-        stored_password = str(user.get("password_hash", "")).strip()
-        password_ok = False
-
-        try:
-            password_ok = check_password_hash(stored_password, password)
-        except Exception:
-            password_ok = False
-
-        if not password_ok and stored_password == password:
-            password_ok = True
-
-        if not password_ok:
-            return jsonify({"message": "Unable to resend the activation key."}), 401
-
-        if str(user.get("status", "")).strip().lower() != "pending":
-            return jsonify({
-                "message": "A registration key is not required for this account."
-            }), 409
-
-        cursor.execute("""
-            SELECT key_id, key_code
-            FROM staff_registration_keys
-            WHERE LOWER(assigned_email) = %s
-              AND status = 'unused'
-            ORDER BY assigned_at DESC, key_id DESC
-            LIMIT 1
-        """, (email,))
-        key_row = cursor.fetchone()
-
-        if not key_row:
-            return jsonify({
-                "message": "Your account is still awaiting manager or team leader approval."
-            }), 403
-
-        email_sent = send_registration_activation_email(
-            user.get("full_name"),
-            user.get("email"),
-            key_row["key_code"]
-        )
-
-        if email_sent:
-            cursor.execute("""
-                UPDATE staff_registration_keys
-                SET email_sent_at = NOW()
-                WHERE key_id = %s
-            """, (key_row["key_id"],))
-            conn.commit()
-
-        return jsonify({
-            "message": (
-                "The registration key has been resent to your email."
-                if email_sent
-                else "The registration key could not be emailed right now. Please contact your manager or team leader."
-            ),
-            "email_sent": bool(email_sent)
-        }), 200 if email_sent else 503
-
-    except Exception as error:
-        if conn:
-            conn.rollback()
-        print("RESEND ACTIVATION KEY ERROR:", error)
-        return jsonify({
-            "message": "Unable to resend the activation key right now."
-        }), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
+    return jsonify({"code": "REGISTRATION_KEYS_REMOVED", "message": "Registration keys are no longer required. Contact your Manager for account approval."}), 410
 
 # =========================
 # PROFILE
@@ -5441,6 +4630,7 @@ def change_password(user_id):
             WHERE user_id = %s
         """, (new_hash, user_id))
         conn.commit()
+        session["password_fingerprint"] = password_session_fingerprint(new_hash)
 
         return jsonify({"message": "Password updated successfully."}), 200
 
@@ -5556,83 +4746,160 @@ def get_audit_logs():
 
 
 # =========================
-# DASHBOARD
+# DASHBOARD / NOTIFICATION READS
 # =========================
+_notification_user_reads_ready = False
+
+def ensure_notification_user_reads_table(cursor):
+    """Set up individual read receipts for shared announcements, if needed.
+
+    Do not alter the existing notification rows: their is_read column remains
+    the read status for individually addressed notifications only. A separate
+    receipt is needed because a shared row has no single recipient.
+    """
+    global _notification_user_reads_ready
+    if _notification_user_reads_ready:
+        return
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS notification_user_reads (
+            notification_id BIGINT NOT NULL,
+            user_id BIGINT NOT NULL,
+            read_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (notification_id, user_id),
+            INDEX idx_notification_user_reads_user_id (user_id)
+        ) ENGINE=InnoDB
+    """)
+    _notification_user_reads_ready = True
+
+
+def load_visible_notifications(cursor, viewer_id, viewer_role):
+    """Return one viewer's notifications and individual read statuses.
+
+    Private notifications use notification.is_read as before. Shared notices
+    use a separate read receipt, so one staff member cannot mark another's
+    notice as read. The dashboard and Notifications page share this helper.
+    """
+    ensure_notification_user_reads_table(cursor)
+    normalized_role = str(viewer_role or "").strip().lower().replace(" ", "").replace("_", "").replace("-", "")
+    cursor.execute("""
+        SELECT n.notification_id AS id, n.title, n.detail,
+               CASE
+                   WHEN n.user_id IS NULL THEN (nur.notification_id IS NOT NULL)
+                   ELSE COALESCE(n.is_read, 0)
+               END AS isRead,
+               n.type, n.related_id, n.target_role, n.created_by, n.created_at
+        FROM notification AS n
+        LEFT JOIN notification_user_reads AS nur
+          ON nur.notification_id = n.notification_id AND nur.user_id = %s
+        WHERE n.user_id = %s
+           OR (n.user_id IS NULL AND (
+                n.target_role IS NULL
+                OR LOWER(REPLACE(REPLACE(REPLACE(n.target_role, ' ', ''), '_', ''), '-', ''))
+                   IN (%s, 'all')
+           ))
+        ORDER BY n.created_at DESC, n.notification_id DESC
+    """, (viewer_id, viewer_id, normalized_role))
+    return cursor.fetchall() or []
+
+
 @app.route("/api/dashboard", methods=["GET"])
 def get_dashboard():
+    """Return role-appropriate dashboard data for the authenticated account."""
     conn = None
     cursor = None
+
+    # Auth middleware loads this identity from the database-backed Flask session.
+    viewer_id = int(g.auth_user["user_id"])
+    viewer_role = str(g.auth_user.get("role_name") or "").strip().lower().replace(" ", "").replace("_", "").replace("-", "")
+    can_view_management_metrics = viewer_role in {"manager", "admin", "teamlead"}
+    is_manager = viewer_role in {"manager", "admin"}
 
     try:
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
 
         articles = safe_count_query(cursor, "SELECT COUNT(*) AS total FROM wiki_article")
-        questions = safe_count_query(
-            cursor,
-            "SELECT COUNT(*) AS total FROM question WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)"
-        )
-        escalations = safe_count_query(
-            cursor,
-            "SELECT COUNT(*) AS total FROM escalation WHERE status = 'pending'"
-        )
-        notifications_count = safe_count_query(
-            cursor,
-            "SELECT COUNT(*) AS total FROM notification WHERE is_read = 0"
+
+        # Use the exact same visible rows and read flags as the Notifications page.
+        # Counting a separate SQL query previously caused dashboard/page mismatches.
+        visible_notifications = load_visible_notifications(cursor, viewer_id, viewer_role)
+        notifications_count = sum(
+            1 for item in visible_notifications
+            if item.get("isRead") not in (True, 1, "1")
         )
 
-        ai_conf = 0
-        try:
-            cursor.execute("SELECT ROUND(AVG(confidence), 2) AS avg_conf FROM ai_response")
-            result = cursor.fetchone()
-            if result and result["avg_conf"] is not None:
-                ai_conf = result["avg_conf"]
-        except Exception:
-            ai_conf = 0
+        stats = [
+            {"label": "Knowledge Articles", "value": articles},
+        ]
 
-        recent_notifications = safe_list_query(cursor, """
-            SELECT 
-                notification_id AS id,
-                title,
-                detail,
-                is_read,
-                created_at
-            FROM notification
-            ORDER BY created_at DESC
-            LIMIT 3
-        """)
-
-        activities = safe_list_query(cursor, """
-            SELECT action, created_at
-            FROM audit_log
-            ORDER BY created_at DESC
-            LIMIT 3
-        """)
-
-        return jsonify({
-            "stats": [
-                {"label": "Knowledge Articles", "value": articles},
+        if can_view_management_metrics:
+            # The AI question log may not exist on a fresh installation.
+            cursor.execute("SHOW TABLES LIKE 'ai_chat_log'")
+            questions = (
+                safe_count_query(
+                    cursor,
+                    "SELECT COUNT(*) AS total FROM ai_chat_log "
+                    "WHERE question IS NOT NULL AND TRIM(question) <> '' "
+                    "AND created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)",
+                )
+                if cursor.fetchone() else 0
+            )
+            escalations = safe_count_query(
+                cursor, "SELECT COUNT(*) AS total FROM escalation WHERE status = 'pending'"
+            )
+            stats.extend([
                 {"label": "Questions This Week", "value": questions},
                 {"label": "Pending Escalations", "value": escalations},
-                {"label": "Unread Notifications", "value": notifications_count}
-            ],
-            "ai": {
-                "accuracy": f"{ai_conf * 100:.0f}%"
-            },
-            "notifications": recent_notifications,
-            "activities": activities
-        }), 200
+            ])
 
-    except Exception as e:
-        print("DASHBOARD ERROR:", e)
-        return jsonify({"error": str(e)}), 500
+        stats.append({"label": "Unread Notifications", "value": notifications_count})
+
+        recent_notifications = visible_notifications[:3]
+
+        if is_manager:
+            # Managers already have permission to see the system audit log.
+            activities = safe_list_query(cursor, """
+                SELECT action, created_at FROM audit_log
+                ORDER BY created_at DESC LIMIT 3
+            """)
+        else:
+            # Staff and Team Leaders see their own events, not colleagues' logs.
+            activities = safe_list_query(cursor, """
+                SELECT action, created_at FROM audit_log
+                WHERE actor_id = %s
+                ORDER BY created_at DESC LIMIT 3
+            """, (viewer_id,))
+
+        payload = {
+            "stats": stats,
+            "notifications": recent_notifications,
+            "activities": activities,
+        }
+
+        if can_view_management_metrics:
+            ai_conf = 0
+            try:
+                cursor.execute("SELECT ROUND(AVG(confidence), 2) AS avg_conf FROM ai_response")
+                result = cursor.fetchone()
+                if result and result["avg_conf"] is not None:
+                    ai_conf = result["avg_conf"]
+            except Exception:
+                ai_conf = 0
+            payload["ai"] = {"accuracy": f"{ai_conf * 100:.0f}%"}
+
+        response = jsonify(payload)
+        response.headers["Cache-Control"] = "no-store"
+        return response, 200
+
+    except Exception as error:
+        print("DASHBOARD ERROR:", error)
+        return jsonify({"error": "Unable to load dashboard."}), 500
 
     finally:
         if cursor:
             cursor.close()
         if conn:
             conn.close()
-
 
 
 # =========================
@@ -5647,26 +4914,14 @@ def get_notifications(user_id):
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
 
-        cursor.execute("""
-            SELECT
-                notification_id AS id,
-                title,
-                detail,
-                is_read AS isRead,
-                type,
-                related_id,
-                target_role,
-                created_by,
-                created_at
-            FROM notification
-            WHERE user_id = %s
-               OR user_id IS NULL
-            ORDER BY created_at DESC
-        """, (user_id,))
-
-        notifications = cursor.fetchall()
-
-        return jsonify(notifications), 200
+        # The session middleware has verified that user_id belongs to this viewer.
+        # Apply the same recipient/role scope used by the dashboard.
+        notifications = load_visible_notifications(
+            cursor, user_id, g.auth_user.get("role_name")
+        )
+        response = jsonify(notifications)
+        response.headers["Cache-Control"] = "no-store"
+        return response, 200
 
     except mysql.connector.Error as err:
         print("MYSQL ERROR /api/notifications:", err)
@@ -5693,43 +4948,62 @@ def mark_notification_as_read(notification_id):
     cursor = None
 
     try:
+        viewer_id = current_auth_user_id()
+        normalized_role = str(g.auth_user.get("role_name") or "").strip().lower().replace(" ", "").replace("_", "").replace("-", "")
         conn = get_db_connection()
-        cursor = conn.cursor()
+        cursor = conn.cursor(dictionary=True)
+        ensure_notification_user_reads_table(cursor)
 
+        # Match the GET/dashboard visibility rule exactly. Previously, any
+        # authenticated staff member could mark an unrelated shared row read.
         cursor.execute("""
-            UPDATE notification
-            SET is_read = TRUE
+            SELECT user_id
+            FROM notification
             WHERE notification_id = %s
-        """, (notification_id,))
+              AND (user_id = %s OR (user_id IS NULL AND (
+                   target_role IS NULL
+                   OR LOWER(REPLACE(REPLACE(REPLACE(target_role, ' ', ''), '_', ''), '-', ''))
+                      IN (%s, 'all')
+              )))
+            LIMIT 1
+        """, (notification_id, viewer_id, normalized_role))
+        visible_notification = cursor.fetchone()
+        if not visible_notification:
+            conn.rollback()
+            return jsonify({"message": "Notification not found."}), 404
+
+        if visible_notification["user_id"] is None:
+            # Atomic and repeatable: only this viewer gets a read receipt.
+            # Never set the shared notification row's global is_read flag.
+            cursor.execute("""
+                INSERT INTO notification_user_reads (notification_id, user_id)
+                VALUES (%s, %s)
+                ON DUPLICATE KEY UPDATE read_at = read_at
+            """, (notification_id, viewer_id))
+        else:
+            # Preserve existing behaviour for one-recipient notifications.
+            # Treat a second Mark read as success rather than an artificial 404.
+            cursor.execute("""
+                UPDATE notification SET is_read = TRUE
+                WHERE notification_id = %s AND user_id = %s
+            """, (notification_id, viewer_id))
 
         conn.commit()
+        response = jsonify({"message": "Notification marked as read."})
+        response.headers["Cache-Control"] = "no-store"
+        return response, 200
 
-        if cursor.rowcount == 0:
-            return jsonify({
-                "message": "Notification not found."
-            }), 404
-
-        return jsonify({
-            "message": "Notification marked as read."
-        }), 200
-
-    except mysql.connector.Error as err:
+    except mysql.connector.Error:
         if conn:
             conn.rollback()
+        print("READ NOTIFICATION MYSQL ERROR: Could not update notification")
+        return jsonify({"message": "Unable to mark notification as read."}), 500
 
-        print("READ NOTIFICATION MYSQL ERROR:", err)
-        return jsonify({
-            "message": f"Database error: {str(err)}"
-        }), 500
-
-    except Exception as e:
+    except Exception:
         if conn:
             conn.rollback()
-
-        print("READ NOTIFICATION GENERAL ERROR:", e)
-        return jsonify({
-            "message": f"Server error: {str(e)}"
-        }), 500
+        print("READ NOTIFICATION ERROR: Could not update notification")
+        return jsonify({"message": "Unable to mark notification as read."}), 500
 
     finally:
         if cursor:
@@ -6226,7 +5500,7 @@ def save_ai_settings():
 
     data = request.get_json(silent=True) or {}
 
-    actor_id = data.get("updated_by") or data.get("user_id")
+    actor_id = current_auth_user_id()
     provider = str(data.get("provider", "")).strip().lower()
     model_name = str(data.get("model_name", "")).strip()
     api_key = str(data.get("api_key", "")).strip()
@@ -6316,7 +5590,7 @@ def test_ai_settings():
 
     data = request.get_json(silent=True) or {}
 
-    actor_id = data.get("user_id")
+    actor_id = current_auth_user_id()
     provider = str(data.get("provider", "")).strip().lower()
     model_name = str(data.get("model_name", "")).strip()
     api_key = str(data.get("api_key", "")).strip()
@@ -6431,38 +5705,13 @@ def test_ai_settings():
 
 
 # =========================
-# NOTION SYNC ROUTES (OAuth "Connect Notion" flow)
+# NOTION SYNC ROUTES
 #
 # Reuses the exact same encryption service already built for AI provider
 # keys (ai_provider_service.encrypt_api_key/decrypt_api_key/mask_api_key)
 # instead of a second encryption scheme, and the same manager-only access
-# check pattern used everywhere else in this file. The OAuth callback is the
-# one exception: Notion redirects the browser there directly (no auth
-# header, no JSON body possible), so it authenticates via possession of the
-# one-time `state` token instead -- that state was only ever handed out to
-# an already-manager-authenticated actor by /oauth/start.
+# check pattern used everywhere else in this file.
 # =========================
-def _notify_managers_of_notion_update(cursor, title, article_id, actor_id):
-    cursor.execute("""
-        SELECT u.user_id
-        FROM users u
-        JOIN roles r ON u.role_id = r.role_id
-        WHERE r.role_name = 'manager' AND u.status = 'active'
-    """)
-    managers = cursor.fetchall() or []
-
-    for manager in managers:
-        manager_id = manager["user_id"] if isinstance(manager, dict) else manager[0]
-        create_notification_safe(
-            user_id=manager_id,
-            title="Notion content changed",
-            detail=f'"{title}" was edited in Notion. Review it in Notion Sync to update or keep the current version.',
-            notification_type="system",
-            related_id=article_id,
-            created_by=actor_id,
-        )
-
-
 @app.route("/api/notion-sync/config", methods=["GET"])
 def get_notion_sync_config():
     if not NOTION_SYNC_SERVICE_AVAILABLE:
@@ -6491,29 +5740,27 @@ def get_notion_sync_config():
             conn.close()
 
 
-@app.route("/api/notion-sync/oauth/start", methods=["POST"])
-def start_notion_oauth():
+@app.route("/api/notion-sync/config", methods=["POST"])
+def save_notion_sync_config():
     if not NOTION_SYNC_SERVICE_AVAILABLE:
         return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
 
     data = request.get_json(silent=True) or {}
-    actor_id = data.get("user_id")
 
-    # Fail here with a clear message instead of silently building an
-    # authorize URL with an empty client_id and letting Notion's own API
-    # return a cryptic "client_id should be a string" error after the
-    # browser has already navigated away.
-    if not os.getenv("NOTION_OAUTH_CLIENT_ID"):
-        return jsonify({
-            "success": False,
-            "message": "Notion OAuth is not configured on this server yet (NOTION_OAUTH_CLIENT_ID is missing). Set it in Railway's Variables tab for this exact service, then redeploy."
-        }), 500
+    actor_id = current_auth_user_id()
+    raw_token = str(data.get("token", "")).strip()
+    raw_source = str(data.get("source", "")).strip()
 
-    if not os.getenv("NOTION_OAUTH_CLIENT_SECRET"):
-        return jsonify({
-            "success": False,
-            "message": "Notion OAuth is not configured on this server yet (NOTION_OAUTH_CLIENT_SECRET is missing). Set it in Railway's Variables tab for this exact service, then redeploy."
-        }), 500
+    if not raw_token:
+        return jsonify({"success": False, "message": "Notion integration token is required."}), 400
+
+    if not raw_source:
+        return jsonify({"success": False, "message": "Notion page/database URL or ID is required."}), 400
+
+    source_id = notion_sync_service.extract_notion_id(raw_source)
+
+    if not source_id:
+        return jsonify({"success": False, "message": "Could not read a valid Notion ID from that URL/ID."}), 400
 
     conn = None
     cursor = None
@@ -6527,174 +5774,28 @@ def start_notion_oauth():
 
         if not is_ai_settings_manager(cursor, actor_id):
             conn.rollback()
-            return jsonify({"success": False, "message": "Only managers can connect Notion."}), 403
+            return jsonify({"success": False, "message": "Only managers can update Notion sync settings."}), 403
 
-        state = notion_sync_service.create_oauth_state(cursor, actor_id)
-        conn.commit()
-
-        redirect_uri = f"{notion_sync_service.get_public_base_url()}/api/notion-sync/oauth/callback"
-        authorize_url = notion_sync_service.build_authorize_url(redirect_uri, state)
-
-        return jsonify({"success": True, "authorizeUrl": authorize_url}), 200
-
-    except Exception as error:
-        if conn:
-            conn.rollback()
-
-        print("START NOTION OAUTH ERROR:", error)
-        return jsonify({"success": False, "message": "Failed to start Notion connection."}), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-
-@app.route("/api/notion-sync/oauth/diagnostics", methods=["GET"])
-def notion_oauth_diagnostics():
-    """
-    Lets an admin confirm the OAuth env vars are actually visible to THIS
-    running server process -- never returns the secret values themselves,
-    only whether they're set, plus the exact redirect_uri this server will
-    send to Notion (must match a Redirect URI registered on the Notion
-    integration EXACTLY, or Notion rejects the request).
-    """
-    if not NOTION_SYNC_SERVICE_AVAILABLE:
-        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
-
-    redirect_uri = f"{notion_sync_service.get_public_base_url()}/api/notion-sync/oauth/callback"
-
-    return jsonify({
-        "success": True,
-        "clientIdSet": bool(os.getenv("NOTION_OAUTH_CLIENT_ID")),
-        "clientSecretSet": bool(os.getenv("NOTION_OAUTH_CLIENT_SECRET")),
-        "frontendPublicUrlSet": bool(os.getenv("FRONTEND_PUBLIC_URL")),
-        "redirectUriThisServerWillUse": redirect_uri,
-    }), 200
-
-
-@app.route("/api/notion-sync/oauth/callback", methods=["GET"])
-def notion_oauth_callback():
-    frontend_url = os.getenv("FRONTEND_PUBLIC_URL", "").rstrip("/")
-    notion_sync_page = f"{frontend_url}/admin/notion-sync" if frontend_url else None
-
-    def redirect_with(status_param):
-        if notion_sync_page:
-            return redirect(f"{notion_sync_page}?{status_param}")
-        # No FRONTEND_PUBLIC_URL configured -- fall back to a plain response
-        # rather than a broken redirect to an empty URL.
-        return jsonify({"success": "connected" in status_param, "message": status_param}), 200
-
-    if not NOTION_SYNC_SERVICE_AVAILABLE:
-        return redirect_with("error=service_unavailable")
-
-    code = request.args.get("code")
-    state = request.args.get("state")
-
-    if not code or not state:
-        return redirect_with("error=missing_code_or_state")
-
-    conn = None
-    cursor = None
-
-    try:
-        conn = notion_sync_service.get_db_connection()
-        conn.start_transaction()
-        cursor = conn.cursor(dictionary=True)
-
-        notion_sync_service.ensure_notion_sync_tables(cursor)
-
-        actor_id = notion_sync_service.consume_oauth_state(cursor, state)
-        conn.commit()
-
-        if not actor_id:
-            return redirect_with("error=invalid_or_expired_state")
-
-        redirect_uri = f"{notion_sync_service.get_public_base_url()}/api/notion-sync/oauth/callback"
-        token_response = notion_sync_service.exchange_oauth_code_for_token(code, redirect_uri)
-
-        access_token = token_response.get("access_token")
-        workspace_id = token_response.get("workspace_id")
-        workspace_name = token_response.get("workspace_name") or "Notion workspace"
-        workspace_icon = token_response.get("workspace_icon")
-        bot_id = token_response.get("bot_id")
-
-        if not access_token:
-            return redirect_with("error=token_exchange_failed")
-
-        conn2 = notion_sync_service.get_db_connection()
-        cursor2 = conn2.cursor(dictionary=True)
-        notion_sync_service.save_notion_oauth_config(
-            cursor2, access_token, workspace_id, workspace_name, workspace_icon, bot_id, actor_id
-        )
-        conn2.commit()
-        cursor2.close()
-        conn2.close()
-
-        add_audit_log(
-            actor_id=actor_id,
-            action="Connected Notion workspace",
-            module="Notion Sync",
-            description=f"Connected workspace: {workspace_name}."
-        )
-
-        return redirect_with("connected=1")
-
-    except Exception as error:
-        if conn:
-            conn.rollback()
-
-        print("NOTION OAUTH CALLBACK ERROR:", error)
-        return redirect_with("error=connection_failed")
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-
-@app.route("/api/notion-sync/disconnect", methods=["POST"])
-def disconnect_notion_sync():
-    if not NOTION_SYNC_SERVICE_AVAILABLE:
-        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
-
-    data = request.get_json(silent=True) or {}
-    actor_id = data.get("user_id")
-
-    conn = None
-    cursor = None
-
-    try:
-        conn = notion_sync_service.get_db_connection()
-        conn.start_transaction()
-        cursor = conn.cursor(dictionary=True)
-
-        notion_sync_service.ensure_notion_sync_tables(cursor)
-
-        if not is_ai_settings_manager(cursor, actor_id):
-            conn.rollback()
-            return jsonify({"success": False, "message": "Only managers can disconnect Notion."}), 403
-
-        notion_sync_service.disconnect_notion(cursor)
+        notion_sync_service.save_notion_config(cursor, raw_token, source_id, raw_source, actor_id)
         conn.commit()
 
         add_audit_log(
             actor_id=actor_id,
-            action="Disconnected Notion workspace",
+            action="Updated Notion sync settings",
             module="Notion Sync",
-            description="Notion workspace disconnected."
+            description=f"Notion source set to {source_id}."
         )
 
-        return jsonify({"success": True, "message": "Notion disconnected."}), 200
+        config = notion_sync_service.get_notion_public_config(cursor)
+
+        return jsonify({"success": True, "message": "Notion sync settings saved successfully.", "config": config}), 200
 
     except Exception as error:
         if conn:
             conn.rollback()
 
-        print("DISCONNECT NOTION SYNC ERROR:", error)
-        return jsonify({"success": False, "message": "Failed to disconnect Notion."}), 500
+        print("SAVE NOTION SYNC CONFIG ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to save Notion sync settings."}), 500
 
     finally:
         if cursor:
@@ -6703,13 +5804,16 @@ def disconnect_notion_sync():
             conn.close()
 
 
-@app.route("/api/notion-sync/check", methods=["POST"])
-def check_notion_sync():
+@app.route("/api/notion-sync/test", methods=["POST"])
+def test_notion_sync():
     if not NOTION_SYNC_SERVICE_AVAILABLE:
         return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
 
     data = request.get_json(silent=True) or {}
-    actor_id = data.get("user_id")
+
+    actor_id = current_auth_user_id()
+    raw_token = str(data.get("token", "")).strip()
+    raw_source = str(data.get("source", "")).strip()
 
     conn = None
     cursor = None
@@ -6721,186 +5825,95 @@ def check_notion_sync():
         notion_sync_service.ensure_notion_sync_tables(cursor)
 
         if not is_ai_settings_manager(cursor, actor_id):
-            return jsonify({"success": False, "message": "Only managers can check for Notion updates."}), 403
+            return jsonify({"success": False, "message": "Only managers can test Notion sync."}), 403
 
-        raw_token = notion_sync_service.get_active_notion_access_token(cursor)
+        if not raw_token or not raw_source:
+            existing = notion_sync_service.get_active_notion_config(cursor)
 
-        if not raw_token:
-            return jsonify({"success": False, "message": "No Notion workspace is connected yet."}), 400
+            if not existing:
+                return jsonify({"success": False, "message": "No Notion sync source is configured yet."}), 400
 
-    except Exception as error:
-        print("CHECK NOTION SYNC SETUP ERROR:", error)
-        return jsonify({"success": False, "message": "Failed to start checking Notion for updates."}), 500
+            raw_token = ai_provider_service.decrypt_api_key(existing["encrypted_notion_token"])
+            source_id = existing["source_id"]
+        else:
+            source_id = notion_sync_service.extract_notion_id(raw_source)
 
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
+            if not source_id:
+                return jsonify({"success": False, "message": "Could not read a valid Notion ID from that URL/ID."}), 400
 
-    result = notion_sync_service.check_for_notion_updates(raw_token, actor_id, UPLOAD_FOLDER)
-
-    if result.get("flaggedItems"):
-        notify_conn = None
-        notify_cursor = None
         try:
-            notify_conn = notion_sync_service.get_db_connection()
-            notify_cursor = notify_conn.cursor(dictionary=True)
-            for item in result["flaggedItems"]:
-                _notify_managers_of_notion_update(
-                    notify_cursor, item["title"], item["article_id"], actor_id
-                )
-            notify_conn.commit()
-        except Exception as notify_error:
-            print("NOTION UPDATE NOTIFICATION ERROR:", notify_error)
-        finally:
-            if notify_cursor:
-                notify_cursor.close()
-            if notify_conn:
-                notify_conn.close()
+            pages = notion_sync_service.list_notion_pages(raw_token, source_id)
+            return jsonify({
+                "success": True,
+                "message": f"Notion connected successfully. Found {len(pages)} page(s)."
+            }), 200
+        except Exception as call_error:
+            print("NOTION TEST CALL ERROR:", call_error)
+            return jsonify({
+                "success": False,
+                "message": "Notion connection failed. Please make sure the page/database is shared with your integration, and the token is correct."
+            }), 400
+
+    except Exception as error:
+        print("TEST NOTION SYNC ERROR:", error)
+        return jsonify({"success": False, "message": "Notion connection failed."}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/notion-sync/run", methods=["POST"])
+def run_notion_sync():
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
+
+    data = request.get_json(silent=True) or {}
+    actor_id = current_auth_user_id()
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = notion_sync_service.get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        notion_sync_service.ensure_notion_sync_tables(cursor)
+
+        if not is_ai_settings_manager(cursor, actor_id):
+            return jsonify({"success": False, "message": "Only managers can run Notion sync."}), 403
+
+        config = notion_sync_service.get_active_notion_config(cursor)
+
+        if not config:
+            return jsonify({"success": False, "message": "No Notion sync source is configured yet."}), 400
+
+        raw_token = ai_provider_service.decrypt_api_key(config["encrypted_notion_token"])
+
+    except Exception as error:
+        print("RUN NOTION SYNC SETUP ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to start Notion sync."}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+    result = notion_sync_service.sync_notion_source(
+        raw_token, config["source_id"], actor_id, UPLOAD_FOLDER
+    )
 
     add_audit_log(
         actor_id=actor_id,
-        action="Checked Notion for updates",
+        action="Ran Notion sync",
         module="Notion Sync",
-        description=f"New {result['new']}, flagged {result['flagged']}, unchanged {result['unchanged']}, failed {result['failed']}."
+        description=f"Imported {result['imported']}, updated {result['updated']}, skipped {result['skipped']}, failed {result['failed']}."
     )
 
     return jsonify({"success": result["status"] == "completed", **result}), 200
-
-
-@app.route("/api/notion-sync/pending-updates", methods=["GET"])
-def get_notion_pending_updates():
-    if not NOTION_SYNC_SERVICE_AVAILABLE:
-        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
-
-    conn = None
-    cursor = None
-
-    try:
-        conn = notion_sync_service.get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-
-        notion_sync_service.ensure_notion_sync_tables(cursor)
-        pending = notion_sync_service.list_pending_updates(cursor)
-
-        return jsonify({"success": True, "pending": pending}), 200
-
-    except Exception as error:
-        print("GET NOTION PENDING UPDATES ERROR:", error)
-        return jsonify({"success": False, "message": "Failed to load pending Notion updates."}), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-
-@app.route("/api/notion-sync/pending-updates/<int:pending_id>/apply", methods=["POST"])
-def apply_notion_pending_update(pending_id):
-    if not NOTION_SYNC_SERVICE_AVAILABLE:
-        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
-
-    data = request.get_json(silent=True) or {}
-    actor_id = data.get("user_id")
-
-    conn = None
-    cursor = None
-
-    try:
-        conn = notion_sync_service.get_db_connection()
-        conn.start_transaction()
-        cursor = conn.cursor(dictionary=True)
-
-        notion_sync_service.ensure_notion_sync_tables(cursor)
-
-        if not is_ai_settings_manager(cursor, actor_id):
-            conn.rollback()
-            return jsonify({"success": False, "message": "Only managers can approve Notion updates."}), 403
-
-        applied = notion_sync_service.apply_pending_update(cursor, pending_id, actor_id)
-
-        if not applied:
-            conn.rollback()
-            return jsonify({"success": False, "message": "This update was already resolved."}), 409
-
-        conn.commit()
-
-        add_audit_log(
-            actor_id=actor_id,
-            action="Applied Notion update",
-            module="Notion Sync",
-            description=f"Applied pending Notion update #{pending_id}."
-        )
-
-        return jsonify({"success": True, "message": "Article updated to the latest Notion version."}), 200
-
-    except Exception as error:
-        if conn:
-            conn.rollback()
-
-        print("APPLY NOTION PENDING UPDATE ERROR:", error)
-        return jsonify({"success": False, "message": "Failed to apply this update."}), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-
-@app.route("/api/notion-sync/pending-updates/<int:pending_id>/dismiss", methods=["POST"])
-def dismiss_notion_pending_update(pending_id):
-    if not NOTION_SYNC_SERVICE_AVAILABLE:
-        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
-
-    data = request.get_json(silent=True) or {}
-    actor_id = data.get("user_id")
-
-    conn = None
-    cursor = None
-
-    try:
-        conn = notion_sync_service.get_db_connection()
-        conn.start_transaction()
-        cursor = conn.cursor(dictionary=True)
-
-        notion_sync_service.ensure_notion_sync_tables(cursor)
-
-        if not is_ai_settings_manager(cursor, actor_id):
-            conn.rollback()
-            return jsonify({"success": False, "message": "Only managers can dismiss Notion updates."}), 403
-
-        dismissed = notion_sync_service.dismiss_pending_update(cursor, pending_id, actor_id)
-
-        if not dismissed:
-            conn.rollback()
-            return jsonify({"success": False, "message": "This update was already resolved."}), 409
-
-        conn.commit()
-
-        add_audit_log(
-            actor_id=actor_id,
-            action="Dismissed Notion update",
-            module="Notion Sync",
-            description=f"Kept current version over pending Notion update #{pending_id}."
-        )
-
-        return jsonify({"success": True, "message": "Kept the current version."}), 200
-
-    except Exception as error:
-        if conn:
-            conn.rollback()
-
-        print("DISMISS NOTION PENDING UPDATE ERROR:", error)
-        return jsonify({"success": False, "message": "Failed to dismiss this update."}), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
 
 
 @app.route("/api/notion-sync/jobs", methods=["GET"])
@@ -7174,11 +6187,8 @@ def chat():
     uploaded_chat_image_filename = ""
 
     try:
-        original_question = ""
-
         if request.content_type and request.content_type.startswith("multipart/form-data"):
             question = request.form.get("question", "")
-            original_question = question
             uploaded_chat_image = request.files.get("image") or request.files.get("attachment")
             uploaded_chat_image_filename = uploaded_chat_image.filename if uploaded_chat_image else ""
 
@@ -7188,7 +6198,7 @@ def chat():
             except Exception:
                 data["context"] = {}
 
-            data["user_id"] = request.form.get("user_id") or request.form.get("userId")
+            data["user_id"] = current_auth_user_id()
 
             if uploaded_chat_image:
                 uploaded_chat_image_url, uploaded_chat_image_type = save_chat_image(uploaded_chat_image)
@@ -7244,12 +6254,6 @@ def chat():
                         vision_result = analyze_uploaded_image_with_vision(local_image_path, file_hash)
                         used_vision = vision_result is not None
 
-                        if used_vision and vision_result.get("isWorkRelated"):
-                            # So a later text-only follow-up in this same
-                            # conversation ("which article should I refer")
-                            # can still resolve "this" to this photo.
-                            remember_last_image_context(data, vision_result)
-
                     if used_vision and not vision_result.get("isWorkRelated") and vision_result.get("confidence", 0) >= 0.55:
                         rejection_result = build_image_irrelevant_response(vision_result)
 
@@ -7270,84 +6274,13 @@ def chat():
                     # pipeline (which only escalates every plain photo, since
                     # it never finds an exact text match for "").
                     if not had_real_question and (not used_vision or vision_result.get("isWorkRelated")):
-                        # Image-only upload: the image itself IS the query.
-                        # Use the same cleaned/deduped detected-object terms
-                        # as the text+image path (build_vision_augmented_question
-                        # with an empty question just returns those terms) and
-                        # run it through the same 3-tier retrieval used for a
-                        # typed question -- confident match answers directly,
-                        # related-but-uncertain shows clickable cards, and only
-                        # when NEITHER exists do we fall back to asking what
-                        # the crew member wants to know. Per spec, a bare
-                        # image with no useful match never auto-escalates.
-                        detected_terms = build_vision_augmented_question("", vision_result)
-
                         kb_hint = None
-                        related_options = []
+                        detected_terms = " ".join((vision_result or {}).get("detectedObjects") or [])
 
                         if detected_terms:
                             kb_hint = search_knowledge_base_articles(detected_terms, limit=1)
 
-                            if not kb_hint:
-                                related_articles = search_related_knowledge_base_articles(detected_terms, limit=3)
-                                seen_related_titles = set()
-
-                                for item in related_articles:
-                                    for option in build_answer_options(detected_terms, None, item):
-                                        title_key = str(option.get("title", "")).lower().strip()
-                                        if title_key and title_key not in seen_related_titles:
-                                            seen_related_titles.add(title_key)
-                                            related_options.append(option)
-
-                        if kb_hint:
-                            # Level 1: confident match -- answer directly,
-                            # same as a typed question would.
-                            clear_ai_fail_count(data, question)
-                            remember_chat_context(data, kb_hint)
-                            log_request(
-                                detected_terms,
-                                result=kb_hint,
-                                user_id=data.get("user_id") or data.get("userId")
-                            )
-
-                            kb_hint["final_source"] = kb_hint.get("source")
-                            kb_hint["served_by"] = "image_only_knowledge_base"
-
-                            return jsonify(kb_hint), 200
-
-                        if related_options:
-                            # Level 2: related but not 100% confident.
-                            related_message = build_related_knowledge_message(question, related_options)
-
-                            related_result = standardize_ai_response({
-                                "question": detected_terms,
-                                "type": "options",
-                                "reply": related_message,
-                                "answer": related_message,
-                                "score": related_options[0].get("confidence", 0.0),
-                                "confidence": related_options[0].get("confidence", 0.0),
-                                "confidence_label": get_confidence_label(related_options[0].get("confidence", 0.0)),
-                                "source": "related_knowledge",
-                                "fallback": False,
-                                "escalation_ready": False,
-                                "escalation_required": False,
-                                "options": related_options,
-                            })
-
-                            log_request(
-                                detected_terms,
-                                result=related_result,
-                                user_id=data.get("user_id") or data.get("userId")
-                            )
-
-                            related_result["final_source"] = "related_knowledge"
-                            related_result["served_by"] = "related_knowledge"
-
-                            return jsonify(related_result), 200
-
-                        # Level 3: nothing found. Ask what they want to know
-                        # instead of escalating a bare, unmatched image.
-                        clarification_result = build_image_only_clarification_response(vision_result, None)
+                        clarification_result = build_image_only_clarification_response(vision_result, kb_hint)
 
                         log_request(
                             question,
@@ -7377,20 +6310,8 @@ def chat():
 
         else:
             data = request.get_json(silent=True) or {}
+            data["user_id"] = current_auth_user_id()
             question = data.get("question", "")
-            original_question = question
-
-            # No new image on THIS request, but if one was uploaded earlier
-            # in this same conversation (within the TTL), a follow-up like
-            # "which article should I refer" or "where do I store this"
-            # should still resolve "this" to that photo, not just when the
-            # image and question arrive together in one request.
-            if question and question.strip():
-                remembered_vision_result = get_remembered_image_context(data)
-
-                if remembered_vision_result:
-                    question = build_vision_augmented_question(question, remembered_vision_result)
-                    print("REUSED LAST IMAGE CONTEXT FOR FOLLOW-UP QUESTION:", question)
 
         question = clean_question(question)
         q_lower = question.lower()
@@ -7811,7 +6732,10 @@ def chat():
                         related_options.append(option)
 
             if related_options:
-                related_message = build_related_knowledge_message(original_question, related_options)
+                related_message = (
+                    "I couldn't confirm the exact procedure from the information "
+                    "provided, but these Knowledge Base articles may help:"
+                )
 
                 result = standardize_ai_response({
                     "question": question,
@@ -7923,6 +6847,18 @@ def get_articles():
 
     try:
         show_deleted = request.args.get("deleted", "false").lower() == "true"
+
+        # All active accounts can read live articles. The recycle bin is a
+        # management feature: a Staff account must not bypass the UI by
+        # requesting /api/articles?deleted=true directly.
+        if show_deleted:
+            viewer_role = str(g.auth_user.get("role_name") or "").strip().lower()
+            viewer_role = viewer_role.replace(" ", "").replace("_", "").replace("-", "")
+            if viewer_role not in {"teamlead", "manager", "admin"}:
+                return jsonify({
+                    "code": "FORBIDDEN",
+                    "message": "Manager or Team Leader access required to view deleted articles."
+                }), 403
 
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
@@ -8334,7 +7270,7 @@ def delete_article(article_id):
 
     try:
         data = request.get_json(silent=True) or {}
-        deleted_by = data.get("deleted_by")
+        deleted_by = current_auth_user_id()
 
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
@@ -8504,7 +7440,7 @@ def bulk_permanent_delete_articles():
         data = request.get_json(silent=True) or {}
 
         article_ids = data.get("article_ids") or data.get("ids") or []
-        deleted_by = data.get("deleted_by")
+        deleted_by = current_auth_user_id()
 
         clean_ids = []
 
@@ -9077,7 +8013,7 @@ def submit_escalation_answer(escalation_id):
         if not manual_answer:
             return jsonify({'message': 'Manual answer is required.'}), 400
 
-        handled_by = _safe_int_value(handled_by)
+        handled_by = current_auth_user_id()
 
         conn = get_db_connection()
         conn.start_transaction()
@@ -9205,7 +8141,7 @@ def submit_escalation_answer(escalation_id):
 @app.route('/api/escalations/<int:escalation_id>/approve', methods=['PUT'])
 def approve_escalation_answer(escalation_id):
     data = request.get_json(silent=True) or {}
-    reviewed_by = _safe_int_value(data.get('reviewed_by') or data.get('user_id') or data.get('userId'))
+    reviewed_by = current_auth_user_id()
     reviewer_comment = str(data.get('reviewer_comment', '')).strip()
 
     conn = None
@@ -9337,7 +8273,7 @@ def approve_escalation_answer(escalation_id):
 @app.route('/api/escalations/<int:escalation_id>/reject', methods=['PUT'])
 def reject_escalation_answer(escalation_id):
     data = request.get_json(silent=True) or {}
-    reviewed_by = _safe_int_value(data.get('reviewed_by') or data.get('user_id') or data.get('userId'))
+    reviewed_by = current_auth_user_id()
     reviewer_comment = str(data.get('reviewer_comment', '')).strip()
 
     conn = None
@@ -9470,7 +8406,7 @@ def bulk_delete_escalations():
         data = request.get_json(silent=True) or {}
 
         escalation_ids = data.get("escalation_ids") or data.get("ids") or []
-        deleted_by = _safe_int_value(data.get("deleted_by"))
+        deleted_by = current_auth_user_id()
 
         clean_ids = []
 
@@ -9637,7 +8573,7 @@ def delete_escalation(escalation_id):
 
     try:
         data = request.get_json(silent=True) or {}
-        deleted_by = data.get("deleted_by")
+        deleted_by = current_auth_user_id()
 
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
@@ -9880,7 +8816,7 @@ def get_reviews():
 def approve_review(review_id):
     data = request.get_json() or {}
 
-    reviewed_by = data.get("reviewed_by")
+    reviewed_by = current_auth_user_id()
     reviewer_comment = data.get("reviewer_comment", "").strip()
 
     conn = None
@@ -9940,7 +8876,7 @@ def approve_review(review_id):
 def reject_review(review_id):
     data = request.get_json() or {}
 
-    reviewed_by = data.get("reviewed_by")
+    reviewed_by = current_auth_user_id()
     reviewer_comment = data.get("reviewer_comment", "").strip()
 
     conn = None
@@ -9999,7 +8935,7 @@ def reject_review(review_id):
 @app.route("/api/reviews/<int:review_id>/publish", methods=["PUT"])
 def publish_review(review_id):
     data = request.get_json() or {}
-    reviewed_by = data.get("reviewed_by")
+    reviewed_by = current_auth_user_id()
 
     conn = None
     cursor = None
@@ -10389,17 +9325,6 @@ def get_quiz_questions(quiz_id):
         formatted_questions = []
 
         for q in questions:
-            correct_answer = None
-
-            if q["correct_option"] == "A":
-                correct_answer = q["option_a"]
-            elif q["correct_option"] == "B":
-                correct_answer = q["option_b"]
-            elif q["correct_option"] == "C":
-                correct_answer = q["option_c"]
-            elif q["correct_option"] == "D":
-                correct_answer = q["option_d"]
-
             formatted_questions.append({
                 "id": q["question_id"],
                 "question": q["question_text"],
@@ -10409,9 +9334,8 @@ def get_quiz_questions(quiz_id):
                     q["option_c"],
                     q["option_d"]
                 ],
-                "correctAnswer": correct_answer,
-                "correctOption": q["correct_option"],
-                "explanation": q["explanation"],
+                # Do not send answer keys or explanations before submission.
+                # Flask marks answers against quiz_question.correct_option.
                 "points": q["points"]
             })
 
@@ -10421,6 +9345,100 @@ def get_quiz_questions(quiz_id):
         print("GET QUIZ QUESTIONS ERROR:", e)
         return jsonify({"message": str(e)}), 500
 
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/quizzes/<int:quiz_id>/submit", methods=["POST"])
+def submit_quiz(quiz_id):
+    """Mark a completed quiz on the server and save one attempt to quiz_result.
+
+    The global before_request hook validates the active session and CSRF token.
+    Never trust a user_id, score, percentage, or answer key sent by the browser.
+    """
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or not isinstance(data.get("answers"), dict):
+        return jsonify({"message": "Submit your selected answers as an answers object."}), 400
+
+    raw_answers = data["answers"]
+    if not raw_answers or len(raw_answers) > 500:
+        return jsonify({"message": "A valid set of quiz answers is required."}), 400
+
+    answers = {}
+    for raw_question_id, raw_option in raw_answers.items():
+        question_id_text = str(raw_question_id).strip()
+        if (not question_id_text.isascii() or not question_id_text.isdecimal()
+                or len(question_id_text) > 18):
+            return jsonify({"message": "Invalid question ID in quiz answers."}), 400
+        question_id = int(question_id_text)
+        if question_id < 1 or question_id in answers:
+            return jsonify({"message": "Duplicate or invalid quiz question ID."}), 400
+        if not isinstance(raw_option, str) or raw_option.strip().upper() not in {"A", "B", "C", "D"}:
+            return jsonify({"message": "Each answer must be A, B, C, or D."}), 400
+        answers[question_id] = raw_option.strip().upper()
+
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        conn.start_transaction()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute(
+            "SELECT quiz_id FROM quiz WHERE quiz_id = %s AND status = 'active' LIMIT 1",
+            (quiz_id,),
+        )
+        if not cursor.fetchone():
+            conn.rollback()
+            return jsonify({"message": "This quiz is not available."}), 404
+
+        cursor.execute(
+            "SELECT question_id, correct_option FROM quiz_question WHERE quiz_id = %s ORDER BY question_id ASC",
+            (quiz_id,),
+        )
+        questions = cursor.fetchall() or []
+        if not questions:
+            conn.rollback()
+            return jsonify({"message": "This quiz has no questions."}), 400
+
+        expected_ids = {int(row["question_id"]) for row in questions}
+        if set(answers) != expected_ids:
+            conn.rollback()
+            return jsonify({"message": "Please answer every question in this quiz."}), 400
+
+        correct_count = sum(
+            answers[int(row["question_id"])] == str(row["correct_option"] or "").strip().upper()
+            for row in questions
+        )
+        total_questions = len(questions)
+        percentage = round(correct_count * 100 / total_questions, 2)
+
+        # The screenshot confirms these quiz_result columns exist. The DB
+        # must still be checked for its auto-increment/defaults before deploy.
+        cursor.execute(
+            """INSERT INTO quiz_result
+               (quiz_id, user_id, score, total_questions, percentage, completed_at)
+               VALUES (%s, %s, %s, %s, %s, NOW())""",
+            (quiz_id, current_auth_user_id(), correct_count, total_questions, percentage),
+        )
+        result_id = cursor.lastrowid
+        conn.commit()
+        return jsonify({
+            "message": "Quiz completed and result saved.",
+            "saved": True,
+            "result_id": result_id,
+            "quiz_id": quiz_id,
+            "score": correct_count,
+            "total_questions": total_questions,
+            "percentage": percentage,
+        }), 201
+    except Exception:
+        if conn:
+            conn.rollback()
+        print("QUIZ SUBMISSION ERROR: Unable to save quiz result.")
+        return jsonify({"message": "Could not save your result. Please retry."}), 500
     finally:
         if cursor:
             cursor.close()
@@ -10491,7 +9509,7 @@ def create_admin_quiz():
     title = data.get("title", "").strip()
     description = data.get("description", "").strip()
     category = data.get("category", "").strip()
-    created_by = data.get("created_by")
+    created_by = current_auth_user_id()
     status = data.get("status", "active").strip().lower()
 
     if not title:
@@ -11378,59 +10396,40 @@ def ai_generate_quiz():
 # USER MANAGEMENT ROUTES
 # =========================
 
+def format_registration_timestamp(value):
+    """User Management only: return UTC ISO-8601, not an ambiguous display string.
+
+    This project's MySQL timestamps are currently read as naive UTC datetimes.
+    The frontend converts the explicit UTC value to Asia/Kuching for display.
+    No other API response format is changed.
+    """
+    if isinstance(value, datetime):
+        return value.isoformat(timespec="seconds") if value.tzinfo else value.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return value
+
+
 @app.route("/api/admin/users", methods=["GET"])
 def get_admin_users():
     conn = None
     cursor = None
-
     try:
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
-        ensure_registration_keys_table(cursor)
-
         cursor.execute("""
-            SELECT
-                u.user_id,
-                u.full_name,
-                u.email,
-                u.status,
-                u.created_at,
-                r.role_name,
-                (
-                    SELECT rk.status
-                    FROM staff_registration_keys rk
-                    WHERE LOWER(rk.assigned_email) = LOWER(u.email)
-                    ORDER BY rk.assigned_at DESC, rk.key_id DESC
-                    LIMIT 1
-                ) AS activation_key_status,
-                (
-                    SELECT COALESCE(rk2.failed_attempts, 0)
-                    FROM staff_registration_keys rk2
-                    WHERE LOWER(rk2.assigned_email) = LOWER(u.email)
-                    ORDER BY rk2.assigned_at DESC, rk2.key_id DESC
-                    LIMIT 1
-                ) AS activation_failed_attempts
-            FROM users u
-            JOIN roles r ON u.role_id = r.role_id
+            SELECT u.user_id, u.full_name, u.email, u.status, u.created_at,
+                   r.role_name
+            FROM users u JOIN roles r ON u.role_id = r.role_id
             ORDER BY u.user_id ASC
         """)
-
         users = cursor.fetchall() or []
-
         for user in users:
-            user["created_at"] = format_datetime_value(user.get("created_at"))
-            user["activation_failed_attempts"] = int(user.get("activation_failed_attempts") or 0)
-            user["awaiting_activation"] = (
-                str(user.get("status", "")).lower() == "pending"
-                and str(user.get("activation_key_status", "")).lower() == "unused"
-            )
-
+            user["created_at"] = format_registration_timestamp(user.get("created_at"))
+            # Temporary compatibility for older frontend pages, never issue keys.
+            user.update(activation_key_status=None, activation_failed_attempts=0, awaiting_activation=False)
         return jsonify(users), 200
-
-    except Exception as error:
-        print("MYSQL ERROR /api/admin/users GET:", error)
-        return jsonify({"message": "Failed to load users.", "error": str(error)}), 500
-
+    except Exception:
+        print("GET ADMIN USERS ERROR: Query failed.")
+        return jsonify({"message": "Failed to load users."}), 500
     finally:
         if cursor:
             cursor.close()
@@ -11444,11 +10443,7 @@ def update_admin_user_role(user_id):
     data = request.get_json() or {}
 
     role = str(data.get("role", "")).strip().lower()
-    actor_id = _safe_int_value(
-        data.get("actor_id")
-        or data.get("user_id")
-        or data.get("userId")
-    )
+    actor_id = current_auth_user_id()
 
     if role not in ["staff", "teamlead"]:
         return jsonify({"message": "Invalid role."}), 400
@@ -11545,11 +10540,7 @@ def update_admin_user_status(user_id):
     data = request.get_json() or {}
 
     status = str(data.get("status", "")).strip().lower()
-    actor_id = _safe_int_value(
-        data.get("actor_id")
-        or data.get("user_id")
-        or data.get("userId")
-    )
+    actor_id = current_auth_user_id()
 
     if status not in ["active", "inactive"]:
         return jsonify({"message": "Invalid status."}), 400
@@ -11643,75 +10634,35 @@ def update_admin_user_status(user_id):
 
 @app.route("/api/admin/registration-requests", methods=["GET"])
 def get_registration_requests():
+    status = str(request.args.get("status") or "pending").strip().lower()
+    if status not in {"pending", "active", "declined", "inactive", "all"}:
+        status = "pending"
     conn = None
     cursor = None
-
     try:
-        status = request.args.get("status", "pending").strip().lower()
-        actor_id = _safe_int_value(request.args.get("actor_id") or request.args.get("user_id") or request.args.get("userId"))
-
-        if status not in ["pending", "active", "declined", "inactive", "all"]:
-            status = "pending"
-
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
-        ensure_registration_keys_table(cursor)
-
-        if not actor_id:
-            return jsonify({"message": "Approver user ID is required."}), 400
-
-        if not is_registration_approver(cursor, actor_id):
+        if not is_registration_approver(cursor, g.auth_user["user_id"]):
             return jsonify({"message": "Only a Manager or Team Leader can view registration requests."}), 403
-
-        query = """
-            SELECT
-                u.user_id,
-                u.full_name,
-                u.email,
-                u.status,
-                u.created_at,
-                r.role_name,
-                (
-                    SELECT rk.status
-                    FROM staff_registration_keys rk
-                    WHERE LOWER(rk.assigned_email) = LOWER(u.email)
-                    ORDER BY rk.assigned_at DESC, rk.key_id DESC
-                    LIMIT 1
-                ) AS activation_key_status,
-                (
-                    SELECT COALESCE(rk2.failed_attempts, 0)
-                    FROM staff_registration_keys rk2
-                    WHERE LOWER(rk2.assigned_email) = LOWER(u.email)
-                    ORDER BY rk2.assigned_at DESC, rk2.key_id DESC
-                    LIMIT 1
-                ) AS activation_failed_attempts
-            FROM users u
-            JOIN roles r ON u.role_id = r.role_id
+        sql = """
+            SELECT u.user_id, u.full_name, u.email, u.status, u.created_at,
+                   r.role_name
+            FROM users u JOIN roles r ON u.role_id = r.role_id
         """
-
-        params = []
+        params = ()
         if status != "all":
-            query += " WHERE LOWER(u.status) = %s"
-            params.append(status)
-
-        query += " ORDER BY u.created_at DESC, u.user_id DESC"
-        cursor.execute(query, tuple(params))
+            sql += " WHERE LOWER(u.status) = %s"
+            params = (status,)
+        sql += " ORDER BY u.created_at DESC, u.user_id DESC"
+        cursor.execute(sql, params)
         users = cursor.fetchall() or []
-
         for user in users:
             user["created_at"] = format_datetime_value(user.get("created_at"))
-            user["activation_failed_attempts"] = int(user.get("activation_failed_attempts") or 0)
-            user["awaiting_activation"] = (
-                str(user.get("status", "")).lower() == "pending"
-                and str(user.get("activation_key_status", "")).lower() == "unused"
-            )
-
+            user.update(activation_key_status=None, activation_failed_attempts=0, awaiting_activation=False)
         return jsonify(users), 200
-
-    except Exception as error:
-        print("GET REGISTRATION REQUESTS ERROR:", error)
-        return jsonify({"message": "Failed to load registration requests.", "error": str(error)}), 500
-
+    except Exception:
+        print("GET REGISTRATION REQUESTS ERROR: Query failed.")
+        return jsonify({"message": "Failed to load registration requests."}), 500
     finally:
         if cursor:
             cursor.close()
@@ -11720,204 +10671,147 @@ def get_registration_requests():
 
 
 
+@app.route("/api/admin/registration-history", methods=["GET"])
+def get_registration_history():
+    """Read-only history for authorized registration approvers.
+
+    Current declined users and archived attempts are both included. This
+    endpoint does not update users, change statuses or create tables.
+    """
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        if not is_registration_approver(cursor, current_auth_user_id()):
+            return jsonify({"message": "Manager or Team Leader access required."}), 403
+
+        records = []
+        cursor.execute("SHOW TABLES LIKE 'declined_registration_history'")
+        has_archive = bool(cursor.fetchone())
+        if has_archive:
+            cursor.execute("""
+                SELECT history_id, user_id, full_name, email,
+                       originally_registered_at, declined_at,
+                       declined_by_name, decision_description, archived_at
+                FROM declined_registration_history
+                ORDER BY archived_at DESC, history_id DESC
+            """)
+            for entry in cursor.fetchall() or []:
+                records.append({
+                    "record_type": "archived",
+                    "history_id": entry["history_id"],
+                    "user_id": entry["user_id"],
+                    "full_name": entry["full_name"],
+                    "email": entry["email"],
+                    "registered_at": format_registration_timestamp(entry.get("originally_registered_at")),
+                    "declined_at": format_registration_timestamp(entry.get("declined_at")),
+                    "declined_by_name": entry.get("declined_by_name"),
+                    "decision_description": entry.get("decision_description"),
+                    "archived_at": format_registration_timestamp(entry.get("archived_at")),
+                })
+
+        cursor.execute("""
+            SELECT user_id, full_name, email, created_at
+            FROM users WHERE LOWER(status) = 'declined'
+            ORDER BY created_at DESC, user_id DESC
+        """)
+        for entry in cursor.fetchall() or []:
+            # Each decline already writes an audit record. Read only the
+            # corresponding user's latest decision; no schema change required.
+            cursor.execute("""
+                SELECT actor_name, description, created_at
+                FROM audit_log
+                WHERE action = 'Declined account registration'
+                  AND module = 'User Management'
+                  AND description LIKE %s
+                ORDER BY created_at DESC, audit_id DESC LIMIT 1
+            """, (f"User ID {entry['user_id']} registration declined.%",))
+            decision = cursor.fetchone() or {}
+            records.append({
+                "record_type": "current",
+                "history_id": None,
+                "user_id": entry["user_id"],
+                "full_name": entry["full_name"],
+                "email": entry["email"],
+                "registered_at": format_registration_timestamp(entry.get("created_at")),
+                "declined_at": format_registration_timestamp(decision.get("created_at")),
+                "declined_by_name": decision.get("actor_name"),
+                "decision_description": decision.get("description"),
+                "archived_at": None,
+            })
+
+        response = jsonify({"records": records})
+        response.headers["Cache-Control"] = "no-store"
+        return response, 200
+    except Exception:
+        print("REGISTRATION HISTORY ERROR: Could not load registration records.")
+        return jsonify({"message": "Unable to load registration history."}), 500
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
 @app.route("/api/admin/registration-requests/<int:user_id>/approve", methods=["PUT"])
 def approve_registration_request(user_id):
     data = request.get_json(silent=True) or {}
-
-    approved_by = _safe_int_value(data.get("approved_by") or data.get("actor_id") or data.get("user_id") or data.get("userId"))
+    approved_by = g.auth_user["user_id"]
     new_role = str(data.get("role", "staff")).strip().lower()
-
-    if new_role not in ["staff", "teamlead"]:
-        new_role = "staff"
+    if new_role not in {"staff", "teamlead"}:
+        return jsonify({"message": "Select a valid staff or team lead role."}), 400
 
     conn = None
     cursor = None
-    key_id = None
-    key_code = None
-    target_user = None
-
     try:
         conn = get_db_connection()
         conn.start_transaction()
         cursor = conn.cursor(dictionary=True)
-        ensure_registration_keys_table(cursor)
-
-        if not approved_by:
-            conn.rollback()
-            return jsonify({"message": "Approver user ID is required."}), 400
-
         if not is_registration_approver(cursor, approved_by):
             conn.rollback()
             return jsonify({"message": "Only a Manager or Team Leader can approve registrations."}), 403
-
         cursor.execute("""
-            SELECT u.user_id, u.full_name, u.email, u.status, r.role_name
-            FROM users u
-            JOIN roles r ON u.role_id = r.role_id
-            WHERE u.user_id = %s
-            LIMIT 1
-            FOR UPDATE
+            SELECT user_id, full_name, email, status FROM users
+            WHERE user_id = %s LIMIT 1 FOR UPDATE
         """, (user_id,))
-        target_user = cursor.fetchone()
-
-        if not target_user:
+        target = cursor.fetchone()
+        if not target:
             conn.rollback()
             return jsonify({"message": "Registration request not found."}), 404
-
-        if str(target_user.get("status", "")).lower() != "pending":
+        if str(target.get("status") or "").lower() != "pending":
             conn.rollback()
-            return jsonify({"message": "Only pending registration requests can be approved."}), 400
-
-        cursor.execute("""
-            SELECT role_id
-            FROM roles
-            WHERE LOWER(role_name) = %s
-            LIMIT 1
-        """, (new_role,))
+            return jsonify({"message": "Only pending registrations can be approved."}), 409
+        cursor.execute("SELECT role_id FROM roles WHERE LOWER(role_name) = %s LIMIT 1", (new_role,))
         role_row = cursor.fetchone()
-
         if not role_row:
             conn.rollback()
             return jsonify({"message": "Selected role does not exist."}), 400
-
-        # Repeated approval must not create multiple usable keys.
+        # The account becomes usable immediately upon manager approval.
         cursor.execute("""
-            SELECT key_id
-            FROM staff_registration_keys
-            WHERE LOWER(assigned_email) = %s
-              AND status = 'unused'
-            ORDER BY assigned_at DESC, key_id DESC
-            LIMIT 1
-            FOR UPDATE
-        """, (str(target_user["email"]).strip().lower(),))
-        existing_key = cursor.fetchone()
-
-        if existing_key:
-            conn.rollback()
-            return jsonify({
-                "code": "ACTIVATION_KEY_ALREADY_ISSUED",
-                "message": "This registration is already approved and is waiting for the user to enter the one-time registration key.",
-                "key_id": existing_key["key_id"]
-            }), 409
-
-        for _ in range(5):
-            candidate = generate_registration_key_code()
-            cursor.execute("SELECT key_id FROM staff_registration_keys WHERE key_code = %s LIMIT 1", (candidate,))
-            if not cursor.fetchone():
-                key_code = candidate
-                break
-
-        if not key_code:
-            conn.rollback()
-            return jsonify({"message": "Unable to generate a unique registration key."}), 500
-
-        cursor.execute("""
-            UPDATE users
-            SET role_id = %s
-            WHERE user_id = %s
-              AND status = 'pending'
+            UPDATE users SET role_id = %s, status = 'active'
+            WHERE user_id = %s AND status = 'pending'
         """, (role_row["role_id"], user_id))
-
-        cursor.execute("""
-            INSERT INTO staff_registration_keys
-                (key_code, status, created_by_user_id, assigned_email, assigned_at, failed_attempts)
-            VALUES (%s, 'unused', %s, %s, NOW(), 0)
-        """, (key_code, approved_by, str(target_user["email"]).strip().lower()))
-        key_id = cursor.lastrowid
-
+        if cursor.rowcount != 1:
+            conn.rollback()
+            return jsonify({"message": "Registration was already reviewed."}), 409
+        revoke_legacy_unused_registration_keys(cursor, str(target["email"]).strip().lower())
         conn.commit()
-
-        email_sent = send_registration_activation_email(target_user.get("full_name"), target_user.get("email"), key_code)
-
-        if not email_sent:
-            # Do not leave the UI in "Awaiting Activation" when the user never
-            # received a key. Remove the undelivered key and restore the
-            # original pending role so the approver can retry cleanly.
-            try:
-                conn.start_transaction()
-                cursor.execute(
-                    "DELETE FROM staff_registration_keys WHERE key_id = %s AND status = 'unused'",
-                    (key_id,),
-                )
-                cursor.execute(
-                    "SELECT role_id FROM roles WHERE LOWER(role_name) = %s LIMIT 1",
-                    (str(target_user.get("role_name") or "staff").strip().lower(),),
-                )
-                previous_role = cursor.fetchone()
-                if previous_role:
-                    cursor.execute(
-                        "UPDATE users SET role_id = %s WHERE user_id = %s AND status = 'pending'",
-                        (previous_role["role_id"], user_id),
-                    )
-                conn.commit()
-            except Exception as cleanup_error:
-                conn.rollback()
-                print("APPROVAL EMAIL FAILURE CLEANUP ERROR:", cleanup_error)
-
-            add_audit_log(
-                actor_id=approved_by,
-                actor_name="Manager/Team Lead",
-                action="Approval email delivery failed",
-                module="User Management",
-                description=f"Activation key delivery failed for {target_user.get('email')}; undelivered key was discarded."
-            )
-
-            return jsonify({
-                "code": "ACTIVATION_EMAIL_FAILED",
-                "message": (
-                    "Approval was not completed because the one-time registration key "
-                    "email could not be delivered. The undelivered key was discarded; "
-                    "the registration remains Pending Approval so you can retry."
-                ),
-                "account_status": "pending",
-                "activation_key_issued": False,
-                "email_sent": False,
-            }), 503
-
-        update_conn = None
-        update_cursor = None
-        try:
-            update_conn = get_db_connection()
-            update_cursor = update_conn.cursor()
-            update_cursor.execute("UPDATE staff_registration_keys SET email_sent_at = NOW() WHERE key_id = %s", (key_id,))
-            update_conn.commit()
-        finally:
-            if update_cursor:
-                update_cursor.close()
-            if update_conn:
-                update_conn.close()
-
-        create_notification_safe(
-            user_id=user_id,
-            title="Account approved - activation required",
-            detail="Your registration was approved. Use the one-time key sent to your email during first login.",
-            notification_type="system",
-            related_id=user_id,
-            created_by=approved_by
-        )
-
+        notify_registration_decision(user_id, approved=True)
         add_audit_log(
-            actor_id=approved_by,
-            actor_name="Manager/Team Lead",
-            action="Approved account registration",
-            module="User Management",
-            description=f"Approved user ID {user_id} as {new_role}; one-time activation key issued to {target_user.get('email')}."
+            actor_id=approved_by, actor_name=g.auth_user["full_name"],
+            action="Approved account registration", module="User Management",
+            description=f"User ID {user_id} approved as {new_role}; account activated directly."
         )
-
         return jsonify({
-            "message": "Registration approved. The one-time registration key was generated and emailed to the user.",
-            "account_status": "pending",
-            "activation_key_issued": True,
-            "key_id": key_id,
-            "email_sent": True
+            "message": "Registration approved. The user can now sign in with email and password.",
+            "account_status": "active", "activation_key_issued": False,
         }), 200
-
-    except Exception as error:
+    except Exception:
         if conn:
             conn.rollback()
-        print("APPROVE REGISTRATION ERROR:", error)
+        print("APPROVE REGISTRATION ERROR: Approval transaction failed.")
         return jsonify({"message": "Failed to approve registration."}), 500
-
     finally:
         if cursor:
             cursor.close()
@@ -11927,91 +10821,53 @@ def approve_registration_request(user_id):
 
 @app.route("/api/admin/registration-requests/<int:user_id>/decline", methods=["PUT"])
 def decline_registration_request(user_id):
+    """Mark a declined registration without deleting historical account data."""
     data = request.get_json(silent=True) or {}
-
-    declined_by = _safe_int_value(
-        data.get("declined_by")
-        or data.get("actor_id")
-        or data.get("user_id")
-        or data.get("userId")
-    )
-    reason = str(data.get("reason", "")).strip()
-
+    declined_by = g.auth_user["user_id"]
+    reason = str(data.get("reason") or "").strip()[:1000]
     conn = None
     cursor = None
-    target_user = None
-
     try:
         conn = get_db_connection()
         conn.start_transaction()
         cursor = conn.cursor(dictionary=True)
-
-        if not declined_by:
-            conn.rollback()
-            return jsonify({"message": "Approver user ID is required."}), 400
-
         if not is_registration_approver(cursor, declined_by):
             conn.rollback()
-            return jsonify({"message": "Only manager or team lead can decline registrations."}), 403
-
+            return jsonify({"message": "Only a Manager or Team Leader can decline registrations."}), 403
         cursor.execute("""
-            SELECT user_id, full_name, email, status
-            FROM users
-            WHERE user_id = %s
-            LIMIT 1
-            FOR UPDATE
+            SELECT user_id, email, status FROM users WHERE user_id = %s
+            LIMIT 1 FOR UPDATE
         """, (user_id,))
-        target_user = cursor.fetchone()
-
-        if not target_user:
+        target = cursor.fetchone()
+        if not target:
             conn.rollback()
             return jsonify({"message": "Registration request not found."}), 404
-
-        if str(target_user.get("status", "")).strip().lower() != "pending":
+        if str(target.get("status") or "").lower() != "pending":
             conn.rollback()
-            return jsonify({"message": "Only pending registration requests can be declined and removed."}), 400
-
-        target_email = str(target_user.get("email") or "").strip().lower()
-        target_name = target_user.get("full_name") or "there"
-
-        # User requirement: Decline means WIPE the pending registration, not
-        # keep a declined row. Remove its related auth rows first, then users.
-        wipe_pending_registration(cursor, user_id, target_email)
+            return jsonify({"message": "Only pending registrations can be declined."}), 409
+        cursor.execute("""
+            UPDATE users SET status = 'declined'
+            WHERE user_id = %s AND status = 'pending'
+        """, (user_id,))
+        if cursor.rowcount != 1:
+            conn.rollback()
+            return jsonify({"message": "Registration was already reviewed."}), 409
+        revoke_legacy_unused_registration_keys(cursor, str(target["email"]).strip().lower())
         conn.commit()
-
-        # Send the decision after the DB commit using the cached email/name;
-        # the users row no longer exists at this point.
-        email_sent = send_registration_declined_email(target_name, target_email, reason)
-
         add_audit_log(
-            actor_id=declined_by,
-            actor_name="Manager/Team Lead",
-            action="Declined and removed account registration",
-            module="User Management",
-            description=(
-                f"Pending registration for {target_email} was declined and permanently removed. "
-                f"Reason: {reason or 'No reason provided.'}"
-            ),
+            actor_id=declined_by, actor_name=g.auth_user["full_name"],
+            action="Declined account registration", module="User Management",
+            description=f"User ID {user_id} registration declined. Reason: {reason or 'Not specified'}."
         )
-
         return jsonify({
-            "message": (
-                "Registration declined and removed. The same email can register again. "
-                + ("Rejection email sent." if email_sent else "Rejection email could not be sent; check Railway email logs.")
-            ),
-            "deleted": True,
-            "email_sent": bool(email_sent),
+            "message": "Registration declined. The account remains disabled and its history is preserved.",
+            "account_status": "declined", "deleted": False,
         }), 200
-
-    except Exception as error:
+    except Exception:
         if conn:
             conn.rollback()
-        print("DECLINE + WIPE REGISTRATION ERROR:", error)
-        return jsonify({
-            "message": "Failed to decline and remove this registration.",
-            "error": str(error),
-        }), 500
-
+        print("DECLINE REGISTRATION ERROR: Decline transaction failed.")
+        return jsonify({"message": "Failed to decline registration."}), 500
     finally:
         if cursor:
             cursor.close()
@@ -12025,7 +10881,7 @@ def decline_registration_request(user_id):
 @app.route("/api/admin/email/test", methods=["POST"])
 def test_system_email():
     data = request.get_json(silent=True) or {}
-    actor_id = _safe_int_value(data.get("actor_id") or data.get("user_id") or data.get("userId"))
+    actor_id = current_auth_user_id()
     requested_email = str(data.get("email") or "").strip().lower()
 
     conn = None
@@ -12043,6 +10899,19 @@ def test_system_email():
 
         if not recipient or not is_valid_email_format(recipient):
             return jsonify({"message": "A valid test recipient email is required."}), 400
+
+        if PRESENTATION_DEMO_MODE:
+            send_email_safe(
+                recipient,
+                "Jungle House AI Wiki - Presentation demo email",
+                "This is a simulated presentation email. No real SMTP message is sent in demo mode.",
+            )
+            return jsonify({
+                "message": f"Presentation demo email simulated successfully for {recipient}.",
+                "configured": True,
+                "email_sent": True,
+                "presentation_demo_mode": True,
+            }), 200
 
         smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com").strip()
         smtp_user = os.getenv("SMTP_USER", "").strip()
@@ -12136,7 +11005,7 @@ def get_message_users():
 def send_message():
     data = request.get_json() or {}
 
-    sender_id = data.get("sender_id")
+    sender_id = current_auth_user_id()
     receiver_id = data.get("receiver_id")
     subject = data.get("subject", "").strip()
     message = data.get("message", "").strip()
@@ -12355,7 +11224,7 @@ def reply_message():
 
     thread_id = data.get("thread_id")
     parent_message_id = data.get("parent_message_id")
-    sender_id = data.get("sender_id")
+    sender_id = current_auth_user_id()
     receiver_id = data.get("receiver_id")
     subject = data.get("subject", "").strip()
     message = data.get("message", "").strip()
@@ -12371,6 +11240,16 @@ def reply_message():
     try:
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
+        # Do not let an employee inject messages into another conversation.
+        cursor.execute("""
+            SELECT message_id FROM user_message
+            WHERE thread_id = %s AND
+                  ((sender_id = %s AND receiver_id = %s)
+                   OR (sender_id = %s AND receiver_id = %s))
+            LIMIT 1
+        """, (thread_id, sender_id, receiver_id, receiver_id, sender_id))
+        if not cursor.fetchone():
+            return jsonify({"message": "You can only reply to your own conversation."}), 403
 
         cursor.execute("""
             INSERT INTO user_message
@@ -12415,54 +11294,115 @@ def reply_message():
             conn.close()
 
 
+# Five minutes is enforced against the database's timestamp, not the browser clock.
+# Never trust a user_id supplied in JSON for editing/deleting another person's message.
+MESSAGE_ACTION_WINDOW_SECONDS = 5 * 60
+
+
+def _message_action_denied(cursor, message_id, user_id, operation):
+    """Explain an unsuccessful atomic UPDATE without disclosing message contents."""
+    cursor.execute("""
+        SELECT sender_id, is_deleted_by_sender, is_deleted_by_receiver,
+               TIMESTAMPDIFF(MICROSECOND, created_at, NOW()) AS age_microseconds
+        FROM user_message
+        WHERE message_id = %s
+        LIMIT 1
+    """, (message_id,))
+    row = cursor.fetchone()
+    if not row:
+        return jsonify({"message": "Message not found."}), 404
+    if int(row["sender_id"]) != int(user_id):
+        return jsonify({"message": "You can only change messages you sent."}), 403
+
+    age = row.get("age_microseconds")
+    if age is None or not 0 <= int(age) <= MESSAGE_ACTION_WINDOW_SECONDS * 1000000:
+        return jsonify({"message": "The five-minute message action window has expired."}), 409
+
+    if operation == "edit" and row["is_deleted_by_sender"]:
+        return jsonify({"message": "A message deleted from your view cannot be edited."}), 409
+    if operation == "everyone" and row["is_deleted_by_sender"] and row["is_deleted_by_receiver"]:
+        return jsonify({"message": "Message is already deleted for everyone."}), 409
+
+    return jsonify({"message": "Message could not be changed. Refresh and try again."}), 409
+
+
 @app.route("/api/messages/edit/<int:message_id>", methods=["PUT"])
 def edit_message(message_id):
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
+    user_id = current_auth_user_id()
+    message = str(data.get("message") or "").strip()
 
-    user_id = data.get("user_id")
-    message = data.get("message", "").strip()
-
-    if not user_id or not message:
-        return jsonify({
-            "message": "User ID and message are required."
-        }), 400
+    if not message:
+        return jsonify({"message": "Message cannot be empty."}), 400
 
     conn = None
     cursor = None
-
     try:
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
 
+        # Atomic condition: ownership, visibility and deadline cannot be
+        # bypassed by forging the request or racing the five-minute cutoff.
         cursor.execute("""
             UPDATE user_message
-            SET message = %s,
-                edited_at = NOW()
+            SET message = %s, edited_at = NOW()
             WHERE message_id = %s
-            AND sender_id = %s
+              AND sender_id = %s
+              AND is_deleted_by_sender = FALSE
+              AND created_at BETWEEN NOW() - INTERVAL 5 MINUTE AND NOW()
         """, (message, message_id, user_id))
 
+        if cursor.rowcount != 1:
+            conn.rollback()
+            return _message_action_denied(cursor, message_id, user_id, "edit")
+
         conn.commit()
-
-        if cursor.rowcount == 0:
-            return jsonify({
-                "message": "You can only edit messages you sent."
-            }), 403
-
-        return jsonify({
-            "message": "Message updated successfully."
-        }), 200
-
-    except Exception as error:
+        return jsonify({"message": "Message updated successfully."}), 200
+    except Exception:
         if conn:
             conn.rollback()
+        print("MYSQL ERROR /api/messages/edit: unable to update message")
+        return jsonify({"message": "Failed to edit message."}), 500
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
-        print("MYSQL ERROR /api/messages/edit:", error)
-        return jsonify({
-            "message": "Failed to edit message.",
-            "error": str(error)
-        }), 500
 
+@app.route("/api/messages/delete-for-everyone/<int:message_id>", methods=["PUT"])
+def delete_message_for_everyone(message_id):
+    """Soft-delete for both participants; only the sender and only for 5 minutes."""
+    user_id = current_auth_user_id()
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        # One UPDATE, one transaction: no impersonation of the receiver,
+        # and neither participant can keep seeing the message after commit.
+        cursor.execute("""
+            UPDATE user_message
+            SET is_deleted_by_sender = TRUE,
+                is_deleted_by_receiver = TRUE
+            WHERE message_id = %s
+              AND sender_id = %s
+              AND created_at BETWEEN NOW() - INTERVAL 5 MINUTE AND NOW()
+              AND (is_deleted_by_sender = FALSE OR is_deleted_by_receiver = FALSE)
+        """, (message_id, user_id))
+
+        if cursor.rowcount != 1:
+            conn.rollback()
+            return _message_action_denied(cursor, message_id, user_id, "everyone")
+
+        conn.commit()
+        return jsonify({"message": "Message deleted for everyone."}), 200
+    except Exception:
+        if conn:
+            conn.rollback()
+        print("MYSQL ERROR /api/messages/delete-for-everyone: unable to delete message")
+        return jsonify({"message": "Failed to delete message for everyone."}), 500
     finally:
         if cursor:
             cursor.close()
@@ -12474,7 +11414,7 @@ def edit_message(message_id):
 def delete_message_from_view(message_id):
     data = request.get_json() or {}
 
-    user_id = data.get("user_id")
+    user_id = current_auth_user_id()
 
     if not user_id:
         return jsonify({
@@ -12548,30 +11488,18 @@ def delete_message_from_view(message_id):
 
 @app.route("/static/<path:filename>", methods=["GET"])
 def serve_static(filename):
-    clean_filename = str(filename or "").replace("\\", "/").strip().lstrip("/")
-    file_path = STATIC_DIR / clean_filename
+    return send_private_static_file(STATIC_DIR, filename)
 
-    if file_path.exists() and file_path.is_file():
-        return send_from_directory(str(file_path.parent), file_path.name)
 
-    basename = Path(clean_filename).name
-    matched_file = None
-
-    if basename and STATIC_DIR.exists():
-        for candidate in STATIC_DIR.rglob(basename):
-            if candidate.exists() and candidate.is_file():
-                matched_file = candidate
-                break
-
-    if matched_file:
-        return send_from_directory(str(matched_file.parent), matched_file.name)
-
-    return jsonify({
-        "message": "Static file not found on server.",
-        "filename": clean_filename,
-        "static_folder": str(STATIC_DIR),
-        "expected_path": str(file_path)
-    }), 404
+@app.after_request
+def prevent_private_static_caching(response):
+    """Do not cache internal files (or access-denied responses) in shared proxies."""
+    if request.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "private, no-store, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.vary.add("Cookie")
+    return response
 
 # =========================
 # RUN APP
