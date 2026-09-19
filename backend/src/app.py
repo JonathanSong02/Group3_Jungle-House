@@ -1322,6 +1322,14 @@ def auth_logout():
 _AUTH_PUBLIC = {
     "auth_csrf", "register", "login", "forgot_password",
     "validate_password_reset_token", "reset_password", "health",
+    # Notion redirects the browser here directly after login, on the raw
+    # Railway domain -- there is no session cookie for that origin (the
+    # admin's session cookie belongs to the Vercel frontend origin), so this
+    # can't require one. It authenticates instead via possession of the
+    # one-time oauth `state` value (see consume_oauth_state), which was only
+    # ever handed out to an already-manager-authenticated actor by
+    # /api/notion-sync/oauth/start.
+    "notion_oauth_callback",
 }
 _LEGACY_REGISTRATION_ENDPOINTS = {
     "generate_registration_key", "list_registration_keys", "resend_registration_key",
