@@ -43,6 +43,10 @@ export default function EditArticle() {
       askBeforePasteHTML: false,
       askBeforePasteFromWord: false,
       defaultActionOnPaste: 'insert_as_html',
+      // Without this, pasting a copied image (e.g. a screenshot) from the
+      // clipboard is silently ignored -- Jodit only routes dropped/pasted
+      // image files through the configured uploader below when this is on.
+      enableDragAndDropFileToEditor: true,
       buttons: [
         'source',
         '|',
@@ -287,6 +291,53 @@ export default function EditArticle() {
       buildInlineFileHtml(getFileUrl(file), fileName, isImageFile(fileName))
     );
     removeCurrentAttachment(index);
+  };
+
+  // Jodit's own built-in clipboard-image handling is unreliable in practice
+  // (depends on internal event ordering that can silently do nothing for
+  // some screenshot/clipboard sources) -- intercepting the paste ourselves
+  // at the capture phase, before Jodit's own listeners run, guarantees a
+  // pasted image is always uploaded and inserted the same way "Insert into
+  // Content" already does. Non-image pastes (plain text, copied HTML) are
+  // left completely alone and fall through to Jodit's normal handling.
+  const handleEditorPasteCapture = async (event) => {
+    const items = event.clipboardData?.items;
+    if (!items) return;
+
+    const imageItem = Array.from(items).find(
+      (item) => item.kind === 'file' && item.type.startsWith('image/')
+    );
+    if (!imageItem) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const file = imageItem.getAsFile();
+    if (!file) return;
+
+    try {
+      setMessage('');
+
+      const uploadData = new FormData();
+      uploadData.append('attachments', file, file.name || `pasted-image-${Date.now()}.png`);
+
+      const response = await api.post('/articles/upload-image', uploadData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+
+      const fileUrl = response.data?.files?.[0];
+
+      if (!fileUrl || response.data?.error) {
+        throw new Error(response.data?.msg || 'Failed to upload pasted image.');
+      }
+
+      insertHtmlIntoContent(buildInlineFileHtml(fileUrl, file.name || 'pasted-image.png', true));
+    } catch (error) {
+      console.error('Paste image upload error:', error);
+      setMessage(
+        error.response?.data?.msg || error.message || 'Failed to paste image.'
+      );
+    }
   };
 
   const formatFileSize = (bytes) => {
@@ -563,7 +614,7 @@ export default function EditArticle() {
             <label className="full-width">
               Article Content *
 
-              <div className="article-rich-editor">
+              <div className="article-rich-editor" onPasteCapture={handleEditorPasteCapture}>
                 <JoditEditor
                   ref={editorRef}
                   value={form.content}
