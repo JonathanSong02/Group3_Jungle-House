@@ -5724,13 +5724,38 @@ def test_ai_settings():
 
 
 # =========================
-# NOTION SYNC ROUTES
+# NOTION SYNC ROUTES (OAuth "Connect Notion" flow)
 #
 # Reuses the exact same encryption service already built for AI provider
 # keys (ai_provider_service.encrypt_api_key/decrypt_api_key/mask_api_key)
 # instead of a second encryption scheme, and the same manager-only access
-# check pattern used everywhere else in this file.
+# check pattern used everywhere else in this file. The OAuth callback is the
+# one exception: Notion redirects the browser there directly (no auth
+# header, no JSON body possible), so it authenticates via possession of the
+# one-time `state` token instead -- that state was only ever handed out to
+# an already-manager-authenticated actor by /oauth/start.
 # =========================
+def _notify_managers_of_notion_update(cursor, title, article_id, actor_id):
+    cursor.execute("""
+        SELECT u.user_id
+        FROM users u
+        JOIN roles r ON u.role_id = r.role_id
+        WHERE r.role_name = 'manager' AND u.status = 'active'
+    """)
+    managers = cursor.fetchall() or []
+
+    for manager in managers:
+        manager_id = manager["user_id"] if isinstance(manager, dict) else manager[0]
+        create_notification_safe(
+            user_id=manager_id,
+            title="Notion content changed",
+            detail=f'"{title}" was edited in Notion. Review it in Notion Sync to update or keep the current version.',
+            notification_type="system",
+            related_id=article_id,
+            created_by=actor_id,
+        )
+
+
 @app.route("/api/notion-sync/config", methods=["GET"])
 def get_notion_sync_config():
     if not NOTION_SYNC_SERVICE_AVAILABLE:
@@ -5759,27 +5784,19 @@ def get_notion_sync_config():
             conn.close()
 
 
-@app.route("/api/notion-sync/config", methods=["POST"])
-def save_notion_sync_config():
+@app.route("/api/notion-sync/oauth/start", methods=["POST"])
+def start_notion_oauth():
     if not NOTION_SYNC_SERVICE_AVAILABLE:
         return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
 
+    if not os.getenv("NOTION_OAUTH_CLIENT_ID") or not os.getenv("NOTION_OAUTH_CLIENT_SECRET"):
+        return jsonify({
+            "success": False,
+            "message": "Notion OAuth is not configured on the server yet. Set NOTION_OAUTH_CLIENT_ID and NOTION_OAUTH_CLIENT_SECRET."
+        }), 500
+
     data = request.get_json(silent=True) or {}
-
-    actor_id = current_auth_user_id()
-    raw_token = str(data.get("token", "")).strip()
-    raw_source = str(data.get("source", "")).strip()
-
-    if not raw_token:
-        return jsonify({"success": False, "message": "Notion integration token is required."}), 400
-
-    if not raw_source:
-        return jsonify({"success": False, "message": "Notion page/database URL or ID is required."}), 400
-
-    source_id = notion_sync_service.extract_notion_id(raw_source)
-
-    if not source_id:
-        return jsonify({"success": False, "message": "Could not read a valid Notion ID from that URL/ID."}), 400
+    actor_id = data.get("user_id")
 
     conn = None
     cursor = None
@@ -5793,28 +5810,22 @@ def save_notion_sync_config():
 
         if not is_ai_settings_manager(cursor, actor_id):
             conn.rollback()
-            return jsonify({"success": False, "message": "Only managers can update Notion sync settings."}), 403
+            return jsonify({"success": False, "message": "Only managers can connect Notion."}), 403
 
-        notion_sync_service.save_notion_config(cursor, raw_token, source_id, raw_source, actor_id)
+        state = notion_sync_service.create_oauth_state(cursor, actor_id)
         conn.commit()
 
-        add_audit_log(
-            actor_id=actor_id,
-            action="Updated Notion sync settings",
-            module="Notion Sync",
-            description=f"Notion source set to {source_id}."
-        )
+        redirect_uri = f"{notion_sync_service.get_public_base_url()}/api/notion-sync/oauth/callback"
+        authorize_url = notion_sync_service.build_authorize_url(redirect_uri, state)
 
-        config = notion_sync_service.get_notion_public_config(cursor)
-
-        return jsonify({"success": True, "message": "Notion sync settings saved successfully.", "config": config}), 200
+        return jsonify({"success": True, "authorizeUrl": authorize_url}), 200
 
     except Exception as error:
         if conn:
             conn.rollback()
 
-        print("SAVE NOTION SYNC CONFIG ERROR:", error)
-        return jsonify({"success": False, "message": "Failed to save Notion sync settings."}), 500
+        print("START NOTION OAUTH ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to start Notion connection."}), 500
 
     finally:
         if cursor:
@@ -5823,16 +5834,169 @@ def save_notion_sync_config():
             conn.close()
 
 
-@app.route("/api/notion-sync/test", methods=["POST"])
-def test_notion_sync():
+def _render_notion_oauth_result_page(status, detail=""):
+    """
+    Notion redirects the browser here directly, so this can't just return
+    JSON. Connect Notion opens this callback in a popup window (see
+    NotionSync.jsx), so the primary path posts the result back to the
+    window that opened the popup and closes it -- the admin never leaves
+    the Notion Sync page. If there's no opener (popup blocked, or the
+    callback URL was opened directly), it falls back to a normal redirect
+    to the Notion Sync page with the old ?connected=1 / ?error=... params.
+    """
+    query_param = f"connected=1" if status == "connected" else f"error={detail or 'connection_failed'}"
+    fallback_url = f"{FRONTEND_URL}/admin/notion-sync?{query_param}"
+    message = "Notion connected successfully. You can close this window." if status == "connected" else f"Notion connection failed: {(detail or 'connection_failed').replace('_', ' ')}"
+
+    html = f"""<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Notion Sync</title></head>
+<body style="font-family: sans-serif; padding: 2rem; color: #222;">
+<p>{message}</p>
+<script>
+(function() {{
+  var payload = {{ source: "jungle-house-notion-oauth", status: "{status}", detail: "{detail}" }};
+  try {{
+    if (window.opener && !window.opener.closed) {{
+      window.opener.postMessage(payload, "{FRONTEND_URL}");
+      window.close();
+      return;
+    }}
+  }} catch (e) {{}}
+  window.location.href = "{fallback_url}";
+}})();
+</script>
+</body>
+</html>"""
+    return html
+
+
+@app.route("/api/notion-sync/oauth/callback", methods=["GET"])
+def notion_oauth_callback():
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return _render_notion_oauth_result_page("error", "service_unavailable")
+
+    code = request.args.get("code")
+    state = request.args.get("state")
+
+    if not code or not state:
+        return _render_notion_oauth_result_page("error", "missing_code_or_state")
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = notion_sync_service.get_db_connection()
+        conn.start_transaction()
+        cursor = conn.cursor(dictionary=True)
+
+        notion_sync_service.ensure_notion_sync_tables(cursor)
+
+        actor_id = notion_sync_service.consume_oauth_state(cursor, state)
+        conn.commit()
+
+        if not actor_id:
+            return _render_notion_oauth_result_page("error", "invalid_or_expired_state")
+
+        redirect_uri = f"{notion_sync_service.get_public_base_url()}/api/notion-sync/oauth/callback"
+        token_response = notion_sync_service.exchange_oauth_code_for_token(code, redirect_uri)
+
+        access_token = token_response.get("access_token")
+        workspace_id = token_response.get("workspace_id")
+        workspace_name = token_response.get("workspace_name") or "Notion workspace"
+        workspace_icon = token_response.get("workspace_icon")
+        bot_id = token_response.get("bot_id")
+
+        if not access_token:
+            return _render_notion_oauth_result_page("error", "token_exchange_failed")
+
+        conn2 = notion_sync_service.get_db_connection()
+        cursor2 = conn2.cursor(dictionary=True)
+        notion_sync_service.save_notion_oauth_config(
+            cursor2, access_token, workspace_id, workspace_name, workspace_icon, bot_id, actor_id
+        )
+        conn2.commit()
+        cursor2.close()
+        conn2.close()
+
+        add_audit_log(
+            actor_id=actor_id,
+            action="Connected Notion workspace",
+            module="Notion Sync",
+            description=f"Connected workspace: {workspace_name}."
+        )
+
+        return _render_notion_oauth_result_page("connected")
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("NOTION OAUTH CALLBACK ERROR:", error)
+        return _render_notion_oauth_result_page("error", "connection_failed")
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/notion-sync/disconnect", methods=["POST"])
+def disconnect_notion_sync():
     if not NOTION_SYNC_SERVICE_AVAILABLE:
         return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
 
     data = request.get_json(silent=True) or {}
+    actor_id = data.get("user_id")
 
-    actor_id = current_auth_user_id()
-    raw_token = str(data.get("token", "")).strip()
-    raw_source = str(data.get("source", "")).strip()
+    conn = None
+    cursor = None
+
+    try:
+        conn = notion_sync_service.get_db_connection()
+        conn.start_transaction()
+        cursor = conn.cursor(dictionary=True)
+
+        notion_sync_service.ensure_notion_sync_tables(cursor)
+
+        if not is_ai_settings_manager(cursor, actor_id):
+            conn.rollback()
+            return jsonify({"success": False, "message": "Only managers can disconnect Notion."}), 403
+
+        notion_sync_service.disconnect_notion(cursor)
+        conn.commit()
+
+        add_audit_log(
+            actor_id=actor_id,
+            action="Disconnected Notion workspace",
+            module="Notion Sync",
+            description="Notion workspace disconnected."
+        )
+
+        return jsonify({"success": True, "message": "Notion disconnected."}), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("DISCONNECT NOTION SYNC ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to disconnect Notion."}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/notion-sync/check", methods=["POST"])
+def check_notion_sync():
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
+
+    data = request.get_json(silent=True) or {}
+    actor_id = data.get("user_id")
 
     conn = None
     cursor = None
@@ -5844,95 +6008,186 @@ def test_notion_sync():
         notion_sync_service.ensure_notion_sync_tables(cursor)
 
         if not is_ai_settings_manager(cursor, actor_id):
-            return jsonify({"success": False, "message": "Only managers can test Notion sync."}), 403
+            return jsonify({"success": False, "message": "Only managers can check for Notion updates."}), 403
 
-        if not raw_token or not raw_source:
-            existing = notion_sync_service.get_active_notion_config(cursor)
+        raw_token = notion_sync_service.get_active_notion_access_token(cursor)
 
-            if not existing:
-                return jsonify({"success": False, "message": "No Notion sync source is configured yet."}), 400
+        if not raw_token:
+            return jsonify({"success": False, "message": "No Notion workspace is connected yet."}), 400
 
-            raw_token = ai_provider_service.decrypt_api_key(existing["encrypted_notion_token"])
-            source_id = existing["source_id"]
-        else:
-            source_id = notion_sync_service.extract_notion_id(raw_source)
+    except Exception as error:
+        print("CHECK NOTION SYNC SETUP ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to start checking Notion for updates."}), 500
 
-            if not source_id:
-                return jsonify({"success": False, "message": "Could not read a valid Notion ID from that URL/ID."}), 400
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
+    result = notion_sync_service.check_for_notion_updates(raw_token, actor_id, UPLOAD_FOLDER)
+
+    if result.get("flaggedItems"):
+        notify_conn = None
+        notify_cursor = None
         try:
-            pages = notion_sync_service.list_notion_pages(raw_token, source_id)
-            return jsonify({
-                "success": True,
-                "message": f"Notion connected successfully. Found {len(pages)} page(s)."
-            }), 200
-        except Exception as call_error:
-            print("NOTION TEST CALL ERROR:", call_error)
-            return jsonify({
-                "success": False,
-                "message": "Notion connection failed. Please make sure the page/database is shared with your integration, and the token is correct."
-            }), 400
-
-    except Exception as error:
-        print("TEST NOTION SYNC ERROR:", error)
-        return jsonify({"success": False, "message": "Notion connection failed."}), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-
-@app.route("/api/notion-sync/run", methods=["POST"])
-def run_notion_sync():
-    if not NOTION_SYNC_SERVICE_AVAILABLE:
-        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
-
-    data = request.get_json(silent=True) or {}
-    actor_id = current_auth_user_id()
-
-    conn = None
-    cursor = None
-
-    try:
-        conn = notion_sync_service.get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-
-        notion_sync_service.ensure_notion_sync_tables(cursor)
-
-        if not is_ai_settings_manager(cursor, actor_id):
-            return jsonify({"success": False, "message": "Only managers can run Notion sync."}), 403
-
-        config = notion_sync_service.get_active_notion_config(cursor)
-
-        if not config:
-            return jsonify({"success": False, "message": "No Notion sync source is configured yet."}), 400
-
-        raw_token = ai_provider_service.decrypt_api_key(config["encrypted_notion_token"])
-
-    except Exception as error:
-        print("RUN NOTION SYNC SETUP ERROR:", error)
-        return jsonify({"success": False, "message": "Failed to start Notion sync."}), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-    result = notion_sync_service.sync_notion_source(
-        raw_token, config["source_id"], actor_id, UPLOAD_FOLDER
-    )
+            notify_conn = notion_sync_service.get_db_connection()
+            notify_cursor = notify_conn.cursor(dictionary=True)
+            for item in result["flaggedItems"]:
+                _notify_managers_of_notion_update(
+                    notify_cursor, item["title"], item["article_id"], actor_id
+                )
+            notify_conn.commit()
+        except Exception as notify_error:
+            print("NOTION UPDATE NOTIFICATION ERROR:", notify_error)
+        finally:
+            if notify_cursor:
+                notify_cursor.close()
+            if notify_conn:
+                notify_conn.close()
 
     add_audit_log(
         actor_id=actor_id,
-        action="Ran Notion sync",
+        action="Checked Notion for updates",
         module="Notion Sync",
-        description=f"Imported {result['imported']}, updated {result['updated']}, skipped {result['skipped']}, failed {result['failed']}."
+        description=f"New {result['new']}, flagged {result['flagged']}, unchanged {result['unchanged']}, failed {result['failed']}."
     )
 
     return jsonify({"success": result["status"] == "completed", **result}), 200
+
+
+@app.route("/api/notion-sync/pending-updates", methods=["GET"])
+def get_notion_pending_updates():
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = notion_sync_service.get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        notion_sync_service.ensure_notion_sync_tables(cursor)
+        pending = notion_sync_service.list_pending_updates(cursor)
+
+        return jsonify({"success": True, "pending": pending}), 200
+
+    except Exception as error:
+        print("GET NOTION PENDING UPDATES ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to load pending Notion updates."}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/notion-sync/pending-updates/<int:pending_id>/apply", methods=["POST"])
+def apply_notion_pending_update(pending_id):
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
+
+    data = request.get_json(silent=True) or {}
+    actor_id = data.get("user_id")
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = notion_sync_service.get_db_connection()
+        conn.start_transaction()
+        cursor = conn.cursor(dictionary=True)
+
+        notion_sync_service.ensure_notion_sync_tables(cursor)
+
+        if not is_ai_settings_manager(cursor, actor_id):
+            conn.rollback()
+            return jsonify({"success": False, "message": "Only managers can approve Notion updates."}), 403
+
+        applied = notion_sync_service.apply_pending_update(cursor, pending_id, actor_id)
+
+        if not applied:
+            conn.rollback()
+            return jsonify({"success": False, "message": "This update was already resolved."}), 409
+
+        conn.commit()
+
+        add_audit_log(
+            actor_id=actor_id,
+            action="Applied Notion update",
+            module="Notion Sync",
+            description=f"Applied pending Notion update #{pending_id}."
+        )
+
+        return jsonify({"success": True, "message": "Article updated to the latest Notion version."}), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("APPLY NOTION PENDING UPDATE ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to apply this update."}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/notion-sync/pending-updates/<int:pending_id>/dismiss", methods=["POST"])
+def dismiss_notion_pending_update(pending_id):
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
+
+    data = request.get_json(silent=True) or {}
+    actor_id = data.get("user_id")
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = notion_sync_service.get_db_connection()
+        conn.start_transaction()
+        cursor = conn.cursor(dictionary=True)
+
+        notion_sync_service.ensure_notion_sync_tables(cursor)
+
+        if not is_ai_settings_manager(cursor, actor_id):
+            conn.rollback()
+            return jsonify({"success": False, "message": "Only managers can dismiss Notion updates."}), 403
+
+        dismissed = notion_sync_service.dismiss_pending_update(cursor, pending_id, actor_id)
+
+        if not dismissed:
+            conn.rollback()
+            return jsonify({"success": False, "message": "This update was already resolved."}), 409
+
+        conn.commit()
+
+        add_audit_log(
+            actor_id=actor_id,
+            action="Dismissed Notion update",
+            module="Notion Sync",
+            description=f"Kept current version over pending Notion update #{pending_id}."
+        )
+
+        return jsonify({"success": True, "message": "Kept the current version."}), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("DISMISS NOTION PENDING UPDATE ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to dismiss this update."}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 
 @app.route("/api/notion-sync/jobs", methods=["GET"])
@@ -5969,6 +6224,61 @@ def get_notion_sync_jobs():
             cursor.close()
         if conn:
             conn.close()
+
+
+def _notion_auto_sync_loop():
+    """
+    Background loop so new/edited Notion pages land in the Knowledge Base
+    on their own, without a manager having to open Notion Sync and click
+    "Check for Updates" every time. Runs in a single daemon thread inside
+    the one gunicorn worker this service is deployed with (see
+    backend/src/Procfile, --workers 1), so it never runs more than once
+    concurrently. Safe to leave running with nothing connected -- it just
+    checks the active token each cycle and no-ops when there isn't one.
+    """
+    interval_seconds = max(60, int(os.getenv("NOTION_AUTO_SYNC_INTERVAL_SECONDS", "300")))
+    time.sleep(30)
+
+    while True:
+        try:
+            conn = notion_sync_service.get_db_connection()
+            cursor = conn.cursor(dictionary=True)
+            notion_sync_service.ensure_notion_sync_tables(cursor)
+            token = notion_sync_service.get_active_notion_access_token(cursor)
+            cursor.close()
+            conn.close()
+
+            if token:
+                result = notion_sync_service.check_for_notion_updates(token, None, UPLOAD_FOLDER)
+
+                if result.get("flaggedItems"):
+                    notify_conn = notion_sync_service.get_db_connection()
+                    notify_cursor = notify_conn.cursor(dictionary=True)
+                    for item in result["flaggedItems"]:
+                        _notify_managers_of_notion_update(
+                            notify_cursor, item["title"], item["article_id"], None
+                        )
+                    notify_conn.commit()
+                    notify_cursor.close()
+                    notify_conn.close()
+
+                if result.get("new") or result.get("flagged"):
+                    add_audit_log(
+                        actor_id=None,
+                        actor_name="System",
+                        action="Auto-checked Notion for updates",
+                        module="Notion Sync",
+                        description=f"New {result['new']}, flagged {result['flagged']}, unchanged {result['unchanged']}, failed {result['failed']}."
+                    )
+        except Exception as error:
+            print("NOTION AUTO SYNC LOOP ERROR:", error)
+
+        time.sleep(interval_seconds)
+
+
+if NOTION_SYNC_SERVICE_AVAILABLE and os.getenv("NOTION_AUTO_SYNC_ENABLED", "true").strip().lower() == "true":
+    import threading
+    threading.Thread(target=_notion_auto_sync_loop, daemon=True).start()
 
 
 # =========================

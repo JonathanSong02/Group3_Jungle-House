@@ -1,13 +1,26 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import PageHeader from '../../components/PageHeader';
 import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 import './styles/NotionSync.css';
 
-// Keep the teammate placeholder behaviour until the Railway Notion OAuth
-// environment variables are ready. Change to true later to use the real
-// backend OAuth start route without redesigning this page again.
-const USE_REAL_NOTION_OAUTH = false;
+// Notion's redirect_uri has to be the backend's own real, stable public
+// URL (what's registered in the Notion integration settings) -- NOT the
+// "/api" same-origin Vercel proxy path everything else in this app uses --
+// so the OAuth popup ends up on the Railway domain directly, same as the
+// other places in this app that need the raw backend origin (see
+// ArticleDetail.jsx/Chat.jsx's VITE_STATIC_BASE_URL/VITE_BACKEND_PUBLIC_URL
+// fallback chain, reused here for the postMessage origin check below).
+const NOTION_OAUTH_BACKEND_URL = String(
+  import.meta.env.VITE_STATIC_BASE_URL ||
+  import.meta.env.VITE_BACKEND_PUBLIC_URL ||
+  (typeof window !== 'undefined' &&
+    ['localhost', '127.0.0.1'].includes(window.location.hostname)
+    ? 'http://127.0.0.1:5000'
+    : 'https://group3jungle-house-production.up.railway.app')
+).replace(/\/+$/, '');
+
+const NOTION_OAUTH_ORIGIN = new URL(NOTION_OAUTH_BACKEND_URL).origin;
 
 export default function NotionSync() {
   const { user } = useAuth();
@@ -34,6 +47,9 @@ export default function NotionSync() {
   const [pending, setPending] = useState([]);
   const [expandedPendingId, setExpandedPendingId] = useState(null);
   const [resolvingId, setResolvingId] = useState(null);
+
+  const oauthPopupRef = useRef(null);
+  const oauthPopupPollRef = useRef(null);
 
   const fetchConfig = async () => {
     try {
@@ -90,6 +106,28 @@ export default function NotionSync() {
     }
   };
 
+  const stopWatchingOauthPopup = () => {
+    if (oauthPopupPollRef.current) {
+      clearInterval(oauthPopupPollRef.current);
+      oauthPopupPollRef.current = null;
+    }
+    oauthPopupRef.current = null;
+  };
+
+  const finishConnectAttempt = (statusMessage, { connected } = {}) => {
+    stopWatchingOauthPopup();
+    setConnecting(false);
+    if (statusMessage) setMessage(statusMessage);
+
+    fetchConfig();
+    if (connected) {
+      handleCheckForUpdates({ silent: true });
+    } else {
+      fetchJobs();
+      fetchPending();
+    }
+  };
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const connected = params.get('connected');
@@ -104,16 +142,51 @@ export default function NotionSync() {
     fetchPending();
 
     if (connected) {
+      setMessage('Notion connected successfully.');
       handleCheckForUpdates({ silent: true });
+    } else if (error) {
+      setMessage(`Notion connection failed: ${error.replace(/_/g, ' ')}`);
     }
+
+    // Primary path: the OAuth callback runs in a popup window (opened by
+    // handleConnect below) and posts the result back here via
+    // window.postMessage instead of navigating this tab away, so the admin
+    // never loses their place on this page. The ?connected=1/?error=...
+    // query params handled above are only the fallback for when the popup
+    // was blocked and the callback had to redirect this tab directly.
+    const handleOauthMessage = (event) => {
+      if (event.origin !== NOTION_OAUTH_ORIGIN) return;
+      if (!event.data || event.data.source !== 'jungle-house-notion-oauth') return;
+
+      if (event.data.status === 'connected') {
+        finishConnectAttempt('Notion connected successfully.', { connected: true });
+      } else {
+        const detail = event.data.detail || 'connection_failed';
+        finishConnectAttempt(`Notion connection failed: ${detail.replace(/_/g, ' ')}`);
+      }
+    };
+
+    window.addEventListener('message', handleOauthMessage);
+    return () => {
+      window.removeEventListener('message', handleOauthMessage);
+      stopWatchingOauthPopup();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleConnectReal = async () => {
-    try {
-      setConnecting(true);
-      setMessage('');
+  const handleConnect = async () => {
+    setConnecting(true);
+    setMessage('');
 
+    // Open the popup synchronously (before the await below) so browsers
+    // don't treat it as an unrequested popup and block it.
+    const popup = window.open(
+      '',
+      'jungle-house-notion-oauth',
+      'width=600,height=720,menubar=no,toolbar=no,status=no'
+    );
+
+    try {
       const response = await api.post('/notion-sync/oauth/start', {
         user_id: actorId,
       });
@@ -124,24 +197,30 @@ export default function NotionSync() {
         throw new Error('No authorization URL returned.');
       }
 
-      window.location.href = authorizeUrl;
+      if (popup && !popup.closed) {
+        oauthPopupRef.current = popup;
+        popup.location.href = authorizeUrl;
+
+        // If the admin closes the popup themselves without finishing
+        // login, don't leave the button stuck on "Opening Notion...".
+        oauthPopupPollRef.current = setInterval(() => {
+          if (oauthPopupRef.current && oauthPopupRef.current.closed) {
+            finishConnectAttempt(null);
+          }
+        }, 500);
+      } else {
+        // Popup blocked -- fall back to redirecting this tab, same as the
+        // callback's own fallback when it finds no opener.
+        window.location.href = authorizeUrl;
+      }
     } catch (error) {
+      if (popup && !popup.closed) popup.close();
       console.error('Start Notion OAuth error:', error);
       setMessage(
         error.response?.data?.message || 'Failed to start connecting to Notion.'
       );
       setConnecting(false);
     }
-  };
-
-  const handleConnect = async () => {
-    if (!USE_REAL_NOTION_OAUTH) {
-      setConnecting(true);
-      window.location.href = 'https://app.notion.com/login';
-      return;
-    }
-
-    await handleConnectReal();
   };
 
   const handleDisconnect = async () => {
