@@ -364,6 +364,25 @@ def save_article_attachments(files):
         file_path = UPLOAD_FOLDER / unique_filename
         file.save(str(file_path))
 
+        # Temporary diagnostic logging: two rounds of guessing at the
+        # pasted-image corruption bug (Content-Type header, Vercel proxy)
+        # both turned out wrong. This prints the real, actual bytes Railway
+        # received, so the next fix is based on evidence instead of a
+        # third guess. Safe to remove once that bug is confirmed fixed.
+        try:
+            saved_size = file_path.stat().st_size
+            with open(file_path, "rb") as saved_file:
+                first_bytes = saved_file.read(16)
+            print(
+                "ARTICLE UPLOAD DEBUG:",
+                "filename=", filename,
+                "content_type=", file.content_type,
+                "saved_size_bytes=", saved_size,
+                "first_16_bytes_hex=", first_bytes.hex(),
+            )
+        except Exception as debug_error:
+            print("ARTICLE UPLOAD DEBUG ERROR:", debug_error)
+
         saved_files.append({
             "url": f"/static/uploads/articles/{unique_filename}",
             "type": file.content_type,
