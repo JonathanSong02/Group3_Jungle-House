@@ -198,7 +198,9 @@ export default function AddArticle() {
       // (as this used to) silently corrupts every uploaded file, because
       // the server can no longer tell where one field/file ends and the
       // next begins.
-      const response = await api.post('/articles/upload-image', uploadData);
+      // Hits Railway directly, not through the Vercel /api rewrite proxy --
+      // same reasoning as the article submit below.
+      const response = await api.post(`${API_BASE_URL}/api/articles/upload-image`, uploadData);
 
       const fileUrl = response.data?.files?.[0];
 
@@ -254,7 +256,9 @@ export default function AddArticle() {
       // (as this used to) silently corrupts every uploaded file, because
       // the server can no longer tell where one field/file ends and the
       // next begins.
-      const response = await api.post('/articles/upload-image', uploadData);
+      // Hits Railway directly, not through the Vercel /api rewrite proxy --
+      // same reasoning as the article submit below.
+      const response = await api.post(`${API_BASE_URL}/api/articles/upload-image`, uploadData);
 
       const fileUrl = response.data?.files?.[0];
 
@@ -295,7 +299,12 @@ export default function AddArticle() {
       });
 
       // No manual Content-Type here either -- same reasoning as above.
-      await api.post('/articles', formData);
+      // Also hits Railway directly instead of going through the Vercel
+      // /api rewrite proxy: that proxy appears to corrupt binary multipart
+      // uploads (confirmed by the toolbar's own image button, which has
+      // always called Railway directly and worked, while requests through
+      // the proxy produced undecodable image bytes).
+      await api.post(`${API_BASE_URL}/api/articles`, formData);
 
       navigate('/admin/content');
     } catch (error) {
