@@ -7120,8 +7120,16 @@ def upload_article_editor_image():
             "msg": "No valid image file was uploaded."
         }), 400
 
-    base_url = get_public_request_base_url()
-    file_urls = [f"{base_url}{item['url']}" for item in saved_files]
+    # Deliberately a relative path, NOT an absolute Railway URL. The global
+    # auth guard (require_authenticated_api) now protects /static/ too, and
+    # the session cookie is SameSite=Lax -- it's only sent for same-origin
+    # requests. A relative "/static/..." src resolves against the page's
+    # own Vercel origin, which the Vercel rewrite then forwards to Railway
+    # while still carrying the cookie. An absolute Railway URL is a
+    # different origin from the browser's point of view, so the cookie
+    # never gets attached and the image request comes back 401 instead of
+    # the actual file -- which is exactly what was happening here.
+    file_urls = [item["url"] for item in saved_files]
 
     return jsonify({
         "files": file_urls,

@@ -203,7 +203,15 @@ export default function EditArticle() {
     if (fileUrl.startsWith('http://') || fileUrl.startsWith('https://')) {
       return fileUrl;
     }
-    return `${API_BASE_URL}${fileUrl.startsWith('/') ? '' : '/'}${fileUrl}`;
+    // Deliberately left relative, not prefixed with the absolute Railway
+    // API_BASE_URL. The backend now requires a logged-in session for
+    // /static/ files, and that session cookie is SameSite=Lax -- it's only
+    // sent for same-origin requests. A relative path resolves against this
+    // page's own Vercel origin, which Vercel's rewrite forwards to Railway
+    // while still carrying the cookie; an absolute Railway URL is a
+    // different origin, so the cookie never attaches and the image request
+    // comes back 401 instead of the file.
+    return fileUrl.startsWith('/') ? fileUrl : `/${fileUrl}`;
   };
 
   const escapeHtml = (value = '') =>
