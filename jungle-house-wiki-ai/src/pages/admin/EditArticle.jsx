@@ -255,9 +255,13 @@ export default function EditArticle() {
       const uploadData = new FormData();
       uploadData.append('attachments', file);
 
-      const response = await api.post('/articles/upload-image', uploadData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      // Deliberately no explicit Content-Type header -- axios/the browser
+      // must generate it themselves for FormData, since it has to include
+      // a unique multipart boundary string. Setting it manually here
+      // (as this used to) silently corrupts every uploaded file, because
+      // the server can no longer tell where one field/file ends and the
+      // next begins.
+      const response = await api.post('/articles/upload-image', uploadData);
 
       const fileUrl = response.data?.files?.[0];
 
@@ -321,9 +325,13 @@ export default function EditArticle() {
       const uploadData = new FormData();
       uploadData.append('attachments', file, file.name || `pasted-image-${Date.now()}.png`);
 
-      const response = await api.post('/articles/upload-image', uploadData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      // Deliberately no explicit Content-Type header -- axios/the browser
+      // must generate it themselves for FormData, since it has to include
+      // a unique multipart boundary string. Setting it manually here
+      // (as this used to) silently corrupts every uploaded file, because
+      // the server can no longer tell where one field/file ends and the
+      // next begins.
+      const response = await api.post('/articles/upload-image', uploadData);
 
       const fileUrl = response.data?.files?.[0];
 
@@ -381,11 +389,8 @@ export default function EditArticle() {
         formData.append('attachments', file);
       });
 
-      await api.put(`/articles/${id}`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
+      // No manual Content-Type here either -- same reasoning as above.
+      await api.put(`/articles/${id}`, formData);
 
       navigate('/admin/content');
     } catch (error) {
