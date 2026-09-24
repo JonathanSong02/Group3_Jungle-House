@@ -7206,6 +7206,19 @@ def chat():
                 should_escalate = False
                 clear_ai_fail_count(data, question)
 
+                # The draft `result` this branch started from was the
+                # "below 100%, don't guess" placeholder (score/confidence
+                # 0.0) -- now that the AI provider produced a real,
+                # KB-grounded answer, reflect that in the displayed
+                # confidence instead of leaving it stuck at 0%/low.
+                if ai_answer.get("off_topic"):
+                    confidence_value = 0.0
+                else:
+                    confidence_value = 1.0 if ai_answer.get("article_id") else 0.85
+                result["score"] = confidence_value
+                result["confidence"] = confidence_value
+                result["confidence_label"] = get_confidence_label(confidence_value)
+
                 if ai_answer.get("article_id"):
                     result["article_id"] = ai_answer["article_id"]
                     result.setdefault("context", {})
