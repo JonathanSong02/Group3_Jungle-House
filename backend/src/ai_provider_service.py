@@ -1,6 +1,7 @@
 import os
 import base64
 import hashlib
+import time
 
 import mysql.connector
 import requests
@@ -282,7 +283,30 @@ def _call_anthropic(prompt, model_name, api_key, timeout):
     return data["content"][0]["text"]
 
 
+TRANSIENT_HTTP_STATUS = {429, 500, 502, 503, 504}
+
+
 def call_ai_provider(prompt, provider, model_name, api_key, timeout=90):
+    # Providers (especially preview models) briefly return 503/429 under
+    # load. These fail fast, so retry a couple of times instead of dropping
+    # the staff member's question. Timeouts are NOT retried, so a slow
+    # provider can never multiply the wait.
+    max_retries = 2
+
+    for attempt in range(max_retries + 1):
+        try:
+            return _call_ai_provider_once(prompt, provider, model_name, api_key, timeout)
+        except requests.HTTPError as error:
+            status = getattr(error.response, "status_code", None)
+
+            if status not in TRANSIENT_HTTP_STATUS or attempt >= max_retries:
+                raise
+
+            print(f"AI PROVIDER transient error {status}, retrying ({attempt + 1}/{max_retries})")
+            time.sleep(1.5 * (attempt + 1))
+
+
+def _call_ai_provider_once(prompt, provider, model_name, api_key, timeout=90):
     provider = str(provider or "").strip().lower()
 
     if provider == "gemini":
