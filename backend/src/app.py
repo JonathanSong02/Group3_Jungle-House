@@ -6487,11 +6487,24 @@ def build_ai_chat_context(question, limit=5, max_chars=6000, search_question=Non
 
     scored_articles = []
 
+    # A direct question ("where should I keep the iPad when closing?") has
+    # filler words that dilute the ratio-based score, so rank by how many
+    # meaningful question words the article contains (title/category words
+    # count triple). Fully-confident strict matches still sort first.
+    filler_words = {"should", "we", "our", "us", "they", "them", "during", "after", "before",
+                    "there", "here", "any", "get", "got", "let", "make", "must", "would", "could"}
+    question_tokens = tokenize_for_knowledge_match(scoring_question) - filler_words
+
     for article in articles:
         score = calculate_article_match_score(scoring_question, article)
 
-        if score > 0:
-            scored_articles.append((score, article))
+        meta_text = f"{article.get('title') or ''} {article.get('category') or ''} {article.get('sub_category') or ''}"
+        meta_hits = len(question_tokens & tokenize_for_knowledge_match(meta_text))
+        content_hits = len(question_tokens & tokenize_for_knowledge_match(clean_question(article.get("content") or "")))
+        overlap_rank = 3 * meta_hits + content_hits
+
+        if score > 0 or overlap_rank > 0:
+            scored_articles.append(((1 if score >= 1.0 else 0, overlap_rank, score), article))
 
     scored_articles.sort(key=lambda item: item[0], reverse=True)
     top_articles = [article for _, article in scored_articles[:limit]]
@@ -7173,6 +7186,32 @@ def chat():
         elif result.get("confidence", result.get("score", 0)) < LOW_CONFIDENCE_THRESHOLD:
             should_escalate = True
 
+        # Direct (non-trigger) questions: a full natural-language question
+        # such as "where should I keep the iPad when closing?" never
+        # contains an exact topic/title keyword, so the rule-based matcher
+        # only answers it with a "please pick a topic" clarification prompt.
+        # For those, also give the grounded AI provider a chance first. Short
+        # keyword queries ("kiosk", "daily") and "show step N" follow-ups are
+        # excluded so their existing option/step flows are untouched.
+        direct_question_clarification_sources = {
+            "clarification_round_1",
+            "unclear_question_clarification",
+            "system_problem_clarification",
+            "broad_topic_clarification",
+            "category_choice",
+            "ambiguous_title_choice",
+        }
+        is_direct_natural_question = (
+            (len(question.split()) >= 4 or bool(CJK_CHAR_RE.search(question)))
+            and not is_broad_topic_question(question)
+        )
+        try_ai_instead_of_clarifying = (
+            not should_escalate
+            and source in direct_question_clarification_sources
+            and is_direct_natural_question
+            and float(result.get("confidence", result.get("score", 0)) or 0.0) < LOW_CONFIDENCE_THRESHOLD
+        )
+
         # Before actually escalating, give a real AI provider (if the
         # manager has configured one) one chance to answer, grounded only
         # in the real Knowledge Base content. Any failure here (not
@@ -7180,7 +7219,7 @@ def chat():
         # through to the normal escalation flow below -- this can only
         # ever prevent an escalation, never cause one that wasn't already
         # about to happen.
-        if should_escalate and AI_PROVIDER_SERVICE_AVAILABLE:
+        if (should_escalate or try_ai_instead_of_clarifying) and AI_PROVIDER_SERVICE_AVAILABLE:
             try:
                 ai_answer = answer_question_with_ai_provider(
                     question,
@@ -7205,6 +7244,11 @@ def chat():
                 result["escalation_required"] = False
                 should_escalate = False
                 clear_ai_fail_count(data, question)
+
+                if try_ai_instead_of_clarifying:
+                    result["type"] = "text"
+                    result["options"] = []
+                    result["steps"] = []
 
                 # The draft `result` this branch started from was the
                 # "below 100%, don't guess" placeholder (score/confidence
