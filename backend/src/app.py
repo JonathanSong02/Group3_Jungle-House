@@ -6765,6 +6765,12 @@ Knowledge Base context:
         return None
 
     if not parsed.get("answered"):
+        print(
+            "AI ANSWER NOT GROUNDED:",
+            f"question={question!r}",
+            f"off_topic={bool(parsed.get('off_topic'))}",
+            f"context_titles={[c['title'] for c in candidate_articles]}",
+        )
         decline_message = str(parsed.get("declineMessage") or "").strip()
 
         if parsed.get("off_topic") and decline_message:
@@ -7292,6 +7298,12 @@ def chat():
             and float(result.get("confidence", result.get("score", 0)) or 0.0) < 1.0
         ):
             step_result, candidate_titles = build_step_answer_from_last_topic(question, last_answer)
+            print(
+                "STEP FOLLOW-UP:",
+                f"resolved={bool(step_result)}",
+                f"candidate_titles={candidate_titles}",
+                f"previous_question={(last_answer or {}).get('question')!r}",
+            )
 
             if step_result:
                 clear_ai_fail_count(data, question)
