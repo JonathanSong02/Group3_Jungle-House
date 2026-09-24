@@ -6493,14 +6493,24 @@ def build_ai_chat_context(question, limit=5, max_chars=6000, search_question=Non
     # count triple). Fully-confident strict matches still sort first.
     filler_words = {"should", "we", "our", "us", "they", "them", "during", "after", "before",
                     "there", "here", "any", "get", "got", "let", "make", "must", "would", "could"}
-    question_tokens = tokenize_for_knowledge_match(scoring_question) - filler_words
+    def light_stem(tokens):
+        stemmed = set()
+        for token in tokens:
+            for suffix in ("ing", "ed", "es", "s"):
+                if token.endswith(suffix) and len(token) - len(suffix) >= 3:
+                    token = token[: -len(suffix)]
+                    break
+            stemmed.add(token)
+        return stemmed
+
+    question_tokens = light_stem(tokenize_for_knowledge_match(scoring_question) - filler_words)
 
     for article in articles:
         score = calculate_article_match_score(scoring_question, article)
 
         meta_text = f"{article.get('title') or ''} {article.get('category') or ''} {article.get('sub_category') or ''}"
-        meta_hits = len(question_tokens & tokenize_for_knowledge_match(meta_text))
-        content_hits = len(question_tokens & tokenize_for_knowledge_match(clean_question(article.get("content") or "")))
+        meta_hits = len(question_tokens & light_stem(tokenize_for_knowledge_match(meta_text)))
+        content_hits = len(question_tokens & light_stem(tokenize_for_knowledge_match(clean_question(article.get("content") or ""))))
         overlap_rank = 3 * meta_hits + content_hits
 
         if score > 0 or overlap_rank > 0:
@@ -6635,7 +6645,20 @@ Knowledge Base context:
     json_text = re.sub(r"^```(?:json)?\s*", "", json_text)
     json_text = re.sub(r"\s*```$", "", json_text)
 
-    parsed = json.loads(json_text)
+    try:
+        parsed = json.loads(json_text)
+    except ValueError:
+        # Some models wrap the JSON in extra prose; pull out the outermost
+        # {...} block instead of giving up and escalating a fine answer.
+        json_match = re.search(r"\{.*\}", json_text, re.DOTALL)
+        if not json_match:
+            print("AI PROVIDER REPLY WAS NOT JSON:", json_text[:200])
+            return None
+        try:
+            parsed = json.loads(json_match.group(0))
+        except ValueError:
+            print("AI PROVIDER REPLY WAS NOT VALID JSON:", json_text[:200])
+            return None
 
     if not isinstance(parsed, dict):
         return None
@@ -7152,6 +7175,44 @@ def chat():
         ]
 
         source = result.get("source", "")
+
+        # "show step 4" with no topic in context: there is nothing to pull a
+        # step from, so ask which topic instead of letting the AI fallback
+        # answer from a random article (or escalating a pointless ticket).
+        is_bare_step_request = bool(re.fullmatch(
+            r"\s*(?:please\s+)?(?:show|give|tell|open)?\s*(?:me\s+)?(?:the\s+)?steps?\s*\d+(?:\s*(?:to|-)\s*\d+)?\s*[?.!]?\s*",
+            question,
+            re.IGNORECASE,
+        ))
+
+        if (
+            is_bare_step_request
+            and not str(source).startswith(("context_", "matched_title_"))
+            and float(result.get("confidence", result.get("score", 0)) or 0.0) < 1.0
+        ):
+            missing_topic_message = (
+                "Which topic do you mean? Please type the topic first "
+                "(for example \"kiosk opening\"), choose it from the options, "
+                "then ask for the step."
+            )
+            result = standardize_ai_response({
+                "question": question,
+                "type": "text",
+                "reply": missing_topic_message,
+                "answer": missing_topic_message,
+                "score": 0.0,
+                "confidence": 0.0,
+                "confidence_label": "low",
+                "source": "step_request_missing_topic",
+                "fallback": False,
+                "escalation_ready": False,
+                "escalation_required": False,
+            })
+            clear_ai_fail_count(data, question)
+            result["final_source"] = "step_request_missing_topic"
+            result["served_by"] = "ai"
+
+            return jsonify(result), 200
 
         fail_count = update_ai_fail_count(data, question, result)
 
