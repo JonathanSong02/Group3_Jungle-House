@@ -2469,6 +2469,92 @@ def should_escalate_generic_answer(question: str, result: dict | None) -> bool:
     return False
 
 
+def build_step_answer_from_last_topic(question: str, last_answer: dict | None):
+    """
+    "show step 4" typed right after a topic lookup (e.g. "kiosk opening")
+    that the staff member did not click into. If the previous answer pointed
+    at exactly ONE fully-matched Knowledge Base article, answer the step from
+    that article. Returns None when the topic is missing/ambiguous, so the
+    caller falls back to asking which topic is meant.
+    """
+    step_match = re.search(r"steps?\s*(\d+)(?:\s*(?:to|-)\s*(\d+))?", question or "", re.IGNORECASE)
+
+    if not step_match or not last_answer:
+        return None
+
+    previous_question = clean_question(last_answer.get("question") or "")
+
+    if not previous_question or re.search(r"\bsteps?\s*\d+", previous_question, re.IGNORECASE):
+        return None
+
+    previous_result = last_answer.get("result") or {}
+    titles = []
+
+    if previous_result.get("article_id") and previous_result.get("title"):
+        titles = [str(previous_result["title"]).strip()]
+    else:
+        for option in previous_result.get("options") or []:
+            option_title = str(option.get("title") or "").strip()
+            if (
+                option_title
+                and float(option.get("confidence", 0.0) or 0.0) >= 1.0
+                and option_title not in titles
+            ):
+                titles.append(option_title)
+
+    if len(titles) != 1:
+        return None
+
+    articles = search_knowledge_base_articles(titles[0], limit=10) or []
+    article = next(
+        (item for item in articles if str(item.get("title") or "").strip().lower() == titles[0].lower()),
+        None,
+    )
+
+    if not article:
+        return None
+
+    start_step = int(step_match.group(1))
+    end_step = int(step_match.group(2) or start_step)
+    chosen_steps = [
+        step for step in (article.get("steps") or [])
+        if start_step <= int(step.get("step_order") or step.get("step") or 0) <= end_step
+    ]
+
+    if not chosen_steps:
+        return None
+
+    title = article.get("title")
+    label = f"Step {start_step}" if start_step == end_step else f"Steps {start_step} to {end_step}"
+    step_text = "\n".join(str(step.get("answer") or step.get("content") or "") for step in chosen_steps)
+
+    return standardize_ai_response({
+        "question": question,
+        "type": "sop",
+        "category": article.get("category"),
+        "title": title,
+        "section": article.get("section"),
+        "reply": f"Got it — this is {label} for {title}.",
+        "answer": step_text,
+        "steps": chosen_steps,
+        "notes": [],
+        "score": 1.0,
+        "confidence": 1.0,
+        "confidence_label": "high",
+        "source": "context_step_from_last_topic",
+        "article_id": article.get("article_id"),
+        "context": {
+            "title": title,
+            "category": article.get("category"),
+            "section": article.get("section"),
+            "unclear_count": 0,
+        },
+        "fallback": False,
+        "escalation_ready": False,
+        "escalation_required": False,
+    })
+
+
 def remember_last_ai_answer(data: dict | None, question: str, result: dict | None) -> None:
     if not result:
         return
@@ -7190,6 +7276,23 @@ def chat():
             and not str(source).startswith(("context_", "matched_title_"))
             and float(result.get("confidence", result.get("score", 0)) or 0.0) < 1.0
         ):
+            step_result = build_step_answer_from_last_topic(question, last_answer)
+
+            if step_result:
+                clear_ai_fail_count(data, question)
+                remember_chat_context(data, step_result)
+                log_request(
+                    question,
+                    result=step_result,
+                    user_id=data.get("user_id") or data.get("userId")
+                )
+                remember_last_ai_answer(data, question, step_result)
+
+                step_result["final_source"] = "context_step_from_last_topic"
+                step_result["served_by"] = "ai"
+
+                return jsonify(step_result), 200
+
             missing_topic_message = (
                 "Which topic do you mean? Please type the topic first "
                 "(for example \"kiosk opening\"), choose it from the options, "
