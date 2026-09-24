@@ -5792,16 +5792,147 @@ def get_notion_sync_config():
             conn.close()
 
 
+@app.route("/api/notion-sync/oauth/app-config", methods=["GET"])
+def get_notion_oauth_app_config():
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = notion_sync_service.get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        notion_sync_service.ensure_notion_sync_tables(cursor)
+        app_config = notion_sync_service.get_notion_oauth_app_public_config(cursor)
+
+        return jsonify({"success": True, "appConfig": app_config}), 200
+
+    except Exception as error:
+        print("GET NOTION OAUTH APP CONFIG ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to load Notion app settings."}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/notion-sync/oauth/app-config", methods=["POST"])
+def save_notion_oauth_app_config():
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
+
+    data = request.get_json(silent=True) or {}
+    actor_id = data.get("user_id")
+    client_id = str(data.get("clientId", "")).strip()
+    client_secret = str(data.get("clientSecret", "")).strip()
+
+    if not client_id or not client_secret:
+        return jsonify({"success": False, "message": "Both Client ID and Client Secret are required."}), 400
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = notion_sync_service.get_db_connection()
+        conn.start_transaction()
+        cursor = conn.cursor(dictionary=True)
+
+        notion_sync_service.ensure_notion_sync_tables(cursor)
+
+        if not is_ai_settings_manager(cursor, actor_id):
+            conn.rollback()
+            return jsonify({"success": False, "message": "Only managers can change the Notion app."}), 403
+
+        notion_sync_service.save_notion_oauth_app(cursor, client_id, client_secret, actor_id)
+        conn.commit()
+
+        add_audit_log(
+            actor_id=actor_id,
+            action="Updated Notion OAuth app",
+            module="Notion Sync",
+            description=f"Notion app Client ID set to {client_id}."
+        )
+
+        app_config = notion_sync_service.get_notion_oauth_app_public_config(cursor)
+
+        return jsonify({
+            "success": True,
+            "message": "Notion app credentials saved. Existing connections are unaffected -- disconnect and reconnect if you're switching to a different client's workspace.",
+            "appConfig": app_config
+        }), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("SAVE NOTION OAUTH APP CONFIG ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to save Notion app credentials."}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/notion-sync/oauth/app-config", methods=["DELETE"])
+def reset_notion_oauth_app_config():
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
+
+    data = request.get_json(silent=True) or {}
+    actor_id = data.get("user_id")
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = notion_sync_service.get_db_connection()
+        conn.start_transaction()
+        cursor = conn.cursor(dictionary=True)
+
+        notion_sync_service.ensure_notion_sync_tables(cursor)
+
+        if not is_ai_settings_manager(cursor, actor_id):
+            conn.rollback()
+            return jsonify({"success": False, "message": "Only managers can change the Notion app."}), 403
+
+        notion_sync_service.clear_notion_oauth_app(cursor)
+        conn.commit()
+
+        add_audit_log(
+            actor_id=actor_id,
+            action="Reset Notion OAuth app",
+            module="Notion Sync",
+            description="Reverted to the server's default Notion app."
+        )
+
+        app_config = notion_sync_service.get_notion_oauth_app_public_config(cursor)
+
+        return jsonify({"success": True, "message": "Reverted to the server's default Notion app.", "appConfig": app_config}), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("RESET NOTION OAUTH APP CONFIG ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to reset Notion app credentials."}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
 @app.route("/api/notion-sync/oauth/start", methods=["POST"])
 def start_notion_oauth():
     if not NOTION_SYNC_SERVICE_AVAILABLE:
         return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
-
-    if not os.getenv("NOTION_OAUTH_CLIENT_ID") or not os.getenv("NOTION_OAUTH_CLIENT_SECRET"):
-        return jsonify({
-            "success": False,
-            "message": "Notion OAuth is not configured on the server yet. Set NOTION_OAUTH_CLIENT_ID and NOTION_OAUTH_CLIENT_SECRET."
-        }), 500
 
     data = request.get_json(silent=True) or {}
     actor_id = data.get("user_id")
@@ -5820,11 +5951,20 @@ def start_notion_oauth():
             conn.rollback()
             return jsonify({"success": False, "message": "Only managers can connect Notion."}), 403
 
+        client_id, client_secret = notion_sync_service.get_notion_oauth_credentials(cursor)
+
+        if not client_id or not client_secret:
+            conn.rollback()
+            return jsonify({
+                "success": False,
+                "message": "Notion OAuth is not configured yet. Add your Notion integration's Client ID and Client Secret above first."
+            }), 500
+
         state = notion_sync_service.create_oauth_state(cursor, actor_id)
         conn.commit()
 
         redirect_uri = f"{notion_sync_service.get_public_base_url()}/api/notion-sync/oauth/callback"
-        authorize_url = notion_sync_service.build_authorize_url(redirect_uri, state)
+        authorize_url = notion_sync_service.build_authorize_url(client_id, redirect_uri, state)
 
         return jsonify({"success": True, "authorizeUrl": authorize_url}), 200
 
@@ -5901,13 +6041,19 @@ def notion_oauth_callback():
         notion_sync_service.ensure_notion_sync_tables(cursor)
 
         actor_id = notion_sync_service.consume_oauth_state(cursor, state)
+        client_id, client_secret = notion_sync_service.get_notion_oauth_credentials(cursor)
         conn.commit()
 
         if not actor_id:
             return _render_notion_oauth_result_page("error", "invalid_or_expired_state")
 
+        if not client_id or not client_secret:
+            return _render_notion_oauth_result_page("error", "oauth_app_not_configured")
+
         redirect_uri = f"{notion_sync_service.get_public_base_url()}/api/notion-sync/oauth/callback"
-        token_response = notion_sync_service.exchange_oauth_code_for_token(code, redirect_uri)
+        token_response = notion_sync_service.exchange_oauth_code_for_token(
+            client_id, client_secret, code, redirect_uri
+        )
 
         access_token = token_response.get("access_token")
         workspace_id = token_response.get("workspace_id")

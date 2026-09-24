@@ -147,6 +147,28 @@ def ensure_notion_sync_tables(cursor):
         )
     """)
 
+    # Lets a manager point this deployment at a different Notion public
+    # integration (their own Client ID/Secret) from the Notion Sync page,
+    # instead of needing Railway env var access -- e.g. when this system is
+    # handed off to a different client who wants their own Notion app on
+    # the consent screen. NOTION_OAUTH_CLIENT_ID/SECRET env vars remain the
+    # fallback default when no row here is active (see
+    # get_notion_oauth_credentials), so nothing already deployed breaks.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS notion_oauth_apps (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            client_id VARCHAR(255) NOT NULL,
+            encrypted_client_secret TEXT NOT NULL,
+            client_secret_hint VARCHAR(20) NULL,
+            is_active TINYINT(1) NOT NULL DEFAULT 1,
+            created_by INT NULL,
+            updated_by INT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_notion_oauth_apps_active (is_active)
+        )
+    """)
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS notion_pending_updates (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -259,6 +281,94 @@ def disconnect_notion(cursor):
     cursor.execute("UPDATE notion_sync_configs SET is_active = 0 WHERE is_active = 1")
 
 
+def get_active_notion_oauth_app(cursor):
+    cursor.execute("""
+        SELECT * FROM notion_oauth_apps
+        WHERE is_active = 1
+        ORDER BY id DESC
+        LIMIT 1
+    """)
+    return cursor.fetchone()
+
+
+def get_notion_oauth_app_public_config(cursor):
+    """
+    Never returns the client secret -- only whether an app is configured,
+    where it came from, and (if saved in the database) a short hint plus
+    the client ID, which isn't sensitive.
+    """
+    app_row = get_active_notion_oauth_app(cursor)
+
+    if app_row:
+        return {
+            "configured": True,
+            "source": "database",
+            "clientId": app_row.get("client_id"),
+            "clientSecretHint": app_row.get("client_secret_hint"),
+            "updatedAt": (
+                app_row["updated_at"].strftime("%d/%m/%Y %I:%M %p")
+                if app_row.get("updated_at")
+                else None
+            ),
+        }
+
+    env_client_id = os.getenv("NOTION_OAUTH_CLIENT_ID", "").strip()
+    env_client_secret = os.getenv("NOTION_OAUTH_CLIENT_SECRET", "").strip()
+
+    if env_client_id and env_client_secret:
+        return {
+            "configured": True,
+            "source": "environment",
+            "clientId": env_client_id,
+            "clientSecretHint": None,
+            "updatedAt": None,
+        }
+
+    return {"configured": False, "source": None, "clientId": None, "clientSecretHint": None, "updatedAt": None}
+
+
+def get_notion_oauth_credentials(cursor):
+    """
+    Resolves which Notion app to use for OAuth: a database override (set by
+    a manager on the Notion Sync page) always wins over the
+    NOTION_OAUTH_CLIENT_ID/SECRET env vars, which remain the fallback so
+    existing deployments keep working untouched. Returns (client_id,
+    client_secret), or (None, None) if neither is configured.
+    """
+    app_row = get_active_notion_oauth_app(cursor)
+
+    if app_row:
+        client_secret = ai_provider_service.decrypt_api_key(app_row["encrypted_client_secret"])
+        return app_row.get("client_id"), client_secret
+
+    env_client_id = os.getenv("NOTION_OAUTH_CLIENT_ID", "").strip()
+    env_client_secret = os.getenv("NOTION_OAUTH_CLIENT_SECRET", "").strip()
+
+    if env_client_id and env_client_secret:
+        return env_client_id, env_client_secret
+
+    return None, None
+
+
+def save_notion_oauth_app(cursor, client_id, client_secret, actor_id):
+    cursor.execute("UPDATE notion_oauth_apps SET is_active = 0 WHERE is_active = 1")
+
+    encrypted_secret = ai_provider_service.encrypt_api_key(client_secret)
+    secret_hint = ai_provider_service.mask_api_key(client_secret)
+
+    cursor.execute("""
+        INSERT INTO notion_oauth_apps
+        (client_id, encrypted_client_secret, client_secret_hint, is_active, created_by, updated_by)
+        VALUES (%s, %s, %s, 1, %s, %s)
+    """, (client_id, encrypted_secret, secret_hint, actor_id, actor_id))
+
+    return cursor.lastrowid
+
+
+def clear_notion_oauth_app(cursor):
+    cursor.execute("UPDATE notion_oauth_apps SET is_active = 0 WHERE is_active = 1")
+
+
 def create_oauth_state(cursor, actor_id, ttl_seconds=600):
     import secrets as secrets_module
 
@@ -297,9 +407,7 @@ def consume_oauth_state(cursor, state):
     return row.get("created_by") if isinstance(row, dict) else row[0]
 
 
-def build_authorize_url(redirect_uri, state):
-    client_id = os.getenv("NOTION_OAUTH_CLIENT_ID", "")
-
+def build_authorize_url(client_id, redirect_uri, state):
     from urllib.parse import urlencode
 
     params = {
@@ -312,10 +420,7 @@ def build_authorize_url(redirect_uri, state):
     return f"{NOTION_API_BASE}/oauth/authorize?{urlencode(params)}"
 
 
-def exchange_oauth_code_for_token(code, redirect_uri):
-    client_id = os.getenv("NOTION_OAUTH_CLIENT_ID", "")
-    client_secret = os.getenv("NOTION_OAUTH_CLIENT_SECRET", "")
-
+def exchange_oauth_code_for_token(client_id, client_secret, code, redirect_uri):
     response = requests.post(
         f"{NOTION_API_BASE}/oauth/token",
         auth=(client_id, client_secret),

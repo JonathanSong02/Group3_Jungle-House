@@ -51,6 +51,15 @@ export default function NotionSync() {
   const oauthPopupRef = useRef(null);
   const oauthPopupPollRef = useRef(null);
 
+  // Lets a manager point this deployment at a different Notion public
+  // integration (its own Client ID/Secret) -- e.g. a new client wants their
+  // own app on the Notion consent screen -- without needing Railway access.
+  const [appConfig, setAppConfig] = useState(null);
+  const [appForm, setAppForm] = useState({ clientId: '', clientSecret: '' });
+  const [savingAppConfig, setSavingAppConfig] = useState(false);
+  const [resettingAppConfig, setResettingAppConfig] = useState(false);
+  const [appConfigMessage, setAppConfigMessage] = useState('');
+
   const fetchConfig = async () => {
     try {
       setLoading(true);
@@ -61,6 +70,76 @@ export default function NotionSync() {
       setMessage('Failed to load Notion connection status.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchAppConfig = async () => {
+    try {
+      const response = await api.get('/notion-sync/oauth/app-config');
+      const nextAppConfig = response.data?.appConfig || null;
+      setAppConfig(nextAppConfig);
+      setAppForm((prev) => ({ ...prev, clientId: nextAppConfig?.clientId || '' }));
+    } catch (error) {
+      console.error('Fetch Notion app config error:', error);
+    }
+  };
+
+  const handleAppFormChange = (event) => {
+    const { name, value } = event.target;
+    setAppForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleSaveAppConfig = async (event) => {
+    event.preventDefault();
+
+    if (!appForm.clientId.trim() || !appForm.clientSecret.trim()) {
+      setAppConfigMessage('Both Client ID and Client Secret are required.');
+      return;
+    }
+
+    try {
+      setSavingAppConfig(true);
+      setAppConfigMessage('');
+
+      const response = await api.post('/notion-sync/oauth/app-config', {
+        user_id: actorId,
+        clientId: appForm.clientId.trim(),
+        clientSecret: appForm.clientSecret.trim(),
+      });
+
+      setAppConfigMessage(response.data?.message || 'Notion app credentials saved.');
+      setAppConfig(response.data?.appConfig || null);
+      // Never keep the raw secret sitting in state longer than needed.
+      setAppForm((prev) => ({ ...prev, clientSecret: '' }));
+    } catch (error) {
+      console.error('Save Notion app config error:', error);
+      setAppConfigMessage(
+        error.response?.data?.message || 'Failed to save Notion app credentials.'
+      );
+    } finally {
+      setSavingAppConfig(false);
+    }
+  };
+
+  const handleResetAppConfig = async () => {
+    try {
+      setResettingAppConfig(true);
+      setAppConfigMessage('');
+
+      const response = await api.delete('/notion-sync/oauth/app-config', {
+        data: { user_id: actorId },
+      });
+
+      setAppConfigMessage(response.data?.message || "Reverted to the server's default Notion app.");
+      setAppConfig(response.data?.appConfig || null);
+      setAppForm({ clientId: response.data?.appConfig?.clientId || '', clientSecret: '' });
+    } catch (error) {
+      console.error('Reset Notion app config error:', error);
+      setAppConfigMessage(
+        error.response?.data?.message || 'Failed to reset Notion app credentials.'
+      );
+    } finally {
+      setResettingAppConfig(false);
     }
   };
 
@@ -140,6 +219,7 @@ export default function NotionSync() {
     fetchConfig();
     fetchJobs();
     fetchPending();
+    fetchAppConfig();
 
     if (connected) {
       setMessage('Notion connected successfully.');
@@ -309,6 +389,97 @@ export default function NotionSync() {
         </div>
       </section>
 
+      <section className="ns-card ns-app-card">
+        <div className="ns-section-head">
+          <div>
+            <span className="ns-kicker">Integration</span>
+            <h2>Notion App</h2>
+          </div>
+
+          <span className={`ns-status-pill ${appConfig?.configured ? 'connected' : 'idle'}`}>
+            <i />
+            {!appConfig?.configured
+              ? 'Not configured'
+              : appConfig.source === 'database'
+              ? 'Custom app'
+              : 'Server default'}
+          </span>
+        </div>
+
+        <p className="ns-section-copy">
+          Point this Knowledge Base at a specific Notion integration -- use this
+          if a different client wants their own app (their own name/logo on
+          the Notion sign-in screen) instead of the shared default. Switching
+          which Notion <em>workspace</em> is connected does not need this --
+          just Disconnect and Connect Notion again below.
+        </p>
+
+        {appConfigMessage ? <div className="ns-feedback">{appConfigMessage}</div> : null}
+
+        {appConfig?.configured ? (
+          <div className="ns-source-info">
+            <div>
+              <span>Client ID</span>
+              <strong>{appConfig.clientId || '-'}</strong>
+            </div>
+            <div>
+              <span>Client Secret</span>
+              <strong>
+                {appConfig.source === 'database'
+                  ? appConfig.clientSecretHint || '-'
+                  : 'Set on server'}
+              </strong>
+            </div>
+            <div>
+              <span>Source</span>
+              <strong>{appConfig.source === 'database' ? 'Saved here' : 'Server default'}</strong>
+            </div>
+          </div>
+        ) : null}
+
+        <form className="ns-form" onSubmit={handleSaveAppConfig}>
+          <label className="ns-field">
+            <span>Client ID</span>
+            <input
+              type="text"
+              name="clientId"
+              value={appForm.clientId}
+              onChange={handleAppFormChange}
+              placeholder="Paste the integration's Client ID"
+              autoComplete="off"
+            />
+          </label>
+
+          <label className="ns-field">
+            <span>Client Secret</span>
+            <input
+              type="password"
+              name="clientSecret"
+              value={appForm.clientSecret}
+              onChange={handleAppFormChange}
+              placeholder="Paste the integration's Client Secret"
+              autoComplete="off"
+            />
+          </label>
+
+          <div className="ns-actions">
+            {appConfig?.source === 'database' ? (
+              <button
+                type="button"
+                className="ns-btn secondary"
+                onClick={handleResetAppConfig}
+                disabled={resettingAppConfig || savingAppConfig}
+              >
+                {resettingAppConfig ? 'Resetting...' : 'Reset to server default'}
+              </button>
+            ) : null}
+            <button type="submit" className="ns-btn primary" disabled={savingAppConfig}>
+              {savingAppConfig ? 'Saving...' : 'Save Notion App'}
+            </button>
+          </div>
+        </form>
+      </section>
+
       <div className="ns-layout">
         <section className="ns-card ns-source-card">
           <div className="ns-section-head">
@@ -370,10 +541,16 @@ export default function NotionSync() {
                 type="button"
                 className="ns-btn primary"
                 onClick={handleConnect}
-                disabled={connecting}
+                disabled={connecting || !appConfig?.configured}
               >
                 {connecting ? 'Opening Notion...' : 'Connect Notion'}
               </button>
+
+              {!appConfig?.configured ? (
+                <p className="ns-section-copy">
+                  Add a Notion app's Client ID and Client Secret above first.
+                </p>
+              ) : null}
             </div>
           )}
         </section>
