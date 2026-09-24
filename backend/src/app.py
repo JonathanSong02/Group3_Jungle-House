@@ -2480,12 +2480,12 @@ def build_step_answer_from_last_topic(question: str, last_answer: dict | None):
     step_match = re.search(r"steps?\s*(\d+)(?:\s*(?:to|-)\s*(\d+))?", question or "", re.IGNORECASE)
 
     if not step_match or not last_answer:
-        return None
+        return None, []
 
     previous_question = clean_question(last_answer.get("question") or "")
 
     if not previous_question or re.search(r"\bsteps?\s*\d+", previous_question, re.IGNORECASE):
-        return None
+        return None, []
 
     previous_result = last_answer.get("result") or {}
     titles = []
@@ -2502,8 +2502,21 @@ def build_step_answer_from_last_topic(question: str, last_answer: dict | None):
             ):
                 titles.append(option_title)
 
+    # Several topics can match a short query ("kiosk opening" also matches
+    # notes/checklists). Prefer the topic whose title contains every word the
+    # staff member typed; if that still isn't a single topic, let the caller
+    # ask which one they mean.
+    if len(titles) > 1:
+        previous_tokens = tokenize_for_knowledge_match(previous_question)
+        narrowed = [
+            title for title in titles
+            if previous_tokens and previous_tokens.issubset(tokenize_for_knowledge_match(title))
+        ]
+        if len(narrowed) == 1:
+            titles = narrowed
+
     if len(titles) != 1:
-        return None
+        return None, titles
 
     articles = search_knowledge_base_articles(titles[0], limit=10) or []
     article = next(
@@ -2512,7 +2525,7 @@ def build_step_answer_from_last_topic(question: str, last_answer: dict | None):
     )
 
     if not article:
-        return None
+        return None, titles
 
     start_step = int(step_match.group(1))
     end_step = int(step_match.group(2) or start_step)
@@ -2522,13 +2535,13 @@ def build_step_answer_from_last_topic(question: str, last_answer: dict | None):
     ]
 
     if not chosen_steps:
-        return None
+        return None, titles
 
     title = article.get("title")
     label = f"Step {start_step}" if start_step == end_step else f"Steps {start_step} to {end_step}"
     step_text = "\n".join(str(step.get("answer") or step.get("content") or "") for step in chosen_steps)
 
-    return standardize_ai_response({
+    step_answer = standardize_ai_response({
         "question": question,
         "type": "sop",
         "category": article.get("category"),
@@ -2553,6 +2566,8 @@ def build_step_answer_from_last_topic(question: str, last_answer: dict | None):
         "escalation_ready": False,
         "escalation_required": False,
     })
+
+    return step_answer, titles
 
 
 def remember_last_ai_answer(data: dict | None, question: str, result: dict | None) -> None:
@@ -7276,7 +7291,7 @@ def chat():
             and not str(source).startswith(("context_", "matched_title_"))
             and float(result.get("confidence", result.get("score", 0)) or 0.0) < 1.0
         ):
-            step_result = build_step_answer_from_last_topic(question, last_answer)
+            step_result, candidate_titles = build_step_answer_from_last_topic(question, last_answer)
 
             if step_result:
                 clear_ai_fail_count(data, question)
@@ -7298,6 +7313,13 @@ def chat():
                 "(for example \"kiosk opening\"), choose it from the options, "
                 "then ask for the step."
             )
+
+            if candidate_titles:
+                missing_topic_message = (
+                    "Which topic do you mean? Type the full topic name, then ask for the step:\n"
+                    + "\n".join(f"- {title}" for title in candidate_titles[:5])
+                )
+
             result = standardize_ai_response({
                 "question": question,
                 "type": "text",
