@@ -561,7 +561,7 @@ export default function NotionSync() {
             <div>
               <span className="ns-kicker">Knowledge Sync</span>
               <h2>Check for Updates</h2>
-              <p>Import new pages and flag edited pages for review.</p>
+              <p>Finds new and edited Notion pages and queues them below for review -- nothing is published automatically.</p>
             </div>
           </div>
 
@@ -611,8 +611,8 @@ export default function NotionSync() {
         </div>
 
         <p className="ns-section-copy">
-          Changed Notion pages wait here so they do not overwrite published
-          content automatically.
+          Every new or changed Notion page waits here first -- nothing reaches
+          the Knowledge Base until you approve it below.
         </p>
 
         {pending.length === 0 ? (
@@ -625,15 +625,19 @@ export default function NotionSync() {
             {pending.map((item) => {
               const isExpanded = expandedPendingId === item.id;
               const isResolving = resolvingId === item.id;
+              const isNew = item.article_id === null || item.article_id === undefined;
 
               return (
                 <article className="ns-pending-card" key={item.id}>
                   <div className="ns-pending-head">
                     <div>
                       <h3>{item.proposed_title || item.previous_title}</h3>
-                      <p>Changed in Notion: {item.notion_last_edited_time || '-'}</p>
+                      <p>
+                        {isNew ? 'Found in Notion' : 'Changed in Notion'}:{' '}
+                        {item.notion_last_edited_time || '-'}
+                      </p>
                     </div>
-                    <span className="ns-review-pill">Review</span>
+                    <span className="ns-review-pill">{isNew ? 'New' : 'Review'}</span>
                   </div>
 
                   <div className="ns-pending-actions">
@@ -642,7 +646,7 @@ export default function NotionSync() {
                       className="ns-btn secondary"
                       onClick={() => setExpandedPendingId(isExpanded ? null : item.id)}
                     >
-                      {isExpanded ? 'Hide Preview' : 'Review Changes'}
+                      {isExpanded ? 'Hide Preview' : (isNew ? 'Preview' : 'Review Changes')}
                     </button>
                     <button
                       type="button"
@@ -650,7 +654,7 @@ export default function NotionSync() {
                       disabled={isResolving}
                       onClick={() => handleResolvePending(item.id, 'dismiss')}
                     >
-                      {isResolving ? 'Working...' : 'Keep Current'}
+                      {isResolving ? 'Working...' : (isNew ? 'Discard' : 'Keep Current')}
                     </button>
                     <button
                       type="button"
@@ -658,7 +662,9 @@ export default function NotionSync() {
                       disabled={isResolving}
                       onClick={() => handleResolvePending(item.id, 'apply')}
                     >
-                      {isResolving ? 'Working...' : 'Update to Latest'}
+                      {isResolving
+                        ? 'Working...'
+                        : (isNew ? 'Add to Knowledge Base' : 'Update to Latest')}
                     </button>
                   </div>
 
@@ -666,10 +672,14 @@ export default function NotionSync() {
                     <div className="ns-compare-grid">
                       <div className="ns-version-card current">
                         <div className="ns-version-label">Current</div>
-                        <div
-                          className="article-rich-content"
-                          dangerouslySetInnerHTML={{ __html: item.previous_content || '' }}
-                        />
+                        {isNew ? (
+                          <p className="ns-section-copy">Not yet in your Knowledge Base.</p>
+                        ) : (
+                          <div
+                            className="article-rich-content"
+                            dangerouslySetInnerHTML={{ __html: item.previous_content || '' }}
+                          />
+                        )}
                       </div>
 
                       <div className="ns-version-card proposed">

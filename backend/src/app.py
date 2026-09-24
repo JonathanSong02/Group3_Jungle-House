@@ -5743,7 +5743,7 @@ def test_ai_settings():
 # one-time `state` token instead -- that state was only ever handed out to
 # an already-manager-authenticated actor by /oauth/start.
 # =========================
-def _notify_managers_of_notion_update(cursor, title, article_id, actor_id):
+def _notify_managers_of_notion_update(cursor, title, article_id, actor_id, kind="update"):
     cursor.execute("""
         SELECT u.user_id
         FROM users u
@@ -5752,12 +5752,19 @@ def _notify_managers_of_notion_update(cursor, title, article_id, actor_id):
     """)
     managers = cursor.fetchall() or []
 
+    if kind == "new":
+        title_text = "New Notion page ready for review"
+        detail_text = f'"{title}" was found in Notion. Review it in Notion Sync to add it to the Knowledge Base or discard it.'
+    else:
+        title_text = "Notion content changed"
+        detail_text = f'"{title}" was edited in Notion. Review it in Notion Sync to update or keep the current version.'
+
     for manager in managers:
         manager_id = manager["user_id"] if isinstance(manager, dict) else manager[0]
         create_notification_safe(
             user_id=manager_id,
-            title="Notion content changed",
-            detail=f'"{title}" was edited in Notion. Review it in Notion Sync to update or keep the current version.',
+            title=title_text,
+            detail=detail_text,
             notification_type="system",
             related_id=article_id,
             created_by=actor_id,
@@ -6189,7 +6196,8 @@ def check_notion_sync():
             notify_cursor = notify_conn.cursor(dictionary=True)
             for item in result["flaggedItems"]:
                 _notify_managers_of_notion_update(
-                    notify_cursor, item["title"], item["article_id"], actor_id
+                    notify_cursor, item["title"], item["article_id"], actor_id,
+                    kind=item.get("kind", "update"),
                 )
             notify_conn.commit()
         except Exception as notify_error:
@@ -6275,7 +6283,7 @@ def apply_notion_pending_update(pending_id):
             description=f"Applied pending Notion update #{pending_id}."
         )
 
-        return jsonify({"success": True, "message": "Article updated to the latest Notion version."}), 200
+        return jsonify({"success": True, "message": "Published to the Knowledge Base.", "articleId": applied}), 200
 
     except Exception as error:
         if conn:
@@ -6410,7 +6418,8 @@ def _notion_auto_sync_loop():
                     notify_cursor = notify_conn.cursor(dictionary=True)
                     for item in result["flaggedItems"]:
                         _notify_managers_of_notion_update(
-                            notify_cursor, item["title"], item["article_id"], None
+                            notify_cursor, item["title"], item["article_id"], None,
+                            kind=item.get("kind", "update"),
                         )
                     notify_conn.commit()
                     notify_cursor.close()

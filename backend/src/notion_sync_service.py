@@ -169,10 +169,14 @@ def ensure_notion_sync_tables(cursor):
         )
     """)
 
+    # article_id is NULL for a brand-new Notion page that hasn't been
+    # imported yet (nothing to link to until a manager approves it) and set
+    # for an edit to an already-imported article -- see
+    # check_for_notion_updates/apply_pending_update, which branch on this.
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS notion_pending_updates (
             id INT AUTO_INCREMENT PRIMARY KEY,
-            article_id INT NOT NULL,
+            article_id INT NULL,
             notion_page_id VARCHAR(64) NOT NULL,
             proposed_title VARCHAR(500) NULL,
             proposed_content MEDIUMTEXT NULL,
@@ -186,6 +190,19 @@ def ensure_notion_sync_tables(cursor):
             INDEX idx_notion_pending_updates_article (article_id, status)
         )
     """)
+
+    # Deployments that already created this table before article_id became
+    # nullable need an explicit migration -- CREATE TABLE IF NOT EXISTS above
+    # only applies to a fresh table.
+    pending_updates_columns = {
+        row["Field"] if isinstance(row, dict) else row[0]: row
+        for row in _describe_table(cursor, "notion_pending_updates")
+    }
+    article_id_column = pending_updates_columns.get("article_id")
+    if article_id_column:
+        is_nullable = article_id_column["Null"] if isinstance(article_id_column, dict) else article_id_column[2]
+        if str(is_nullable).upper() == "NO":
+            cursor.execute("ALTER TABLE notion_pending_updates MODIFY COLUMN article_id INT NULL")
 
 
 def _describe_table(cursor, table_name):
@@ -869,20 +886,22 @@ def check_for_notion_updates(token, actor_id, upload_folder):
     """
     Discovers everything currently shared with the connected integration
     (discover_notion_content) and, per page:
-      - not yet imported -> import directly as a new wiki_article (new
-        content doesn't need approval, only edits to already-imported
-        content do).
+      - not yet imported -> stage it as a pending "new" entry
+        (article_id NULL) for a manager to approve before it reaches the
+        Knowledge Base, unless this exact edited-time is already sitting
+        pending/resolved for this page (avoids re-flagging on every click).
       - already imported and Notion's last_edited_time changed, with no
         existing pending/dismissed notion_pending_updates row already
         covering this exact edited-time -> stage the new content as a
-        pending update instead of overwriting the live article, and report
-        it in flagged_items so the caller (the /check route) can notify the
-        admin(s).
+        pending update instead of overwriting the live article.
       - unchanged -> skip.
 
-    Returns counts plus flagged_items ([{article_id, title, pending_id}])
-    for the caller to notify about. This function intentionally does not
-    call into app.py's create_notification_safe() itself, to avoid a
+    Both cases are reported in flagged_items so the caller (the /check
+    route) can notify the admin(s). Nothing ever reaches wiki_article
+    without going through the Pending Updates review queue first -- see
+    apply_pending_update, which creates the article for a "new" entry or
+    updates the existing one for an edit. This function intentionally does
+    not call into app.py's create_notification_safe() itself, to avoid a
     circular import between this service module and app.py.
     """
     conn = None
@@ -966,11 +985,27 @@ def check_for_notion_updates(token, actor_id, upload_folder):
 
                     flagged_count += 1
                     flagged_items.append({
+                        "kind": "update",
                         "article_id": existing["article_id"],
                         "title": title,
                         "pending_id": pending_id,
                     })
                 else:
+                    # Brand-new page, never imported. Same dedupe as the
+                    # edit branch above -- don't create a second pending
+                    # entry for a page already sitting pending/resolved at
+                    # this exact edited-time.
+                    cursor.execute("""
+                        SELECT id FROM notion_pending_updates
+                        WHERE article_id IS NULL AND notion_page_id = %s AND notion_last_edited_time = %s
+                        LIMIT 1
+                    """, (page_id, edited_time_mysql))
+                    already_staged = cursor.fetchone()
+
+                    if already_staged:
+                        unchanged_count += 1
+                        continue
+
                     title = extract_notion_page_title(page)
                     blocks = fetch_notion_block_children(token, page_id)
                     content_html = notion_blocks_to_html(token, blocks, upload_folder)
@@ -979,11 +1014,20 @@ def check_for_notion_updates(token, actor_id, upload_folder):
                         content_html = "<p>(No readable content found in this Notion page.)</p>"
 
                     cursor.execute("""
-                        INSERT INTO wiki_article
-                        (title, content, category, sub_category, link, is_deleted, source_type, notion_page_id, notion_last_edited_time)
-                        VALUES (%s, %s, %s, %s, %s, FALSE, 'notion', %s, %s)
-                    """, (title, content_html, "Notion", "", "", page_id, edited_time_mysql))
+                        INSERT INTO notion_pending_updates
+                        (article_id, notion_page_id, proposed_title, proposed_content,
+                         previous_title, previous_content, notion_last_edited_time, status)
+                        VALUES (NULL, %s, %s, %s, NULL, NULL, %s, 'pending')
+                    """, (page_id, title, content_html, edited_time_mysql))
+                    pending_id = cursor.lastrowid
+
                     new_count += 1
+                    flagged_items.append({
+                        "kind": "new",
+                        "article_id": None,
+                        "title": title,
+                        "pending_id": pending_id,
+                    })
 
                 conn.commit()
             except Exception as page_error:
@@ -1025,9 +1069,12 @@ def check_for_notion_updates(token, actor_id, upload_folder):
 
 
 def list_pending_updates(cursor):
+    # Includes the full proposed/previous content -- the Notion Sync page's
+    # "Review Changes" compare view renders these directly from this list
+    # rather than fetching each item individually.
     cursor.execute("""
-        SELECT id, article_id, notion_page_id, proposed_title, previous_title,
-               notion_last_edited_time, detected_at
+        SELECT id, article_id, notion_page_id, proposed_title, proposed_content,
+               previous_title, previous_content, notion_last_edited_time, detected_at
         FROM notion_pending_updates
         WHERE status = 'pending'
         ORDER BY detected_at DESC
@@ -1043,19 +1090,38 @@ def get_pending_update(cursor, pending_id):
 
 
 def apply_pending_update(cursor, pending_id, actor_id):
+    """
+    Returns the resulting article_id on success (the existing one for an
+    edit, or the newly-created one for a "new" entry), or None if the
+    update was already resolved by someone else.
+    """
     pending = get_pending_update(cursor, pending_id)
 
     if not pending or pending.get("status") != "pending":
         return None
 
-    cursor.execute("""
-        UPDATE wiki_article
-        SET title = %s, content = %s, notion_last_edited_time = %s
-        WHERE article_id = %s
-    """, (
-        pending["proposed_title"], pending["proposed_content"],
-        pending["notion_last_edited_time"], pending["article_id"],
-    ))
+    if pending.get("article_id") is None:
+        # Brand-new page approved for the first time -- create it now,
+        # same shape as the old direct-import insert used to.
+        cursor.execute("""
+            INSERT INTO wiki_article
+            (title, content, category, sub_category, link, is_deleted, source_type, notion_page_id, notion_last_edited_time)
+            VALUES (%s, %s, %s, %s, %s, FALSE, 'notion', %s, %s)
+        """, (
+            pending["proposed_title"], pending["proposed_content"], "Notion", "", "",
+            pending["notion_page_id"], pending["notion_last_edited_time"],
+        ))
+        article_id = cursor.lastrowid
+    else:
+        article_id = pending["article_id"]
+        cursor.execute("""
+            UPDATE wiki_article
+            SET title = %s, content = %s, notion_last_edited_time = %s
+            WHERE article_id = %s
+        """, (
+            pending["proposed_title"], pending["proposed_content"],
+            pending["notion_last_edited_time"], article_id,
+        ))
 
     cursor.execute("""
         UPDATE notion_pending_updates
@@ -1063,7 +1129,10 @@ def apply_pending_update(cursor, pending_id, actor_id):
         WHERE id = %s AND status = 'pending'
     """, (actor_id, pending_id))
 
-    return cursor.rowcount > 0
+    if cursor.rowcount <= 0:
+        return None
+
+    return article_id
 
 
 def dismiss_pending_update(cursor, pending_id, actor_id):
