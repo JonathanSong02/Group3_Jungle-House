@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import PageHeader from '../../components/PageHeader';
 import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
+import './styles/UserManagement.css';
 
 const NAV_ITEMS = [
   { key: 'all', label: 'All Users' },
@@ -458,7 +459,7 @@ export default function UserManagement() {
                                 <strong>{item.full_name}</strong>
                                 <span>{item.email}</span>
                                 {item.isArchivedApplication ? (
-                                  <span style={{ fontSize: '12px', color: '#9a6700' }}>Previous application · record only</span>
+                                  <span className="um-record-note">Previous application · record only</span>
                                 ) : null}
                               </div>
                             </div>

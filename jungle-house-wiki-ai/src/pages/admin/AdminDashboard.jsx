@@ -13,10 +13,10 @@ const QUICK_ACTIONS = [
   { title: 'Notion', route: '/admin/notion-sync', icon: 'sync' },
 ];
 
-function DashboardIcon({ name }) {
+function DashboardIcon({ name, size = 22 }) {
   const commonProps = {
-    width: 22,
-    height: 22,
+    width: size,
+    height: size,
     viewBox: '0 0 24 24',
     fill: 'none',
     stroke: 'currentColor',
@@ -105,6 +105,14 @@ function DashboardIcon({ name }) {
         </svg>
       );
 
+    case 'arrow':
+      return (
+        <svg {...commonProps}>
+          <path d="M5 12h14" />
+          <path d="m14 7 5 5-5 5" />
+        </svg>
+      );
+
     default:
       return (
         <svg {...commonProps}>
@@ -135,7 +143,6 @@ export default function AdminDashboard() {
   const [notifications, setNotifications] = useState([]);
   const [activities, setActivities] = useState([]);
   const [ai, setAi] = useState({ accuracy: '0%' });
-
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -164,17 +171,11 @@ export default function AdminDashboard() {
             : []
         );
         setAi(dashboardData.ai || { accuracy: '0%' });
-
-        setUsers(
-          Array.isArray(usersResponse.data)
-            ? usersResponse.data
-            : []
-        );
+        setUsers(Array.isArray(usersResponse.data) ? usersResponse.data : []);
       } catch (requestError) {
         if (cancelled) return;
 
         console.error('Admin dashboard fetch error:', requestError);
-
         setError(
           requestError.response?.data?.message ||
             requestError.response?.data?.error ||
@@ -209,6 +210,8 @@ export default function AdminDashboard() {
 
   const confidence = parsePercent(ai.accuracy);
   const managerName = user?.name || user?.full_name || 'Manager';
+  const managerRole = String(user?.role || 'Manager').replace(/[_-]/g, ' ');
+  const attentionCount = pendingUsers + pendingEscalations;
 
   const overviewCards = [
     {
@@ -217,6 +220,7 @@ export default function AdminDashboard() {
       route: '/admin/users',
       icon: 'users',
       tone: 'blue',
+      helper: pendingUsers > 0 ? `${pendingUsers} pending` : 'All accounts',
     },
     {
       label: 'Pending',
@@ -224,6 +228,7 @@ export default function AdminDashboard() {
       route: '/admin/users',
       icon: 'review',
       tone: pendingUsers > 0 ? 'amber' : 'green',
+      helper: pendingUsers > 0 ? 'Needs review' : 'Up to date',
     },
     {
       label: 'Articles',
@@ -231,6 +236,7 @@ export default function AdminDashboard() {
       route: '/admin/content',
       icon: 'knowledge',
       tone: 'green',
+      helper: 'Knowledge base',
     },
     {
       label: 'Escalations',
@@ -238,29 +244,37 @@ export default function AdminDashboard() {
       route: '/escalation',
       icon: 'question',
       tone: pendingEscalations > 0 ? 'amber' : 'slate',
+      helper: pendingEscalations > 0 ? 'Needs action' : 'Clear',
     },
   ];
 
   return (
-    <div className="hd-admin-page hd-admin-page-compact">
-      <header className="hd-admin-page-header compact">
-        <div>
-          <span className="hd-admin-overline">Admin Dashboard</span>
+    <div className="hd-admin-page" aria-busy={loading}>
+      <header className="hd-admin-hero">
+        <div className="hd-admin-hero-copy">
+          <div className="hd-admin-hero-kicker">
+            <span className="hd-admin-live-dot" aria-hidden="true" />
+            Management workspace
+          </div>
           <h1>Welcome back, {managerName}</h1>
-          <p>System overview and quick actions.</p>
+          <p>Manage people, knowledge and system activity from one place.</p>
+
+          <div className="hd-admin-hero-meta" aria-label="Account and system status">
+            <span className="hd-admin-role-chip">{managerRole}</span>
+            <span className={`hd-admin-attention-chip ${attentionCount > 0 ? 'is-active' : ''}`}>
+              {loading ? 'Checking status…' : attentionCount > 0 ? `${attentionCount} need attention` : 'Everything looks good'}
+            </span>
+          </div>
         </div>
 
         <div className="hd-admin-header-actions">
-          <Link to="/chat" className="hd-admin-btn hd-admin-btn-ghost">
-            <DashboardIcon name="question" />
+          <Link to="/chat" className="hd-admin-btn hd-admin-btn-secondary">
+            <DashboardIcon name="question" size={19} />
             Ask AI
           </Link>
 
-          <Link
-            to="/admin/content/add"
-            className="hd-admin-btn hd-admin-btn-primary"
-          >
-            <span className="hd-admin-btn-plus">+</span>
+          <Link to="/admin/content/add" className="hd-admin-btn hd-admin-btn-primary">
+            <span className="hd-admin-btn-plus" aria-hidden="true">+</span>
             Add Article
           </Link>
         </div>
@@ -268,128 +282,125 @@ export default function AdminDashboard() {
 
       {error ? (
         <div className="hd-admin-data-notice" role="status">
-          <DashboardIcon name="bell" />
+          <DashboardIcon name="bell" size={18} />
           <span>{error}</span>
         </div>
       ) : null}
 
-      <section
-        className="hd-admin-overview-grid compact"
-        aria-label="System overview"
-      >
+      <section className="hd-admin-overview-grid" aria-label="System overview">
         {overviewCards.map((item) => (
           <Link
             key={item.label}
             to={item.route}
-            className={`hd-admin-metric compact hd-tone-${item.tone}`}
+            className={`hd-admin-metric hd-tone-${item.tone}`}
           >
-            <div className="hd-admin-metric-top">
+            <div className="hd-admin-metric-head">
               <span className="hd-admin-metric-icon">
-                <DashboardIcon name={item.icon} />
+                <DashboardIcon name={item.icon} size={20} />
               </span>
-
               <span className="hd-admin-metric-label">{item.label}</span>
             </div>
 
-            <strong className="hd-admin-metric-value">
-              {loading ? '—' : item.value}
-            </strong>
+            <div className="hd-admin-metric-body">
+              <strong>{loading ? '—' : item.value}</strong>
+              <span>{loading ? 'Loading' : item.helper}</span>
+            </div>
 
-            <span className="hd-admin-metric-link">Open →</span>
+            <span className="hd-admin-card-arrow" aria-hidden="true">
+              <DashboardIcon name="arrow" size={18} />
+            </span>
           </Link>
         ))}
       </section>
 
-      <section className="hd-admin-pulse-row">
-        <div className="hd-admin-pulse-item">
-          <span>AI Confidence</span>
-          <strong>{loading ? '—' : ai.accuracy || '0%'}</strong>
-          <div className="hd-admin-pulse-track" aria-hidden="true">
-            <span style={{ width: `${confidence}%` }} />
+      <section className="hd-admin-command-grid">
+        <article className="hd-admin-command-panel">
+          <div className="hd-admin-section-heading">
+            <div>
+              <span className="hd-admin-section-kicker">Management</span>
+              <h2>Quick actions</h2>
+            </div>
           </div>
-        </div>
 
-        <div className="hd-admin-pulse-item">
-          <span>Questions This Week</span>
-          <strong>{loading ? '—' : weeklyQuestions}</strong>
-        </div>
-
-        <div className="hd-admin-pulse-item">
-          <span>Notifications</span>
-          <strong>{loading ? '—' : unreadNotifications}</strong>
-        </div>
-      </section>
-
-      <section className="hd-admin-section-block">
-        <div className="hd-admin-section-title">
-          <div>
-            <h2>Quick Actions</h2>
-            <p>Go directly to a management area.</p>
+          <div className="hd-admin-quick-grid">
+            {QUICK_ACTIONS.map((item) => (
+              <Link key={item.title} to={item.route} className="hd-admin-quick-card">
+                <span className="hd-admin-quick-icon">
+                  <DashboardIcon name={item.icon} size={20} />
+                </span>
+                <strong>{item.title}</strong>
+                <span className="hd-admin-quick-arrow" aria-hidden="true">
+                  <DashboardIcon name="arrow" size={17} />
+                </span>
+              </Link>
+            ))}
           </div>
-        </div>
+        </article>
 
-        <div className="hd-admin-quick-grid">
-          {QUICK_ACTIONS.map((item) => (
-            <Link
-              key={item.title}
-              to={item.route}
-              className="hd-admin-quick-card"
-            >
-              <span className="hd-admin-quick-icon">
-                <DashboardIcon name={item.icon} />
-              </span>
+        <aside className="hd-admin-health-panel" aria-label="System pulse">
+          <div className="hd-admin-section-heading hd-admin-section-heading-tight">
+            <div>
+              <span className="hd-admin-section-kicker">System</span>
+              <h2>Pulse</h2>
+            </div>
+            <Link to="/admin/analytics" className="hd-admin-inline-link">Analytics</Link>
+          </div>
 
-              <strong>{item.title}</strong>
-              <span className="hd-admin-quick-arrow">→</span>
-            </Link>
-          ))}
-        </div>
+          <div className="hd-admin-health-list">
+            <div className="hd-admin-health-item hd-admin-health-item-ai">
+              <div>
+                <span>AI confidence</span>
+                <strong>{loading ? '—' : ai.accuracy || '0%'}</strong>
+              </div>
+              <div className="hd-admin-confidence-ring" style={{ '--confidence': `${confidence * 3.6}deg` }} aria-hidden="true">
+                <span>{loading ? '—' : `${Math.round(confidence)}%`}</span>
+              </div>
+            </div>
+
+            <div className="hd-admin-health-item">
+              <span>Questions this week</span>
+              <strong>{loading ? '—' : weeklyQuestions}</strong>
+            </div>
+
+            <div className="hd-admin-health-item">
+              <span>Unread notifications</span>
+              <strong>{loading ? '—' : unreadNotifications}</strong>
+            </div>
+          </div>
+        </aside>
       </section>
 
       <section className="hd-admin-info-grid">
-        <article className="hd-admin-panel compact">
-          <div className="hd-admin-panel-heading compact">
+        <article className="hd-admin-panel">
+          <div className="hd-admin-panel-heading">
             <div>
-              <h3>Recent Activity</h3>
+              <span className="hd-admin-section-kicker">Latest</span>
+              <h3>Recent activity</h3>
             </div>
-
-            <Link
-              to="/admin/security"
-              className="hd-admin-inline-link"
-            >
-              View all
-            </Link>
+            <Link to="/admin/security" className="hd-admin-inline-link">View all</Link>
           </div>
 
           {loading ? (
-            <div className="hd-admin-skeleton-list">
+            <div className="hd-admin-skeleton-list" aria-hidden="true">
               <span />
               <span />
               <span />
             </div>
           ) : activities.length === 0 ? (
-            <div className="hd-admin-empty-state compact">
+            <div className="hd-admin-empty-state">
+              <span className="hd-admin-empty-icon"><DashboardIcon name="shield" size={20} /></span>
               <strong>No recent activity</strong>
+              <p>New system activity will appear here.</p>
             </div>
           ) : (
-            <div className="hd-admin-activity-list compact">
+            <div className="hd-admin-activity-list">
               {activities.slice(0, 4).map((item, index) => (
-                <div
-                  key={`${item.action}-${index}`}
-                  className="hd-admin-activity-item compact"
-                >
-                  <span
-                    className="hd-admin-activity-marker"
-                    aria-hidden="true"
-                  />
-
+                <div key={`${item.action}-${index}`} className="hd-admin-activity-item">
+                  <span className="hd-admin-activity-marker" aria-hidden="true" />
                   <div>
                     <strong>{item.action}</strong>
-
                     {item.created_at ? (
-                      <time dateTime={item.created_at}>
-                        {formatDateTime(item.created_at)}
-                      </time>
+                      <time dateTime={item.created_at}>{formatDateTime(item.created_at)}</time>
                     ) : null}
                   </div>
                 </div>
@@ -398,39 +409,32 @@ export default function AdminDashboard() {
           )}
         </article>
 
-        <article className="hd-admin-panel compact">
-          <div className="hd-admin-panel-heading compact">
+        <article className="hd-admin-panel">
+          <div className="hd-admin-panel-heading">
             <div>
+              <span className="hd-admin-section-kicker">Inbox</span>
               <h3>Notifications</h3>
             </div>
-
-            <span className="hd-admin-panel-count hd-admin-panel-count-soft">
-              {unreadNotifications}
-            </span>
+            <span className="hd-admin-panel-count">{loading ? '—' : unreadNotifications}</span>
           </div>
 
           {loading ? (
-            <div className="hd-admin-skeleton-list">
+            <div className="hd-admin-skeleton-list" aria-hidden="true">
               <span />
               <span />
               <span />
             </div>
           ) : notifications.length === 0 ? (
-            <div className="hd-admin-empty-state compact">
-              <strong>No new notifications</strong>
+            <div className="hd-admin-empty-state">
+              <span className="hd-admin-empty-icon"><DashboardIcon name="bell" size={20} /></span>
+              <strong>You're all caught up</strong>
+              <p>New notifications will appear here.</p>
             </div>
           ) : (
-            <div className="hd-admin-notification-list compact">
-              {notifications.slice(0, 4).map((item) => (
-                <div
-                  key={item.id}
-                  className="hd-admin-notification-item compact"
-                >
-                  <span
-                    className="hd-admin-notification-dot"
-                    aria-hidden="true"
-                  />
-
+            <div className="hd-admin-notification-list">
+              {notifications.slice(0, 4).map((item, index) => (
+                <div key={item.id ?? `${item.title}-${index}`} className="hd-admin-notification-item">
+                  <span className="hd-admin-notification-dot" aria-hidden="true" />
                   <div>
                     <strong>{item.title}</strong>
                     <p>{item.detail || item.message || 'System update'}</p>
