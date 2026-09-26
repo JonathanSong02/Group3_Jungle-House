@@ -50,6 +50,7 @@ export default function UserManagement() {
 
   const [activeView, setActiveView] = useState('all');
   const [search, setSearch] = useState('');
+  const [roleFilter, setRoleFilter] = useState('all');
 
   const [message, setMessage] = useState('');
   const [emailTestMessage, setEmailTestMessage] = useState('');
@@ -72,6 +73,7 @@ export default function UserManagement() {
   const fetchUsers = useCallback(async () => {
     try {
       setLoading(true);
+      setMessage('');
       const response = await api.get('/admin/users');
       setUsers(Array.isArray(response.data) ? response.data : []);
     } catch (error) {
@@ -104,7 +106,7 @@ export default function UserManagement() {
   }, [isApproverActor]);
 
   useEffect(() => {
-    if ((activeView === 'history' || activeView === 'all') && isApproverActor) {
+    if (activeView === 'history' && isApproverActor) {
       fetchHistory();
     }
   }, [activeView, fetchHistory, isApproverActor]);
@@ -137,27 +139,6 @@ export default function UserManagement() {
     return () => window.removeEventListener('keydown', handleEscape);
   }, [approvalDialog.open, approvalDialog.userId, actionLoadingId]);
 
-  // Show one login account, plus a separate read-only row for each past
-  // application. The archived rows never participate in account actions.
-  const archivedApplications = useMemo(() => (
-    isApproverActor && !historyError
-      ? historyRecords.filter((record) => record.record_type === 'archived').map((record) => ({
-          user_id: record.user_id,
-          history_id: record.history_id,
-          full_name: record.full_name,
-          email: record.email,
-          role_name: null,
-          status: 'declined',
-          created_at: record.registered_at,
-          isArchivedApplication: true,
-        }))
-      : []
-  ), [historyRecords, historyError, isApproverActor]);
-
-  const allUserRecords = useMemo(() => (
-    [...users, ...archivedApplications]
-  ), [users, archivedApplications]);
-
   const getStage = (item) => {
     if (item.status === 'pending') return 'pending';
     if (item.status === 'active') return 'active';
@@ -166,32 +147,48 @@ export default function UserManagement() {
     return String(item.status || 'unknown').toLowerCase();
   };
 
-  const counts = useMemo(() => ({
-    all: allUserRecords.length,
-    pending: users.filter((item) => getStage(item) === 'pending').length,
-    active: users.filter((item) => getStage(item) === 'active').length,
-  }), [users, allUserRecords]);
+  const counts = useMemo(() => {
+    const currentAccounts = users.filter((item) => getStage(item) !== 'declined');
+    return {
+      all: currentAccounts.length,
+      pending: currentAccounts.filter((item) => getStage(item) === 'pending').length,
+      active: currentAccounts.filter((item) => getStage(item) === 'active').length,
+      inactive: currentAccounts.filter((item) => getStage(item) === 'inactive').length,
+    };
+  }, [users]);
 
-  const filteredUsers = useMemo(() => {
+  const matchesSearch = useCallback((item, keyword) => {
+    if (!keyword) return true;
+    return [item.full_name, item.email, item.role_name, getStage(item)]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(keyword));
+  }, []);
+
+  const pendingUsers = useMemo(() => {
+    const keyword = search.trim().toLowerCase();
+    return users.filter((item) => (
+      getStage(item) === 'pending' &&
+      matchesSearch(item, keyword)
+    ));
+  }, [users, search, matchesSearch]);
+
+  const directoryUsers = useMemo(() => {
     const keyword = search.trim().toLowerCase();
 
-    const records = activeView === 'all' ? allUserRecords : users;
-    return records.filter((item) => {
+    return users.filter((item) => {
       const stage = getStage(item);
 
-      const viewMatches =
-        activeView === 'all' ||
-        (activeView === 'pending' && stage === 'pending') ||
-        (activeView === 'active' && stage === 'active');
+      // Pending registrations are intentionally separated into the review queue.
+      // Declined applications belong in Registration History.
+      if (stage === 'pending' || stage === 'declined') return false;
+      if (activeView === 'active' && stage !== 'active') return false;
 
-      if (!viewMatches) return false;
-      if (!keyword) return true;
+      const normalizedRole = String(item.role_name || '').toLowerCase().replace(/[\s_-]/g, '');
+      if (roleFilter !== 'all' && normalizedRole !== roleFilter) return false;
 
-      return [item.full_name, item.email, item.role_name, stage]
-        .filter(Boolean)
-        .some((value) => String(value).toLowerCase().includes(keyword));
+      return matchesSearch(item, keyword);
     });
-  }, [users, allUserRecords, activeView, search]);
+  }, [users, activeView, search, roleFilter, matchesSearch]);
 
   const updateUserStatus = async (userId, currentStatus) => {
     const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
@@ -328,47 +325,61 @@ export default function UserManagement() {
     return stage;
   };
 
-  const isUserView = ['all', 'pending', 'active'].includes(activeView);
+  const isDirectoryView = activeView === 'all' || activeView === 'active';
+  const showReviewQueue = activeView === 'all' || activeView === 'pending';
+
+  const renderUserAvatar = (name, className = '') => (
+    <span className={`um2-avatar ${className}`.trim()} aria-hidden="true">
+      {getInitials(name)}
+    </span>
+  );
 
   return (
-    <div className="user-management-page professional">
-      <PageHeader title="User Management" subtitle="Staff accounts and access control." />
+    <div className="user-management-page um2-page">
+      <PageHeader title="User Management" subtitle="Review access requests and manage staff accounts." />
 
-      <section className="um-summary-grid">
+      <section className="um2-overview" aria-label="User account overview">
         <button
           type="button"
-          className={`um-summary-card ${activeView === 'pending' ? 'active' : ''}`}
-          onClick={() => setActiveView('pending')}
-        >
-          <span className="um-summary-label">Pending</span>
-          <strong>{counts.pending}</strong>
-          <span className="um-summary-meta">Needs review</span>
-        </button>
-
-        <button
-          type="button"
-          className={`um-summary-card ${activeView === 'active' ? 'active' : ''}`}
-          onClick={() => setActiveView('active')}
-        >
-          <span className="um-summary-label">Active</span>
-          <strong>{counts.active}</strong>
-          <span className="um-summary-meta">Can sign in</span>
-        </button>
-
-        <button
-          type="button"
-          className={`um-summary-card ${activeView === 'all' ? 'active' : ''}`}
+          className={`um2-stat ${activeView === 'all' ? 'selected' : ''}`}
           onClick={() => setActiveView('all')}
         >
-          <span className="um-summary-label">Total</span>
-          <strong>{counts.all}</strong>
-          <span className="um-summary-meta">Accounts + past applications</span>
+          <span className="um2-stat-icon users" aria-hidden="true">U</span>
+          <span>
+            <small>Total accounts</small>
+            <strong>{loading ? '—' : counts.all}</strong>
+          </span>
+        </button>
+
+        <button
+          type="button"
+          className={`um2-stat ${activeView === 'active' ? 'selected' : ''}`}
+          onClick={() => setActiveView('active')}
+        >
+          <span className="um2-stat-icon active" aria-hidden="true">✓</span>
+          <span>
+            <small>Active staff</small>
+            <strong>{loading ? '—' : counts.active}</strong>
+          </span>
+        </button>
+
+        <button
+          type="button"
+          className={`um2-stat attention ${activeView === 'pending' ? 'selected' : ''}`}
+          onClick={() => setActiveView('pending')}
+        >
+          <span className="um2-stat-icon pending" aria-hidden="true">!</span>
+          <span>
+            <small>Needs review</small>
+            <strong>{loading ? '—' : counts.pending}</strong>
+          </span>
+          {counts.pending > 0 ? <span className="um2-attention-dot" aria-label="Pending registrations" /> : null}
         </button>
       </section>
 
-      <section className="um-workspace">
-        <div className="um-workspace-head">
-          <nav className="um-nav" aria-label="User management sections">
+      <section className="um2-shell">
+        <div className="um2-shell-top">
+          <nav className="um2-tabs" aria-label="User management sections">
             {NAV_ITEMS.map((item) => (
               <button
                 key={item.key}
@@ -382,175 +393,242 @@ export default function UserManagement() {
               >
                 {item.label}
                 {item.key === 'pending' && counts.pending > 0 ? (
-                  <span className="um-nav-count">{counts.pending}</span>
+                  <span className="um2-tab-count">{counts.pending}</span>
                 ) : null}
               </button>
             ))}
           </nav>
 
-          {activeView === 'history' && isApproverActor ? (
-            <input
-              className="um-search"
-              type="search"
-              value={historySearch}
-              onChange={(event) => setHistorySearch(event.target.value)}
-              placeholder="Search registration history"
-              aria-label="Search registration history"
-            />
+          {(isDirectoryView || activeView === 'pending') ? (
+            <div className="um2-search-wrap">
+              <span aria-hidden="true">⌕</span>
+              <input
+                type="search"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search staff"
+                aria-label="Search users"
+              />
+            </div>
           ) : null}
 
-          {isUserView ? (
-            <input
-              className="um-search"
-              type="search"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search name or email"
-              aria-label="Search users"
-            />
+          {activeView === 'history' && isApproverActor ? (
+            <div className="um2-search-wrap">
+              <span aria-hidden="true">⌕</span>
+              <input
+                type="search"
+                value={historySearch}
+                onChange={(event) => setHistorySearch(event.target.value)}
+                placeholder="Search history"
+                aria-label="Search registration history"
+              />
+            </div>
           ) : null}
         </div>
 
-        {message && isUserView ? (
-          <div className="um-feedback">{message}</div>
+        {message && (isDirectoryView || activeView === 'pending') ? (
+          <div className="um2-feedback" role="status">{message}</div>
         ) : null}
-        {activeView === 'all' && historyError ? (
-          <div className="um-feedback" role="alert">
-            Current users are shown, but past applications could not be loaded. {historyError}
+
+        {(isDirectoryView || activeView === 'pending') && loading ? (
+          <div className="um2-loading-grid" aria-label="Loading users">
+            <span /><span /><span />
           </div>
         ) : null}
 
-        {isUserView ? (
-          <>
-            {loading ? (
-              <div className="um-empty-state">Loading users...</div>
-            ) : filteredUsers.length === 0 ? (
-              <div className="um-empty-state">
-                <strong>No users found</strong>
-                <span>Try another filter or search.</span>
+        {!loading && showReviewQueue ? (
+          <section className="um2-section um2-review-section">
+            <div className="um2-section-heading">
+              <div>
+                <div className="um2-heading-line">
+                  <h2>Needs Review</h2>
+                  <span className={`um2-count-pill ${counts.pending > 0 ? 'has-items' : ''}`}>
+                    {counts.pending}
+                  </span>
+                </div>
+                <p>New account requests waiting for approval.</p>
+              </div>
+
+              {activeView === 'all' && counts.pending > 0 ? (
+                <button
+                  type="button"
+                  className="um2-text-action"
+                  onClick={() => setActiveView('pending')}
+                >
+                  Review all
+                  <span aria-hidden="true">→</span>
+                </button>
+              ) : null}
+            </div>
+
+            {pendingUsers.length === 0 ? (
+              <div className="um2-clear-state">
+                <span className="um2-clear-icon" aria-hidden="true">✓</span>
+                <div>
+                  <strong>No registrations waiting</strong>
+                  <p>{search ? 'No pending account matches your search.' : 'You are all caught up.'}</p>
+                </div>
               </div>
             ) : (
-              <div className="um-table-wrap">
-                <table className="um-table">
+              <div className="um2-review-grid">
+                {pendingUsers.map((item) => {
+                  const isBusy = actionLoadingId === item.user_id;
+
+                  return (
+                    <article className="um2-review-card" key={`pending-${item.user_id}`}>
+                      <div className="um2-review-person">
+                        {renderUserAvatar(item.full_name, 'pending')}
+                        <div>
+                          <strong>{item.full_name || 'Unnamed user'}</strong>
+                          <span>{item.email}</span>
+                        </div>
+                        <span className="um2-status pending">Pending</span>
+                      </div>
+
+                      <div className="um2-review-meta">
+                        <div>
+                          <span>Requested role</span>
+                          <strong>{normalizeRole(item.role_name) === 'teamlead' ? 'Team Lead' : 'Staff'}</strong>
+                        </div>
+                        <div>
+                          <span>Registered</span>
+                          <strong>{formatRegistrationDate(item.created_at)}</strong>
+                        </div>
+                      </div>
+
+                      <div className="um2-review-actions">
+                        <button
+                          type="button"
+                          className="um2-btn approve"
+                          disabled={isBusy}
+                          onClick={() => openApprovalDialog(item)}
+                        >
+                          {isBusy ? 'Working...' : 'Approve'}
+                        </button>
+                        <button
+                          type="button"
+                          className="um2-btn decline"
+                          disabled={isBusy}
+                          onClick={() => declineUser(item.user_id)}
+                        >
+                          Decline
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        ) : null}
+
+        {!loading && isDirectoryView ? (
+          <section className="um2-section um2-directory-section">
+            <div className="um2-directory-head">
+              <div>
+                <h2>{activeView === 'active' ? 'Active Staff' : 'Staff Directory'}</h2>
+                <p>{activeView === 'active' ? 'Accounts that can currently sign in.' : 'Manage roles and account access.'}</p>
+              </div>
+
+              <div className="um2-filter-row">
+                <label className="um2-filter">
+                  <span>Role</span>
+                  <select value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)}>
+                    <option value="all">All roles</option>
+                    <option value="staff">Staff</option>
+                    <option value="teamlead">Team Lead</option>
+                    <option value="manager">Manager</option>
+                  </select>
+                </label>
+                <button type="button" className="um2-refresh" onClick={fetchUsers} disabled={loading}>
+                  Refresh
+                </button>
+              </div>
+            </div>
+
+            {directoryUsers.length === 0 ? (
+              <div className="um2-empty">
+                <strong>No staff found</strong>
+                <span>Try another search or role filter.</span>
+              </div>
+            ) : (
+              <div className="um2-table-wrap">
+                <table className="um2-table">
                   <thead>
                     <tr>
-                      <th>User</th>
+                      <th>Staff member</th>
                       <th>Role</th>
                       <th>Status</th>
                       <th>Joined</th>
-                      <th>Action</th>
+                      <th className="um2-action-column">Access</th>
                     </tr>
                   </thead>
-
                   <tbody>
-                    {filteredUsers.map((item) => {
+                    {directoryUsers.map((item) => {
                       const isManager =
                         String(item.role_name || '').toLowerCase() === 'manager';
-                      const isPending = item.status === 'pending';
                       const isBusy = actionLoadingId === item.user_id;
                       const stage = getStage(item);
 
                       return (
-                        <tr key={item.isArchivedApplication ? `history-${item.history_id}` : `user-${item.user_id}`}>
+                        <tr key={`user-${item.user_id}`}>
                           <td>
-                            <div className="um-user">
-                              <div className="um-avatar">{getInitials(item.full_name)}</div>
-                              <div className="um-user-copy">
+                            <div className="um2-person-cell">
+                              {renderUserAvatar(item.full_name)}
+                              <div>
                                 <strong>{item.full_name}</strong>
                                 <span>{item.email}</span>
-                                {item.isArchivedApplication ? (
-                                  <span className="um-record-note">Previous application · record only</span>
-                                ) : null}
                               </div>
                             </div>
                           </td>
-
                           <td>
-                            {item.isArchivedApplication ? (
-                              <span className="um-muted">—</span>
-                            ) : isManager ? (
-                              <span className="um-role-tag manager">Manager</span>
+                            {isManager ? (
+                              <span className="um2-role manager">Manager</span>
                             ) : isManagerActor ? (
                               <select
-                                className="um-role-select"
-                                value={item.role_name}
-                                onChange={(event) =>
-                                  updateUserRole(item.user_id, event.target.value)
-                                }
+                                className="um2-role-select"
+                                value={normalizeRole(item.role_name)}
+                                onChange={(event) => updateUserRole(item.user_id, event.target.value)}
                                 disabled={isBusy}
+                                aria-label={`Role for ${item.full_name}`}
                               >
                                 <option value="staff">Staff</option>
                                 <option value="teamlead">Team Lead</option>
                               </select>
                             ) : (
-                              <span className="um-role-tag">{item.role_name}</span>
+                              <span className="um2-role">
+                                {normalizeRole(item.role_name) === 'teamlead' ? 'Team Lead' : 'Staff'}
+                              </span>
                             )}
                           </td>
-
                           <td>
-                            <span className={`um-status-tag ${stage}`}>
-                              <i />
+                            <span className={`um2-status ${stage}`}>
+                              <i aria-hidden="true" />
                               {stageLabel(stage)}
                             </span>
                           </td>
-
                           <td>
-                            <span className="um-date">{formatRegistrationDate(item.created_at)}</span>
+                            <span className="um2-date">{formatRegistrationDate(item.created_at)}</span>
                           </td>
-
-                          <td>
-                            <div className="um-row-actions">
-                              {item.isArchivedApplication ? (
-                                <button
-                                  type="button"
-                                  className="um-action-btn secondary"
-                                  onClick={() => {
-                                    setHistorySearch(item.email || '');
-                                    setActiveView('history');
-                                  }}
-                                >
-                                  View history
-                                </button>
-                              ) : isManager ? (
-                                <span className="um-protected">Protected</span>
-                              ) : isPending && isApproverActor ? (
-                                <>
-                                  <button
-                                    type="button"
-                                    className="um-action-btn primary"
-                                    disabled={isBusy}
-                                    onClick={() => openApprovalDialog(item)}
-                                  >
-                                    {isBusy ? 'Working...' : 'Approve'}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="um-action-btn danger"
-                                    disabled={isBusy}
-                                    onClick={() => declineUser(item.user_id)}
-                                  >
-                                    Decline
-                                  </button>
-                                </>
-                              ) : item.status === 'declined' ? (
-                                <span className="um-muted">—</span>
-                              ) : isManagerActor ? (
-                                <button
-                                  type="button"
-                                  className={`um-action-btn ${
-                                    item.status === 'active' ? 'danger-soft' : 'secondary'
-                                  }`}
-                                  disabled={isBusy}
-                                  onClick={() =>
-                                    updateUserStatus(item.user_id, item.status)
-                                  }
-                                >
-                                  {item.status === 'active' ? 'Deactivate' : 'Activate'}
-                                </button>
-                              ) : (
-                                <span className="um-muted">—</span>
-                              )}
-                            </div>
+                          <td className="um2-action-column">
+                            {isManager ? (
+                              <span className="um2-protected">Protected</span>
+                            ) : isManagerActor ? (
+                              <button
+                                type="button"
+                                className={`um2-access-btn ${item.status === 'active' ? 'deactivate' : 'activate'}`}
+                                disabled={isBusy}
+                                onClick={() => updateUserStatus(item.user_id, item.status)}
+                              >
+                                {isBusy
+                                  ? 'Updating...'
+                                  : item.status === 'active'
+                                    ? 'Deactivate'
+                                    : 'Activate'}
+                              </button>
+                            ) : (
+                              <span className="um2-muted">—</span>
+                            )}
                           </td>
                         </tr>
                       );
@@ -559,46 +637,43 @@ export default function UserManagement() {
                 </table>
               </div>
             )}
-          </>
+          </section>
         ) : null}
 
         {activeView === 'history' && isApproverActor ? (
-          <div className="um-tool-panel">
-            <div className="um-tool-head" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
+          <section className="um2-section um2-history-section">
+            <div className="um2-directory-head">
               <div>
-                <span className="um-tool-kicker">Registration Records</span>
-                <h3 style={{ marginBottom: '4px' }}>Declined application history</h3>
-                <p style={{ margin: 0, fontSize: '14px', color: '#64748b' }}>
-                  Previous decisions stay on record even if the same email registers again.
-                </p>
+                <h2>Registration History</h2>
+                <p>Declined and archived applications are kept here for audit reference.</p>
               </div>
               <button
                 type="button"
-                className="um-action-btn secondary"
+                className="um2-refresh"
                 onClick={fetchHistory}
                 disabled={historyLoading}
               >
-                {historyLoading ? 'Refreshing...' : 'Refresh history'}
+                {historyLoading ? 'Refreshing...' : 'Refresh'}
               </button>
             </div>
 
             {historyError ? (
-              <div className="um-feedback" role="alert">{historyError}</div>
+              <div className="um2-feedback danger" role="alert">{historyError}</div>
             ) : null}
 
             {historyLoading && historyRecords.length === 0 ? (
-              <div className="um-empty-state">Loading registration history...</div>
+              <div className="um2-loading-grid"><span /><span /><span /></div>
             ) : historyError ? null : filteredHistory.length === 0 ? (
-              <div className="um-empty-state">
-                <strong>No declined applications found</strong>
-                <span>Past declined applications will appear here when available.</span>
+              <div className="um2-empty">
+                <strong>No registration history</strong>
+                <span>Declined applications will appear here.</span>
               </div>
             ) : (
-              <div className="um-table-wrap">
-                <table className="um-table">
+              <div className="um2-table-wrap">
+                <table className="um2-table history">
                   <thead>
                     <tr>
-                      <th>User</th>
+                      <th>Applicant</th>
                       <th>Record</th>
                       <th>Registered</th>
                       <th>Declined</th>
@@ -610,274 +685,133 @@ export default function UserManagement() {
                     {filteredHistory.map((record) => (
                       <tr key={`${record.record_type}-${record.history_id ?? record.user_id}`}>
                         <td>
-                          <div className="um-user">
-                            <div className="um-avatar">{getInitials(record.full_name)}</div>
-                            <div className="um-user-copy">
+                          <div className="um2-person-cell">
+                            {renderUserAvatar(record.full_name)}
+                            <div>
                               <strong>{record.full_name || '-'}</strong>
                               <span>{record.email || '-'}</span>
                             </div>
                           </div>
                         </td>
                         <td>
-                          <span className={`um-status-tag ${record.record_type === 'archived' ? 'inactive' : 'declined'}`}>
-                            <i />
+                          <span className={`um2-status ${record.record_type === 'archived' ? 'inactive' : 'declined'}`}>
+                            <i aria-hidden="true" />
                             {record.record_type === 'archived' ? 'Archived' : 'Declined'}
                           </span>
                         </td>
-                        <td><span className="um-date">{formatRegistrationDate(record.registered_at)}</span></td>
-                        <td><span className="um-date">{formatRegistrationDate(record.declined_at)}</span></td>
+                        <td><span className="um2-date">{formatRegistrationDate(record.registered_at)}</span></td>
+                        <td><span className="um2-date">{formatRegistrationDate(record.declined_at)}</span></td>
                         <td>{record.declined_by_name || 'Not recorded'}</td>
-                        <td style={{ maxWidth: '320px', whiteSpace: 'normal', overflowWrap: 'anywhere' }}>
-                          {getDecisionReason(record)}
-                        </td>
+                        <td className="um2-reason">{getDecisionReason(record)}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             )}
-          </div>
+          </section>
         ) : null}
 
         {activeView === 'email' ? (
-          <div className="um-tool-panel">
-            <div className="um-tool-head">
-              <div>
-                <span className="um-tool-kicker">System Email</span>
-                <h3>Send test email</h3>
+          <section className="um2-section um2-email-section">
+            <div className="um2-email-card">
+              <div className="um2-email-icon" aria-hidden="true">✉</div>
+              <div className="um2-email-copy">
+                <span>System Email</span>
+                <h2>Send a test email</h2>
+                <p>Use this only to confirm that the configured email service is working.</p>
               </div>
+
+              <div className="um2-email-form">
+                <input
+                  type="email"
+                  value={testRecipient}
+                  onChange={(event) => {
+                    setTestRecipient(event.target.value);
+                    setEmailTestMessage('');
+                  }}
+                  placeholder="Recipient email"
+                  aria-label="Recipient email"
+                />
+                <button
+                  type="button"
+                  className="um2-btn approve"
+                  onClick={testSystemEmail}
+                  disabled={emailTestLoading || !isApproverActor || !testRecipient.trim()}
+                >
+                  {emailTestLoading ? 'Sending...' : 'Send test'}
+                </button>
+              </div>
+
+              {emailTestMessage ? (
+                <div className="um2-feedback email">{emailTestMessage}</div>
+              ) : null}
             </div>
-
-            <div className="um-email-form">
-              <input
-                type="email"
-                value={testRecipient}
-                onChange={(event) => {
-                  setTestRecipient(event.target.value);
-                  setEmailTestMessage('');
-                }}
-                placeholder="Recipient email"
-              />
-
-              <button
-                type="button"
-                className="um-action-btn primary"
-                onClick={testSystemEmail}
-                disabled={
-                  emailTestLoading || !isApproverActor || !testRecipient.trim()
-                }
-              >
-                {emailTestLoading ? 'Sending...' : 'Send Test'}
-              </button>
-            </div>
-
-            {emailTestMessage ? (
-              <div className="um-feedback">{emailTestMessage}</div>
-            ) : null}
-          </div>
+          </section>
         ) : null}
       </section>
 
       {approvalDialog.open ? (
-        <div
-          role="presentation"
-          onClick={closeApprovalDialog}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(15, 23, 42, 0.42)',
-            backdropFilter: 'blur(4px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '24px',
-            zIndex: 1200,
-          }}
-        >
+        <div className="um2-modal-backdrop" role="presentation" onClick={closeApprovalDialog}>
           <div
+            className="um2-modal"
             role="dialog"
             aria-modal="true"
             aria-labelledby="approve-user-dialog-title"
             onClick={(event) => event.stopPropagation()}
-            style={{
-              width: '100%',
-              maxWidth: '560px',
-              background: '#ffffff',
-              borderRadius: '24px',
-              boxShadow: '0 28px 70px rgba(15, 23, 42, 0.18)',
-              border: '1px solid rgba(217, 119, 6, 0.16)',
-              overflow: 'hidden',
-            }}
           >
-            <div
-              style={{
-                padding: '24px 24px 18px',
-                borderBottom: '1px solid rgba(226, 232, 240, 0.9)',
-                background: 'linear-gradient(180deg, rgba(255, 251, 235, 0.95), rgba(255, 255, 255, 0.98))',
-              }}
-            >
-              <span
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  padding: '6px 12px',
-                  borderRadius: '999px',
-                  fontSize: '12px',
-                  fontWeight: 700,
-                  letterSpacing: '0.03em',
-                  color: '#b45309',
-                  background: '#fef3c7',
-                  marginBottom: '12px',
-                }}
-              >
-                Registration Review
-              </span>
-              <h3
-                id="approve-user-dialog-title"
-                style={{ margin: 0, fontSize: '24px', lineHeight: 1.2, color: '#1f2937' }}
-              >
-                Approve this user?
-              </h3>
-              <p style={{ margin: '10px 0 0', color: '#6b7280', fontSize: '15px', lineHeight: 1.6 }}>
-                Once approved, this account becomes <strong style={{ color: '#166534' }}>active</strong>{' '}
-                and the user can sign in immediately.
-              </p>
+            <div className="um2-modal-head">
+              <span className="um2-modal-kicker">Registration Review</span>
+              <h3 id="approve-user-dialog-title">Approve account</h3>
+              <p>Choose the account role before allowing this user to sign in.</p>
             </div>
 
-            <div style={{ padding: '22px 24px 24px' }}>
-              <div
-                style={{
-                  display: 'grid',
-                  gap: '14px',
-                  marginBottom: '18px',
-                }}
-              >
-                <div
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '14px',
-                    padding: '14px 16px',
-                    borderRadius: '18px',
-                    background: '#f8fafc',
-                    border: '1px solid #e5e7eb',
-                  }}
-                >
-                  <div
-                    style={{
-                      width: '48px',
-                      height: '48px',
-                      borderRadius: '16px',
-                      background: 'linear-gradient(135deg, #fbbf24, #d97706)',
-                      color: '#ffffff',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontWeight: 700,
-                      fontSize: '16px',
-                      flexShrink: 0,
-                    }}
-                  >
-                    {getInitials(approvalDialog.fullName)}
-                  </div>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontWeight: 700, color: '#111827', fontSize: '16px' }}>
-                      {approvalDialog.fullName}
-                    </div>
-                    <div style={{ color: '#6b7280', fontSize: '14px', wordBreak: 'break-word' }}>
-                      {approvalDialog.email}
-                    </div>
-                  </div>
-                </div>
-
-                <label style={{ display: 'grid', gap: '8px' }}>
-                  <span style={{ fontSize: '14px', fontWeight: 600, color: '#374151' }}>
-                    Account role
-                  </span>
-                  <select
-                    value={approvalDialog.role}
-                    onChange={(event) =>
-                      setApprovalDialog((prev) => ({ ...prev, role: event.target.value }))
-                    }
-                    disabled={actionLoadingId === approvalDialog.userId}
-                    style={{
-                      width: '100%',
-                      borderRadius: '14px',
-                      border: '1px solid #d1d5db',
-                      padding: '12px 14px',
-                      fontSize: '15px',
-                      color: '#111827',
-                      background: '#ffffff',
-                      outline: 'none',
-                    }}
-                  >
-                    <option value="staff">Staff</option>
-                    <option value="teamlead">Team Lead</option>
-                  </select>
-                </label>
-
-                <div
-                  style={{
-                    borderRadius: '16px',
-                    background: '#fffbeb',
-                    border: '1px solid #fde68a',
-                    padding: '14px 16px',
-                    color: '#92400e',
-                  }}
-                >
-                  <div style={{ fontWeight: 700, marginBottom: '8px' }}>Approval summary</div>
-                  <ul style={{ margin: 0, paddingLeft: '18px', lineHeight: 1.7, fontSize: '14px' }}>
-                    <li>The account status will change from Pending to Active.</li>
-                    <li>The user will be able to log in immediately after approval.</li>
-                    <li>Assigned role will control access to pages and features.</li>
-                  </ul>
+            <div className="um2-modal-body">
+              <div className="um2-modal-user">
+                {renderUserAvatar(approvalDialog.fullName, 'pending')}
+                <div>
+                  <strong>{approvalDialog.fullName}</strong>
+                  <span>{approvalDialog.email}</span>
                 </div>
               </div>
 
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'flex-end',
-                  gap: '12px',
-                  flexWrap: 'wrap',
-                }}
-              >
-                <button
-                  type="button"
-                  onClick={closeApprovalDialog}
+              <label className="um2-modal-field">
+                <span>Account role</span>
+                <select
+                  value={approvalDialog.role}
+                  onChange={(event) =>
+                    setApprovalDialog((prev) => ({ ...prev, role: event.target.value }))
+                  }
                   disabled={actionLoadingId === approvalDialog.userId}
-                  style={{
-                    minWidth: '120px',
-                    borderRadius: '14px',
-                    border: '1px solid #d1d5db',
-                    background: '#ffffff',
-                    color: '#374151',
-                    padding: '12px 18px',
-                    fontWeight: 600,
-                    cursor: actionLoadingId === approvalDialog.userId ? 'not-allowed' : 'pointer',
-                  }}
                 >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={confirmApproveUser}
-                  disabled={actionLoadingId === approvalDialog.userId}
-                  style={{
-                    minWidth: '160px',
-                    borderRadius: '14px',
-                    border: 'none',
-                    background: 'linear-gradient(135deg, #f59e0b, #d97706)',
-                    color: '#ffffff',
-                    padding: '12px 18px',
-                    fontWeight: 700,
-                    boxShadow: '0 12px 24px rgba(217, 119, 6, 0.22)',
-                    cursor: actionLoadingId === approvalDialog.userId ? 'not-allowed' : 'pointer',
-                  }}
-                >
-                  {actionLoadingId === approvalDialog.userId ? 'Approving...' : 'Approve User'}
-                </button>
+                  <option value="staff">Staff</option>
+                  <option value="teamlead">Team Lead</option>
+                </select>
+              </label>
+
+              <div className="um2-modal-note">
+                <strong>After approval</strong>
+                <span>The account becomes active and the user can sign in immediately.</span>
               </div>
+            </div>
+
+            <div className="um2-modal-actions">
+              <button
+                type="button"
+                className="um2-btn cancel"
+                onClick={closeApprovalDialog}
+                disabled={actionLoadingId === approvalDialog.userId}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="um2-btn approve"
+                onClick={confirmApproveUser}
+                disabled={actionLoadingId === approvalDialog.userId}
+              >
+                {actionLoadingId === approvalDialog.userId ? 'Approving...' : 'Approve user'}
+              </button>
             </div>
           </div>
         </div>
