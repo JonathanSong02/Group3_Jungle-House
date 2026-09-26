@@ -683,3 +683,418 @@
     transition: none;
   }
 }
+
+
+/* ==========================================================================
+   STEP 14F.7 — AI SETTINGS UI V2
+   UI-ONLY OVERRIDES
+   --------------------------------------------------------------------------
+   Functional safety:
+   - AISettings.jsx is unchanged.
+   - Provider/model selection is unchanged.
+   - Test Connection is unchanged.
+   - Save Settings is unchanged.
+   - API key handling and clearing after save are unchanged.
+   - Existing API endpoints are unchanged.
+   ========================================================================== */
+
+.ais-page {
+  --ais-admin-green: #176b4a;
+  --ais-admin-green-dark: #10553a;
+  --ais-admin-green-soft: #eaf4ee;
+  --ais-admin-green-pale: #f5f9f5;
+  --ais-admin-cream: #fffdf8;
+  --ais-admin-cream-2: #faf7ef;
+  --ais-admin-honey: #d99113;
+  --ais-admin-honey-soft: #fff3d7;
+  --ais-admin-purple: #6d5bc7;
+  --ais-admin-purple-soft: #f1effb;
+  --ais-admin-red: #b95147;
+  --ais-admin-red-soft: #fff1ef;
+  --ais-admin-blue: #4e7897;
+  --ais-admin-blue-soft: #edf4f8;
+  --ais-admin-ink: #1f2b24;
+  --ais-admin-muted: #6d776f;
+  --ais-admin-border: #dfe7dd;
+  --ais-admin-shadow: 0 16px 45px rgba(31, 56, 40, 0.075);
+
+  color: var(--ais-admin-ink);
+}
+
+/* Feedback -------------------------------------------------------------- */
+
+.ais-feedback {
+  margin-top: 13px;
+  padding: 11px 13px;
+  color: #725519;
+  background: #fff7e5;
+  border-color: #ecd49e;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* Layout ---------------------------------------------------------------- */
+
+.ais-layout {
+  grid-template-columns: minmax(300px, 0.72fr) minmax(0, 1.38fr);
+  gap: 15px;
+  margin-top: 17px;
+}
+
+.ais-status-card,
+.ais-settings-card {
+  border: 1px solid var(--ais-admin-border);
+  border-radius: 22px;
+  box-shadow: var(--ais-admin-shadow);
+}
+
+/* Current model --------------------------------------------------------- */
+
+.ais-status-card {
+  min-height: 500px;
+  padding: 23px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(109, 91, 199, 0.10), transparent 34%),
+    radial-gradient(circle at 0% 100%, rgba(23, 107, 74, 0.10), transparent 33%),
+    linear-gradient(150deg, #fbfdfb, #f2f7f3);
+}
+
+.ais-status-card::after {
+  background: radial-gradient(
+    circle,
+    rgba(23, 107, 74, 0.065),
+    transparent 66%
+  );
+}
+
+.ais-status-top {
+  grid-template-columns: 52px minmax(0, 1fr) auto;
+  gap: 13px;
+}
+
+.ais-orb {
+  width: 52px;
+  height: 52px;
+  background: linear-gradient(145deg, #5f50b2, #8068d0);
+  border-radius: 15px;
+  box-shadow: 0 10px 24px rgba(93, 73, 170, 0.20);
+}
+
+.ais-orb span {
+  font-size: 14px;
+}
+
+.ais-kicker {
+  color: var(--ais-admin-green);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.ais-status-top h2,
+.ais-section-head h2 {
+  color: var(--ais-admin-ink);
+}
+
+.ais-status-top h2 {
+  font-size: 22px;
+}
+
+.ais-status-pill {
+  min-height: 30px;
+  padding: 5px 10px;
+  font-size: 11px;
+}
+
+.ais-status-pill.connected {
+  color: #487347;
+  background: #edf5eb;
+  border-color: #cfe0cb;
+}
+
+.ais-status-pill.failed {
+  color: #9e4d45;
+  background: var(--ais-admin-red-soft);
+  border-color: #edc5c1;
+}
+
+.ais-status-pill.untested {
+  color: #98660b;
+  background: var(--ais-admin-honey-soft);
+  border-color: #ecd099;
+}
+
+/* Current configuration ------------------------------------------------ */
+
+.ais-model-name {
+  margin-top: 26px;
+  padding: 17px;
+  background: rgba(255, 255, 255, 0.82);
+  border-color: #dce6dc;
+  border-radius: 15px;
+  backdrop-filter: none;
+}
+
+.ais-model-name span,
+.ais-config-grid span {
+  color: var(--ais-admin-muted);
+  font-size: 11px;
+}
+
+.ais-model-name strong {
+  color: #5f4daf;
+  font-size: 15.5px;
+}
+
+.ais-config-grid {
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.ais-config-grid > div {
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.76);
+  border-color: #dfe7dd;
+  border-radius: 13px;
+}
+
+.ais-config-grid strong {
+  color: var(--ais-admin-ink);
+  font-size: 12px;
+}
+
+.ais-empty-config {
+  color: var(--ais-admin-muted);
+}
+
+.ais-empty-config strong {
+  color: var(--ais-admin-ink);
+  font-size: 15px;
+}
+
+.ais-empty-config span {
+  font-size: 12px;
+}
+
+/* AI note --------------------------------------------------------------- */
+
+.ais-ai-note {
+  margin-top: 24px;
+  padding: 13px;
+  color: #6252ae;
+  background: rgba(241, 239, 251, 0.92);
+  border-color: #ddd6f4;
+  border-radius: 13px;
+}
+
+.ais-ai-note-icon {
+  background: linear-gradient(145deg, #6654bb, #8067d0);
+}
+
+.ais-ai-note strong {
+  font-size: 12.5px;
+}
+
+.ais-ai-note div > span {
+  color: #756d94;
+  font-size: 10.5px;
+}
+
+/* Loading --------------------------------------------------------------- */
+
+.ais-loading-block span {
+  background: linear-gradient(
+    90deg,
+    #eaf1eb,
+    #f8fbf8,
+    #eaf1eb
+  );
+}
+
+/* Settings card --------------------------------------------------------- */
+
+.ais-settings-card {
+  padding: 25px;
+  background: #fff;
+}
+
+.ais-section-head {
+  padding-bottom: 18px;
+  border-bottom-color: #e7ece5;
+}
+
+.ais-section-head h2 {
+  font-size: 23px;
+}
+
+.ais-provider-chip {
+  min-height: 32px;
+  padding: 6px 10px;
+  color: #5f4daf;
+  background: var(--ais-admin-purple-soft);
+  border-color: #ddd6f4;
+  font-size: 11px;
+}
+
+.ais-form {
+  gap: 16px;
+  margin-top: 22px;
+}
+
+.ais-form-grid {
+  gap: 12px;
+}
+
+.ais-field {
+  gap: 7px;
+}
+
+.ais-field > span {
+  color: #4f5c54;
+  font-size: 12.5px;
+  font-weight: 800;
+}
+
+.ais-field input,
+.ais-field select {
+  min-height: 44px;
+  padding: 10px 12px;
+  color: var(--ais-admin-ink);
+  background: #fff;
+  border-color: #d9e3d8;
+  border-radius: 10px;
+  font-size: 13.5px;
+}
+
+.ais-field input::placeholder {
+  color: #9aa39c;
+}
+
+.ais-field input:focus,
+.ais-field select:focus {
+  background: #fff;
+  border-color: #94bda0;
+  box-shadow: 0 0 0 3px rgba(23, 107, 74, 0.10);
+}
+
+/* API key --------------------------------------------------------------- */
+
+.ais-key-input input {
+  padding-right: 92px;
+}
+
+.ais-key-input > span {
+  right: 9px;
+  padding: 5px 8px;
+  color: var(--ais-admin-green-dark);
+  background: var(--ais-admin-green-soft);
+  border-color: #cfe1d4;
+  border-radius: 7px;
+  font-size: 9.5px;
+}
+
+/* Test result ----------------------------------------------------------- */
+
+.ais-test-result {
+  min-height: 44px;
+  padding: 10px 12px;
+  border-radius: 11px;
+  font-size: 12.5px;
+}
+
+.ais-test-result.success {
+  color: #487347;
+  background: #edf5eb;
+  border-color: #cfe0cb;
+}
+
+.ais-test-result.error {
+  color: #9e4d45;
+  background: var(--ais-admin-red-soft);
+  border-color: #edc5c1;
+}
+
+/* Actions --------------------------------------------------------------- */
+
+.ais-actions {
+  margin-top: 4px;
+  padding-top: 18px;
+  border-top-color: #e7ece5;
+}
+
+.ais-btn {
+  min-height: 43px;
+  padding: 9px 15px;
+  border-radius: 11px;
+  font-size: 12.5px;
+  font-weight: 850;
+}
+
+.ais-btn.secondary {
+  color: var(--ais-admin-green-dark);
+  background: #f1f6f1;
+  border-color: #d3e0d4;
+}
+
+.ais-btn.secondary:hover {
+  background: #e8f1e9;
+}
+
+.ais-btn.primary {
+  color: #fff;
+  background: var(--ais-admin-green);
+  border-color: var(--ais-admin-green-dark);
+  box-shadow: 0 8px 19px rgba(23, 107, 74, 0.16);
+}
+
+.ais-btn.primary:hover {
+  background: var(--ais-admin-green-dark);
+  box-shadow: 0 11px 24px rgba(23, 107, 74, 0.20);
+}
+
+/* Focus ----------------------------------------------------------------- */
+
+.ais-page button:focus-visible,
+.ais-page input:focus-visible,
+.ais-page select:focus-visible {
+  outline: 3px solid rgba(23, 107, 74, 0.18);
+  outline-offset: 2px;
+}
+
+/* Responsive ------------------------------------------------------------ */
+
+@media (max-width: 1000px) {
+  .ais-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .ais-status-card {
+    min-height: auto;
+  }
+}
+
+@media (max-width: 620px) {
+  .ais-status-card,
+  .ais-settings-card {
+    padding: 17px;
+    border-radius: 17px;
+  }
+
+  .ais-status-top {
+    grid-template-columns: 46px minmax(0, 1fr);
+  }
+
+  .ais-form-grid,
+  .ais-config-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ais-actions {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+
+  .ais-actions .ais-btn {
+    width: 100%;
+  }
+}
