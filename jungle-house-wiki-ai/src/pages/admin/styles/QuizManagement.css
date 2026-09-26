@@ -1984,3 +1984,920 @@ button.qm-stat:hover {
   border-color: rgba(187, 146, 87, 0.22);
   box-shadow: 0 28px 80px rgba(62, 45, 23, 0.2);
 }
+
+
+/* ==========================================================================
+   STEP 14F.4 — QUIZ MANAGEMENT UI V2
+   UI-ONLY OVERRIDES
+   --------------------------------------------------------------------------
+   Functional safety:
+   - No JSX logic is changed.
+   - No API endpoint is changed.
+   - No form field name/value is changed.
+   - No click handler is changed.
+   - No AI generation/save workflow is changed.
+   ========================================================================== */
+
+.qm-page {
+  --qm-admin-green: #176b4a;
+  --qm-admin-green-dark: #10553a;
+  --qm-admin-green-soft: #eaf4ee;
+  --qm-admin-green-soft-2: #f4f8f4;
+  --qm-admin-cream: #fffdf8;
+  --qm-admin-cream-2: #faf7ef;
+  --qm-admin-honey: #d99113;
+  --qm-admin-honey-soft: #fff3d7;
+  --qm-admin-red: #b95147;
+  --qm-admin-red-soft: #fff1ef;
+  --qm-admin-blue: #4e7897;
+  --qm-admin-blue-soft: #edf4f8;
+  --qm-admin-purple: #6d5bc7;
+  --qm-admin-purple-soft: #f1effb;
+  --qm-admin-ink: #1f2b24;
+  --qm-admin-muted: #6d776f;
+  --qm-admin-border: #dfe7dd;
+  --qm-admin-shadow: 0 16px 45px rgba(31, 56, 40, 0.075);
+
+  color: var(--qm-admin-ink);
+}
+
+/* Header actions ---------------------------------------------------------- */
+
+.qm-heading-row {
+  align-items: center;
+}
+
+.qm-heading-actions {
+  margin-top: 0;
+}
+
+.qm-btn {
+  min-height: 44px;
+  border-radius: 11px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.qm-btn-primary {
+  color: #fff;
+  background: var(--qm-admin-green);
+  border-color: var(--qm-admin-green-dark);
+  box-shadow: 0 7px 17px rgba(23, 107, 74, 0.16);
+}
+
+.qm-btn-primary:hover {
+  background: var(--qm-admin-green-dark);
+  box-shadow: 0 10px 22px rgba(23, 107, 74, 0.2);
+}
+
+.qm-btn-ai {
+  color: #fff;
+  background: linear-gradient(135deg, #6755bb, #8067d0);
+  border-color: rgba(79, 61, 158, 0.2);
+  box-shadow: 0 8px 18px rgba(103, 85, 187, 0.18);
+}
+
+.qm-btn-ai:hover {
+  box-shadow: 0 11px 23px rgba(103, 85, 187, 0.23);
+}
+
+.qm-btn-soft {
+  color: #506057;
+  background: #f5f8f4;
+  border-color: #d9e3d8;
+}
+
+.qm-btn-soft:hover {
+  background: #edf4ee;
+}
+
+/* Summary ---------------------------------------------------------------- */
+
+.qm-stats {
+  gap: 13px;
+  margin-top: 18px;
+}
+
+.qm-stat {
+  min-height: 102px;
+  justify-content: center;
+  gap: 7px;
+  padding: 17px 18px;
+  background: rgba(255, 253, 248, 0.94);
+  border: 1px solid var(--qm-admin-border);
+  border-radius: 17px;
+  box-shadow: 0 7px 22px rgba(31, 56, 40, 0.045);
+}
+
+.qm-stat::after {
+  width: 96px;
+  height: 96px;
+  right: -32px;
+  bottom: -38px;
+  opacity: 0.72;
+}
+
+.qm-stat span {
+  color: var(--qm-admin-muted);
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.qm-stat strong {
+  color: var(--qm-admin-ink);
+  font-size: 30px;
+}
+
+.qm-stat-blue {
+  --qm-stat-soft: var(--qm-admin-blue-soft);
+}
+
+.qm-stat-green {
+  --qm-stat-soft: var(--qm-admin-green-soft);
+}
+
+.qm-stat-amber {
+  --qm-stat-soft: var(--qm-admin-honey-soft);
+}
+
+.qm-stat-violet {
+  --qm-stat-soft: var(--qm-admin-purple-soft);
+}
+
+button.qm-stat:hover {
+  transform: translateY(-1px);
+  border-color: #b9ceb9;
+  box-shadow: 0 11px 27px rgba(31, 56, 40, 0.07);
+}
+
+/* Feedback --------------------------------------------------------------- */
+
+.qm-feedback {
+  margin-top: 13px;
+  padding: 11px 13px;
+  color: #725519;
+  background: #fff7e5;
+  border-color: #ecd49e;
+  border-radius: 12px;
+  font-size: 13px;
+}
+
+/* Main workspace --------------------------------------------------------- */
+
+.qm-workspace {
+  margin-top: 16px;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid var(--qm-admin-border);
+  border-radius: 22px;
+  box-shadow: var(--qm-admin-shadow);
+  backdrop-filter: none;
+}
+
+.qm-nav {
+  min-height: 66px;
+  gap: 5px;
+  padding: 11px 15px;
+  background: linear-gradient(180deg, #fffefb 0%, #faf8f1 100%);
+  border-bottom: 1px solid #e7ece5;
+}
+
+.qm-nav button {
+  min-height: 40px;
+  padding: 9px 13px;
+  color: #6b756d;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  font-size: 13px;
+}
+
+.qm-nav button:hover {
+  color: var(--qm-admin-green-dark);
+  background: #f1f6f1;
+}
+
+.qm-nav button.active {
+  color: var(--qm-admin-green-dark);
+  background: var(--qm-admin-green-soft);
+  border-color: #cfe1d4;
+}
+
+.qm-nav button.active::after {
+  display: none;
+}
+
+.qm-nav button.qm-nav-ai {
+  color: #6654b7;
+}
+
+.qm-nav button.qm-nav-ai:hover,
+.qm-nav button.qm-nav-ai.active {
+  color: #5d4aad;
+  background: var(--qm-admin-purple-soft);
+  border-color: #dcd5f3;
+}
+
+/* Manage layout ---------------------------------------------------------- */
+
+.qm-manage {
+  grid-template-columns: minmax(320px, 0.72fr) minmax(0, 1.55fr);
+  min-height: 650px;
+}
+
+.qm-library {
+  padding: 20px;
+  background: #f8faf7;
+  border-right: 1px solid #e3e9e1;
+}
+
+.qm-detail {
+  padding: 22px;
+  background: #fff;
+}
+
+.qm-kicker {
+  margin-bottom: 5px;
+  color: var(--qm-admin-green);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.qm-section-head h2 {
+  font-size: 22px;
+}
+
+.qm-section-head h3 {
+  font-size: 19px;
+}
+
+.qm-count-badge {
+  min-width: 30px;
+  height: 30px;
+  color: var(--qm-admin-green-dark);
+  background: var(--qm-admin-green-soft);
+  border-color: #cfe1d4;
+  font-size: 12px;
+}
+
+/* Search ----------------------------------------------------------------- */
+
+.qm-search {
+  min-height: 43px;
+  margin-top: 14px;
+  color: #8c968f;
+  background: #fff;
+  border-color: #dbe4da;
+  border-radius: 11px;
+}
+
+.qm-search:focus-within {
+  border-color: #9fc2a8;
+  box-shadow: 0 0 0 3px rgba(23, 107, 74, 0.1);
+}
+
+.qm-search input {
+  color: var(--qm-admin-ink);
+  font-size: 13.5px;
+}
+
+/* Quiz library cards ----------------------------------------------------- */
+
+.qm-quiz-list {
+  gap: 9px;
+  max-height: 575px;
+  margin-top: 13px;
+}
+
+.qm-quiz-card {
+  --qm-card-accent: var(--qm-admin-green);
+  --qm-card-soft: var(--qm-admin-green-soft);
+
+  padding: 14px;
+  background: #fff;
+  border: 1px solid #e1e8df;
+  border-radius: 14px;
+  box-shadow: 0 4px 14px rgba(31, 56, 40, 0.03);
+}
+
+.qm-quiz-card::before {
+  width: 4px;
+  background: var(--qm-admin-green);
+}
+
+.qm-quiz-card:hover {
+  transform: translateY(-1px);
+  border-color: #bdd0bf;
+  box-shadow: 0 8px 20px rgba(31, 56, 40, 0.06);
+}
+
+.qm-quiz-card.selected {
+  background: #f8fbf8;
+  border-color: #a8c8ae;
+  box-shadow: 0 0 0 3px rgba(23, 107, 74, 0.075);
+}
+
+.qm-color-0,
+.qm-color-1,
+.qm-color-2,
+.qm-color-3,
+.qm-color-4 {
+  --qm-card-accent: var(--qm-admin-green);
+  --qm-card-soft: var(--qm-admin-green-soft);
+}
+
+.qm-quiz-icon {
+  width: 37px;
+  height: 37px;
+  color: var(--qm-admin-green);
+  background: var(--qm-admin-green-soft);
+  border: 1px solid #d3e3d6;
+  border-radius: 11px;
+}
+
+.qm-status,
+.qm-pill {
+  min-height: 28px;
+  padding: 5px 9px;
+  font-size: 11px;
+}
+
+.qm-status.active,
+.qm-pill-green {
+  color: #487347;
+  background: #edf5eb;
+  border-color: #cfe0cb;
+}
+
+.qm-status.draft,
+.qm-pill-amber {
+  color: #98660b;
+  background: #fff3d8;
+  border-color: #ecd099;
+}
+
+.qm-pill-blue {
+  color: #4a718e;
+  background: var(--qm-admin-blue-soft);
+  border-color: #cedee8;
+}
+
+.qm-pill-violet {
+  color: #6653b6;
+  background: var(--qm-admin-purple-soft);
+  border-color: #ddd6f4;
+}
+
+.qm-quiz-card h3 {
+  margin: 12px 0 7px;
+  color: var(--qm-admin-ink);
+  font-size: 14px;
+}
+
+.qm-quiz-meta {
+  color: var(--qm-admin-muted);
+  font-size: 11.5px;
+}
+
+.qm-card-actions {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top-color: #edf1ec;
+}
+
+.qm-mini-action {
+  width: 33px;
+  height: 33px;
+  color: #5d6961;
+  background: #f5f7f4;
+  border-color: #dfe5de;
+  border-radius: 9px;
+}
+
+.qm-mini-action:hover {
+  color: var(--qm-admin-green-dark);
+  background: var(--qm-admin-green-soft);
+}
+
+.qm-mini-action.danger:hover {
+  color: var(--qm-admin-red);
+  background: var(--qm-admin-red-soft);
+}
+
+.qm-open-link {
+  color: var(--qm-admin-green);
+  font-size: 11px;
+}
+
+/* Selected quiz ---------------------------------------------------------- */
+
+.qm-detail-hero {
+  padding: 20px;
+  background:
+    radial-gradient(circle at 95% 0%, rgba(23, 107, 74, 0.08), transparent 31%),
+    linear-gradient(145deg, #f7faf7, #fffdf8);
+  border-color: #dbe5da;
+  border-radius: 17px;
+}
+
+.qm-detail-hero h2 {
+  margin: 12px 0 6px;
+  color: var(--qm-admin-ink);
+  font-size: 25px;
+}
+
+.qm-detail-hero p {
+  color: var(--qm-admin-muted);
+  font-size: 13px;
+}
+
+.qm-mini-stats {
+  gap: 10px;
+  margin-top: 11px;
+}
+
+.qm-mini-stats > div {
+  min-height: 75px;
+  padding: 12px 14px;
+  background: #fafcf9;
+  border-color: #e1e8df;
+  border-radius: 13px;
+}
+
+.qm-mini-stats span {
+  color: var(--qm-admin-muted);
+  font-size: 11px;
+}
+
+.qm-mini-stats strong {
+  color: var(--qm-admin-ink);
+  font-size: 13.5px;
+}
+
+/* Forms ------------------------------------------------------------------ */
+
+.qm-field {
+  gap: 7px;
+}
+
+.qm-field > span {
+  color: #4f5c54;
+  font-size: 12.5px;
+  font-weight: 800;
+}
+
+.qm-field input,
+.qm-field select,
+.qm-field textarea {
+  padding: 10px 12px;
+  color: var(--qm-admin-ink);
+  background: #fff;
+  border-color: #d9e3d8;
+  border-radius: 10px;
+  font-size: 13.5px;
+}
+
+.qm-field input,
+.qm-field select {
+  min-height: 43px;
+}
+
+.qm-field input:focus,
+.qm-field select:focus,
+.qm-field textarea:focus {
+  border-color: #94bda0;
+  box-shadow: 0 0 0 3px rgba(23, 107, 74, 0.1);
+}
+
+/* Question editor / question list --------------------------------------- */
+
+.qm-question-editor {
+  gap: 13px;
+  margin-top: 13px;
+  padding: 18px;
+  background: #f7faf7;
+  border-color: #d8e5da;
+  border-radius: 16px;
+}
+
+.qm-icon-close {
+  color: #5b675f;
+  background: #fff;
+  border-color: #dce4db;
+}
+
+.qm-question-section {
+  margin-top: 19px;
+}
+
+.qm-question-list {
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.qm-question-card {
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  padding: 13px 14px;
+  background: #fff;
+  border-color: #e1e8df;
+  border-radius: 13px;
+}
+
+.qm-question-card:hover {
+  transform: none;
+  border-color: #c5d7c7;
+  box-shadow: 0 6px 16px rgba(31, 56, 40, 0.045);
+}
+
+.qm-question-number {
+  color: var(--qm-admin-green-dark);
+  background: var(--qm-admin-green-soft);
+}
+
+.qm-question-copy h4 {
+  color: var(--qm-admin-ink);
+  font-size: 13.5px;
+}
+
+.qm-question-meta {
+  color: var(--qm-admin-muted);
+  font-size: 11px;
+}
+
+/* Create quiz ------------------------------------------------------------ */
+
+.qm-create-layout {
+  grid-template-columns: minmax(0, 1.45fr) minmax(290px, 0.65fr);
+}
+
+.qm-create-card {
+  padding: 27px;
+  background: #fff;
+}
+
+.qm-create-card .qm-section-head h2 {
+  font-size: 25px;
+}
+
+.qm-create-icon {
+  color: var(--qm-admin-green);
+  background: var(--qm-admin-green-soft);
+  border: 1px solid #d2e2d5;
+}
+
+.qm-create-side {
+  min-height: 520px;
+  padding: 28px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(217, 145, 19, 0.12), transparent 35%),
+    linear-gradient(160deg, #f5f9f5, #edf5ee);
+  border-left-color: #dbe6dc;
+}
+
+.qm-create-side > h3 {
+  color: var(--qm-admin-ink);
+  font-size: 21px;
+}
+
+.qm-create-side > p {
+  color: var(--qm-admin-muted);
+  font-size: 13px;
+}
+
+.qm-side-orb-blue {
+  color: var(--qm-admin-green);
+  background: #e7f1e9;
+}
+
+.qm-side-ai {
+  background: rgba(255, 255, 255, 0.82);
+  border-color: #d9d5ed;
+}
+
+.qm-side-ai:hover {
+  background: #fff;
+}
+
+.qm-side-ai strong {
+  color: #5e4eaa;
+  font-size: 12.5px;
+}
+
+.qm-side-ai small {
+  color: #7d759f;
+  font-size: 10.5px;
+}
+
+/* AI Builder ------------------------------------------------------------- */
+
+.qm-ai-layout {
+  grid-template-columns: minmax(320px, 0.78fr) minmax(0, 1.42fr);
+}
+
+.qm-ai-builder {
+  padding: 26px;
+  background:
+    radial-gradient(circle at 90% 0%, rgba(255, 255, 255, 0.16), transparent 30%),
+    linear-gradient(145deg, #53498f, #6f5bb5 55%, #7f66c6);
+}
+
+.qm-ai-head span {
+  font-size: 11px;
+}
+
+.qm-ai-head h2 {
+  font-size: 24px;
+}
+
+.qm-ai-builder .qm-field > span {
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.qm-ai-builder .qm-field input,
+.qm-ai-builder .qm-field select {
+  color: #312a50;
+  background: rgba(255, 255, 255, 0.98);
+  border-color: rgba(255, 255, 255, 0.26);
+}
+
+.qm-generate-btn {
+  color: #5c4ca4;
+  background: #fff;
+}
+
+.qm-ai-preview {
+  padding: 22px;
+  background: #fff;
+}
+
+.qm-ai-empty {
+  color: #837d91;
+}
+
+.qm-ai-empty-orb {
+  color: #6755b4;
+  background: var(--qm-admin-purple-soft);
+  border-color: #ddd6f4;
+}
+
+.qm-ai-empty strong {
+  color: #4d4855;
+  font-size: 15px;
+}
+
+.qm-ai-empty span {
+  font-size: 12px;
+}
+
+.qm-ai-preview-head h2 {
+  color: var(--qm-admin-ink);
+  font-size: 23px;
+}
+
+.qm-ai-preview-head p {
+  color: var(--qm-admin-muted);
+  font-size: 12px;
+}
+
+.qm-ai-question {
+  padding: 15px;
+  background: #fff;
+  border-color: #e5e2ee;
+  border-radius: 14px;
+}
+
+.qm-ai-question h4 {
+  color: var(--qm-admin-ink);
+  font-size: 13px;
+}
+
+.qm-ai-options > div {
+  color: #59635d;
+  background: #f8faf8;
+  border-color: #e5eae4;
+}
+
+.qm-ai-options > div.correct {
+  color: #35704c;
+  background: var(--qm-admin-green-soft);
+  border-color: #cce1d1;
+}
+
+.qm-ai-options > div.correct > span {
+  color: #35704c;
+  background: #d9ebdd;
+}
+
+.qm-ai-source {
+  color: #8a938c;
+  font-size: 10.5px;
+}
+
+/* Empty states ----------------------------------------------------------- */
+
+.qm-empty {
+  color: var(--qm-admin-muted);
+  font-size: 12.5px;
+}
+
+.qm-empty strong {
+  color: var(--qm-admin-ink);
+  font-size: 14px;
+}
+
+.qm-empty-soft {
+  background: #f8faf7;
+  border-color: #d5e2d6;
+}
+
+.qm-empty-icon {
+  color: var(--qm-admin-green);
+  background: var(--qm-admin-green-soft);
+}
+
+/* Success modal ---------------------------------------------------------- */
+
+.qm-modal-overlay {
+  background: rgba(19, 36, 27, 0.4);
+  backdrop-filter: blur(6px);
+}
+
+.qm-modal {
+  background: #fff;
+  border-color: #dfe7dd;
+  box-shadow: 0 28px 80px rgba(20, 38, 28, 0.2);
+}
+
+.qm-modal-check {
+  color: var(--qm-admin-green);
+  background: var(--qm-admin-green-soft);
+}
+
+.qm-modal h2 {
+  color: var(--qm-admin-ink);
+  font-size: 22px;
+}
+
+.qm-modal p {
+  color: var(--qm-admin-muted);
+  font-size: 13px;
+}
+
+/* Accessibility ---------------------------------------------------------- */
+
+.qm-page button:focus-visible,
+.qm-page input:focus-visible,
+.qm-page select:focus-visible,
+.qm-page textarea:focus-visible {
+  outline: 3px solid rgba(23, 107, 74, 0.18);
+  outline-offset: 2px;
+}
+
+/* Responsive ------------------------------------------------------------- */
+
+@media (max-width: 1050px) {
+  .qm-manage,
+  .qm-create-layout,
+  .qm-ai-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .qm-library,
+  .qm-create-side,
+  .qm-ai-builder {
+    border-right: 0;
+    border-left: 0;
+    border-bottom: 1px solid var(--qm-admin-border);
+  }
+
+  .qm-quiz-list {
+    max-height: none;
+  }
+
+  .qm-create-side {
+    min-height: auto;
+  }
+}
+
+@media (max-width: 760px) {
+  .qm-heading-row {
+    align-items: stretch;
+  }
+
+  .qm-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .qm-detail,
+  .qm-library,
+  .qm-create-card,
+  .qm-create-side,
+  .qm-ai-builder,
+  .qm-ai-preview {
+    padding: 17px;
+  }
+
+  .qm-nav {
+    overflow-x: auto;
+  }
+
+  .qm-nav button {
+    flex: 0 0 auto;
+  }
+}
+
+@media (max-width: 540px) {
+  .qm-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .qm-stat {
+    min-height: 82px;
+  }
+
+  .qm-workspace {
+    border-radius: 16px;
+  }
+
+  .qm-nav {
+    padding: 9px;
+  }
+
+  .qm-nav button {
+    min-height: 38px;
+    padding: 8px 10px;
+  }
+
+  .qm-heading-actions {
+    flex-direction: column;
+  }
+
+  .qm-heading-actions .qm-btn {
+    width: 100%;
+  }
+}
+
+
+/* ==========================================================================
+   STEP 14F.4 — QUIZ LIBRARY CARD SHRINK FIX
+   --------------------------------------------------------------------------
+   The library is a vertical flex container with a max-height. Without
+   flex-shrink: 0, the browser compresses every quiz card to fit all cards
+   inside that height, which clips the title/meta/actions.
+   ========================================================================== */
+
+.qm-quiz-list {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  max-height: 575px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  gap: 10px;
+  padding-right: 6px;
+  scrollbar-gutter: stable;
+}
+
+.qm-quiz-card {
+  flex: 0 0 auto;
+  height: auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.qm-quiz-card h3,
+.qm-quiz-meta,
+.qm-card-actions {
+  visibility: visible;
+  opacity: 1;
+}
+
+.qm-quiz-card h3 {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.qm-quiz-list::-webkit-scrollbar {
+  width: 7px;
+}
+
+.qm-quiz-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.qm-quiz-list::-webkit-scrollbar-thumb {
+  background: #cbd9cd;
+  border-radius: 999px;
+}
+
+.qm-quiz-list::-webkit-scrollbar-thumb:hover {
+  background: #aebfaf;
+}
+
+@media (max-width: 1050px) {
+  .qm-quiz-list {
+    max-height: none;
+    overflow-y: visible;
+    padding-right: 0;
+  }
+}

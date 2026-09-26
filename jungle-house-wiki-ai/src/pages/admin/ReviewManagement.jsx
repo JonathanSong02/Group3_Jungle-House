@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import PageHeader from '../../components/PageHeader';
 import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
@@ -12,6 +12,8 @@ const TABS = [
   { key: 'all', label: 'All' },
 ];
 
+const REVIEWS_PER_PAGE = 10;
+
 export default function ReviewManagement() {
   const { user } = useAuth();
 
@@ -20,6 +22,7 @@ export default function ReviewManagement() {
   const [searchText, setSearchText] = useState('');
   const [reviewerComment, setReviewerComment] = useState({});
   const [expandedReviewId, setExpandedReviewId] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
 
   const [loading, setLoading] = useState(false);
   const [actionLoadingId, setActionLoadingId] = useState(null);
@@ -60,22 +63,63 @@ export default function ReviewManagement() {
   const filteredReviews = useMemo(() => {
     const search = searchText.trim().toLowerCase();
 
-    return reviews.filter((item) => {
-      const matchesTab = activeTab === 'all' || item.status === activeTab;
+    return reviews
+      .filter((item) => {
+        const matchesTab = activeTab === 'all' || item.status === activeTab;
 
-      if (!matchesTab) return false;
-      if (!search) return true;
+        if (!matchesTab) return false;
+        if (!search) return true;
 
-      return [
-        item.question,
-        item.answer,
-        item.submitted_by_name,
-        item.reviewer_comment,
-      ]
-        .filter(Boolean)
-        .some((value) => String(value).toLowerCase().includes(search));
-    });
+        return [
+          item.question,
+          item.answer,
+          item.submitted_by_name,
+          item.reviewer_comment,
+        ]
+          .filter(Boolean)
+          .some((value) => String(value).toLowerCase().includes(search));
+      })
+      .sort((a, b) => {
+        const aTime = new Date(a.created_at || 0).getTime();
+        const bTime = new Date(b.created_at || 0).getTime();
+
+        if (Number.isFinite(aTime) && Number.isFinite(bTime) && aTime !== bTime) {
+          return bTime - aTime;
+        }
+
+        return Number(b.review_id || 0) - Number(a.review_id || 0);
+      });
   }, [reviews, activeTab, searchText]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredReviews.length / REVIEWS_PER_PAGE));
+
+  const paginatedReviews = useMemo(() => {
+    const startIndex = (currentPage - 1) * REVIEWS_PER_PAGE;
+    return filteredReviews.slice(startIndex, startIndex + REVIEWS_PER_PAGE);
+  }, [filteredReviews, currentPage]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+    setExpandedReviewId(null);
+  }, [activeTab, searchText]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
+  const pageNumbers = useMemo(() => {
+    if (totalPages <= 7) {
+      return Array.from({ length: totalPages }, (_, index) => index + 1);
+    }
+
+    const pages = new Set([1, totalPages, currentPage - 1, currentPage, currentPage + 1]);
+    return [...pages]
+      .filter((page) => page >= 1 && page <= totalPages)
+      .sort((a, b) => a - b);
+  }, [currentPage, totalPages]);
+
 
   const handleReviewAction = async (reviewId, action) => {
     try {
@@ -132,78 +176,98 @@ export default function ReviewManagement() {
   };
 
   return (
-    <div className="rm-page">
+    <div className="rm2-page">
       <PageHeader
         title="Review Management"
-        subtitle="Review and publish staff answers."
+        subtitle="Review staff answers and publish approved knowledge."
       />
 
-      <section className="rm-summary-grid" aria-label="Review overview">
+      <section className="rm2-overview" aria-label="Review overview">
         <button
           type="button"
-          className={`rm-summary-card ${activeTab === 'pending' ? 'active' : ''}`}
+          className={`rm2-stat attention ${activeTab === 'pending' ? 'selected' : ''}`}
           onClick={() => setActiveTab('pending')}
         >
-          <span>Pending</span>
-          <strong>{counts.pending}</strong>
+          <span className="rm2-stat-icon pending" aria-hidden="true">!</span>
+          <span className="rm2-stat-copy">
+            <small>Needs review</small>
+            <strong>{loading && reviews.length === 0 ? '—' : counts.pending}</strong>
+          </span>
+          {counts.pending > 0 ? <span className="rm2-attention-dot" aria-hidden="true" /> : null}
         </button>
 
         <button
           type="button"
-          className={`rm-summary-card ${activeTab === 'approved' ? 'active' : ''}`}
+          className={`rm2-stat ${activeTab === 'approved' ? 'selected' : ''}`}
           onClick={() => setActiveTab('approved')}
         >
-          <span>Approved</span>
-          <strong>{counts.approved}</strong>
+          <span className="rm2-stat-icon approved" aria-hidden="true">✓</span>
+          <span className="rm2-stat-copy">
+            <small>Approved</small>
+            <strong>{loading && reviews.length === 0 ? '—' : counts.approved}</strong>
+          </span>
         </button>
 
         <button
           type="button"
-          className={`rm-summary-card ${activeTab === 'published' ? 'active' : ''}`}
+          className={`rm2-stat ${activeTab === 'published' ? 'selected' : ''}`}
           onClick={() => setActiveTab('published')}
         >
-          <span>Published</span>
-          <strong>{counts.published}</strong>
+          <span className="rm2-stat-icon published" aria-hidden="true">↗</span>
+          <span className="rm2-stat-copy">
+            <small>Published</small>
+            <strong>{loading && reviews.length === 0 ? '—' : counts.published}</strong>
+          </span>
         </button>
 
         <button
           type="button"
-          className={`rm-summary-card ${activeTab === 'rejected' ? 'active' : ''}`}
+          className={`rm2-stat ${activeTab === 'rejected' ? 'selected' : ''}`}
           onClick={() => setActiveTab('rejected')}
         >
-          <span>Rejected</span>
-          <strong>{counts.rejected}</strong>
+          <span className="rm2-stat-icon rejected" aria-hidden="true">×</span>
+          <span className="rm2-stat-copy">
+            <small>Rejected</small>
+            <strong>{loading && reviews.length === 0 ? '—' : counts.rejected}</strong>
+          </span>
         </button>
       </section>
 
-      <section className="rm-workspace">
-        <div className="rm-workspace-head">
-          <div className="rm-tabs">
+      <section className="rm2-shell">
+        <div className="rm2-shell-top">
+          <nav className="rm2-tabs" aria-label="Review filters">
             {TABS.map((tab) => (
               <button
                 key={tab.key}
                 type="button"
                 className={activeTab === tab.key ? 'active' : ''}
-                onClick={() => setActiveTab(tab.key)}
+                onClick={() => {
+                  setActiveTab(tab.key);
+                  setError('');
+                  setSuccess('');
+                }}
               >
                 {tab.label}
                 <span>{counts[tab.key]}</span>
               </button>
             ))}
-          </div>
+          </nav>
 
-          <div className="rm-tools">
-            <input
-              type="search"
-              value={searchText}
-              onChange={(event) => setSearchText(event.target.value)}
-              placeholder="Search reviews"
-              aria-label="Search reviews"
-            />
+          <div className="rm2-tools">
+            <label className="rm2-search">
+              <span aria-hidden="true">⌕</span>
+              <input
+                type="search"
+                value={searchText}
+                onChange={(event) => setSearchText(event.target.value)}
+                placeholder="Search questions, answers or staff"
+                aria-label="Search reviews"
+              />
+            </label>
 
             <button
               type="button"
-              className="rm-btn secondary"
+              className="rm2-refresh"
               onClick={fetchReviews}
               disabled={loading}
             >
@@ -212,182 +276,304 @@ export default function ReviewManagement() {
           </div>
         </div>
 
-        {error ? <div className="rm-feedback error">{error}</div> : null}
-        {success ? <div className="rm-feedback success">{success}</div> : null}
+        {error ? <div className="rm2-feedback error" role="alert">{error}</div> : null}
+        {success ? <div className="rm2-feedback success" role="status">{success}</div> : null}
+
+        <div className="rm2-section-head">
+          <div>
+            <div className="rm2-title-line">
+              <h2>
+                {activeTab === 'pending' && 'Needs Review'}
+                {activeTab === 'approved' && 'Approved Answers'}
+                {activeTab === 'published' && 'Published Knowledge'}
+                {activeTab === 'rejected' && 'Rejected Answers'}
+                {activeTab === 'all' && 'All Reviews'}
+              </h2>
+              <span className={`rm2-count ${activeTab === 'pending' && counts.pending > 0 ? 'attention' : ''}`}>
+                {counts[activeTab]}
+              </span>
+            </div>
+
+            <p>
+              {activeTab === 'pending' && 'Check answer quality before approving or rejecting it.'}
+              {activeTab === 'approved' && 'Approved answers are ready to be published.'}
+              {activeTab === 'published' && 'Knowledge already published to the system.'}
+              {activeTab === 'rejected' && 'Answers that were not accepted.'}
+              {activeTab === 'all' && 'Complete review history across all statuses.'}
+            </p>
+          </div>
+
+          {filteredReviews.length > 0 ? (
+            <span className="rm2-result-range">
+              {((currentPage - 1) * REVIEWS_PER_PAGE) + 1}
+              {'–'}
+              {Math.min(currentPage * REVIEWS_PER_PAGE, filteredReviews.length)}
+              {' of '}
+              {filteredReviews.length}
+            </span>
+          ) : null}
+        </div>
 
         {loading && reviews.length === 0 ? (
-          <div className="rm-empty-state">
-            <strong>Loading reviews...</strong>
+          <div className="rm2-loading" aria-label="Loading reviews">
+            <span /><span /><span />
           </div>
         ) : filteredReviews.length === 0 ? (
-          <div className="rm-empty-state">
+          <div className="rm2-empty">
+            <span className="rm2-empty-icon" aria-hidden="true">✓</span>
             <strong>No reviews found</strong>
-            <span>Try another tab or search.</span>
+            <p>
+              {searchText
+                ? 'No review matches your current search.'
+                : activeTab === 'pending'
+                  ? 'There are no answers waiting for review.'
+                  : 'There are no records in this section yet.'}
+            </p>
+          </div>
+        ) : activeTab === 'pending' ? (
+          <div className="rm2-review-grid">
+            {paginatedReviews.map((item) => {
+              const isExpanded = expandedReviewId === item.review_id;
+              const isProcessing = actionLoadingId === item.review_id;
+
+              return (
+                <article
+                  className={`rm2-review-card ${isExpanded ? 'expanded' : ''}`}
+                  key={`pending-${item.review_id}`}
+                >
+                  <div className="rm2-card-top">
+                    <span className="rm2-status pending">
+                      <i aria-hidden="true" />
+                      Pending
+                    </span>
+                    <span className="rm2-date">{formatDate(item.created_at)}</span>
+                  </div>
+
+                  <div className="rm2-card-question">
+                    <span>Question</span>
+                    <h3>{item.question}</h3>
+                  </div>
+
+                  <div className="rm2-card-answer">
+                    <span>Staff answer</span>
+                    <p>{item.answer || 'No answer provided.'}</p>
+                  </div>
+
+                  <div className="rm2-card-footer">
+                    <div className="rm2-submitter">
+                      <span className="rm2-avatar" aria-hidden="true">
+                        {String(item.submitted_by_name || 'U')
+                          .split(' ')
+                          .filter(Boolean)
+                          .slice(0, 2)
+                          .map((part) => part[0]?.toUpperCase())
+                          .join('')}
+                      </span>
+                      <div>
+                        <small>Submitted by</small>
+                        <strong>{item.submitted_by_name || 'Unknown'}</strong>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      className="rm2-details-btn"
+                      onClick={() => toggleExpanded(item.review_id)}
+                    >
+                      {isExpanded ? 'Close details' : 'Review answer'}
+                      <span aria-hidden="true">{isExpanded ? '↑' : '→'}</span>
+                    </button>
+                  </div>
+
+                  {isExpanded ? (
+                    <div className="rm2-review-panel">
+                      <label className="rm2-comment-field" htmlFor={`review-comment-${item.review_id}`}>
+                        <span>Reviewer comment <small>Optional</small></span>
+                        <textarea
+                          id={`review-comment-${item.review_id}`}
+                          rows="3"
+                          placeholder="Add a note for this review"
+                          value={reviewerComment[item.review_id] || ''}
+                          onChange={(event) =>
+                            setReviewerComment((prev) => ({
+                              ...prev,
+                              [item.review_id]: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
+
+                      <div className="rm2-review-actions">
+                        <button
+                          type="button"
+                          className="rm2-btn reject"
+                          disabled={isProcessing}
+                          onClick={() => handleReviewAction(item.review_id, 'reject')}
+                        >
+                          {isProcessing ? 'Working...' : 'Reject'}
+                        </button>
+                        <button
+                          type="button"
+                          className="rm2-btn approve"
+                          disabled={isProcessing}
+                          onClick={() => handleReviewAction(item.review_id, 'approve')}
+                        >
+                          {isProcessing ? 'Working...' : 'Approve answer'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                </article>
+              );
+            })}
           </div>
         ) : (
-          <div className="rm-table-wrap">
-            <table className="rm-table">
+          <div className="rm2-table-wrap">
+            <table className="rm2-table">
               <thead>
                 <tr>
                   <th>Question</th>
-                  <th>Submitted By</th>
+                  <th>Submitted by</th>
                   <th>Status</th>
                   <th>Date</th>
-                  <th className="rm-action-col">Action</th>
+                  <th className="rm2-action-col">Action</th>
                 </tr>
               </thead>
 
               <tbody>
-                {filteredReviews.map((item) => {
+                {paginatedReviews.map((item) => {
                   const isExpanded = expandedReviewId === item.review_id;
-                  const isPending = item.status === 'pending';
                   const isApproved = item.status === 'approved';
                   const isProcessing = actionLoadingId === item.review_id;
 
                   return (
-                    <>
-                      <tr key={`row-${item.review_id}`}>
+                    <Fragment key={`review-${item.review_id}`}>
+                      <tr>
                         <td>
-                          <div className="rm-question-cell">
+                          <div className="rm2-question-cell">
                             <strong>{item.question}</strong>
                             <span>{item.answer || 'No answer provided'}</span>
                           </div>
                         </td>
 
                         <td>
-                          <span className="rm-submitter">
+                          <span className="rm2-submitter-name">
                             {item.submitted_by_name || 'Unknown'}
                           </span>
                         </td>
 
                         <td>
-                          <span className={`rm-status ${item.status || 'unknown'}`}>
-                            <i />
+                          <span className={`rm2-status ${item.status || 'unknown'}`}>
+                            <i aria-hidden="true" />
                             {statusLabel(item.status)}
                           </span>
                         </td>
 
                         <td>
-                          <span className="rm-date">
-                            {formatDate(item.created_at)}
-                          </span>
+                          <span className="rm2-date">{formatDate(item.created_at)}</span>
                         </td>
 
-                        <td>
+                        <td className="rm2-action-col">
                           <button
                             type="button"
-                            className="rm-btn secondary"
+                            className="rm2-details-btn compact"
                             onClick={() => toggleExpanded(item.review_id)}
                           >
-                            {isExpanded ? 'Close' : 'Review'}
+                            {isExpanded ? 'Close' : 'View'}
                           </button>
                         </td>
                       </tr>
 
                       {isExpanded ? (
-                        <tr key={`detail-${item.review_id}`} className="rm-detail-row">
+                        <tr key={`detail-${item.review_id}`} className="rm2-detail-row">
                           <td colSpan="5">
-                            <div className="rm-detail-panel">
-                              <div className="rm-detail-section">
-                                <span className="rm-detail-label">Question</span>
-                                <p>{item.question}</p>
-                              </div>
-
-                              <div className="rm-detail-section">
-                                <span className="rm-detail-label">Answer</span>
-                                <p>{item.answer || 'No answer provided.'}</p>
+                            <div className="rm2-detail-panel">
+                              <div className="rm2-detail-grid">
+                                <div>
+                                  <span className="rm2-detail-label">Question</span>
+                                  <p>{item.question}</p>
+                                </div>
+                                <div>
+                                  <span className="rm2-detail-label">Answer</span>
+                                  <p>{item.answer || 'No answer provided.'}</p>
+                                </div>
                               </div>
 
                               {item.reviewer_comment ? (
-                                <div className="rm-detail-section">
-                                  <span className="rm-detail-label">
-                                    Reviewer Comment
-                                  </span>
+                                <div className="rm2-existing-comment">
+                                  <span className="rm2-detail-label">Reviewer comment</span>
                                   <p>{item.reviewer_comment}</p>
                                 </div>
                               ) : null}
 
-                              {isPending ? (
-                                <div className="rm-comment-box">
-                                  <label htmlFor={`review-comment-${item.review_id}`}>
-                                    Comment
-                                  </label>
-
-                                  <textarea
-                                    id={`review-comment-${item.review_id}`}
-                                    rows="3"
-                                    placeholder="Optional reviewer comment"
-                                    value={reviewerComment[item.review_id] || ''}
-                                    onChange={(event) =>
-                                      setReviewerComment((prev) => ({
-                                        ...prev,
-                                        [item.review_id]: event.target.value,
-                                      }))
-                                    }
-                                  />
-                                </div>
-                              ) : null}
-
-                              <div className="rm-detail-actions">
-                                {isPending ? (
-                                  <>
-                                    <button
-                                      type="button"
-                                      className="rm-btn primary"
-                                      disabled={isProcessing}
-                                      onClick={() =>
-                                        handleReviewAction(
-                                          item.review_id,
-                                          'approve'
-                                        )
-                                      }
-                                    >
-                                      {isProcessing ? 'Working...' : 'Approve'}
-                                    </button>
-
-                                    <button
-                                      type="button"
-                                      className="rm-btn danger"
-                                      disabled={isProcessing}
-                                      onClick={() =>
-                                        handleReviewAction(
-                                          item.review_id,
-                                          'reject'
-                                        )
-                                      }
-                                    >
-                                      {isProcessing ? 'Working...' : 'Reject'}
-                                    </button>
-                                  </>
-                                ) : null}
-
-                                {isApproved ? (
+                              {isApproved ? (
+                                <div className="rm2-detail-actions">
                                   <button
                                     type="button"
-                                    className="rm-btn primary"
+                                    className="rm2-btn publish"
                                     disabled={isProcessing}
-                                    onClick={() =>
-                                      handleReviewAction(
-                                        item.review_id,
-                                        'publish'
-                                      )
-                                    }
+                                    onClick={() => handleReviewAction(item.review_id, 'publish')}
                                   >
-                                    {isProcessing ? 'Publishing...' : 'Publish'}
+                                    {isProcessing ? 'Publishing...' : 'Publish knowledge'}
                                   </button>
-                                ) : null}
-                              </div>
+                                </div>
+                              ) : null}
                             </div>
                           </td>
                         </tr>
                       ) : null}
-                    </>
+                    </Fragment>
                   );
                 })}
               </tbody>
             </table>
           </div>
         )}
+
+        {filteredReviews.length > REVIEWS_PER_PAGE ? (
+          <nav className="rm2-pagination" aria-label="Review pages">
+            <button
+              type="button"
+              className="rm2-page-arrow"
+              onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+              disabled={currentPage === 1}
+              aria-label="Previous page"
+            >
+              ‹
+            </button>
+
+            <div className="rm2-page-numbers">
+              {pageNumbers.map((page, index) => {
+                const previousPage = pageNumbers[index - 1];
+                const showGap = index > 0 && page - previousPage > 1;
+
+                return (
+                  <Fragment key={`page-${page}`}>
+                    {showGap ? <span className="rm2-page-gap">…</span> : null}
+                    <button
+                      type="button"
+                      className={currentPage === page ? 'active' : ''}
+                      onClick={() => setCurrentPage(page)}
+                      aria-current={currentPage === page ? 'page' : undefined}
+                    >
+                      {page}
+                    </button>
+                  </Fragment>
+                );
+              })}
+            </div>
+
+            <button
+              type="button"
+              className="rm2-page-arrow"
+              onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+              disabled={currentPage === totalPages}
+              aria-label="Next page"
+            >
+              ›
+            </button>
+          </nav>
+        ) : null}
       </section>
     </div>
   );
