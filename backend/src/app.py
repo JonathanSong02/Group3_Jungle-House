@@ -1363,6 +1363,16 @@ _MANAGER_ENDPOINTS = {
 _SELF_PROFILE_ENDPOINTS = {"get_profile", "update_profile", "change_password"}
 _SELF_MESSAGE_ENDPOINTS = {"get_message_threads", "get_thread_messages"}
 
+# Public reference images used by Knowledge Base / SOP / product / notice pages.
+# These folders contain bundled content assets only. User-uploaded files under
+# /static/uploads/* stay protected by the normal authenticated-session check.
+_PUBLIC_STATIC_PREFIXES = (
+    "/static/sop_images/",
+    "/static/product_images/",
+    "/static/notice_images/",
+    "/static/uploads/articles/",
+)
+
 
 @app.before_request
 def require_authenticated_api():
@@ -1378,8 +1388,15 @@ def require_authenticated_api():
         filename = str((request.view_args or {}).get("filename") or "").replace("\\", "/")
         if not filename or any(segment in {".", ".."} for segment in filename.split("/")):
             return jsonify({"message": "File not found."}), 404
-    # The session cookie is shared with /static via the Vercel same-origin rewrite.
-    # Protect both the Vercel proxy path and direct requests to Railway.
+
+    # Knowledge Base reference assets and article-upload files are intentionally
+    # public so article <img> tags can load reliably without depending on a
+    # Flask session cookie. Chat uploads remain private.
+    if path.startswith(_PUBLIC_STATIC_PREFIXES):
+        return None
+
+    # API routes, chat and remaining private static uploads still require an
+    # active, database-backed session.
     if not (path.startswith("/api/") or path == "/chat" or path.startswith("/static/")):
         return None
     if endpoint in _LEGACY_REGISTRATION_ENDPOINTS:
