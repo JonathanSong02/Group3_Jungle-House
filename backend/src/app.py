@@ -2599,6 +2599,125 @@ MALAY_MARKER_WORDS = {
     "ini", "itu", "siapa", "berapa",
 }
 
+# Common Malaysian retail "SMS slang"/Bahasa Pasar shorthand, expanded into
+# full Malay words BEFORE language detection runs -- without this, a
+# message like "cmne nk simpan ipad ble clsing kdai" contains none of the
+# full-word MALAY_MARKER_WORDS above and would be misdetected as English.
+_MALAY_SHORTHAND_MAP = {
+    "cmne": "macam mana", "mcmne": "macam mana", "camne": "macam mana",
+    "nk": "nak", "bpe": "berapa", "brape": "berapa", "kt": "kat",
+    "mne": "mana", "ble": "bila", "bile": "bila",
+    "xleh": "tidak boleh", "xboleh": "tidak boleh", "takleh": "tidak boleh",
+    "x": "tidak", "xde": "tidak ada", "takde": "tidak ada",
+    "kdai": "kedai", "clsing": "closing", "clsg": "closing",
+    "opning": "opening", "bukak": "buka", "pmbayaran": "pembayaran",
+    "tp": "tapi", "dgn": "dengan", "utk": "untuk", "sbb": "sebab",
+    "sblm": "sebelum", "slps": "selepas", "jgn": "jangan", "mcm": "macam",
+    "sy": "saya", "awk": "awak", "pg": "pagi", "ptg": "petang",
+    "mlm": "malam", "slm": "selamat", "kbr": "khabar", "kba": "khabar",
+    "pkabar": "apa khabar", "apakhabar": "apa khabar",
+}
+
+# Extra vocabulary (beyond MALAY_MARKER_WORDS) recognized when splitting a
+# spaceless Malay phrase like "berapapembayaranais" via the same
+# _segment_no_space_word() word-break helper used for English.
+_MALAY_COMMON_WORDS = MALAY_MARKER_WORDS | {
+    "kedai", "closing", "opening", "simpan", "letak", "guna", "ambil",
+    "beli", "jual", "bawa", "bayar", "bayaran", "wang", "duit", "ais",
+    "peti", "sejuk", "kunci", "buka", "tutup", "staf", "pelanggan",
+    "harga", "kos", "resit", "stok", "bersih", "basuh", "buang",
+    "pakai", "tukar", "mula", "habis", "kerja", "syif", "khabar",
+    "pagi", "petang", "malam", "selamat", "terima", "kasih",
+}
+
+_MALAY_GREETINGS = {
+    "selamat pagi", "selamat petang", "selamat malam", "selamat tengah hari",
+    "apa khabar", "salam", "assalamualaikum",
+}
+
+# Chinese greetings typed in Latin-letter Pinyin (no CJK characters at all),
+# so CJK_CHAR_RE never fires for them -- checked directly against the raw
+# lowercased text, independent of language detection.
+_PINYIN_GREETINGS = {
+    "nihao", "ni hao", "nihao ma", "ni hao ma", "zao an", "zaoan",
+    "zaoshang hao", "wan an", "wanan", "nihao ah",
+}
+
+# Common retail homophone/shorthand typos in Chinese input (e.g. staff
+# meaning "closing" (打烊) but typing the homophone "打样"). Deliberately a
+# small, known-safe substring swap list -- not a general spellchecker -- so
+# it can never corrupt correctly-typed text.
+_CHINESE_HOMOPHONE_MAP = {
+    "打样": "打烊",
+    "蜂密": "蜂蜜",
+    "收档": "打烊",
+    "开档": "开店",
+    "点弄": "怎么弄",
+    "点做": "怎么做",
+    "几多": "多少",
+}
+
+
+def expand_malay_shorthand(question):
+    """
+    Best-effort SMS-slang/shorthand expansion for Bahasa Melayu chat input
+    (e.g. "cmne nk simpan ipad ble clsing kdai" -> "macam mana nak simpan
+    ipad bila closing kedai"). Used only to help detect_question_language()
+    recognize slang Malay and to improve the English keyword bridge --
+    never shown to the user, never used for logging/escalation/replies.
+    Returns (expanded_text, changed).
+
+    A no-op for CJK text (translate_query_to_english_keywords already owns
+    that case).
+    """
+    text = str(question or "").strip()
+
+    if not text or CJK_CHAR_RE.search(text):
+        return text, False
+
+    raw_tokens = re.findall(r"[a-zA-Z']+|[^\sa-zA-Z']+", text.lower())
+    output_tokens = []
+    changed = False
+
+    for token in raw_tokens:
+        if not re.fullmatch(r"[a-z']+", token):
+            output_tokens.append(token)
+            continue
+
+        if token in _MALAY_SHORTHAND_MAP:
+            output_tokens.append(_MALAY_SHORTHAND_MAP[token])
+            changed = True
+            continue
+
+        if token in _MALAY_COMMON_WORDS:
+            output_tokens.append(token)
+            continue
+
+        segmented = _segment_no_space_word(token, _MALAY_COMMON_WORDS)
+        if segmented:
+            output_tokens.extend(segmented)
+            changed = True
+            continue
+
+        output_tokens.append(token)
+
+    normalized = " ".join(output_tokens)
+    normalized = re.sub(r"\s+([?.!,])", r"\1", normalized).strip()
+
+    return (normalized, changed) if changed else (text, False)
+
+
+def correct_chinese_homophones(text):
+    """
+    Fixes a small set of known retail homophone typos in Chinese input
+    (e.g. "打样" typed for "打烊"/closing) before the English-keyword bridge
+    runs, so retrieval isn't thrown off by them.
+    """
+    text = str(text or "")
+    for wrong, right in _CHINESE_HOMOPHONE_MAP.items():
+        text = text.replace(wrong, right)
+    return text
+
 
 def detect_question_language(text: str) -> str:
     """
@@ -7342,11 +7461,27 @@ def chat():
         # exactly what the staff member typed for logging/escalation/replies.
         # Falls back to `question` unchanged on any detection/AI failure.
         # =========================
+        # Malay SMS slang ("cmne nk simpan ipad") contains none of the
+        # full-word MALAY_MARKER_WORDS detect_question_language() looks for,
+        # so expand it first and re-detect on the expanded text if the raw
+        # text didn't already read as non-English.
+        malay_expanded_question, malay_query_was_expanded = expand_malay_shorthand(question)
+
         detected_language = detect_question_language(question)
+        if detected_language == "en" and malay_query_was_expanded:
+            detected_language = detect_question_language(malay_expanded_question)
+
         question_for_search = question
 
-        if detected_language != "en":
-            question_for_search = translate_query_to_english_keywords(question, detected_language)
+        if detected_language == "zh":
+            question_for_search = translate_query_to_english_keywords(
+                correct_chinese_homophones(question), detected_language
+            )
+        elif detected_language == "ms":
+            question_for_search = translate_query_to_english_keywords(
+                malay_expanded_question if malay_query_was_expanded else question,
+                detected_language,
+            )
 
         # =========================
         # TYPO / SHORTHAND / NO-SPACE NORMALIZATION
@@ -7372,14 +7507,36 @@ def chat():
 
         # =========================
         # ✅ STEP 0: GREETING
-        # Checked against both the raw and normalized text, so a mistyped
-        # greeting ("hqw are yio") is recognized the same as a clean one.
+        # Checked against the raw text, the English-typo-normalized text
+        # ("hqw are yio"), the Malay-slang-expanded text ("slm pg" ->
+        # "selamat pagi"), and Pinyin-typed Chinese greetings ("nihao",
+        # "zao an") -- so a mistyped or shorthand greeting in any of the
+        # three supported languages is recognized the same as a clean one,
+        # and none of them are ever escalated.
         # =========================
         if q_lower.strip() in greetings or (
             query_was_normalized and normalized_question.lower().strip() in greetings
         ):
             return jsonify({
                 "reply": "Hi! 👋 I can help you with SOP, kiosk steps, product info, or promotion.\n\nTry asking:\n- kiosk opening\n- show step 4\n- latest promotion",
+                "confidence": 1.0,
+                "source": "greeting",
+                "fallback": False,
+                "escalation_ready": False
+            }), 200
+
+        if malay_query_was_expanded and malay_expanded_question.lower().strip() in _MALAY_GREETINGS:
+            return jsonify({
+                "reply": "Selamat sejahtera! 👋 Saya boleh bantu dengan SOP, langkah kiosk, maklumat produk, atau promosi.\n\nCuba tanya:\n- pembukaan kiosk\n- tunjuk langkah 4\n- promosi terkini",
+                "confidence": 1.0,
+                "source": "greeting",
+                "fallback": False,
+                "escalation_ready": False
+            }), 200
+
+        if q_lower.strip() in _PINYIN_GREETINGS:
+            return jsonify({
+                "reply": "你好！👋 我可以帮你查SOP、开店/打烊步骤、产品资讯或促销活动。\n\n试着问：\n- kiosk opening\n- show step 4\n- latest promotion",
                 "confidence": 1.0,
                 "source": "greeting",
                 "fallback": False,
@@ -7396,7 +7553,8 @@ def chat():
         # still unrecognizable after normalization too.
         # =========================
         if is_nonsense(question) and not (
-            query_was_normalized and not is_nonsense(normalized_question)
+            (query_was_normalized and not is_nonsense(normalized_question))
+            or (malay_query_was_expanded and not is_nonsense(malay_expanded_question))
         ):
             retrieval_result = search_similar_question(question)
 
