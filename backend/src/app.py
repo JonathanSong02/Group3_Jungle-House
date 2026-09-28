@@ -221,6 +221,19 @@ _COMMON_QUERY_WORDS = {
     "good", "morning", "afternoon", "evening", "thank", "thanks", "please",
     "help", "yes", "no", "ok", "okay", "not", "open", "close", "step",
     "steps", "time", "today", "tomorrow", "day", "first", "last", "next",
+    # Everyday action/work verbs and common nouns -- these are exactly the
+    # words a staff question is likely to use even when the matching KB
+    # article itself phrases the same idea differently (e.g. the "Ice
+    # Receiving" SOP says "pay", never "buy", but "how to buy ice" is a
+    # completely normal way for a staff member to ask about it).
+    "buy", "buying", "purchase", "pay", "paying", "get", "receive",
+    "receiving", "order", "sell", "bring", "take", "give", "collect",
+    "deliver", "delivery", "return", "refund", "exchange", "replace",
+    "broken", "wrong", "missing", "lost", "forgot", "fix", "staff",
+    "customer", "price", "cost", "money", "cash", "cashless", "pos",
+    "receipt", "invoice", "stock", "count", "clean", "wash", "throw",
+    "dispose", "wear", "use", "turn", "switch", "lock", "unlock", "start",
+    "end", "finish", "begin", "who's", "whos", "shift", "work", "job",
 }
 
 _KB_VOCABULARY_CACHE = {"words": set(), "built_at": 0}
@@ -310,7 +323,48 @@ def _segment_no_space_word(token, vocabulary):
                 if best[i] is None or len(candidate) < len(best[i]):
                     best[i] = candidate
 
-    return best[n]
+    if best[n] is not None:
+        return best[n]
+
+    # No split covers the ENTIRE string -- almost always because one word
+    # in the middle just isn't in the vocabulary yet (a real gap in the
+    # word list, not necessarily nonsense input). Falling back to greedy
+    # longest-match-first still recovers the words that ARE recognized
+    # instead of giving up on the whole token because of one unknown
+    # chunk -- e.g. "howtobuyice" with "buy" missing from the vocabulary
+    # still correctly recovers "how", "ice", and isolates "tobuy" rather
+    # than leaving the entire original gibberish string untouched.
+    partial_words = []
+    recognized_count = 0
+    i = 0
+    unknown_buffer = ""
+
+    while i < n:
+        matched = None
+        max_len = min(20, n - i)
+        for length in range(max_len, 1, -1):
+            candidate = token[i:i + length]
+            if candidate in vocabulary:
+                matched = candidate
+                break
+
+        if matched:
+            if unknown_buffer:
+                partial_words.append(unknown_buffer)
+                unknown_buffer = ""
+            partial_words.append(matched)
+            recognized_count += 1
+            i += len(matched)
+        else:
+            unknown_buffer += token[i]
+            i += 1
+
+    if unknown_buffer:
+        partial_words.append(unknown_buffer)
+
+    # Only worth using if it genuinely recovered multiple real words --
+    # otherwise this is just noise and the original token is left as-is.
+    return partial_words if recognized_count >= 2 else None
 
 
 def _fuzzy_correct_token(token, vocabulary):
