@@ -1621,7 +1621,7 @@ _APPROVER_ENDPOINTS = {
     "restore_escalation", "permanent_delete_escalation",
     "add_article", "upload_article_editor_image", "edit_article", "delete_article",
     "restore_article", "bulk_permanent_delete_articles", "permanent_delete_article",
-    "cleanup_unused_uploads",
+    "cleanup_unused_uploads", "bulk_bin_articles", "bulk_restore_articles",
 }
 _MANAGER_ENDPOINTS = {
     "get_ai_settings", "save_ai_settings", "test_ai_settings",
@@ -8504,6 +8504,94 @@ def delete_article(article_id):
             conn.close()
 
 
+def _parse_bulk_article_ids(data):
+    """
+    Same parsing every bulk article route needs: dedupe, coerce to int,
+    silently drop anything that isn't a valid ID instead of failing the
+    whole request over one bad value.
+    """
+    article_ids = data.get("article_ids") or data.get("ids") or []
+    clean_ids = []
+
+    for item in article_ids:
+        try:
+            clean_id = int(item)
+            if clean_id not in clean_ids:
+                clean_ids.append(clean_id)
+        except (TypeError, ValueError):
+            continue
+
+    return clean_ids
+
+
+# =========================
+# BULK MOVE TO BIN ROUTE
+# Soft-delete multiple selected articles from the Articles tab at once
+# =========================
+@app.route('/api/articles/bulk-bin', methods=['POST'])
+def bulk_bin_articles():
+    conn = None
+    cursor = None
+
+    try:
+        data = request.get_json(silent=True) or {}
+        clean_ids = _parse_bulk_article_ids(data)
+        deleted_by = current_auth_user_id()
+
+        if not clean_ids:
+            return jsonify({"message": "No article selected."}), 400
+
+        placeholders = ",".join(["%s"] * len(clean_ids))
+
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        # Only touch articles that are currently active -- an ID that's
+        # already in the bin (or doesn't exist) is silently skipped rather
+        # than failing the whole batch.
+        cursor.execute(f"""
+            UPDATE wiki_article
+            SET is_deleted = TRUE,
+                deleted_at = NOW(),
+                deleted_by = %s
+            WHERE article_id IN ({placeholders})
+              AND COALESCE(is_deleted, 0) = 0
+        """, (deleted_by, *clean_ids))
+
+        moved_count = cursor.rowcount
+
+        conn.commit()
+
+        add_audit_log(
+            actor_id=deleted_by,
+            action="Bulk moved articles to Retrieve Bin",
+            module="Content Management",
+            description=f"{moved_count} article(s) were bulk moved to Retrieve Bin."
+        )
+
+        return jsonify({
+            "message": f"{moved_count} article(s) moved to Retrieve Bin successfully.",
+            "moved_count": moved_count
+        }), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("GENERAL ERROR /api/articles/bulk-bin:", error)
+
+        return jsonify({
+            "message": "Failed to move selected articles to Retrieve Bin.",
+            "error": str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
 # =========================
 # RESTORE ARTICLE ROUTE
 # Restore article from Retrieve Bin
@@ -8550,6 +8638,74 @@ def restore_article(article_id):
         return jsonify({
             'message': 'Failed to restore article.',
             'error': str(error)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+# =========================
+# BULK RESTORE ARTICLE ROUTE
+# Restore multiple selected articles from the Retrieve Bin at once
+# =========================
+@app.route('/api/articles/bulk-restore', methods=['POST'])
+def bulk_restore_articles():
+    conn = None
+    cursor = None
+
+    try:
+        data = request.get_json(silent=True) or {}
+        clean_ids = _parse_bulk_article_ids(data)
+        restored_by = current_auth_user_id()
+
+        if not clean_ids:
+            return jsonify({"message": "No article selected."}), 400
+
+        placeholders = ",".join(["%s"] * len(clean_ids))
+
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        # Only touch articles that are currently in the bin -- an ID that's
+        # already active (or doesn't exist) is silently skipped rather than
+        # failing the whole batch.
+        cursor.execute(f"""
+            UPDATE wiki_article
+            SET is_deleted = FALSE,
+                deleted_at = NULL,
+                deleted_by = NULL
+            WHERE article_id IN ({placeholders})
+              AND COALESCE(is_deleted, 0) = 1
+        """, tuple(clean_ids))
+
+        restored_count = cursor.rowcount
+
+        conn.commit()
+
+        add_audit_log(
+            actor_id=restored_by,
+            action="Bulk restored articles",
+            module="Content Management",
+            description=f"{restored_count} article(s) were bulk restored from Retrieve Bin."
+        )
+
+        return jsonify({
+            "message": f"{restored_count} article(s) restored successfully.",
+            "restored_count": restored_count
+        }), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("GENERAL ERROR /api/articles/bulk-restore:", error)
+
+        return jsonify({
+            "message": "Failed to restore selected articles.",
+            "error": str(error)
         }), 500
 
     finally:

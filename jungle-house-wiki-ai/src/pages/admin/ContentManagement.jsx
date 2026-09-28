@@ -16,8 +16,11 @@ export default function ContentManagement() {
   const [activeTab, setActiveTab] = useState('active');
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
-  const [selectedDeletedIds, setSelectedDeletedIds] = useState([]);
-  const [bulkDeleting, setBulkDeleting] = useState(false);
+  // One selection list shared by both tabs -- safe because switchTab()
+  // already clears it on every tab change, so an ID from the Articles tab
+  // can never linger while viewing the Retrieve Bin or vice versa.
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [bulkProcessing, setBulkProcessing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
 
@@ -93,7 +96,7 @@ export default function ContentManagement() {
       setMessage('');
       await api.put(`/articles/${articleId}/restore`);
       setMessage('Article restored.');
-      setSelectedDeletedIds((prev) => prev.filter((id) => id !== articleId));
+      setSelectedIds((prev) => prev.filter((id) => id !== articleId));
       await fetchArticles();
     } catch (error) {
       console.error('Restore article error:', error);
@@ -101,29 +104,29 @@ export default function ContentManagement() {
     }
   };
 
-  const toggleDeletedSelection = (articleId) => {
-    setSelectedDeletedIds((prev) =>
+  const toggleSelection = (articleId) => {
+    setSelectedIds((prev) =>
       prev.includes(articleId)
         ? prev.filter((id) => id !== articleId)
         : [...prev, articleId]
     );
   };
 
-  const toggleSelectAllDeleted = () => {
+  const toggleSelectAllVisible = () => {
     const visibleIds = filteredArticles.map((article) => article.article_id);
     const allSelected =
       visibleIds.length > 0 &&
-      visibleIds.every((id) => selectedDeletedIds.includes(id));
+      visibleIds.every((id) => selectedIds.includes(id));
 
     if (allSelected) {
-      setSelectedDeletedIds((prev) =>
-        prev.filter((id) => !visibleIds.includes(id))
-      );
+      setSelectedIds((prev) => prev.filter((id) => !visibleIds.includes(id)));
       return;
     }
 
-    setSelectedDeletedIds((prev) => [...new Set([...prev, ...visibleIds])]);
+    setSelectedIds((prev) => [...new Set([...prev, ...visibleIds])]);
   };
+
+  const clearSelection = () => setSelectedIds([]);
 
   const permanentDeleteArticle = async (articleId) => {
     if (!window.confirm('Permanently delete this article?')) return;
@@ -132,7 +135,7 @@ export default function ContentManagement() {
       setMessage('');
       await api.delete(`/articles/${articleId}/permanent-delete`);
       setMessage('Article permanently deleted.');
-      setSelectedDeletedIds((prev) => prev.filter((id) => id !== articleId));
+      setSelectedIds((prev) => prev.filter((id) => id !== articleId));
       await fetchArticles();
     } catch (error) {
       console.error('Permanent delete article error:', error);
@@ -144,66 +147,85 @@ export default function ContentManagement() {
     }
   };
 
-  const permanentDeleteSelected = async () => {
-    const selectedVisibleIds = selectedDeletedIds.filter((id) =>
+  // Shared by all three bulk actions below -- same validation, same
+  // confirm-before-acting safety net, same success/error handling shape,
+  // just a different endpoint and confirm/result wording per action.
+  const runBulkAction = async ({ endpoint, confirmText, successFallback, errorFallback }) => {
+    const selectedVisibleIds = selectedIds.filter((id) =>
       filteredArticles.some((article) => article.article_id === id)
     );
 
     if (selectedVisibleIds.length === 0) return;
 
-    if (
-      !window.confirm(
-        `Permanently delete ${selectedVisibleIds.length} selected article(s)?`
-      )
-    ) {
+    if (confirmText && !window.confirm(confirmText(selectedVisibleIds.length))) {
       return;
     }
 
     try {
-      setBulkDeleting(true);
+      setBulkProcessing(true);
       setMessage('');
 
-      const response = await api.post('/articles/bulk-permanent-delete', {
+      const response = await api.post(endpoint, {
         article_ids: selectedVisibleIds,
-        deleted_by: currentUserId,
+        actor_id: currentUserId,
       });
 
-      setMessage(
-        response.data?.message ||
-          `${selectedVisibleIds.length} article(s) deleted.`
-      );
+      setMessage(response.data?.message || successFallback(selectedVisibleIds.length));
 
-      setSelectedDeletedIds([]);
+      setSelectedIds([]);
       await fetchArticles();
     } catch (error) {
-      console.error('Bulk permanent delete error:', error);
+      console.error(`Bulk action error (${endpoint}):`, error);
       setMessage(
         error.response?.data?.error ||
           error.response?.data?.message ||
-          'Unable to delete selected articles.'
+          errorFallback
       );
     } finally {
-      setBulkDeleting(false);
+      setBulkProcessing(false);
     }
   };
+
+  const bulkMoveToBin = () =>
+    runBulkAction({
+      endpoint: '/articles/bulk-bin',
+      confirmText: (count) => `Move ${count} selected article(s) to the Retrieve Bin?`,
+      successFallback: (count) => `${count} article(s) moved to Retrieve Bin.`,
+      errorFallback: 'Unable to move selected articles to Retrieve Bin.',
+    });
+
+  const bulkRestoreSelected = () =>
+    runBulkAction({
+      endpoint: '/articles/bulk-restore',
+      confirmText: null,
+      successFallback: (count) => `${count} article(s) restored.`,
+      errorFallback: 'Unable to restore selected articles.',
+    });
+
+  const permanentDeleteSelected = () =>
+    runBulkAction({
+      endpoint: '/articles/bulk-permanent-delete',
+      confirmText: (count) =>
+        `Permanently delete ${count} selected article(s)? This cannot be undone.`,
+      successFallback: (count) => `${count} article(s) deleted.`,
+      errorFallback: 'Unable to delete selected articles.',
+    });
 
   const switchTab = (tabName) => {
     setActiveTab(tabName);
     setSearch('');
     setSelectedCategory('All');
-    setSelectedDeletedIds([]);
+    setSelectedIds([]);
     setMessage('');
   };
 
-  const selectedVisibleDeletedIds = selectedDeletedIds.filter((id) =>
+  const selectedVisibleIds = selectedIds.filter((id) =>
     filteredArticles.some((article) => article.article_id === id)
   );
 
-  const allVisibleDeletedSelected =
+  const allVisibleSelected =
     filteredArticles.length > 0 &&
-    filteredArticles.every((article) =>
-      selectedDeletedIds.includes(article.article_id)
-    );
+    filteredArticles.every((article) => selectedIds.includes(article.article_id));
 
   const categoryTotal = new Set(
     articleList.map((article) => article.category).filter(Boolean)
@@ -309,31 +331,51 @@ export default function ContentManagement() {
 
         {message ? <div className="cm-feedback">{message}</div> : null}
 
-        {activeTab === 'bin' && filteredArticles.length > 0 ? (
-          <div className="cm-bin-toolbar">
-            <label className="cm-select-all">
-              <input
-                type="checkbox"
-                checked={allVisibleDeletedSelected}
-                onChange={toggleSelectAllDeleted}
-              />
-              <span>Select all</span>
-            </label>
-
+        {filteredArticles.length > 0 && selectedVisibleIds.length > 0 ? (
+          <div className="cm-bin-toolbar" role="toolbar" aria-label="Bulk actions">
             <span className="cm-selection-count">
-              {selectedVisibleDeletedIds.length} selected
+              {selectedVisibleIds.length} selected
             </span>
 
             <button
               type="button"
-              className="cm-btn danger"
-              onClick={permanentDeleteSelected}
-              disabled={
-                selectedVisibleDeletedIds.length === 0 || bulkDeleting
-              }
+              className="cm-btn secondary"
+              onClick={clearSelection}
+              disabled={bulkProcessing}
             >
-              {bulkDeleting ? 'Deleting...' : 'Delete Selected'}
+              Clear selection
             </button>
+
+            {activeTab === 'active' ? (
+              <button
+                type="button"
+                className="cm-btn danger-soft"
+                onClick={bulkMoveToBin}
+                disabled={bulkProcessing}
+              >
+                {bulkProcessing ? 'Moving...' : 'Move Selected to Bin'}
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="cm-btn primary"
+                  onClick={bulkRestoreSelected}
+                  disabled={bulkProcessing}
+                >
+                  {bulkProcessing ? 'Restoring...' : 'Restore Selected'}
+                </button>
+
+                <button
+                  type="button"
+                  className="cm-btn danger"
+                  onClick={permanentDeleteSelected}
+                  disabled={bulkProcessing}
+                >
+                  {bulkProcessing ? 'Deleting...' : 'Delete Selected Permanently'}
+                </button>
+              </>
+            )}
           </div>
         ) : null}
 
@@ -361,7 +403,14 @@ export default function ContentManagement() {
             <table className="cm-table">
               <thead>
                 <tr>
-                  {activeTab === 'bin' ? <th className="cm-check-col" /> : null}
+                  <th className="cm-check-col">
+                    <input
+                      type="checkbox"
+                      checked={allVisibleSelected}
+                      onChange={toggleSelectAllVisible}
+                      aria-label="Select all visible articles"
+                    />
+                  </th>
                   <th>Article</th>
                   <th>Category</th>
                   <th>ID</th>
@@ -373,27 +422,21 @@ export default function ContentManagement() {
               <tbody>
                 {filteredArticles.map((article) => {
                   const articleId = article.article_id || article.id;
-                  const selected = selectedDeletedIds.includes(
-                    article.article_id
-                  );
+                  const selected = selectedIds.includes(article.article_id);
 
                   return (
                     <tr
                       key={articleId}
                       className={selected ? 'selected' : ''}
                     >
-                      {activeTab === 'bin' ? (
-                        <td className="cm-check-col">
-                          <input
-                            type="checkbox"
-                            checked={selected}
-                            onChange={() =>
-                              toggleDeletedSelection(article.article_id)
-                            }
-                            aria-label={`Select ${article.title}`}
-                          />
-                        </td>
-                      ) : null}
+                      <td className="cm-check-col">
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          onChange={() => toggleSelection(article.article_id)}
+                          aria-label={`Select ${article.title}`}
+                        />
+                      </td>
 
                       <td>
                         <div className="cm-article-cell">

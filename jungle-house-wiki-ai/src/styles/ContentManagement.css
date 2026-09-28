@@ -371,10 +371,18 @@ button.cm-summary-card:hover {
 
 .cm-select-all input,
 .cm-table input[type='checkbox'] {
-  width: 17px;
-  height: 17px;
+  width: 20px;
+  height: 20px;
   min-height: auto;
   accent-color: var(--primary);
+  cursor: pointer;
+}
+
+/* Generous tap area around the checkbox itself on touch screens, without
+   growing the visible box beyond the 20px it's already drawn at. */
+.cm-check-col {
+  padding-top: 12px !important;
+  padding-bottom: 12px !important;
 }
 
 .cm-selection-count {
