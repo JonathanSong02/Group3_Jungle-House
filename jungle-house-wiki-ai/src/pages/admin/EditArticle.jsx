@@ -30,6 +30,35 @@ export default function EditArticle() {
   const [message, setMessage] = useState('');
   const [insertingIndex, setInsertingIndex] = useState(null);
 
+  // URLs of NEW files uploaded/pasted during this edit session that were
+  // never part of the article when it loaded. Deliberately separate from
+  // the article's already-existing images: removing one of THOSE and
+  // clicking Save is already handled by the backend's own before/after
+  // diff on update, and clicking Cancel must never touch them at all.
+  // This ref only ever tracks brand-new files from this session, tracked
+  // in a ref (not state) since it's pure bookkeeping, not render data.
+  const sessionUploadedUrlsRef = useRef([]);
+
+  const cleanupUploadedUrls = (urls) => {
+    const list = (urls || []).filter(Boolean);
+    if (!list.length) return;
+
+    api.post('/articles/cleanup-uploads', { urls: list }).catch((error) => {
+      console.error('Cleanup unused uploads error:', error);
+    });
+  };
+
+  // Best-effort: catches navigating away (sidebar link, browser back)
+  // without ever clicking Save or Cancel. Both of those already clear the
+  // ref themselves, so this only has something to do when neither ran.
+  useEffect(() => {
+    return () => {
+      if (sessionUploadedUrlsRef.current.length) {
+        cleanupUploadedUrls(sessionUploadedUrlsRef.current);
+      }
+    };
+  }, []);
+
   const editorConfig = useMemo(
     () => ({
       readonly: false,
@@ -280,6 +309,7 @@ export default function EditArticle() {
       insertHtmlIntoContent(
         buildInlineFileHtml(fileUrl, file.name, isImageFile(file.name))
       );
+      sessionUploadedUrlsRef.current.push(fileUrl);
       removeAttachment(index);
     } catch (error) {
       console.error('Insert attachment into content error:', error);
@@ -348,6 +378,7 @@ export default function EditArticle() {
       }
 
       insertHtmlIntoContent(buildInlineFileHtml(fileUrl, file.name || 'pasted-image.png', true));
+      sessionUploadedUrlsRef.current.push(fileUrl);
     } catch (error) {
       console.error('Paste image upload error:', error);
       setMessage(
@@ -399,6 +430,13 @@ export default function EditArticle() {
 
       // No manual Content-Type here either -- same reasoning as above.
       await api.put(`/articles/${id}`, formData);
+
+      // The article saved successfully, so every session-uploaded file is
+      // now genuinely referenced -- clear the tracking list WITHOUT
+      // deleting anything (that's the opposite of Cancel above). Any
+      // pre-existing images the user removed during this edit are cleaned
+      // up separately, by the backend's own before/after diff.
+      sessionUploadedUrlsRef.current = [];
 
       navigate('/admin/content');
     } catch (error) {
@@ -638,12 +676,32 @@ export default function EditArticle() {
                       content: newContent,
                     }))
                   }
-                  onChange={(newContent) =>
+                  onChange={(newContent) => {
+                    // If a still-unsaved-this-session uploaded/pasted
+                    // file's URL is no longer anywhere in the new content,
+                    // the user just removed it from the body -- clean it
+                    // up immediately instead of leaving it orphaned on
+                    // Railway until the page is closed. Existing (already
+                    // saved) images are untouched here; those are handled
+                    // by the backend's own before/after diff on Save.
+                    const stillPresent = [];
+                    const removed = [];
+
+                    sessionUploadedUrlsRef.current.forEach((url) => {
+                      (newContent.includes(url) ? stillPresent : removed).push(url);
+                    });
+
+                    if (removed.length) {
+                      cleanupUploadedUrls(removed);
+                    }
+
+                    sessionUploadedUrlsRef.current = stillPresent;
+
                     setForm((prev) => ({
                       ...prev,
                       content: newContent,
-                    }))
-                  }
+                    }));
+                  }}
                 />
               </div>
             </label>
@@ -653,7 +711,14 @@ export default function EditArticle() {
             <button
               type="button"
               className="secondary-btn"
-              onClick={() => navigate('/admin/content')}
+              onClick={() => {
+                // Only ever deletes files uploaded/pasted THIS session --
+                // the article's pre-existing images are never touched by
+                // Cancel, exactly as required.
+                cleanupUploadedUrls(sessionUploadedUrlsRef.current);
+                sessionUploadedUrlsRef.current = [];
+                navigate('/admin/content');
+              }}
             >
               Cancel
             </button>

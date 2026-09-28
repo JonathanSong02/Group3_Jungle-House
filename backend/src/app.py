@@ -1352,6 +1352,7 @@ _APPROVER_ENDPOINTS = {
     "restore_escalation", "permanent_delete_escalation",
     "add_article", "upload_article_editor_image", "edit_article", "delete_article",
     "restore_article", "bulk_permanent_delete_articles", "permanent_delete_article",
+    "cleanup_unused_uploads",
 }
 _MANAGER_ENDPOINTS = {
     "get_ai_settings", "save_ai_settings", "test_ai_settings",
@@ -8001,7 +8002,7 @@ def edit_article(article_id):
         # or an image pasted by mistake and then removed inside the editor)
         # is now orphaned on the volume -- clean it up instead of leaving
         # it there forever.
-        delete_upload_filenames(old_filenames - new_filenames)
+        delete_upload_filenames(old_filenames - new_filenames, cursor=cursor)
 
         add_audit_log(
             action="Edited article",
@@ -8184,19 +8185,122 @@ def extract_article_upload_filenames(article_row):
     return filenames
 
 
-def delete_upload_filenames(filenames):
-    for filename in filenames:
+def _upload_filename_still_referenced(cursor, filename):
+    """
+    Defensive shared-file check run right before physically deleting an
+    uploaded file. Every filename is already unique (millisecond-timestamp
+    prefixed on upload), so in practice no two articles ever point at the
+    same file -- but this guards against ever deleting one that some other
+    article (or the same article's just-committed new state) still uses.
+    """
+    like_pattern = f"%{filename}%"
+    cursor.execute("""
+        SELECT article_id
+        FROM wiki_article
+        WHERE attachment_url LIKE %s
+           OR image_files LIKE %s
+           OR content LIKE %s
+        LIMIT 1
+    """, (like_pattern, like_pattern, like_pattern))
+    return cursor.fetchone() is not None
+
+
+def delete_upload_filenames(filenames, cursor=None):
+    if not filenames:
+        return
+
+    owns_connection = cursor is None
+    conn = None
+
+    if owns_connection:
         try:
-            file_path = UPLOAD_FOLDER / filename
-
-            if file_path.exists() and file_path.is_file():
-                file_path.unlink()
+            conn = get_db_connection()
+            cursor = conn.cursor(dictionary=True)
         except Exception as error:
-            print("DELETE ARTICLE FILE ERROR:", filename, error)
+            print("DELETE UPLOAD FILENAMES: could not open DB for safety check:", error)
+            cursor = None
+
+    try:
+        for filename in filenames:
+            try:
+                if cursor and _upload_filename_still_referenced(cursor, filename):
+                    continue
+
+                file_path = UPLOAD_FOLDER / filename
+
+                if file_path.exists() and file_path.is_file():
+                    file_path.unlink()
+            except Exception as error:
+                print("DELETE ARTICLE FILE ERROR:", filename, error)
+    finally:
+        if owns_connection:
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
 
 
-def delete_article_upload_files(article_row):
-    delete_upload_filenames(extract_article_upload_filenames(article_row))
+def delete_article_upload_files(article_row, cursor=None):
+    delete_upload_filenames(extract_article_upload_filenames(article_row), cursor=cursor)
+
+
+def extract_upload_filenames_from_urls(urls):
+    """
+    Same /static/uploads/articles/<filename> extraction extract_article_
+    upload_filenames() does for a saved article row, but for a plain list
+    of URL strings -- used to clean up images uploaded during a Create/Edit
+    session that never made it into a saved article (pasted by mistake and
+    removed, or the whole form was cancelled).
+    """
+    filenames = set()
+
+    for url in urls or []:
+        match = re.search(r"/static/uploads/articles/([^\s\"'?]+)", str(url or ""))
+
+        if match:
+            filenames.add(match.group(1))
+
+    return filenames
+
+
+# =========================
+# CLEANUP UNSAVED SESSION UPLOADS ROUTE
+# Called by the frontend when an image uploaded/pasted during an in-progress
+# Create/Edit session gets removed before saving, or the session is
+# cancelled outright -- otherwise that file would sit in the volume forever
+# with nothing ever pointing to it. Never touches a file that's actually
+# referenced by a saved article (see delete_upload_filenames's safety
+# check), so this can never delete something a page currently uses.
+# =========================
+@app.route('/api/articles/cleanup-uploads', methods=['POST'])
+def cleanup_unused_uploads():
+    data = request.get_json(silent=True) or {}
+    urls = data.get("urls") or []
+
+    if not isinstance(urls, list):
+        return jsonify({"message": "urls must be a list."}), 400
+
+    filenames = extract_upload_filenames_from_urls(urls)
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        delete_upload_filenames(filenames, cursor=cursor)
+
+        return jsonify({"message": "Cleanup completed.", "count": len(filenames)}), 200
+
+    except Exception as error:
+        print("CLEANUP UNUSED UPLOADS ERROR:", error)
+        return jsonify({"message": "Failed to clean up uploads.", "error": str(error)}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 
 # =========================
@@ -8281,7 +8385,7 @@ def bulk_permanent_delete_articles():
         conn.commit()
 
         for row in trash_rows:
-            delete_article_upload_files(row)
+            delete_article_upload_files(row, cursor=cursor)
 
         add_audit_log(
             actor_id=deleted_by,
@@ -8369,7 +8473,7 @@ def permanent_delete_article(article_id):
 
         conn.commit()
 
-        delete_article_upload_files(article)
+        delete_article_upload_files(article, cursor=cursor)
 
         add_audit_log(
             action="Permanently deleted article",

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import JoditEditor from 'jodit-react';
 import { useNavigate } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
@@ -27,6 +27,35 @@ export default function AddArticle() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [insertingIndex, setInsertingIndex] = useState(null);
+
+  // URLs of files uploaded/pasted during THIS still-unsaved session (not
+  // yet part of any saved article). Tracked in a ref, not state, since it's
+  // pure bookkeeping that should never trigger a re-render on its own.
+  // Cleaned up (deleted from Railway) if the user removes one from the
+  // editor, cancels, or navigates away without saving -- cleared without
+  // deleting once the article actually saves, since these become real
+  // referenced files at that point.
+  const sessionUploadedUrlsRef = useRef([]);
+
+  const cleanupUploadedUrls = (urls) => {
+    const list = (urls || []).filter(Boolean);
+    if (!list.length) return;
+
+    api.post('/articles/cleanup-uploads', { urls: list }).catch((error) => {
+      console.error('Cleanup unused uploads error:', error);
+    });
+  };
+
+  // Best-effort: catches navigating away (sidebar link, browser back) without
+  // ever clicking Save or Cancel. Both of those already clear the ref
+  // themselves, so this only ever has something to do when neither ran.
+  useEffect(() => {
+    return () => {
+      if (sessionUploadedUrlsRef.current.length) {
+        cleanupUploadedUrls(sessionUploadedUrlsRef.current);
+      }
+    };
+  }, []);
 
   const editorConfig = useMemo(
     () => ({
@@ -209,6 +238,7 @@ export default function AddArticle() {
       insertHtmlIntoContent(
         buildInlineFileHtml(fileUrl, file.name, isImageFile(file.name))
       );
+      sessionUploadedUrlsRef.current.push(fileUrl);
       removeAttachment(index);
     } catch (error) {
       console.error('Insert attachment into content error:', error);
@@ -263,6 +293,7 @@ export default function AddArticle() {
       }
 
       insertHtmlIntoContent(buildInlineFileHtml(fileUrl, file.name || 'pasted-image.png', true));
+      sessionUploadedUrlsRef.current.push(fileUrl);
     } catch (error) {
       console.error('Paste image upload error:', error);
       setMessage(
@@ -296,6 +327,11 @@ export default function AddArticle() {
 
       // No manual Content-Type here either -- same reasoning as above.
       await api.post('/articles', formData);
+
+      // The article saved successfully, so every session-uploaded file is
+      // now genuinely referenced -- clear the tracking list WITHOUT
+      // deleting anything (that's the opposite of Cancel above).
+      sessionUploadedUrlsRef.current = [];
 
       navigate('/admin/content');
     } catch (error) {
@@ -476,12 +512,30 @@ export default function AddArticle() {
                       content: newContent,
                     }))
                   }
-                  onChange={(newContent) =>
+                  onChange={(newContent) => {
+                    // If the editor's content just changed such that a
+                    // still-unsaved uploaded/pasted file's URL is no longer
+                    // anywhere in it, the user just removed it from the
+                    // body -- clean it up immediately instead of leaving it
+                    // orphaned on Railway until the page is closed.
+                    const stillPresent = [];
+                    const removed = [];
+
+                    sessionUploadedUrlsRef.current.forEach((url) => {
+                      (newContent.includes(url) ? stillPresent : removed).push(url);
+                    });
+
+                    if (removed.length) {
+                      cleanupUploadedUrls(removed);
+                    }
+
+                    sessionUploadedUrlsRef.current = stillPresent;
+
                     setForm((prev) => ({
                       ...prev,
                       content: newContent,
-                    }))
-                  }
+                    }));
+                  }}
                 />
               </div>
             </label>
@@ -491,7 +545,11 @@ export default function AddArticle() {
             <button
               type="button"
               className="secondary-btn"
-              onClick={() => navigate('/admin/content')}
+              onClick={() => {
+                cleanupUploadedUrls(sessionUploadedUrlsRef.current);
+                sessionUploadedUrlsRef.current = [];
+                navigate('/admin/content');
+              }}
             >
               Cancel
             </button>
