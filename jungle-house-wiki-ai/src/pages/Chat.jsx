@@ -1508,6 +1508,15 @@ function ChatContent({ storageKeys }) {
   const [previewImage, setPreviewImage] = useState(null);
   const [selectedImage, setSelectedImage] = useState(null);
   const [selectedImagePreview, setSelectedImagePreview] = useState('');
+
+  // "Stop Generating" support: the AbortController for whatever request is
+  // currently in flight, and the ID the backend uses to recognize that
+  // same request when the Stop button also tells it to cancel server-side
+  // work (grounded AI call / escalation). Refs, not state -- purely
+  // internal bookkeeping that a click handler needs to read at call time,
+  // not something that should ever trigger its own re-render.
+  const abortControllerRef = useRef(null);
+  const currentRequestIdRef = useRef(null);
   const [confirmModal, setConfirmModal] = useState({
     open: false,
     type: '',
@@ -1835,6 +1844,21 @@ const removeSelectedImage = () => {
   setSelectedImagePreview('');
 };
 
+  // Aborts the in-flight request client-side (browser stops waiting
+  // immediately) AND tells the backend to stop too, via the same
+  // request_id, so it skips the AI provider call and never creates an
+  // escalation ticket for a question the user already abandoned.
+  const handleStopGeneration = () => {
+    abortControllerRef.current?.abort();
+
+    const requestId = currentRequestIdRef.current;
+    if (requestId) {
+      api.post('/chat/cancel', { request_id: requestId }).catch((error) => {
+        console.error('Cancel chat request error:', error);
+      });
+    }
+  };
+
   const handleSend = async () => {
     const trimmedQuestion = cleanQuestionInput(question);
 
@@ -1856,22 +1880,46 @@ const removeSelectedImage = () => {
 
     updateCurrentSessionMessages(messagesAfterUserQuestion, displayQuestion);
 
+    // Capture what's actually being sent BEFORE clearing the composer --
+    // clearing it right away (not just the text) is what lets the user
+    // start typing/attaching their next question while this one is still
+    // generating, instead of the composer staying locked until it's done.
+    const imageToSend = selectedImage;
+    const imagePreviewToRevoke = selectedImagePreview;
+
     setQuestion('');
+    setSelectedImage(null);
+    setSelectedImagePreview('');
+
+    const requestId =
+      (typeof crypto !== 'undefined' && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    currentRequestIdRef.current = requestId;
+
     setLoading(true);
 
     try {
       let response;
 
-      if (selectedImage) {
+      if (imageToSend) {
         const formData = new FormData();
         formData.append('question', trimmedQuestion);
         formData.append('context', JSON.stringify(context));
-        formData.append('attachment', selectedImage);
+        formData.append('attachment', imageToSend);
+        formData.append('request_id', requestId);
         // Do not set multipart Content-Type by hand: the browser must supply
         // the boundary. The shared client adds credentials and X-CSRF-Token.
-        response = await api.post('/chat', formData);
+        response = await api.post('/chat', formData, { signal: controller.signal });
       } else {
-        response = await api.post('/chat', { question: trimmedQuestion, context });
+        response = await api.post(
+          '/chat',
+          { question: trimmedQuestion, context, request_id: requestId },
+          { signal: controller.signal }
+        );
       }
 
       // Axios already validates HTTP status and decodes JSON responses.
@@ -1903,49 +1951,88 @@ const removeSelectedImage = () => {
       updateCurrentSessionMessages(messagesAfterAiResponse, displayQuestion);
       addChatHistory(displayQuestion, aiMessage);
 
-      if (selectedImage) {
-        removeSelectedImage();
+      if (imagePreviewToRevoke) {
+        URL.revokeObjectURL(imagePreviewToRevoke);
       }
     } catch (error) {
-      console.error('Chat request failed:', error);
+      // An intentional Stop click, not a real failure -- show a calm status
+      // line under the question instead of a scary red network error, and
+      // never touch the composer (it may already hold a draft the user
+      // started typing for their NEXT question while this one was running).
+      const wasCancelled =
+        error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError';
 
-      const errorCode = error?.response?.data?.code;
-      const requestMessage =
-        error?.response?.status === 401 ||
-        errorCode === 'SESSION_EXPIRED' ||
-        errorCode === 'ACCOUNT_INACTIVE'
-          ? 'Your session has expired or your account is inactive. Please sign in again.'
-          : errorCode === 'CSRF_INVALID'
-            ? 'Security verification failed. Refresh the page and try again.'
-            : error?.response?.data?.message ||
-              error?.message ||
-              'Failed to connect to backend. Please check whether Flask is running.';
-
-      const errorMessage = {
-        id: Date.now() + 1,
-        sender: 'ai',
-        type: 'text',
-        text: requestMessage,
-        context: {
+      if (wasCancelled) {
+        const stoppedMessage = {
+          id: Date.now() + 1,
+          sender: 'ai',
+          type: 'text',
+          text: 'Generation stopped.',
+          context: { unclear_count: 0 },
           unclear_count: 0,
-        },
-        unclear_count: 0,
-        escalation_ready: false,
-        escalation_required: false,
-        confidence: 0,
-        confidence_label: 'low',
-        source: 'frontend_request_error',
-        fallback: true,
-        fallback_message: requestMessage,
-        message: requestMessage,
-      };
+          escalation_ready: false,
+          escalation_required: false,
+          confidence: 0,
+          confidence_label: 'low',
+          source: 'user_stopped_generation',
+          fallback: false,
+          fallback_message: '',
+          message: 'Generation stopped.',
+        };
 
-      const messagesAfterError = [...messagesAfterUserQuestion, errorMessage];
+        const messagesAfterStop = [...messagesAfterUserQuestion, stoppedMessage];
 
-      updateCurrentSessionMessages(messagesAfterError, displayQuestion);
-      addChatHistory(displayQuestion, errorMessage);
+        updateCurrentSessionMessages(messagesAfterStop, displayQuestion);
+        addChatHistory(displayQuestion, stoppedMessage);
+
+        // Deliberately NOT revoking imagePreviewToRevoke here: the request
+        // never got a response, so there's no permanent URL to swap into
+        // the already-displayed user bubble -- that blob: URL is the only
+        // thing still showing the user's own image. Revoking it now would
+        // break their own just-sent message, not just the aborted answer.
+      } else {
+        console.error('Chat request failed:', error);
+
+        const errorCode = error?.response?.data?.code;
+        const requestMessage =
+          error?.response?.status === 401 ||
+          errorCode === 'SESSION_EXPIRED' ||
+          errorCode === 'ACCOUNT_INACTIVE'
+            ? 'Your session has expired or your account is inactive. Please sign in again.'
+            : errorCode === 'CSRF_INVALID'
+              ? 'Security verification failed. Refresh the page and try again.'
+              : error?.response?.data?.message ||
+                error?.message ||
+                'Failed to connect to backend. Please check whether Flask is running.';
+
+        const errorMessage = {
+          id: Date.now() + 1,
+          sender: 'ai',
+          type: 'text',
+          text: requestMessage,
+          context: {
+            unclear_count: 0,
+          },
+          unclear_count: 0,
+          escalation_ready: false,
+          escalation_required: false,
+          confidence: 0,
+          confidence_label: 'low',
+          source: 'frontend_request_error',
+          fallback: true,
+          fallback_message: requestMessage,
+          message: requestMessage,
+        };
+
+        const messagesAfterError = [...messagesAfterUserQuestion, errorMessage];
+
+        updateCurrentSessionMessages(messagesAfterError, displayQuestion);
+        addChatHistory(displayQuestion, errorMessage);
+      }
     } finally {
       setLoading(false);
+      abortControllerRef.current = null;
+      currentRequestIdRef.current = null;
     }
   };
 
@@ -2492,7 +2579,6 @@ const removeSelectedImage = () => {
               onChange={(event) => setQuestion(event.target.value)}
               onPaste={handleQuestionPaste}
               placeholder="Ask product knowledge, SOP, sales, or paste/upload a photo..."
-              disabled={loading}
               onKeyDown={(event) => {
                 // While an IME (e.g. Pinyin for Chinese) composition is in
                 // progress, Enter confirms the selected candidate rather
@@ -2505,7 +2591,12 @@ const removeSelectedImage = () => {
                 }
                 if (event.key === 'Enter') {
                   event.preventDefault();
-                  handleSend();
+                  // A previous answer still generating must not let this
+                  // Enter press submit a second question underneath it --
+                  // the draft stays safely in the box until Send/Stop.
+                  if (!loading) {
+                    handleSend();
+                  }
                 }
               }}
             />
@@ -2518,7 +2609,6 @@ const removeSelectedImage = () => {
                 accept="image/*"
                 capture="environment"
                 onChange={handleImageSelect}
-                disabled={loading}
                 hidden
               />
             </label>
@@ -2530,14 +2620,29 @@ const removeSelectedImage = () => {
                 type="file"
                 accept="image/*,.pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 onChange={handleImageSelect}
-                disabled={loading}
                 hidden
               />
             </label>
 
-            <button className="primary-btn ai-chat-send-btn" onClick={handleSend} disabled={loading}>
-              {loading ? 'Sending...' : 'Send'}
-            </button>
+            {loading ? (
+              <button
+                type="button"
+                className="primary-btn ai-chat-send-btn ai-chat-stop-btn"
+                onClick={handleStopGeneration}
+                title="Stop generating"
+                aria-label="Stop generating"
+              >
+                ■ Stop
+              </button>
+            ) : (
+              <button
+                className="primary-btn ai-chat-send-btn"
+                onClick={handleSend}
+                disabled={!question.trim() && !selectedImage}
+              >
+                Send
+              </button>
+            )}
           </div>
         </section>
 
@@ -2588,16 +2693,47 @@ const removeSelectedImage = () => {
               <button type="button" onClick={removeSelectedImage} aria-label="Remove attachment">×</button>
             </div>}
             <textarea ref={staffInputRef} rows={2} value={question} onChange={(event) => setQuestion(event.target.value)}
-              onPaste={handleQuestionPaste} placeholder="Ask anything about Jungle House…" disabled={loading}
+              onPaste={handleQuestionPaste} placeholder="Ask anything about Jungle House…"
               aria-label="Your question"
-              onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); handleSend(); } }} />
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                  // A previous answer still generating must not let this
+                  // Enter press submit a second question underneath it --
+                  // the draft stays safely in the box until Send/Stop.
+                  if (!loading) {
+                    handleSend();
+                  }
+                }
+              }} />
             <div className="staff-composer-actions">
               <div className="staff-upload-actions">
-                <label className="staff-composer-upload" title="Upload photo or document"><span aria-hidden="true">＋</span><span>Attach file</span><input type="file" accept="image/*,.pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={handleImageSelect} disabled={loading} hidden /></label>
-                <label className="staff-composer-upload staff-camera-action" title="Take a photo"><span aria-hidden="true">◎</span><span>Camera</span><input type="file" accept="image/*" capture="environment" onChange={handleImageSelect} disabled={loading} hidden /></label>
+                <label className="staff-composer-upload" title="Upload photo or document"><span aria-hidden="true">＋</span><span>Attach file</span><input type="file" accept="image/*,.pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={handleImageSelect} hidden /></label>
+                <label className="staff-composer-upload staff-camera-action" title="Take a photo"><span aria-hidden="true">◎</span><span>Camera</span><input type="file" accept="image/*" capture="environment" onChange={handleImageSelect} hidden /></label>
                 <span className="staff-knowledge-source"><span aria-hidden="true">▤</span> Knowledge Base</span>
               </div>
-              <button className="staff-send-button" type="button" title="Send message" aria-label="Send message" onClick={handleSend} disabled={loading || (!question.trim() && !selectedImage)}>{loading ? '…' : '↑'}</button>
+              {loading ? (
+                <button
+                  className="staff-send-button staff-stop-button"
+                  type="button"
+                  title="Stop generating"
+                  aria-label="Stop generating"
+                  onClick={handleStopGeneration}
+                >
+                  ■
+                </button>
+              ) : (
+                <button
+                  className="staff-send-button"
+                  type="button"
+                  title="Send message"
+                  aria-label="Send message"
+                  onClick={handleSend}
+                  disabled={!question.trim() && !selectedImage}
+                >
+                  ↑
+                </button>
+              )}
             </div>
           </div>
           {!hasConversation && <div className="staff-suggested-prompts" aria-label="Suggested questions">

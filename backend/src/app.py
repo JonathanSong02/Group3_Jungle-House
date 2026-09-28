@@ -6828,6 +6828,99 @@ Knowledge Base context:
 
 
 # =========================
+# CHAT CANCELLATION ("Stop Generating")
+#
+# Backed by a small DB table, not a plain in-memory dict -- the backend
+# runs multiple gunicorn worker processes, and the request that's slowly
+# generating an answer and the request that clicks Stop can land on two
+# different workers with completely separate memory. A DB row is the one
+# thing every worker actually shares.
+# =========================
+def ensure_chat_cancel_table(cursor):
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS chat_cancelled_requests (
+            request_id VARCHAR(64) PRIMARY KEY,
+            cancelled_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+
+def mark_chat_request_cancelled(request_id):
+    request_id = str(request_id or "").strip()
+    if not request_id:
+        return
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        ensure_chat_cancel_table(cursor)
+
+        cursor.execute(
+            "INSERT IGNORE INTO chat_cancelled_requests (request_id) VALUES (%s)",
+            (request_id,)
+        )
+        # A cancelled request is only ever checked within seconds of being
+        # marked, so anything older than 10 minutes is just leftover noise
+        # from finished/abandoned requests -- keep the table from growing
+        # forever without needing a separate cleanup job.
+        cursor.execute(
+            "DELETE FROM chat_cancelled_requests WHERE cancelled_at < NOW() - INTERVAL 10 MINUTE"
+        )
+        conn.commit()
+    except Exception as error:
+        print("MARK CHAT REQUEST CANCELLED ERROR:", error)
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+def is_chat_request_cancelled(request_id):
+    request_id = str(request_id or "").strip()
+    if not request_id:
+        return False
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        ensure_chat_cancel_table(cursor)
+
+        cursor.execute(
+            "SELECT 1 FROM chat_cancelled_requests WHERE request_id = %s LIMIT 1",
+            (request_id,)
+        )
+        return cursor.fetchone() is not None
+    except Exception as error:
+        print("IS CHAT REQUEST CANCELLED ERROR:", error)
+        return False
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/chat/cancel", methods=["POST"])
+def cancel_chat_request():
+    data = request.get_json(silent=True) or {}
+    request_id = str(data.get("request_id") or "").strip()
+
+    if not request_id:
+        return jsonify({"message": "request_id is required."}), 400
+
+    mark_chat_request_cancelled(request_id)
+
+    return jsonify({"message": "Cancelled."}), 200
+
+
+# =========================
 # AI CHAT ROUTES
 # =========================
 @app.route("/chat", methods=["POST"])
@@ -6852,6 +6945,7 @@ def chat():
                 data["context"] = {}
 
             data["user_id"] = current_auth_user_id()
+            data["request_id"] = request.form.get("request_id", "")
 
             if uploaded_chat_image:
                 uploaded_chat_image_url, uploaded_chat_image_type = save_chat_image(uploaded_chat_image)
@@ -6898,7 +6992,7 @@ def chat():
 
                     local_image_path = get_local_image_path_from_url(uploaded_chat_image_url)
 
-                    if local_image_path:
+                    if local_image_path and not is_chat_request_cancelled(data.get("request_id")):
                         try:
                             file_hash = hashlib.md5(Path(local_image_path).read_bytes()).hexdigest()
                         except Exception:
@@ -6968,6 +7062,7 @@ def chat():
 
         question = clean_question(question)
         q_lower = question.lower()
+        chat_request_id = str(data.get("request_id") or "").strip()
 
         # =========================
         # CROSS-LINGUAL RETRIEVAL BRIDGE
@@ -7427,6 +7522,24 @@ def chat():
             and is_direct_natural_question
             and float(result.get("confidence", result.get("score", 0)) or 0.0) < LOW_CONFIDENCE_THRESHOLD
         )
+
+        # The user clicked Stop after everything up to this point (KB/rule
+        # matching) but before the two genuinely expensive, side-effecting
+        # steps left: calling the AI provider (costs tokens) and, further
+        # below, creating an escalation ticket / logging this as a resolved
+        # question. Stop here, before either of those, instead of doing
+        # either for a question the user already abandoned.
+        if chat_request_id and is_chat_request_cancelled(chat_request_id):
+            return jsonify({
+                "cancelled": True,
+                "reply": "Generation stopped.",
+                "answer": "Generation stopped.",
+                "message": "Generation stopped.",
+                "source": "user_stopped_generation",
+                "fallback": False,
+                "escalation_ready": False,
+                "escalation_required": False,
+            }), 200
 
         # Before actually escalating, give a real AI provider (if the
         # manager has configured one) one chance to answer, grounded only
