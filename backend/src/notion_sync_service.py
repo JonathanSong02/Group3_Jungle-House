@@ -183,17 +183,20 @@ def ensure_notion_sync_tables(cursor):
             previous_title VARCHAR(500) NULL,
             previous_content MEDIUMTEXT NULL,
             notion_last_edited_time DATETIME NULL,
-            status ENUM('pending', 'applied', 'dismissed') NOT NULL DEFAULT 'pending',
+            status ENUM('pending', 'applied', 'dismissed', 'trashed') NOT NULL DEFAULT 'pending',
             detected_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             resolved_by INT NULL,
             resolved_at DATETIME NULL,
+            trashed_by INT NULL,
+            trashed_at DATETIME NULL,
             INDEX idx_notion_pending_updates_article (article_id, status)
         )
     """)
 
     # Deployments that already created this table before article_id became
-    # nullable need an explicit migration -- CREATE TABLE IF NOT EXISTS above
-    # only applies to a fresh table.
+    # nullable, or before 'trashed'/trashed_at/trashed_by existed, need an
+    # explicit migration -- CREATE TABLE IF NOT EXISTS above only applies to
+    # a fresh table. Nothing here drops or rewrites existing rows.
     pending_updates_columns = {
         row["Field"] if isinstance(row, dict) else row[0]: row
         for row in _describe_table(cursor, "notion_pending_updates")
@@ -203,6 +206,20 @@ def ensure_notion_sync_tables(cursor):
         is_nullable = article_id_column["Null"] if isinstance(article_id_column, dict) else article_id_column[2]
         if str(is_nullable).upper() == "NO":
             cursor.execute("ALTER TABLE notion_pending_updates MODIFY COLUMN article_id INT NULL")
+
+    status_column = pending_updates_columns.get("status")
+    if status_column:
+        column_type = str(status_column["Type"] if isinstance(status_column, dict) else status_column[1])
+        if "'trashed'" not in column_type:
+            cursor.execute("""
+                ALTER TABLE notion_pending_updates
+                MODIFY COLUMN status ENUM('pending', 'applied', 'dismissed', 'trashed') NOT NULL DEFAULT 'pending'
+            """)
+
+    if "trashed_by" not in pending_updates_columns:
+        cursor.execute("ALTER TABLE notion_pending_updates ADD COLUMN trashed_by INT NULL")
+    if "trashed_at" not in pending_updates_columns:
+        cursor.execute("ALTER TABLE notion_pending_updates ADD COLUMN trashed_at DATETIME NULL")
 
 
 def _describe_table(cursor, table_name):
@@ -1068,17 +1085,20 @@ def check_for_notion_updates(token, actor_id, upload_folder):
     }
 
 
-def list_pending_updates(cursor):
+def list_pending_updates(cursor, status="pending"):
     # Includes the full proposed/previous content -- the Notion Sync page's
     # "Review Changes" compare view renders these directly from this list
-    # rather than fetching each item individually.
-    cursor.execute("""
+    # rather than fetching each item individually. Also used for the Trash
+    # tab (status="trashed") -- same shape, just a different status filter.
+    order_column = "trashed_at" if status == "trashed" else "detected_at"
+    cursor.execute(f"""
         SELECT id, article_id, notion_page_id, proposed_title, proposed_content,
-               previous_title, previous_content, notion_last_edited_time, detected_at
+               previous_title, previous_content, notion_last_edited_time,
+               detected_at, trashed_at
         FROM notion_pending_updates
-        WHERE status = 'pending'
-        ORDER BY detected_at DESC
-    """)
+        WHERE status = %s
+        ORDER BY {order_column} DESC
+    """, (status,))
     return cursor.fetchall() or []
 
 
@@ -1087,6 +1107,39 @@ def get_pending_update(cursor, pending_id):
         SELECT * FROM notion_pending_updates WHERE id = %s LIMIT 1
     """, (pending_id,))
     return cursor.fetchone()
+
+
+def trash_pending_update(cursor, pending_id, actor_id):
+    """
+    Moves a pending (or previously-dismissed) item into Trash -- a
+    temporary hold, content and images kept untouched, restorable. Does
+    NOT touch any file on disk; only Permanent Delete does that.
+    """
+    cursor.execute("""
+        UPDATE notion_pending_updates
+        SET status = 'trashed', trashed_by = %s, trashed_at = NOW()
+        WHERE id = %s AND status IN ('pending', 'dismissed')
+    """, (actor_id, pending_id))
+    return cursor.rowcount > 0
+
+
+def restore_pending_update_from_trash(cursor, pending_id):
+    """
+    Moves a trashed item back to pending. Nothing is re-downloaded or
+    re-created -- the same row, with its already-stored proposed_content
+    and already-downloaded image files, simply becomes visible again.
+    """
+    cursor.execute("""
+        UPDATE notion_pending_updates
+        SET status = 'pending', trashed_by = NULL, trashed_at = NULL
+        WHERE id = %s AND status = 'trashed'
+    """, (pending_id,))
+    return cursor.rowcount > 0
+
+
+def delete_pending_update_row(cursor, pending_id):
+    cursor.execute("DELETE FROM notion_pending_updates WHERE id = %s", (pending_id,))
+    return cursor.rowcount > 0
 
 
 def apply_pending_update(cursor, pending_id, actor_id):

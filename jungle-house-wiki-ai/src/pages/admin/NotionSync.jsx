@@ -48,6 +48,18 @@ export default function NotionSync() {
   const [expandedPendingId, setExpandedPendingId] = useState(null);
   const [resolvingId, setResolvingId] = useState(null);
 
+  // Trash: a temporary hold for pending Notion items -- content/images kept
+  // until Restore or Delete Permanently, see the Trash tab below.
+  const [activeTab, setActiveTab] = useState('pending');
+  const [trashed, setTrashed] = useState([]);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [bulkProcessing, setBulkProcessing] = useState(false);
+  const [singleActionId, setSingleActionId] = useState(null);
+
+  const [storageAudit, setStorageAudit] = useState(null);
+  const [runningAudit, setRunningAudit] = useState(false);
+  const [cleaningStorage, setCleaningStorage] = useState(false);
+
   const oauthPopupRef = useRef(null);
   const oauthPopupPollRef = useRef(null);
 
@@ -154,10 +166,19 @@ export default function NotionSync() {
 
   const fetchPending = async () => {
     try {
-      const response = await api.get('/notion-sync/pending-updates');
+      const response = await api.get('/notion-sync/pending-updates', { params: { status: 'pending' } });
       setPending(Array.isArray(response.data?.pending) ? response.data.pending : []);
     } catch (error) {
       console.error('Fetch Notion pending updates error:', error);
+    }
+  };
+
+  const fetchTrashed = async () => {
+    try {
+      const response = await api.get('/notion-sync/pending-updates', { params: { status: 'trashed' } });
+      setTrashed(Array.isArray(response.data?.pending) ? response.data.pending : []);
+    } catch (error) {
+      console.error('Fetch Notion trashed updates error:', error);
     }
   };
 
@@ -219,6 +240,7 @@ export default function NotionSync() {
     fetchConfig();
     fetchJobs();
     fetchPending();
+    fetchTrashed();
     fetchAppConfig();
 
     if (connected) {
@@ -353,6 +375,219 @@ export default function NotionSync() {
       fetchPending();
     } finally {
       setResolvingId(null);
+    }
+  };
+
+  const handleTrashItem = async (pendingId) => {
+    try {
+      setSingleActionId(pendingId);
+      setMessage('');
+
+      const response = await api.post(`/notion-sync/pending-updates/${pendingId}/trash`, {
+        user_id: actorId,
+      });
+
+      setMessage(response.data?.message || 'Moved to Trash.');
+      setPending((prev) => prev.filter((item) => item.id !== pendingId));
+      setSelectedIds((prev) => prev.filter((id) => id !== pendingId));
+      fetchTrashed();
+    } catch (error) {
+      console.error('Trash Notion pending update error:', error);
+      setMessage(error.response?.data?.message || 'Failed to move this update to Trash.');
+    } finally {
+      setSingleActionId(null);
+    }
+  };
+
+  const handleRestoreItem = async (pendingId) => {
+    try {
+      setSingleActionId(pendingId);
+      setMessage('');
+
+      const response = await api.post(`/notion-sync/pending-updates/${pendingId}/restore`, {
+        user_id: actorId,
+      });
+
+      setMessage(response.data?.message || 'Restored to Pending.');
+      setTrashed((prev) => prev.filter((item) => item.id !== pendingId));
+      setSelectedIds((prev) => prev.filter((id) => id !== pendingId));
+      fetchPending();
+    } catch (error) {
+      console.error('Restore Notion pending update error:', error);
+      setMessage(error.response?.data?.message || 'Failed to restore this update.');
+    } finally {
+      setSingleActionId(null);
+    }
+  };
+
+  const handlePermanentDeleteItem = async (pendingId) => {
+    if (!window.confirm('Permanently delete this item and its unused local images/files? This cannot be undone.')) {
+      return;
+    }
+
+    try {
+      setSingleActionId(pendingId);
+      setMessage('');
+
+      const response = await api.delete(`/notion-sync/pending-updates/${pendingId}`, {
+        data: { user_id: actorId },
+      });
+
+      const deletedFiles = response.data?.deletedFiles ?? 0;
+      setMessage(
+        `${response.data?.message || 'Permanently deleted.'} ${deletedFiles} unused file(s) removed from storage.`
+      );
+      setTrashed((prev) => prev.filter((item) => item.id !== pendingId));
+      setSelectedIds((prev) => prev.filter((id) => id !== pendingId));
+    } catch (error) {
+      console.error('Permanent delete Notion pending update error:', error);
+      setMessage(error.response?.data?.message || 'Failed to permanently delete this update.');
+    } finally {
+      setSingleActionId(null);
+    }
+  };
+
+  const activeList = activeTab === 'pending' ? pending : trashed;
+
+  const toggleSelection = (id) => {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+
+  const toggleSelectAllVisible = () => {
+    const visibleIds = activeList.map((item) => item.id);
+    const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
+    setSelectedIds(allSelected ? [] : visibleIds);
+  };
+
+  const switchTab = (tab) => {
+    setActiveTab(tab);
+    setSelectedIds([]);
+    setMessage('');
+  };
+
+  // Shared by the two simple bulk actions (trash/restore) -- same
+  // validation, same confirm-before-acting safety net, same success/error
+  // handling shape, mirroring runBulkAction in ContentManagement.jsx.
+  const runBulkAction = async ({ endpoint, confirmText, successFallback, errorFallback }) => {
+    const idsToUse = selectedIds.filter((id) => activeList.some((item) => item.id === id));
+    if (idsToUse.length === 0) return;
+
+    if (confirmText && !window.confirm(confirmText(idsToUse.length))) return;
+
+    try {
+      setBulkProcessing(true);
+      setMessage('');
+
+      const response = await api.post(endpoint, { ids: idsToUse, user_id: actorId });
+
+      setMessage(response.data?.message || successFallback(idsToUse.length));
+      setSelectedIds([]);
+      await Promise.all([fetchPending(), fetchTrashed()]);
+    } catch (error) {
+      console.error(`Bulk action error (${endpoint}):`, error);
+      setMessage(error.response?.data?.message || errorFallback);
+    } finally {
+      setBulkProcessing(false);
+    }
+  };
+
+  const bulkTrashSelected = () =>
+    runBulkAction({
+      endpoint: '/notion-sync/pending-updates/bulk-trash',
+      confirmText: (count) => `Move ${count} selected item(s) to Trash?`,
+      successFallback: (count) => `${count} item(s) moved to Trash.`,
+      errorFallback: 'Unable to move selected items to Trash.',
+    });
+
+  const bulkRestoreSelected = () =>
+    runBulkAction({
+      endpoint: '/notion-sync/pending-updates/bulk-restore',
+      confirmText: null,
+      successFallback: (count) => `${count} item(s) restored.`,
+      errorFallback: 'Unable to restore selected items.',
+    });
+
+  const bulkPermanentDeleteSelected = async () => {
+    const idsToUse = selectedIds.filter((id) => activeList.some((item) => item.id === id));
+    if (idsToUse.length === 0) return;
+
+    if (
+      !window.confirm(
+        `Permanently delete ${idsToUse.length} selected item(s) and their unused local images/files? This action cannot be undone.`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      setBulkProcessing(true);
+      setMessage('');
+
+      const response = await api.post('/notion-sync/pending-updates/bulk-delete', {
+        ids: idsToUse,
+        user_id: actorId,
+      });
+
+      const deletedArticles = response.data?.deletedArticles ?? 0;
+      const deletedFiles = response.data?.deletedFiles ?? 0;
+      setMessage(`${deletedArticles} item(s) permanently deleted. ${deletedFiles} unused file(s) removed from storage.`);
+      setSelectedIds([]);
+      await Promise.all([fetchPending(), fetchTrashed()]);
+    } catch (error) {
+      console.error('Bulk permanent delete error:', error);
+      setMessage(error.response?.data?.message || 'Unable to permanently delete selected items.');
+    } finally {
+      setBulkProcessing(false);
+    }
+  };
+
+  const formatBytes = (bytes) => {
+    if (!bytes) return '0 MB';
+    const mb = bytes / (1024 * 1024);
+    return mb < 1 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${mb.toFixed(1)} MB`;
+  };
+
+  const handleRunStorageAudit = async () => {
+    try {
+      setRunningAudit(true);
+      setMessage('');
+
+      const response = await api.get('/notion-sync/storage-audit');
+      setStorageAudit(response.data?.audit || null);
+    } catch (error) {
+      console.error('Notion storage audit error:', error);
+      setMessage(error.response?.data?.message || 'Failed to run the storage audit.');
+    } finally {
+      setRunningAudit(false);
+    }
+  };
+
+  const handleCleanStorage = async () => {
+    const orphanCount = storageAudit?.orphanFileCount || 0;
+    if (orphanCount === 0) return;
+
+    if (
+      !window.confirm(
+        `Permanently remove ${orphanCount} unused file(s) from storage (about ${formatBytes(
+          storageAudit?.estimatedReclaimableBytes
+        )})? This action cannot be undone.`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      setCleaningStorage(true);
+      setMessage('');
+
+      const response = await api.post('/notion-sync/storage-cleanup', { user_id: actorId });
+      setMessage(response.data?.message || 'Storage cleanup completed.');
+      setStorageAudit(null);
+    } catch (error) {
+      console.error('Notion storage cleanup error:', error);
+      setMessage(error.response?.data?.message || 'Failed to run storage cleanup.');
+    } finally {
+      setCleaningStorage(false);
     }
   };
 
@@ -607,37 +842,126 @@ export default function NotionSync() {
             <span className="ns-kicker">Review Queue</span>
             <h2>Pending Updates</h2>
           </div>
-          <span className="ns-count">{pending.length}</span>
+        </div>
+
+        <div className="ns-review-tabs">
+          <button
+            type="button"
+            className={activeTab === 'pending' ? 'active' : ''}
+            onClick={() => switchTab('pending')}
+          >
+            Pending
+            <span>{pending.length}</span>
+          </button>
+          <button
+            type="button"
+            className={activeTab === 'trash' ? 'active' : ''}
+            onClick={() => switchTab('trash')}
+          >
+            Trash
+            <span>{trashed.length}</span>
+          </button>
         </div>
 
         <p className="ns-section-copy">
-          Every new or changed Notion page waits here first -- nothing reaches
-          the Knowledge Base until you approve it below.
+          {activeTab === 'pending'
+            ? 'Every new or changed Notion page waits here first -- nothing reaches the Knowledge Base until you approve it below.'
+            : 'Items here are held temporarily. Restore them back to Pending, or delete them permanently to free up storage.'}
         </p>
 
-        {pending.length === 0 ? (
+        {activeList.length > 0 ? (
+          <div className="ns-bulk-toolbar" role="toolbar" aria-label="Bulk actions">
+            <label className="ns-select-all">
+              <input
+                type="checkbox"
+                checked={activeList.length > 0 && activeList.every((item) => selectedIds.includes(item.id))}
+                onChange={toggleSelectAllVisible}
+              />
+              Select All
+            </label>
+
+            {selectedIds.filter((id) => activeList.some((item) => item.id === id)).length > 0 ? (
+              <>
+                <span className="ns-selection-count">
+                  {selectedIds.filter((id) => activeList.some((item) => item.id === id)).length} selected
+                </span>
+
+                {activeTab === 'pending' ? (
+                  <button
+                    type="button"
+                    className="ns-btn secondary"
+                    onClick={bulkTrashSelected}
+                    disabled={bulkProcessing}
+                  >
+                    {bulkProcessing ? 'Working...' : 'Move to Trash'}
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="ns-btn secondary"
+                      onClick={bulkRestoreSelected}
+                      disabled={bulkProcessing}
+                    >
+                      {bulkProcessing ? 'Working...' : 'Restore Selected'}
+                    </button>
+                    <button
+                      type="button"
+                      className="ns-btn danger"
+                      onClick={bulkPermanentDeleteSelected}
+                      disabled={bulkProcessing}
+                    >
+                      {bulkProcessing ? 'Working...' : 'Delete Permanently'}
+                    </button>
+                  </>
+                )}
+              </>
+            ) : null}
+          </div>
+        ) : null}
+
+        {activeList.length === 0 ? (
           <div className="ns-empty small">
-            <strong>No pending updates</strong>
-            <span>Your published articles are up to date.</span>
+            <strong>{activeTab === 'pending' ? 'No pending updates' : 'Trash is empty'}</strong>
+            <span>
+              {activeTab === 'pending'
+                ? 'Your published articles are up to date.'
+                : 'Items moved to Trash will appear here.'}
+            </span>
           </div>
         ) : (
           <div className="ns-pending-list">
-            {pending.map((item) => {
+            {activeList.map((item) => {
               const isExpanded = expandedPendingId === item.id;
-              const isResolving = resolvingId === item.id;
+              const isResolving = resolvingId === item.id || singleActionId === item.id;
               const isNew = item.article_id === null || item.article_id === undefined;
+              const isSelected = selectedIds.includes(item.id);
 
               return (
-                <article className="ns-pending-card" key={item.id}>
+                <article className={`ns-pending-card ${isSelected ? 'selected' : ''}`} key={item.id}>
                   <div className="ns-pending-head">
-                    <div>
+                    <label className="ns-pending-select">
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => toggleSelection(item.id)}
+                        aria-label={`Select ${item.proposed_title || item.previous_title}`}
+                      />
+                    </label>
+
+                    <div className="ns-pending-info">
                       <h3>{item.proposed_title || item.previous_title}</h3>
                       <p>
-                        {isNew ? 'Found in Notion' : 'Changed in Notion'}:{' '}
-                        {item.notion_last_edited_time || '-'}
+                        {activeTab === 'trash'
+                          ? 'Moved to Trash'
+                          : isNew ? 'Found in Notion' : 'Changed in Notion'}
+                        {': '}
+                        {(activeTab === 'trash' ? item.trashed_at : item.notion_last_edited_time) || '-'}
                       </p>
                     </div>
-                    <span className="ns-review-pill">{isNew ? 'New' : 'Review'}</span>
+                    <span className="ns-review-pill">
+                      {activeTab === 'trash' ? 'Trashed' : (isNew ? 'New' : 'Review')}
+                    </span>
                   </div>
 
                   <div className="ns-pending-actions">
@@ -648,24 +972,48 @@ export default function NotionSync() {
                     >
                       {isExpanded ? 'Hide Preview' : (isNew ? 'Preview' : 'Review Changes')}
                     </button>
-                    <button
-                      type="button"
-                      className="ns-btn secondary"
-                      disabled={isResolving}
-                      onClick={() => handleResolvePending(item.id, 'dismiss')}
-                    >
-                      {isResolving ? 'Working...' : (isNew ? 'Discard' : 'Keep Current')}
-                    </button>
-                    <button
-                      type="button"
-                      className="ns-btn primary"
-                      disabled={isResolving}
-                      onClick={() => handleResolvePending(item.id, 'apply')}
-                    >
-                      {isResolving
-                        ? 'Working...'
-                        : (isNew ? 'Add to Knowledge Base' : 'Update to Latest')}
-                    </button>
+
+                    {activeTab === 'pending' ? (
+                      <>
+                        <button
+                          type="button"
+                          className="ns-btn secondary"
+                          disabled={isResolving}
+                          onClick={() => handleTrashItem(item.id)}
+                        >
+                          {isResolving ? 'Working...' : 'Move to Trash'}
+                        </button>
+                        <button
+                          type="button"
+                          className="ns-btn primary"
+                          disabled={isResolving}
+                          onClick={() => handleResolvePending(item.id, 'apply')}
+                        >
+                          {isResolving
+                            ? 'Working...'
+                            : (isNew ? 'Add to Knowledge Base' : 'Update to Latest')}
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          className="ns-btn secondary"
+                          disabled={isResolving}
+                          onClick={() => handleRestoreItem(item.id)}
+                        >
+                          {isResolving ? 'Working...' : 'Restore'}
+                        </button>
+                        <button
+                          type="button"
+                          className="ns-btn danger"
+                          disabled={isResolving}
+                          onClick={() => handlePermanentDeleteItem(item.id)}
+                        >
+                          {isResolving ? 'Working...' : 'Delete Permanently'}
+                        </button>
+                      </>
+                    )}
                   </div>
 
                   {isExpanded && (
@@ -696,6 +1044,71 @@ export default function NotionSync() {
             })}
           </div>
         )}
+      </section>
+
+      <section className="ns-card ns-storage-card">
+        <div className="ns-section-head">
+          <div>
+            <span className="ns-kicker">Maintenance</span>
+            <h2>Storage Cleanup</h2>
+          </div>
+        </div>
+
+        <p className="ns-section-copy">
+          Scans for image/file uploads on the server that no article or pending
+          Notion item references any more. Nothing is deleted until you confirm.
+        </p>
+
+        <div className="ns-actions">
+          <button
+            type="button"
+            className="ns-btn secondary"
+            onClick={handleRunStorageAudit}
+            disabled={runningAudit}
+          >
+            {runningAudit ? 'Scanning...' : 'Run Storage Audit'}
+          </button>
+
+          {storageAudit && storageAudit.orphanFileCount > 0 ? (
+            <button
+              type="button"
+              className="ns-btn danger"
+              onClick={handleCleanStorage}
+              disabled={cleaningStorage}
+            >
+              {cleaningStorage ? 'Cleaning...' : 'Clean Unused Files'}
+            </button>
+          ) : null}
+        </div>
+
+        {storageAudit ? (
+          <div className="ns-sync-result-grid">
+            <div>
+              <span>Upload files</span>
+              <strong>{storageAudit.totalFiles}</strong>
+            </div>
+            <div>
+              <span>Used by articles</span>
+              <strong>{storageAudit.referencedByArticles}</strong>
+            </div>
+            <div>
+              <span>Used by pending items</span>
+              <strong>{storageAudit.referencedByPendingUpdates}</strong>
+            </div>
+            <div className={storageAudit.orphanFileCount > 0 ? 'failed' : ''}>
+              <span>Potential orphans</span>
+              <strong>{storageAudit.orphanFileCount}</strong>
+            </div>
+          </div>
+        ) : null}
+
+        {storageAudit && storageAudit.orphanFileCount > 0 ? (
+          <div className="ns-sync-note">
+            <span>
+              Estimated reclaimable space: {formatBytes(storageAudit.estimatedReclaimableBytes)}
+            </span>
+          </div>
+        ) : null}
       </section>
 
       <section className="ns-card ns-history">

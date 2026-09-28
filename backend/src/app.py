@@ -6730,6 +6730,10 @@ def get_notion_pending_updates():
     if not NOTION_SYNC_SERVICE_AVAILABLE:
         return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
 
+    status = request.args.get("status", "pending")
+    if status not in ("pending", "trashed"):
+        return jsonify({"success": False, "message": "Invalid status filter."}), 400
+
     conn = None
     cursor = None
 
@@ -6738,7 +6742,7 @@ def get_notion_pending_updates():
         cursor = conn.cursor(dictionary=True)
 
         notion_sync_service.ensure_notion_sync_tables(cursor)
-        pending = notion_sync_service.list_pending_updates(cursor)
+        pending = notion_sync_service.list_pending_updates(cursor, status=status)
 
         return jsonify({"success": True, "pending": pending}), 200
 
@@ -6859,6 +6863,419 @@ def dismiss_notion_pending_update(pending_id):
             conn.close()
 
 
+@app.route("/api/notion-sync/pending-updates/<int:pending_id>/trash", methods=["POST"])
+def trash_notion_pending_update(pending_id):
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
+
+    data = request.get_json(silent=True) or {}
+    actor_id = data.get("user_id")
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = notion_sync_service.get_db_connection()
+        conn.start_transaction()
+        cursor = conn.cursor(dictionary=True)
+
+        notion_sync_service.ensure_notion_sync_tables(cursor)
+
+        if not is_ai_settings_manager(cursor, actor_id):
+            conn.rollback()
+            return jsonify({"success": False, "message": "Only managers can move Notion updates to Trash."}), 403
+
+        trashed = notion_sync_service.trash_pending_update(cursor, pending_id, actor_id)
+
+        if not trashed:
+            conn.rollback()
+            return jsonify({"success": False, "message": "This update was already resolved."}), 409
+
+        conn.commit()
+        print(f"[Notion Trash] Moving pending update {pending_id} to trash")
+
+        add_audit_log(
+            actor_id=actor_id,
+            action="Moved Notion update to Trash",
+            module="Notion Sync",
+            description=f"Pending Notion update #{pending_id} moved to Trash."
+        )
+
+        return jsonify({"success": True, "message": "Moved to Trash."}), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("TRASH NOTION PENDING UPDATE ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to move this update to Trash."}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/notion-sync/pending-updates/<int:pending_id>/restore", methods=["POST"])
+def restore_notion_pending_update(pending_id):
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
+
+    data = request.get_json(silent=True) or {}
+    actor_id = data.get("user_id")
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = notion_sync_service.get_db_connection()
+        conn.start_transaction()
+        cursor = conn.cursor(dictionary=True)
+
+        notion_sync_service.ensure_notion_sync_tables(cursor)
+
+        if not is_ai_settings_manager(cursor, actor_id):
+            conn.rollback()
+            return jsonify({"success": False, "message": "Only managers can restore Notion updates."}), 403
+
+        restored = notion_sync_service.restore_pending_update_from_trash(cursor, pending_id)
+
+        if not restored:
+            conn.rollback()
+            return jsonify({"success": False, "message": "This item is not in Trash."}), 409
+
+        conn.commit()
+
+        add_audit_log(
+            actor_id=actor_id,
+            action="Restored Notion update from Trash",
+            module="Notion Sync",
+            description=f"Pending Notion update #{pending_id} restored from Trash."
+        )
+
+        return jsonify({"success": True, "message": "Restored to Pending."}), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("RESTORE NOTION PENDING UPDATE ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to restore this update."}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+def _permanently_delete_pending_updates(pending_ids, actor_id):
+    """
+    Shared by the single-item and bulk permanent-delete routes. Order
+    matters (matches the same order already used by permanent article
+    deletion): fetch content -> delete the DB rows -> commit -> only THEN
+    delete files, so the reference check inside delete_upload_filenames
+    sees the post-deletion DB state and correctly treats a file as "shared"
+    only if something OUTSIDE this deletion batch still uses it (this is
+    also what makes bulk deletion of items that share an image safe -- see
+    delete_pending_update_upload_files/_upload_filename_still_referenced).
+
+    Returns (deleted_count, file_stats) or raises on a DB error (caller
+    rolls back). File-deletion errors are caught per-file inside
+    delete_upload_filenames and never abort the DB transaction that already
+    committed -- a partial file-cleanup failure just gets reported back,
+    per the "don't corrupt DB state over a filesystem hiccup" requirement.
+    """
+    conn = notion_sync_service.get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    try:
+        conn.start_transaction()
+
+        placeholders = ",".join(["%s"] * len(pending_ids))
+        cursor.execute(f"""
+            SELECT id, proposed_content, previous_content
+            FROM notion_pending_updates
+            WHERE id IN ({placeholders}) AND status = 'trashed'
+        """, tuple(pending_ids))
+        rows = cursor.fetchall()
+
+        if not rows:
+            conn.rollback()
+            return 0, {"deleted": 0, "kept_shared": 0, "failed": 0}
+
+        trash_ids = [row["id"] for row in rows]
+        trash_placeholders = ",".join(["%s"] * len(trash_ids))
+
+        cursor.execute(f"""
+            DELETE FROM notion_pending_updates
+            WHERE id IN ({trash_placeholders}) AND status = 'trashed'
+        """, tuple(trash_ids))
+        deleted_count = cursor.rowcount
+
+        conn.commit()
+
+        for pending_id in trash_ids:
+            print(f"[Notion Delete] Permanently deleting pending update {pending_id}")
+
+        all_filenames = set()
+        for row in rows:
+            all_filenames |= extract_pending_update_upload_filenames(row)
+
+        print(f"[Asset Cleanup] Candidate files: {len(all_filenames)}")
+        file_stats = delete_upload_filenames(all_filenames, cursor=cursor)
+
+        return deleted_count, file_stats
+    finally:
+        cursor.close()
+        conn.close()
+
+
+@app.route("/api/notion-sync/pending-updates/<int:pending_id>", methods=["DELETE"])
+def permanently_delete_notion_pending_update(pending_id):
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
+
+    data = request.get_json(silent=True) or {}
+    actor_id = data.get("user_id")
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = notion_sync_service.get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        notion_sync_service.ensure_notion_sync_tables(cursor)
+
+        if not is_ai_settings_manager(cursor, actor_id):
+            return jsonify({"success": False, "message": "Only managers can permanently delete Notion updates."}), 403
+
+        cursor.close()
+        conn.close()
+        cursor = None
+        conn = None
+
+        deleted_count, file_stats = _permanently_delete_pending_updates([pending_id], actor_id)
+
+        if deleted_count == 0:
+            return jsonify({"success": False, "message": "Item not found in Trash."}), 404
+
+        add_audit_log(
+            actor_id=actor_id,
+            action="Permanently deleted Notion update",
+            module="Notion Sync",
+            description=f"Pending Notion update #{pending_id} permanently deleted "
+                        f"({file_stats['deleted']} file(s) removed, {file_stats['kept_shared']} kept shared)."
+        )
+
+        return jsonify({
+            "success": True,
+            "message": "Permanently deleted.",
+            "deletedArticles": deleted_count,
+            "deletedFiles": file_stats["deleted"],
+            "keptSharedFiles": file_stats["kept_shared"],
+            "failedFiles": file_stats["failed"],
+        }), 200
+
+    except Exception as error:
+        print("PERMANENT DELETE NOTION PENDING UPDATE ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to permanently delete this update."}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+def _clean_pending_id_list(raw_ids):
+    clean_ids = []
+    for item in raw_ids or []:
+        try:
+            clean_id = int(item)
+            if clean_id not in clean_ids:
+                clean_ids.append(clean_id)
+        except (TypeError, ValueError):
+            continue
+    return clean_ids
+
+
+@app.route("/api/notion-sync/pending-updates/bulk-trash", methods=["POST"])
+def bulk_trash_notion_pending_updates():
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
+
+    data = request.get_json(silent=True) or {}
+    actor_id = data.get("user_id")
+    pending_ids = _clean_pending_id_list(data.get("ids"))
+
+    if not pending_ids:
+        return jsonify({"success": False, "message": "No items selected."}), 400
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = notion_sync_service.get_db_connection()
+        conn.start_transaction()
+        cursor = conn.cursor(dictionary=True)
+
+        notion_sync_service.ensure_notion_sync_tables(cursor)
+
+        if not is_ai_settings_manager(cursor, actor_id):
+            conn.rollback()
+            return jsonify({"success": False, "message": "Only managers can move Notion updates to Trash."}), 403
+
+        trashed_count = 0
+        for pending_id in pending_ids:
+            if notion_sync_service.trash_pending_update(cursor, pending_id, actor_id):
+                trashed_count += 1
+
+        conn.commit()
+
+        add_audit_log(
+            actor_id=actor_id,
+            action="Bulk moved Notion updates to Trash",
+            module="Notion Sync",
+            description=f"{trashed_count} pending Notion update(s) moved to Trash."
+        )
+
+        return jsonify({"success": True, "message": f"{trashed_count} item(s) moved to Trash.", "count": trashed_count}), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("BULK TRASH NOTION PENDING UPDATES ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to move selected updates to Trash."}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/notion-sync/pending-updates/bulk-restore", methods=["POST"])
+def bulk_restore_notion_pending_updates():
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
+
+    data = request.get_json(silent=True) or {}
+    actor_id = data.get("user_id")
+    pending_ids = _clean_pending_id_list(data.get("ids"))
+
+    if not pending_ids:
+        return jsonify({"success": False, "message": "No items selected."}), 400
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = notion_sync_service.get_db_connection()
+        conn.start_transaction()
+        cursor = conn.cursor(dictionary=True)
+
+        notion_sync_service.ensure_notion_sync_tables(cursor)
+
+        if not is_ai_settings_manager(cursor, actor_id):
+            conn.rollback()
+            return jsonify({"success": False, "message": "Only managers can restore Notion updates."}), 403
+
+        restored_count = 0
+        for pending_id in pending_ids:
+            if notion_sync_service.restore_pending_update_from_trash(cursor, pending_id):
+                restored_count += 1
+
+        conn.commit()
+
+        add_audit_log(
+            actor_id=actor_id,
+            action="Bulk restored Notion updates from Trash",
+            module="Notion Sync",
+            description=f"{restored_count} pending Notion update(s) restored from Trash."
+        )
+
+        return jsonify({"success": True, "message": f"{restored_count} item(s) restored.", "count": restored_count}), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("BULK RESTORE NOTION PENDING UPDATES ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to restore selected updates."}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/notion-sync/pending-updates/bulk-delete", methods=["POST"])
+def bulk_permanently_delete_notion_pending_updates():
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
+
+    data = request.get_json(silent=True) or {}
+    actor_id = data.get("user_id")
+    pending_ids = _clean_pending_id_list(data.get("ids"))
+
+    if not pending_ids:
+        return jsonify({"success": False, "message": "No items selected."}), 400
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = notion_sync_service.get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        notion_sync_service.ensure_notion_sync_tables(cursor)
+
+        if not is_ai_settings_manager(cursor, actor_id):
+            return jsonify({"success": False, "message": "Only managers can permanently delete Notion updates."}), 403
+
+        cursor.close()
+        conn.close()
+        cursor = None
+        conn = None
+
+        deleted_count, file_stats = _permanently_delete_pending_updates(pending_ids, actor_id)
+
+        if deleted_count == 0:
+            return jsonify({"success": False, "message": "None of the selected items were found in Trash."}), 404
+
+        add_audit_log(
+            actor_id=actor_id,
+            action="Bulk permanently deleted Notion updates",
+            module="Notion Sync",
+            description=f"{deleted_count} pending Notion update(s) permanently deleted "
+                        f"({file_stats['deleted']} file(s) removed, {file_stats['kept_shared']} kept shared)."
+        )
+
+        return jsonify({
+            "success": True,
+            "message": f"{deleted_count} item(s) permanently deleted.",
+            "deletedArticles": deleted_count,
+            "deletedFiles": file_stats["deleted"],
+            "keptSharedFiles": file_stats["kept_shared"],
+            "failedFiles": file_stats["failed"],
+        }), 200
+
+    except Exception as error:
+        print("BULK PERMANENT DELETE NOTION PENDING UPDATES ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to permanently delete selected updates."}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
 @app.route("/api/notion-sync/jobs", methods=["GET"])
 def get_notion_sync_jobs():
     if not NOTION_SYNC_SERVICE_AVAILABLE:
@@ -6887,6 +7304,155 @@ def get_notion_sync_jobs():
     except Exception as error:
         print("GET NOTION SYNC JOBS ERROR:", error)
         return jsonify({"success": False, "message": "Failed to load Notion sync history."}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+def _compute_notion_storage_audit(cursor):
+    """
+    Read-only report -- never deletes anything. Classifies every file
+    physically sitting in UPLOAD_FOLDER against current DB references
+    (published articles + any notion_pending_updates row, any status) so a
+    manager can see how much disk space is actually reclaimable before ever
+    running a cleanup. Counts are informational estimates (a file could in
+    principle be referenced by both an article and a pending row).
+    """
+    cursor.execute("SELECT attachment_url, image_files, content FROM wiki_article")
+    referenced_by_articles = set()
+    for row in cursor.fetchall() or []:
+        referenced_by_articles |= extract_article_upload_filenames(row)
+
+    cursor.execute("SELECT status, proposed_content, previous_content FROM notion_pending_updates")
+    pending_rows = cursor.fetchall() or []
+
+    status_counts = {"pending": 0, "trashed": 0, "dismissed": 0, "applied": 0}
+    referenced_by_pending = set()
+    for row in pending_rows:
+        row_status = row.get("status")
+        status_counts[row_status] = status_counts.get(row_status, 0) + 1
+        referenced_by_pending |= extract_pending_update_upload_filenames(row)
+
+    try:
+        all_files = [f for f in UPLOAD_FOLDER.iterdir() if f.is_file()]
+    except FileNotFoundError:
+        all_files = []
+
+    referenced_total = referenced_by_articles | referenced_by_pending
+    orphan_filenames = [f.name for f in all_files if f.name not in referenced_total]
+
+    orphan_bytes = 0
+    for filename in orphan_filenames:
+        try:
+            orphan_bytes += (UPLOAD_FOLDER / filename).stat().st_size
+        except OSError:
+            pass
+
+    all_filenames = {f.name for f in all_files}
+
+    return {
+        "totalFiles": len(all_files),
+        "referencedByArticles": len(referenced_by_articles & all_filenames),
+        "referencedByPendingUpdates": len(referenced_by_pending & all_filenames),
+        "orphanFileCount": len(orphan_filenames),
+        "estimatedReclaimableBytes": orphan_bytes,
+        "pendingStatusCounts": status_counts,
+        "_orphanFilenames": orphan_filenames,  # internal use only, stripped before the audit response
+    }
+
+
+@app.route("/api/notion-sync/storage-audit", methods=["GET"])
+def get_notion_storage_audit():
+    """
+    Dry-run only. Never deletes files, and the response never includes
+    server filesystem paths/filenames -- just counts and an estimated size,
+    matching the "audit before cleanup" requirement.
+    """
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
+
+    actor_id = current_auth_user_id()
+    conn = None
+    cursor = None
+
+    try:
+        conn = notion_sync_service.get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        notion_sync_service.ensure_notion_sync_tables(cursor)
+
+        if not is_ai_settings_manager(cursor, actor_id):
+            return jsonify({"success": False, "message": "Only managers can view the storage audit."}), 403
+
+        audit = _compute_notion_storage_audit(cursor)
+        audit.pop("_orphanFilenames", None)
+
+        return jsonify({"success": True, "audit": audit}), 200
+
+    except Exception as error:
+        print("NOTION STORAGE AUDIT ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to run the storage audit."}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/notion-sync/storage-cleanup", methods=["POST"])
+def run_notion_storage_cleanup():
+    """
+    Deletes exactly the orphan files the audit above would report -- files
+    on disk that no wiki_article and no notion_pending_updates row (any
+    status) currently references. Never touches anything still referenced,
+    per the same shared-file safety check used everywhere else in this file.
+    """
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
+
+    data = request.get_json(silent=True) or {}
+    actor_id = data.get("user_id") or current_auth_user_id()
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = notion_sync_service.get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        notion_sync_service.ensure_notion_sync_tables(cursor)
+
+        if not is_ai_settings_manager(cursor, actor_id):
+            return jsonify({"success": False, "message": "Only managers can run storage cleanup."}), 403
+
+        audit = _compute_notion_storage_audit(cursor)
+        orphan_filenames = audit["_orphanFilenames"]
+
+        print(f"[Asset Cleanup] Candidate files: {len(orphan_filenames)}")
+        file_stats = delete_upload_filenames(orphan_filenames, cursor=cursor)
+
+        add_audit_log(
+            actor_id=actor_id,
+            action="Ran Notion storage cleanup",
+            module="Notion Sync",
+            description=f"Removed {file_stats['deleted']} unused file(s), kept {file_stats['kept_shared']} shared file(s)."
+        )
+
+        return jsonify({
+            "success": True,
+            "message": f"{file_stats['deleted']} unused file(s) removed from storage.",
+            "deletedFiles": file_stats["deleted"],
+            "keptSharedFiles": file_stats["kept_shared"],
+            "failedFiles": file_stats["failed"],
+        }), 200
+
+    except Exception as error:
+        print("NOTION STORAGE CLEANUP ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to run storage cleanup."}), 500
 
     finally:
         if cursor:
@@ -8919,6 +9485,15 @@ def _upload_filename_still_referenced(cursor, filename):
     prefixed on upload), so in practice no two articles ever point at the
     same file -- but this guards against ever deleting one that some other
     article (or the same article's just-committed new state) still uses.
+
+    Also checks notion_pending_updates: a Notion image is downloaded to
+    disk the moment "Check for Updates" finds it (see
+    notion_sync_service.download_and_host_notion_file), before any
+    approval -- so a file can be "used" by a still-pending or trashed row
+    that never became a wiki_article at all. Callers that are themselves
+    deleting a notion_pending_updates row must delete that DB row (and
+    commit) BEFORE calling this, so the row being removed doesn't count as
+    its own reference -- see delete_pending_update_upload_files.
     """
     like_pattern = f"%{filename}%"
     cursor.execute("""
@@ -8929,12 +9504,36 @@ def _upload_filename_still_referenced(cursor, filename):
            OR content LIKE %s
         LIMIT 1
     """, (like_pattern, like_pattern, like_pattern))
-    return cursor.fetchone() is not None
+    if cursor.fetchone() is not None:
+        return True
+
+    try:
+        cursor.execute("""
+            SELECT id
+            FROM notion_pending_updates
+            WHERE proposed_content LIKE %s
+               OR previous_content LIKE %s
+            LIMIT 1
+        """, (like_pattern, like_pattern))
+        return cursor.fetchone() is not None
+    except mysql.connector.Error as error:
+        # The table doesn't exist on a deployment that has never used Notion
+        # Sync -- nothing to reference-check against, so behave exactly as
+        # before this feature existed rather than failing article cleanup.
+        if getattr(error, "errno", None) == 1146:
+            return False
+        raise
 
 
 def delete_upload_filenames(filenames, cursor=None):
+    """
+    Returns {"deleted": int, "kept_shared": int, "failed": int} -- existing
+    callers that ignore the return value are unaffected.
+    """
+    stats = {"deleted": 0, "kept_shared": 0, "failed": 0}
+
     if not filenames:
-        return
+        return stats
 
     owns_connection = cursor is None
     conn = None
@@ -8947,17 +9546,34 @@ def delete_upload_filenames(filenames, cursor=None):
             print("DELETE UPLOAD FILENAMES: could not open DB for safety check:", error)
             cursor = None
 
+    upload_root = UPLOAD_FOLDER.resolve()
+
     try:
         for filename in filenames:
             try:
                 if cursor and _upload_filename_still_referenced(cursor, filename):
+                    stats["kept_shared"] += 1
+                    print(f"[Asset Cleanup] Keeping shared file: {filename}")
                     continue
 
-                file_path = UPLOAD_FOLDER / filename
+                # Path safety: a filename must resolve to a plain file
+                # directly inside the upload folder -- rejects "../" or any
+                # other traversal a malformed/malicious content string
+                # might have produced, instead of trusting the regex match
+                # blindly.
+                file_path = (UPLOAD_FOLDER / filename).resolve()
+
+                if file_path.parent != upload_root:
+                    stats["failed"] += 1
+                    print(f"[Asset Cleanup] Skipping unsafe path: {filename}")
+                    continue
 
                 if file_path.exists() and file_path.is_file():
                     file_path.unlink()
+                    stats["deleted"] += 1
+                    print(f"[Asset Cleanup] Deleted unused file: {filename}")
             except Exception as error:
+                stats["failed"] += 1
                 print("DELETE ARTICLE FILE ERROR:", filename, error)
     finally:
         if owns_connection:
@@ -8966,9 +9582,33 @@ def delete_upload_filenames(filenames, cursor=None):
             if conn:
                 conn.close()
 
+    return stats
+
 
 def delete_article_upload_files(article_row, cursor=None):
-    delete_upload_filenames(extract_article_upload_filenames(article_row), cursor=cursor)
+    return delete_upload_filenames(extract_article_upload_filenames(article_row), cursor=cursor)
+
+
+def extract_pending_update_upload_filenames(pending_row):
+    """
+    Same /static/uploads/articles/<filename> extraction as
+    extract_article_upload_filenames(), but for a notion_pending_updates
+    row -- scans both proposed_content (the new HTML built at "Check for
+    Updates" time, images already downloaded to disk then) and
+    previous_content (the pre-edit snapshot kept for the compare view).
+    """
+    filenames = set()
+
+    for field in ("proposed_content", "previous_content"):
+        content = pending_row.get(field) or ""
+        for match in re.finditer(r"/static/uploads/articles/([^\s\"'?]+)", content):
+            filenames.add(match.group(1))
+
+    return filenames
+
+
+def delete_pending_update_upload_files(pending_row, cursor=None):
+    return delete_upload_filenames(extract_pending_update_upload_filenames(pending_row), cursor=cursor)
 
 
 def extract_upload_filenames_from_urls(urls):
