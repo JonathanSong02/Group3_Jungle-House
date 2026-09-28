@@ -16,6 +16,7 @@ import secrets
 import hashlib
 import hmac
 import requests
+import difflib
 
 from email.message import EmailMessage
 
@@ -180,6 +181,220 @@ def is_nonsense(text):
         return True
 
     return False
+
+
+# =========================
+# STAFF QUERY NORMALIZATION
+# Dynamic typo tolerance + no-space word splitting for AI Chat, built
+# entirely from Python string matching against the Knowledge Base's own
+# vocabulary -- zero extra AI provider calls, so it costs no tokens and
+# adds effectively no latency. Only ever used to help KB *retrieval* find
+# the right article; the staff member's original raw text is always what
+# gets logged, displayed, and escalated, never the normalized guess.
+# =========================
+
+# Common staff chat shorthand -- not article content, just everyday chat
+# abbreviations, so this doesn't count as hardcoding SOP answers.
+_QUERY_SHORTHAND_MAP = {
+    "u": "you", "ur": "your", "r": "are", "y": "why",
+    "pls": "please", "plz": "please",
+    "hw": "how", "whr": "where", "wht": "what", "wat": "what",
+    "whn": "when", "wen": "when", "wy": "why",
+    "b4": "before", "tmr": "tomorrow", "tmrw": "tomorrow",
+    "thx": "thank you", "tq": "thank you", "ty": "thank you",
+    "asap": "as soon as possible", "info": "information",
+    "abt": "about", "cn": "can", "wat's": "what is",
+}
+
+# Supplements the KB's own vocabulary with common English words the KB
+# itself won't reliably contain (question words, connectors, common verbs)
+# -- needed so a no-space string like "howmuchicepayment" can actually be
+# split into real words instead of just the one KB term ("payment") it
+# happens to already know.
+_COMMON_QUERY_WORDS = {
+    "how", "much", "many", "what", "where", "when", "why", "who", "which",
+    "is", "are", "was", "were", "do", "does", "did", "can", "could",
+    "should", "would", "will", "the", "a", "an", "to", "for", "of", "in",
+    "on", "at", "and", "or", "before", "after", "keep", "put", "store",
+    "need", "want", "show", "tell", "check", "find", "have", "has", "your",
+    "you", "me", "my", "i", "it", "this", "that", "with", "from", "by",
+    "good", "morning", "afternoon", "evening", "thank", "thanks", "please",
+    "help", "yes", "no", "ok", "okay", "not", "open", "close", "step",
+    "steps", "time", "today", "tomorrow", "day", "first", "last", "next",
+}
+
+_KB_VOCABULARY_CACHE = {"words": set(), "built_at": 0}
+_KB_VOCABULARY_TTL_SECONDS = 300
+
+
+def _get_kb_vocabulary():
+    """
+    Every word appearing in an active article's title/category/sub_category
+    /content, cached for a few minutes. Rebuilding automatically picks up
+    new/edited/Notion-synced articles without any code change -- callers
+    never need to know or care when the cache last refreshed.
+    """
+    now = time.time()
+
+    if _KB_VOCABULARY_CACHE["words"] and (now - _KB_VOCABULARY_CACHE["built_at"]) < _KB_VOCABULARY_TTL_SECONDS:
+        return _KB_VOCABULARY_CACHE["words"]
+
+    words = set(_COMMON_QUERY_WORDS)
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT title, category, sub_category, content
+            FROM wiki_article
+            WHERE COALESCE(is_deleted, 0) = 0
+        """)
+
+        for row in cursor.fetchall() or []:
+            for field in ("title", "category", "sub_category"):
+                text = str(row.get(field) or "")
+                words.update(re.findall(r"[a-z]+", text.lower()))
+
+            content_text = re.sub(r"<[^>]+>", " ", str(row.get("content") or ""))
+            words.update(re.findall(r"[a-z]+", content_text.lower()))
+    except Exception as error:
+        print("BUILD KB VOCABULARY ERROR:", error)
+        # Fall back to whatever's cached (even if stale) or just the
+        # common-words baseline -- never let this block chat entirely.
+        if _KB_VOCABULARY_CACHE["words"]:
+            return _KB_VOCABULARY_CACHE["words"]
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+    # Real words only -- drop 1-2 letter noise that would make fuzzy
+    # matching/segmentation too eager to "correct" short, already-valid
+    # tokens like "ok" or "hi" into something else.
+    words = {word for word in words if len(word) >= 3}
+
+    _KB_VOCABULARY_CACHE["words"] = words
+    _KB_VOCABULARY_CACHE["built_at"] = now
+
+    return words
+
+
+def _segment_no_space_word(token, vocabulary):
+    """
+    Dynamic-programming word-break: can "howmuchicepayment" be split into
+    a sequence of known words end-to-end? Returns the split as a list of
+    words, or None if no full split covers the whole token. Only attempted
+    on longer tokens (short ones are far more likely to just be a real
+    single word or a typo, not several words stuck together).
+    """
+    n = len(token)
+    if n < 8 or n > 40:
+        return None
+
+    # best[i] = list of words covering token[:i], or None if impossible.
+    best = [None] * (n + 1)
+    best[0] = []
+
+    for i in range(1, n + 1):
+        for j in range(max(0, i - 20), i):
+            if best[j] is None:
+                continue
+            word = token[j:i]
+            if len(word) >= 2 and word in vocabulary:
+                candidate = best[j] + [word]
+                # Prefer whichever split uses fewer, longer words -- that's
+                # almost always the more plausible real segmentation.
+                if best[i] is None or len(candidate) < len(best[i]):
+                    best[i] = candidate
+
+    return best[n]
+
+
+def _fuzzy_correct_token(token, vocabulary):
+    """
+    Corrects a single misspelled token against the KB vocabulary (e.g.
+    "paymnt" -> "payment", "openning" -> "opening") using plain string
+    similarity -- no AI call. Leaves the token untouched if it's already a
+    real word, too short to safely guess, or nothing in the vocabulary is
+    close enough to be confident about.
+    """
+    if token in vocabulary or len(token) < 3:
+        return token
+
+    # Short tokens (e.g. "hqw" -> "how", "yio" -> "you") need a lower
+    # similarity threshold -- a single swapped/dropped letter already
+    # produces a much bigger ratio swing on a 3-letter word than on a
+    # longer one, so the same cutoff that's safely strict for long words
+    # would never fire at all for these common short typos.
+    cutoff = 0.6 if len(token) <= 4 else 0.75
+
+    matches = difflib.get_close_matches(token, vocabulary, n=1, cutoff=cutoff)
+    return matches[0] if matches else token
+
+
+def normalize_staff_query(question):
+    """
+    Best-effort typo/shorthand/no-space normalization for English chat
+    input, used only to drive Knowledge Base retrieval -- never shown to
+    the user and never used in place of their actual typed question for
+    logging or escalation. Returns (normalized_text, changed).
+
+    Deliberately a no-op for CJK text: the existing translate_query_to_
+    english_keywords() cross-lingual bridge already owns that case, and
+    these Latin-alphabet heuristics would corrupt Chinese/Malay input.
+    """
+    text = str(question or "").strip()
+
+    if not text or CJK_CHAR_RE.search(text):
+        return text, False
+
+    try:
+        vocabulary = _get_kb_vocabulary()
+    except Exception as error:
+        print("NORMALIZE STAFF QUERY ERROR:", error)
+        return text, False
+
+    raw_tokens = re.findall(r"[a-zA-Z']+|[^\sa-zA-Z']+", text.lower())
+    output_tokens = []
+    changed = False
+
+    for token in raw_tokens:
+        if not re.fullmatch(r"[a-z']+", token):
+            output_tokens.append(token)
+            continue
+
+        if token in _QUERY_SHORTHAND_MAP:
+            expanded = _QUERY_SHORTHAND_MAP[token]
+            output_tokens.append(expanded)
+            changed = True
+            continue
+
+        if token in vocabulary:
+            output_tokens.append(token)
+            continue
+
+        segmented = _segment_no_space_word(token, vocabulary)
+        if segmented:
+            output_tokens.extend(segmented)
+            changed = True
+            continue
+
+        corrected = _fuzzy_correct_token(token, vocabulary)
+        if corrected != token:
+            output_tokens.append(corrected)
+            changed = True
+            continue
+
+        output_tokens.append(token)
+
+    normalized = " ".join(output_tokens)
+    normalized = re.sub(r"\s+([?.!,])", r"\1", normalized).strip()
+
+    return (normalized, changed) if changed else (text, False)
+
 
 try:
     from predict_intent import get_model_answer
@@ -6753,6 +6968,7 @@ from one of the "###" headings in the context below (empty string if there
 is no context).
 
 Staff question: {question}
+{f"(Their typing had typos/shorthand/no spaces -- the likely intended meaning is: {search_question})" if search_question and search_question != question else ""}
 
 Knowledge Base context:
 {context_text if context_text.strip() else "(no matching Knowledge Base articles found)"}
@@ -7078,12 +7294,36 @@ def chat():
         if detected_language != "en":
             question_for_search = translate_query_to_english_keywords(question, detected_language)
 
-        greetings = ["hi", "hello", "hey", "morning", "afternoon", "evening", "good morning", "good afternoon", "good evening"]
+        # =========================
+        # TYPO / SHORTHAND / NO-SPACE NORMALIZATION
+        # Silent, Python-only correction (no extra AI call) for English
+        # input -- CJK/Malay already has its own translation bridge above.
+        # `question` (the staff member's raw text) is never overwritten:
+        # only `question_for_search` below picks up the corrected version,
+        # so KB retrieval benefits from it while logging/escalation/replies
+        # still show exactly what was typed.
+        # =========================
+        normalized_question, query_was_normalized = (
+            normalize_staff_query(question) if detected_language == "en" else (question, False)
+        )
+
+        if query_was_normalized:
+            question_for_search = normalized_question
+
+        greetings = [
+            "hi", "hello", "hey", "morning", "afternoon", "evening",
+            "good morning", "good afternoon", "good evening",
+            "how are you", "good day", "hi there", "hello there",
+        ]
 
         # =========================
         # ✅ STEP 0: GREETING
+        # Checked against both the raw and normalized text, so a mistyped
+        # greeting ("hqw are yio") is recognized the same as a clean one.
         # =========================
-        if q_lower.strip() in greetings:
+        if q_lower.strip() in greetings or (
+            query_was_normalized and normalized_question.lower().strip() in greetings
+        ):
             return jsonify({
                 "reply": "Hi! 👋 I can help you with SOP, kiosk steps, product info, or promotion.\n\nTry asking:\n- kiosk opening\n- show step 4\n- latest promotion",
                 "confidence": 1.0,
@@ -7096,8 +7336,14 @@ def chat():
         # ✅ STEP 1: NONSENSE / INVALID INPUT
         # Check Team Lead resolved answer first.
         # If none, first time = ask again, second time = escalate.
+        # A raw string that LOOKS like nonsense (no spaces, typos) but
+        # successfully normalizes into real, recognizable words is not
+        # actually nonsense -- only fall into this whole block if it's
+        # still unrecognizable after normalization too.
         # =========================
-        if is_nonsense(question):
+        if is_nonsense(question) and not (
+            query_was_normalized and not is_nonsense(normalized_question)
+        ):
             retrieval_result = search_similar_question(question)
 
             if retrieval_result:
