@@ -1323,6 +1323,12 @@ export default function QuizManagement() {
                           ))}
                         </div>
 
+                        {question.explanation ? (
+                          <div className="qm-ai-explanation">
+                            <strong>Explanation:</strong> {question.explanation}
+                          </div>
+                        ) : null}
+
                         <div className="qm-ai-source">
                           {question.sourceTitle || 'Knowledge Base'}
                         </div>

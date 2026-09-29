@@ -1329,6 +1329,18 @@ button.qm-stat:hover {
   background: #d8f2e7;
 }
 
+.qm-ai-explanation {
+  margin-top: 10px;
+
+  color: #5c5468;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.qm-ai-explanation strong {
+  color: #33303b;
+}
+
 .qm-ai-source {
   margin-top: 10px;
 
@@ -2686,6 +2698,11 @@ button.qm-stat:hover {
 .qm-ai-options > div.correct > span {
   color: #35704c;
   background: #d9ebdd;
+}
+
+.qm-ai-explanation {
+  color: #665f72;
+  font-size: 12.5px;
 }
 
 .qm-ai-source {

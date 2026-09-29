@@ -11638,7 +11638,7 @@ def submit_quiz(quiz_id):
             return jsonify({"message": "This quiz is not available."}), 404
 
         cursor.execute(
-            "SELECT question_id, correct_option FROM quiz_question WHERE quiz_id = %s ORDER BY question_id ASC",
+            "SELECT question_id, correct_option, explanation FROM quiz_question WHERE quiz_id = %s ORDER BY question_id ASC",
             (quiz_id,),
         )
         questions = cursor.fetchall() or []
@@ -11668,6 +11668,21 @@ def submit_quiz(quiz_id):
         )
         result_id = cursor.lastrowid
         conn.commit()
+
+        # Safe to reveal now that the attempt is scored and saved -- the
+        # pre-submission GET /api/quizzes/<id>/questions still never exposes
+        # correct_option/explanation, only this post-submission response does.
+        review = [
+            {
+                "question_id": int(row["question_id"]),
+                "correct_option": str(row["correct_option"] or "").strip().upper(),
+                "selected_option": answers.get(int(row["question_id"])),
+                "is_correct": answers.get(int(row["question_id"])) == str(row["correct_option"] or "").strip().upper(),
+                "explanation": row.get("explanation") or "",
+            }
+            for row in questions
+        ]
+
         return jsonify({
             "message": "Quiz completed and result saved.",
             "saved": True,
@@ -11676,6 +11691,7 @@ def submit_quiz(quiz_id):
             "score": correct_count,
             "total_questions": total_questions,
             "percentage": percentage,
+            "review": review,
         }), 201
     except Exception:
         if conn:
@@ -12336,11 +12352,18 @@ def build_ai_quiz_questions(category_filter, question_count, difficulty):
     return generated
 
 
-def build_ai_quiz_source_text(category_filter, max_chars=6000):
+def build_ai_quiz_source_text(category_filter, max_chars=16000, max_chars_per_article=500):
     """
     Collect the latest verified article content into one text blob to feed
-    a real AI provider as context. Capped by character count so it stays a
-    reasonable prompt size regardless of how large the Knowledge Base gets.
+    a real AI provider as context. Each article's content is capped
+    individually so one long article (e.g. a verbose Notion-synced page)
+    cannot crowd out every other article when "All Knowledge" is selected
+    -- previously, articles were added in full, in created_at DESC order,
+    until the (much smaller) total budget ran out, so a single long recent
+    article could consume the whole budget and every generated question
+    ended up about just that one article. Still capped by total character
+    count so it stays a reasonable prompt size regardless of how large the
+    Knowledge Base gets.
     """
     conn = None
     cursor = None
@@ -12382,22 +12405,32 @@ def build_ai_quiz_source_text(category_filter, max_chars=6000):
 
     chunks = []
     total_len = 0
+    included_count = 0
 
     for article in articles:
         title = article.get("title") or ""
         body = clean_text(article.get("content"))
+
+        if len(body) > max_chars_per_article:
+            body = body[:max_chars_per_article].rstrip() + "..."
+
         entry = f"### {title}\n{body}\n"
 
         if total_len + len(entry) > max_chars:
-            remaining = max_chars - total_len
-
-            if remaining > 200:
-                chunks.append(entry[:remaining])
-
             break
 
         chunks.append(entry)
         total_len += len(entry)
+        included_count += 1
+
+    if included_count < len(articles):
+        print(
+            f"AI QUIZ: source text budget reached; included {included_count}/"
+            f"{len(articles)} eligible article(s) (each capped at "
+            f"{max_chars_per_article} chars, total budget {max_chars} chars)."
+        )
+    else:
+        print(f"AI QUIZ: included all {included_count} eligible article(s) in source text.")
 
     return "\n".join(chunks)
 

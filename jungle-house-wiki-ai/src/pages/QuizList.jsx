@@ -574,17 +574,41 @@ export default function QuizList() {
               </div>
 
               <div className="stack-gap top-gap">
-                <p className="muted small">Your submitted answers are shown below. Individual correct answers are not provided by this API.</p>
+                <p className="muted small">Review your answers below.</p>
                 {questions.map((question, index) => {
                   const selectedLetter = selectedAnswers[question.id];
                   const selectedIndex = selectedLetter ? selectedLetter.charCodeAt(0) - 65 : -1;
                   const selectedText = question.options?.[selectedIndex] || 'No answer';
+                  const reviewEntry = serverResult?.review?.find(
+                    (entry) => entry.question_id === question.id
+                  );
+                  const correctIndex = reviewEntry
+                    ? reviewEntry.correct_option.charCodeAt(0) - 65
+                    : -1;
+                  const correctText = question.options?.[correctIndex] || '';
+
                   return (
                     <div key={question.id} className="quiz-review-card">
                       <h4 style={{ marginBottom: '8px' }}>{index + 1}. {question.question}</h4>
-                      <p className="muted" style={{ marginBottom: 0 }}>
+                      <p
+                        className={
+                          reviewEntry ? (reviewEntry.is_correct ? 'success-text' : 'error-text') : 'muted'
+                        }
+                        style={{ marginBottom: 0 }}
+                      >
                         Your answer: {selectedLetter ? `${selectedLetter}. ` : ''}{selectedText}
+                        {reviewEntry ? (reviewEntry.is_correct ? ' ✓' : ' ✗') : ''}
                       </p>
+                      {reviewEntry && !reviewEntry.is_correct ? (
+                        <p className="success-text" style={{ marginBottom: 0 }}>
+                          Correct answer: {reviewEntry.correct_option}. {correctText}
+                        </p>
+                      ) : null}
+                      {reviewEntry?.explanation ? (
+                        <p className="muted" style={{ marginBottom: 0 }}>
+                          <strong>Explanation:</strong> {reviewEntry.explanation}
+                        </p>
+                      ) : null}
                     </div>
                   );
                 })}
