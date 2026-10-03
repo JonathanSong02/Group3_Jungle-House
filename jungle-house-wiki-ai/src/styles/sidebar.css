@@ -257,28 +257,6 @@ body.sidebar-is-collapsed .main-area {
   text-transform: uppercase;
 }
 
-.sidebar-language-switcher {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 18px 11px 8px;
-}
-
-.sidebar-language-label {
-  margin: 0;
-}
-
-.sidebar-language-switcher select {
-  min-height: 44px;
-  padding: 8px 10px;
-
-  color: var(--sidebar-text);
-  background: rgba(255, 255, 255, 0.6);
-  border: 1px solid rgba(101, 80, 51, 0.2);
-  border-radius: 10px;
-  font-size: 13px;
-}
-
 .sidebar-link {
   position: relative;
   min-height: 44px;

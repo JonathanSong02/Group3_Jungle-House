@@ -3251,153 +3251,6 @@ def ensure_ai_chat_log_table():
             conn.close()
 
 
-def ensure_chat_session_table():
-    """
-    Backend-persisted chat threads. Each row is one conversation thread;
-    individual turns are NOT duplicated into a separate messages table --
-    the existing ai_chat_log table already stores one row per completed
-    question+reply turn, so it's reused here (tagged with session_id) as
-    the message history, per "reuse existing tables" rather than building
-    a parallel log.
-    """
-    conn = None
-    cursor = None
-
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS chat_session (
-                chat_session_id INT AUTO_INCREMENT PRIMARY KEY,
-                user_id INT NOT NULL,
-                client_key VARCHAR(64) NOT NULL,
-                title VARCHAR(255) NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-
-                UNIQUE KEY uq_chat_session_user_client (user_id, client_key),
-                INDEX idx_chat_session_user_updated (user_id, updated_at)
-            )
-        """)
-
-        cursor.execute("SHOW COLUMNS FROM ai_chat_log LIKE 'session_id'")
-        if not cursor.fetchone():
-            cursor.execute(
-                "ALTER TABLE ai_chat_log "
-                "ADD COLUMN session_id INT NULL, "
-                "ADD INDEX idx_ai_chat_log_session (session_id)"
-            )
-
-        conn.commit()
-
-    except Exception as error:
-        print("CHAT SESSION TABLE CHECK ERROR:", error)
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-
-def get_or_create_chat_session(user_id, client_key, title_hint=""):
-    """
-    `client_key` is whatever opaque per-thread identifier the frontend
-    already generates locally (its existing Date.now()-based session id) --
-    this just finds-or-creates the matching server-side chat_session row for
-    (user_id, client_key), so the frontend's existing session list/switch/
-    delete logic needs no rework to start getting backend-persisted,
-    user-isolated history. Returns None (never raises) on any failure, so a
-    DB hiccup only loses multi-turn memory for that request, never breaks
-    the chat reply itself.
-    """
-    client_key = str(client_key or "").strip()[:64]
-    if not client_key or not user_id:
-        return None
-
-    conn = None
-    cursor = None
-
-    try:
-        ensure_chat_session_table()
-
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-
-        cursor.execute(
-            "SELECT chat_session_id FROM chat_session WHERE user_id = %s AND client_key = %s LIMIT 1",
-            (user_id, client_key),
-        )
-        row = cursor.fetchone()
-
-        if row:
-            cursor.execute(
-                "UPDATE chat_session SET updated_at = NOW() WHERE chat_session_id = %s",
-                (row["chat_session_id"],),
-            )
-            conn.commit()
-            return int(row["chat_session_id"])
-
-        title = str(title_hint or "").strip()[:255] or "New Chat"
-        cursor.execute(
-            "INSERT INTO chat_session (user_id, client_key, title) VALUES (%s, %s, %s)",
-            (user_id, client_key, title),
-        )
-        conn.commit()
-        return cursor.lastrowid
-
-    except Exception as error:
-        print("GET OR CREATE CHAT SESSION ERROR:", error)
-        return None
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-
-def get_recent_chat_turns(session_id, limit=4):
-    """
-    Last `limit` question+reply turns for a chat_session, oldest first --
-    the bounded sliding window fed to answer_question_with_ai_provider() so
-    a follow-up question can be understood in context without sending the
-    thread's entire, unbounded history to the AI provider on every turn.
-    """
-    if not session_id:
-        return []
-
-    conn = None
-    cursor = None
-
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute(
-            """
-            SELECT question, reply
-            FROM ai_chat_log
-            WHERE session_id = %s
-            ORDER BY created_at DESC, log_id DESC
-            LIMIT %s
-            """,
-            (session_id, limit),
-        )
-        rows = cursor.fetchall() or []
-        return list(reversed(rows))
-
-    except Exception as error:
-        print("GET RECENT CHAT TURNS ERROR:", error)
-        return []
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-
 def save_ai_chat_log_to_mysql(payload, user_id=None):
     """
     Save AI Chat interaction logs into MySQL for the Analytics page.
@@ -3408,11 +3261,6 @@ def save_ai_chat_log_to_mysql(payload, user_id=None):
 
     try:
         ensure_ai_chat_log_table()
-        # Guarantees ai_chat_log.session_id exists even on a request that
-        # never touched get_or_create_chat_session() (e.g. no session_id
-        # sent yet by an unupdated frontend) -- the INSERT below always
-        # references that column.
-        ensure_chat_session_table()
 
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -3434,10 +3282,9 @@ def save_ai_chat_log_to_mysql(payload, user_id=None):
                 fallback_message,
                 escalation_ready,
                 reply,
-                error,
-                session_id
+                error
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             user_id,
             payload.get("question") or "",
@@ -3453,8 +3300,7 @@ def save_ai_chat_log_to_mysql(payload, user_id=None):
             payload.get("fallback_message"),
             1 if payload.get("escalation_ready") else 0,
             payload.get("reply"),
-            payload.get("error"),
-            getattr(g, "active_chat_session_id", None),
+            payload.get("error")
         ))
 
         conn.commit()
@@ -7804,9 +7650,7 @@ def build_ai_chat_context(question, limit=5, max_chars=6000, search_question=Non
     return "\n".join(chunks), candidate_articles
 
 
-def answer_question_with_ai_provider(
-    question, timeout=25, search_question=None, user_language="en", conversation_history=None
-):
+def answer_question_with_ai_provider(question, timeout=25, search_question=None, user_language="en"):
     """
     Returns {"answer": str, "sourceTitle": str, "article_id": int|None,
     "off_topic": bool} if the AI provider produced a usable reply (either a
@@ -7826,14 +7670,6 @@ def answer_question_with_ai_provider(
     (jokes, small talk) a path to a same-language decline instead of
     silently escalating to a Team Lead just because nothing matched.
 
-    `conversation_history` is an optional bounded list of the last few
-    {"question": ..., "reply": ...} turns from the SAME chat session
-    (oldest first), used so a follow-up like "why can't we make it hotter?"
-    can be understood as still being about honey water. Also folded into
-    the KB article search terms (just the single most recent prior
-    question) so retrieval itself benefits from the topic, not only the
-    final answer-generation prompt.
-
     Uses a shorter timeout (25s) than generate_ai_reply()'s own 90s
     default on purpose: this runs inline while a staff member is actively
     waiting for a live chat reply, so it's better to give up sooner and
@@ -7842,14 +7678,7 @@ def answer_question_with_ai_provider(
     (a manager clicking a button, not a live conversation) keeps the
     longer default since waiting there is far less disruptive.
     """
-    context_search_terms = search_question or question
-
-    if conversation_history:
-        previous_question = str(conversation_history[-1].get("question") or "").strip()
-        if previous_question:
-            context_search_terms = f"{previous_question} {context_search_terms}".strip()
-
-    context_text, candidate_articles = build_ai_chat_context(question, search_question=context_search_terms)
+    context_text, candidate_articles = build_ai_chat_context(question, search_question=search_question)
 
     # English behavior is unchanged from before: no KB context at all means
     # there's nothing to ground an answer in, so skip the AI call and let
@@ -7866,26 +7695,6 @@ def answer_question_with_ai_provider(
         "en": "English",
     }
     language_label = language_labels.get(user_language, "the same language as the staff question")
-
-    history_block = ""
-    if conversation_history:
-        history_lines = []
-        for turn in conversation_history[-4:]:
-            turn_question = str(turn.get("question") or "").strip()
-            turn_reply = str(turn.get("reply") or "").strip()
-            if not turn_question:
-                continue
-            if len(turn_reply) > 240:
-                turn_reply = turn_reply[:240].rstrip() + "..."
-            history_lines.append(f"Staff: {turn_question}\nAssistant: {turn_reply}")
-        if history_lines:
-            history_block = (
-                "Recent conversation in this same chat (oldest first) -- use ONLY to "
-                "understand what \"it\"/\"that\"/\"why not\" etc. in the new question "
-                "below refers to. Never treat it as a source of facts; all factual "
-                "answers must still come solely from the Knowledge Base context below.\n"
-                + "\n".join(history_lines) + "\n"
-            )
 
     prompt = f"""You are Jungle House's internal AI Wiki Assistant.
 
@@ -7919,7 +7728,6 @@ preamble, or restate the question. "sourceTitle" must be copied exactly
 from one of the "###" headings in the context below (empty string if there
 is no context).
 
-{history_block}
 Staff question: {question}
 {f"(Their typing had typos/shorthand/no spaces -- the likely intended meaning is: {search_question})" if search_question and search_question != question else ""}
 
@@ -8115,7 +7923,6 @@ def chat():
 
             data["user_id"] = current_auth_user_id()
             data["request_id"] = request.form.get("request_id", "")
-            data["session_id"] = request.form.get("session_id", "")
 
             if uploaded_chat_image:
                 uploaded_chat_image_url, uploaded_chat_image_type = save_chat_image(uploaded_chat_image)
@@ -8233,27 +8040,6 @@ def chat():
         question = clean_question(question)
         q_lower = question.lower()
         chat_request_id = str(data.get("request_id") or "").strip()
-
-        # =========================
-        # CHAT SESSION / BOUNDED MULTI-TURN MEMORY
-        # `session_id` is the frontend's own existing local per-thread
-        # identifier (already used for its local chat history UI) -- find
-        # or create the matching backend chat_session row for this user, so
-        # history persists server-side and a follow-up question can be
-        # answered with the last few turns of this SAME thread as context.
-        # A request with no session_id (not yet updated frontend, or a
-        # one-off call) behaves exactly as before: no history, no session.
-        # =========================
-        raw_session_key = str(data.get("session_id") or data.get("sessionId") or "").strip()
-        chat_session_id = None
-        conversation_history = []
-
-        if raw_session_key:
-            chat_session_id = get_or_create_chat_session(
-                data.get("user_id"), raw_session_key, title_hint=question
-            )
-            g.active_chat_session_id = chat_session_id
-            conversation_history = get_recent_chat_turns(chat_session_id, limit=4)
 
         # =========================
         # CROSS-LINGUAL RETRIEVAL BRIDGE
@@ -8814,7 +8600,6 @@ def chat():
                     question,
                     search_question=question_for_search,
                     user_language=detected_language,
-                    conversation_history=conversation_history,
                 )
             except ai_provider_service.AIProviderNotConfiguredError:
                 ai_answer = None
@@ -8973,180 +8758,6 @@ def chat():
             "escalation": True,
             "escalation_id": escalation_id
         }), 500
-
-
-# =========================
-# CHAT SESSION / HISTORY ROUTES
-# Backend-persisted chat threads, strictly scoped to the logged-in user via
-# current_auth_user_id() on every query -- never trust a user_id from the
-# request body for these. Pairs with the chat_session_id the chat() route
-# above already resolves from the frontend's existing local session id.
-# =========================
-@app.route("/api/chat/sessions", methods=["GET"])
-def list_chat_sessions():
-    user_id = current_auth_user_id()
-    conn = None
-    cursor = None
-
-    try:
-        ensure_chat_session_table()
-
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute(
-            """
-            SELECT
-                s.chat_session_id,
-                s.client_key,
-                s.title,
-                s.created_at,
-                s.updated_at,
-                (
-                    SELECT l.question FROM ai_chat_log l
-                    WHERE l.session_id = s.chat_session_id
-                    ORDER BY l.created_at DESC, l.log_id DESC
-                    LIMIT 1
-                ) AS last_question
-            FROM chat_session s
-            WHERE s.user_id = %s
-            ORDER BY s.updated_at DESC
-            LIMIT 100
-            """,
-            (user_id,),
-        )
-        sessions = cursor.fetchall() or []
-
-        return jsonify([
-            {
-                "id": row["client_key"],
-                "chat_session_id": row["chat_session_id"],
-                "title": row["title"] or row["last_question"] or "New Chat",
-                "snippet": row["last_question"] or "",
-                "created_at": row["created_at"].isoformat() if row["created_at"] else None,
-                "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
-            }
-            for row in sessions
-        ]), 200
-
-    except Exception as error:
-        print("LIST CHAT SESSIONS ERROR:", error)
-        return jsonify({"message": "Unable to load past conversations. Please try again."}), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-
-@app.route("/api/chat/sessions/<path:client_key>/messages", methods=["GET"])
-def get_chat_session_messages(client_key):
-    user_id = current_auth_user_id()
-    conn = None
-    cursor = None
-
-    try:
-        ensure_chat_session_table()
-
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute(
-            "SELECT chat_session_id FROM chat_session WHERE user_id = %s AND client_key = %s LIMIT 1",
-            (user_id, str(client_key).strip()[:64]),
-        )
-        session_row = cursor.fetchone()
-
-        if not session_row:
-            # Not this user's session (or it doesn't exist) -- same response
-            # either way so this can never be used to probe which session
-            # ids belong to someone else.
-            return jsonify({"message": "Chat session not found."}), 404
-
-        cursor.execute(
-            """
-            SELECT log_id, question, reply, title, source, confidence, created_at
-            FROM ai_chat_log
-            WHERE session_id = %s
-            ORDER BY created_at ASC, log_id ASC
-            LIMIT 200
-            """,
-            (session_row["chat_session_id"],),
-        )
-        rows = cursor.fetchall() or []
-
-        return jsonify([
-            {
-                "id": row["log_id"],
-                "question": row["question"],
-                "reply": row["reply"],
-                "title": row["title"],
-                "source": row["source"],
-                "confidence": float(row["confidence"] or 0.0),
-                "created_at": row["created_at"].isoformat() if row["created_at"] else None,
-            }
-            for row in rows
-        ]), 200
-
-    except Exception as error:
-        print("GET CHAT SESSION MESSAGES ERROR:", error)
-        return jsonify({"message": "Unable to load past conversations. Please try again."}), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-
-@app.route("/api/chat/sessions/<path:client_key>", methods=["DELETE"])
-def delete_chat_session(client_key):
-    user_id = current_auth_user_id()
-    conn = None
-    cursor = None
-
-    try:
-        ensure_chat_session_table()
-
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute(
-            "SELECT chat_session_id FROM chat_session WHERE user_id = %s AND client_key = %s LIMIT 1",
-            (user_id, str(client_key).strip()[:64]),
-        )
-        session_row = cursor.fetchone()
-
-        if not session_row:
-            # Idempotent: the frontend already deletes its own local copy
-            # regardless, so a session that was never synced to the backend
-            # (or already deleted) is not an error.
-            return jsonify({"message": "Chat session deleted."}), 200
-
-        # ai_chat_log rows stay (they're also the Analytics source) but are
-        # unlinked from the deleted thread rather than destroyed -- only the
-        # thread grouping/title is actually deleted here.
-        cursor.execute(
-            "UPDATE ai_chat_log SET session_id = NULL WHERE session_id = %s",
-            (session_row["chat_session_id"],),
-        )
-        cursor.execute(
-            "DELETE FROM chat_session WHERE chat_session_id = %s",
-            (session_row["chat_session_id"],),
-        )
-        conn.commit()
-
-        return jsonify({"message": "Chat session deleted."}), 200
-
-    except Exception as error:
-        if conn:
-            conn.rollback()
-        print("DELETE CHAT SESSION ERROR:", error)
-        return jsonify({"message": "Unable to delete this conversation. Please try again."}), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
 
 
 # =========================
@@ -12878,29 +12489,10 @@ def build_ai_quiz_questions_via_provider(category_filter, question_count, diffic
 Use only the provided source content. Do not invent information outside the source.
 Generate practical staff training questions at {difficulty} difficulty.
 
-Quality rules (follow all of these):
-1. Each question must be fully answerable from a SINGLE article in the
-   source content below -- do not combine facts from two different articles
-   into one question.
-2. The 4 options must be 4 genuinely DIFFERENT strings -- never two options
-   that say the same thing in different words, and never an option that is
-   just a shortened or reworded copy of another option in the same question.
-3. Exactly ONE option may be correct. The other 3 must be plausible but
-   clearly wrong to someone who read the source article.
-4. Do not write negative/trick phrasing such as "Which of these is NOT..."
-   or "all of the following EXCEPT...". Ask directly for the correct fact,
-   step, or procedure.
-5. Do not generate two questions (in this same batch) that test the same
-   fact worded differently -- each question must test a distinct fact or
-   step.
-6. "explanation" must briefly state WHY the correct option is correct,
-   citing the specific fact/step from the source article -- not just
-   restate the correct option.
-
 Return ONLY valid JSON. No markdown. No explanation outside JSON.
 Return a JSON array of up to {question_count} question objects (fewer only if
-the source content truly does not support more distinct questions that
-follow all the rules above). Each object must have exactly these fields:
+the source content truly does not support more distinct questions). Each
+object must have exactly these fields:
 - "question": string
 - "options": array of exactly 4 strings
 - "correctAnswerIndex": integer, 0, 1, 2 or 3
@@ -12925,7 +12517,6 @@ Source content:
             raise ValueError("AI did not return a JSON array of questions.")
 
         result = []
-        seen_question_keys = set()
 
         for item in parsed:
             if not isinstance(item, dict):
@@ -12936,16 +12527,7 @@ Source content:
             if not isinstance(options, list) or len(options) != 4:
                 continue
 
-            cleaned_options = [str(option).strip() for option in options]
-
-            if not all(cleaned_options):
-                continue
-
-            # Reject duplicate/near-duplicate options (case/whitespace
-            # insensitive) -- an ambiguous question is worse than no
-            # question at all.
-            normalized_options = {re.sub(r"\s+", " ", opt.lower()) for opt in cleaned_options}
-            if len(normalized_options) != 4:
+            if not all(str(option).strip() for option in options):
                 continue
 
             correct_index = item.get("correctAnswerIndex")
@@ -12959,30 +12541,9 @@ Source content:
             if not question_text or not explanation:
                 continue
 
-            # Reject the classic "which of the following is NOT.../all of
-            # the following EXCEPT..." trick-question template the prompt
-            # explicitly asked the AI to avoid, in case it still slipped
-            # one in. Deliberately narrow: many legitimate SOP questions
-            # naturally contain the word "not" (e.g. "why must staff not
-            # open the honey tester without permission?"), so only the
-            # specific template is rejected, not the word itself.
-            if re.search(r"\bexcept\b", question_text, re.IGNORECASE) or re.search(
-                r"\b(which|what)\b[^?]{0,40}\bnot\b[^?]{0,20}\b(following|these|true|correct)\b",
-                question_text,
-                re.IGNORECASE,
-            ):
-                continue
-
-            # Skip a question that duplicates/near-duplicates one already
-            # accepted in this same batch (same normalized wording).
-            question_key = re.sub(r"[^a-z0-9]+", " ", question_text.lower()).strip()
-            if question_key in seen_question_keys:
-                continue
-            seen_question_keys.add(question_key)
-
             result.append({
                 "question": question_text,
-                "options": cleaned_options,
+                "options": [str(option).strip() for option in options],
                 "correctAnswerIndex": correct_index,
                 "explanation": explanation,
                 "sourceTitle": str(item.get("sourceTitle") or "").strip(),

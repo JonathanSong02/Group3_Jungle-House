@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import api, { API_BASE_URL } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useStaffChat } from '../context/StaffChatContext';
-import { useLanguage } from '../context/LanguageContext';
 import '../styles/Chat.css';
 
 
@@ -949,7 +948,7 @@ function renderRichKnowledgeContent(text, fallbackLink = '') {
   return output;
 }
 
-function renderResponseMeta(message, t) {
+function renderResponseMeta(message) {
   if (message.sender !== 'ai') return null;
 
   const hasConfidence = message.confidence !== undefined && message.confidence !== null;
@@ -982,14 +981,7 @@ function renderResponseMeta(message, t) {
             border: '1px solid #dee2e6',
           }}
         >
-          {t('chat.confidence')}: {confidencePercent}%{' '}
-          {message.confidence_label
-            ? `(${
-                { high: t('chat.confidenceHigh'), medium: t('chat.confidenceMedium'), low: t('chat.confidenceLow') }[
-                  message.confidence_label
-                ] || message.confidence_label
-              })`
-            : ''}
+          Confidence: {confidencePercent}% {message.confidence_label ? `(${message.confidence_label})` : ''}
         </span>
       ) : null}
 
@@ -1009,7 +1001,7 @@ function renderResponseMeta(message, t) {
               fontWeight: 600,
             }}
           >
-            {t('chat.source')}: {message.title || 'View article'} ↗
+            Source: {message.title || 'View article'} ↗
           </Link>
         ) : (
           <span
@@ -1020,7 +1012,7 @@ function renderResponseMeta(message, t) {
               border: '1px solid #dee2e6',
             }}
           >
-            {t('chat.source')}: {message.source}
+            Source: {message.source}
           </span>
         )
       ) : null}
@@ -1035,9 +1027,7 @@ function renderResponseMeta(message, t) {
             color: '#b00020',
           }}
         >
-          {message.escalation_ready || message.escalation_required
-            ? t('chat.escalationRequired')
-            : t('chat.fallback')}
+          {message.escalation_ready || message.escalation_required ? 'Escalation required' : 'Fallback'}
         </span>
       ) : null}
     </div>
@@ -1284,45 +1274,6 @@ function extractLatestSopContext(messages, question) {
   };
 }
 
-// Reconstructs a chat bubble list from the backend's per-turn log rows
-// (GET /api/chat/sessions/:id/messages). This is a simplified reconstruction
-// -- ai_chat_log stores the final reply text, not the original rich
-// multiple_choice/sop card data, so a reopened server-only session renders
-// as plain text bubbles rather than the original interactive cards.
-function buildMessagesFromServerLog(rows) {
-  if (!Array.isArray(rows) || rows.length === 0) return starterMessages;
-
-  const out = [];
-
-  rows.forEach((row) => {
-    out.push({
-      id: `srv-u-${row.id}`,
-      sender: 'user',
-      type: 'text',
-      text: row.question || '',
-      image_files: [],
-    });
-    out.push({
-      id: `srv-a-${row.id}`,
-      sender: 'ai',
-      type: 'text',
-      text: row.reply || '',
-      message: row.reply || '',
-      title: row.title || '',
-      source: row.source || '',
-      confidence: Number(row.confidence || 0),
-      confidence_label: '',
-      escalation_ready: false,
-      escalation_required: false,
-      fallback: false,
-      fallback_message: '',
-      context: { unclear_count: 0 },
-    });
-  });
-
-  return out;
-}
-
 function createNewSession() {
   const now = new Date().toLocaleString();
 
@@ -1536,7 +1487,6 @@ function ChatContent({ storageKeys }) {
   const staffMode = Boolean(staffChat);
   const publishStaffChat = staffChat?.publish;
   const { user } = useAuth();
-  const { t } = useLanguage();
   const firstName = String(user?.full_name || user?.name || 'there').trim().split(/\s+/)[0];
   const staffInputRef = useRef(null);
   const [activeTab, setActiveTab] = useState('ask');
@@ -1584,51 +1534,6 @@ function ChatContent({ storageKeys }) {
       document.body.classList.remove('ai-chat-mobile-menu-open');
     };
   }, [mobileChatMenuOpen]);
-
-  // Pull in any sessions that exist on the backend (started on another
-  // device/browser, or sent by a previous build of this page) but are not
-  // already in this browser's local cache. Purely additive -- never removes
-  // or overwrites a locally-cached session, so this can never clobber a
-  // conversation only the current tab knows about yet. Merged-in sessions
-  // start with messages: null as a "not loaded yet" marker; handleSelectSession
-  // lazy-loads the real messages the first time one is opened.
-  useEffect(() => {
-    let cancelled = false;
-
-    api
-      .get('/chat/sessions')
-      .then((response) => {
-        if (cancelled) return;
-        const serverSessions = Array.isArray(response.data) ? response.data : [];
-        if (serverSessions.length === 0) return;
-
-        setChatSessions((prev) => {
-          const knownIds = new Set(prev.map((session) => String(session.id)));
-          const additions = serverSessions
-            .filter((row) => !knownIds.has(String(row.id)))
-            .map((row) => ({
-              id: Number(row.id) || row.id,
-              title: row.title || 'New Chat',
-              messages: null,
-              created_at: row.created_at || new Date().toLocaleString(),
-              updated_at: row.updated_at || row.created_at || new Date().toLocaleString(),
-            }));
-
-          if (additions.length === 0) return prev;
-
-          const merged = [...prev, ...additions];
-          saveChatSessionsToStorage(storageKeys, merged);
-          return merged;
-        });
-      })
-      .catch((error) => {
-        console.error('Unable to load past conversations:', error);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [storageKeys]);
 
   useEffect(() => {
     const ensureMobileSidebarStartsClosed = () => {
@@ -1715,37 +1620,6 @@ function ChatContent({ storageKeys }) {
     saveActiveSessionId(storageKeys, sessionId);
     setActiveTab('ask');
     setMobileChatMenuOpen(false);
-
-    // A session merged in from the server (see the sync effect above) has
-    // messages: null until it's actually opened -- fetch its real turns now,
-    // once, and cache them locally from then on like any other session.
-    const target = chatSessions.find((session) => session.id === sessionId);
-    if (!target || target.messages !== null) return;
-
-    api
-      .get(`/chat/sessions/${sessionId}/messages`)
-      .then((response) => {
-        const loadedMessages = buildMessagesFromServerLog(response.data);
-        setChatSessions((prev) => {
-          const updated = prev.map((session) =>
-            session.id === sessionId ? { ...session, messages: loadedMessages } : session
-          );
-          saveChatSessionsToStorage(storageKeys, updated);
-          return updated;
-        });
-      })
-      .catch((error) => {
-        console.error('Unable to load this conversation:', error);
-        // Fall back to an empty thread rather than leaving messages stuck
-        // at null (which would otherwise re-trigger this fetch forever).
-        setChatSessions((prev) => {
-          const updated = prev.map((session) =>
-            session.id === sessionId ? { ...session, messages: starterMessages } : session
-          );
-          saveChatSessionsToStorage(storageKeys, updated);
-          return updated;
-        });
-      });
   };
 
   const handleNewChat = () => {
@@ -1842,13 +1716,6 @@ function ChatContent({ storageKeys }) {
   };
 
   const deleteSessionById = (sessionId) => {
-    // Best-effort, non-blocking: the session is removed from this browser's
-    // local list regardless of whether it ever reached the backend (e.g. an
-    // empty "New Chat" never sent a message yet, so no server row exists).
-    api.delete(`/chat/sessions/${sessionId}`).catch((error) => {
-      console.error('Unable to delete this conversation on the server:', error);
-    });
-
     const remainingSessions = chatSessions.filter((session) => session.id !== sessionId);
 
     if (remainingSessions.length === 0) {
@@ -2044,25 +1911,13 @@ const removeSelectedImage = () => {
         formData.append('context', JSON.stringify(context));
         formData.append('attachment', imageToSend);
         formData.append('request_id', requestId);
-        if (activeSessionId) formData.append('session_id', String(activeSessionId));
         // Do not set multipart Content-Type by hand: the browser must supply
         // the boundary. The shared client adds credentials and X-CSRF-Token.
         response = await api.post('/chat', formData, { signal: controller.signal });
       } else {
         response = await api.post(
           '/chat',
-          {
-            question: trimmedQuestion,
-            context,
-            request_id: requestId,
-            // Lets the backend persist this thread's turns under the same
-            // chat_session row and feed the last few turns back in as
-            // bounded conversation memory for follow-up questions -- the
-            // session id itself already exists locally (used by the
-            // sidebar's session list), this just also shares it with the
-            // backend.
-            session_id: activeSessionId || undefined,
-          },
+          { question: trimmedQuestion, context, request_id: requestId },
           { signal: controller.signal }
         );
       }
@@ -2208,7 +2063,7 @@ const removeSelectedImage = () => {
         className={`message-bubble ${message.sender === 'user' ? 'user' : 'ai'}`}
       >
         <strong className="ai-chat-sender-label">{message.sender === 'user' ? 'You' : 'AI'}</strong>
-        {renderResponseMeta(message, t)}
+        {renderResponseMeta(message)}
         {renderKnowledgeLink(message.link || message.article_link)}
 
         {message.sender === 'ai' &&
@@ -2811,8 +2666,8 @@ const removeSelectedImage = () => {
         <div className="staff-chat-toolbar">
           <div className="staff-chat-toolbar-title"><span className="staff-chat-mode-dot"/> <span>{hasConversation ? (activeSession?.title || 'Conversation') : 'AI Assistant'}</span></div>
           <div className="staff-chat-toolbar-actions">
-            <button type="button" onClick={() => handleTabChange('history')}>{t('chat.chatHistory')}</button>
-            {hasConversation && <button type="button" onClick={handleClearCurrentChat}>{t('chat.clearChat')}</button>}
+            <button type="button" onClick={() => handleTabChange('history')}>Chat history</button>
+            {hasConversation && <button type="button" onClick={handleClearCurrentChat}>Clear chat</button>}
           </div>
         </div>
         <div className="staff-chat-scroll" role="log" aria-label="AI conversation" aria-live="polite">
@@ -2838,7 +2693,7 @@ const removeSelectedImage = () => {
               <button type="button" onClick={removeSelectedImage} aria-label="Remove attachment">×</button>
             </div>}
             <textarea ref={staffInputRef} rows={2} value={question} onChange={(event) => setQuestion(event.target.value)}
-              onPaste={handleQuestionPaste} placeholder={t('chat.placeholder')}
+              onPaste={handleQuestionPaste} placeholder="Ask anything about Jungle House…"
               aria-label="Your question"
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -2853,9 +2708,9 @@ const removeSelectedImage = () => {
               }} />
             <div className="staff-composer-actions">
               <div className="staff-upload-actions">
-                <label className="staff-composer-upload" title="Upload photo or document"><span aria-hidden="true">＋</span><span>{t('chat.attachFile')}</span><input type="file" accept="image/*,.pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={handleImageSelect} hidden /></label>
-                <label className="staff-composer-upload staff-camera-action" title="Take a photo"><span aria-hidden="true">◎</span><span>{t('chat.camera')}</span><input type="file" accept="image/*" capture="environment" onChange={handleImageSelect} hidden /></label>
-                <span className="staff-knowledge-source"><span aria-hidden="true">▤</span> {t('chat.knowledgeBase')}</span>
+                <label className="staff-composer-upload" title="Upload photo or document"><span aria-hidden="true">＋</span><span>Attach file</span><input type="file" accept="image/*,.pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={handleImageSelect} hidden /></label>
+                <label className="staff-composer-upload staff-camera-action" title="Take a photo"><span aria-hidden="true">◎</span><span>Camera</span><input type="file" accept="image/*" capture="environment" onChange={handleImageSelect} hidden /></label>
+                <span className="staff-knowledge-source"><span aria-hidden="true">▤</span> Knowledge Base</span>
               </div>
               {loading ? (
                 <button
@@ -2884,7 +2739,7 @@ const removeSelectedImage = () => {
           {!hasConversation && <div className="staff-suggested-prompts" aria-label="Suggested questions">
             {starters.map((item) => <button key={item.title} type="button" className="staff-prompt-card" onClick={() => { setQuestion(item.prompt); staffInputRef.current?.focus(); }}><span className="staff-prompt-icon">{item.icon}</span><strong>{item.title}</strong><small>{item.detail}</small><span className="staff-prompt-arrow" aria-hidden="true">↗</span></button>)}
           </div>}
-          <p className="staff-ai-disclaimer">{t('chat.footerNote')}</p>
+          <p className="staff-ai-disclaimer">Answers use the Jungle House knowledge base. Check important procedures with your supervisor.</p>
         </div>
       </div>
     );
@@ -3074,7 +2929,7 @@ const removeSelectedImage = () => {
 
   return staffMode ? (
     <div className="staff-chat-page">
-      {activeTab === 'ask' ? renderStaffAskQuestion() : <div className="staff-history-wrap"><div className="staff-history-top"><button type="button" onClick={() => handleTabChange('ask')}>{t('chat.backToChat')}</button><h1>{t('chat.chatHistory')}</h1></div>{renderChatHistory()}</div>}
+      {activeTab === 'ask' ? renderStaffAskQuestion() : <div className="staff-history-wrap"><div className="staff-history-top"><button type="button" onClick={() => handleTabChange('ask')}>← Back to chat</button><h1>Chat history</h1></div>{renderChatHistory()}</div>}
       {previewImage && <div className="staff-image-overlay" role="dialog" aria-modal="true" aria-label="Image preview" onClick={() => setPreviewImage(null)}><button type="button" onClick={() => setPreviewImage(null)} aria-label="Close image preview">×</button><img src={previewImage} alt="Attachment preview" onClick={(event) => event.stopPropagation()}/></div>}
       {renderConfirmModal()}
     </div>
