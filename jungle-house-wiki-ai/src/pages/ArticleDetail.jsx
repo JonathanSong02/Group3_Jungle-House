@@ -5,25 +5,18 @@ import api, { API_BASE_URL } from "../services/api";
 import "../styles/ArticleDetail.css";
 
 // Article JSON uses the same cookie-aware API client as login and Knowledge Base.
-//
-// Production static assets stay SAME-ORIGIN (/static/...) so Vercel can proxy
-// them to Railway. Local development can still point directly to Flask.
-const RAILWAY_BACKEND_ORIGIN =
-  "https://group3jungle-house-production.up.railway.app";
-
-const BROWSER_IS_LOCAL =
-  typeof window !== "undefined" &&
-  ["localhost", "127.0.0.1"].includes(window.location.hostname);
-
-const STATIC_ASSET_BASE_URL = BROWSER_IS_LOCAL
-  ? String(
-      import.meta.env.VITE_STATIC_BASE_URL ||
-        import.meta.env.VITE_BACKEND_PUBLIC_URL ||
-        (API_BASE_URL.startsWith("http")
-          ? API_BASE_URL.replace(/\/api\/?$/, "")
-          : "http://127.0.0.1:5000")
-    ).replace(/\/+$/, "")
-  : "";
+// Static uploads are served outside /api. Set VITE_STATIC_BASE_URL when their
+// origin differs from the API origin (e.g. localhost /static files).
+const STATIC_ASSET_BASE_URL = String(
+  import.meta.env.VITE_STATIC_BASE_URL ||
+  import.meta.env.VITE_BACKEND_PUBLIC_URL ||
+  (API_BASE_URL.startsWith("http")
+    ? API_BASE_URL.replace(/\/api\/?$/, "")
+    : (typeof window !== "undefined" &&
+        ["localhost", "127.0.0.1"].includes(window.location.hostname)
+        ? "http://127.0.0.1:5000"
+        : "https://group3jungle-house-production.up.railway.app"))
+).replace(/\/+$/, "");
 
 export default function ArticleDetail() {
   const { id } = useParams();
@@ -39,117 +32,19 @@ export default function ArticleDetail() {
     if (!url) return "";
 
     const path = String(url).trim();
-    if (/^(blob:|data:)/i.test(path)) return path;
+    if (/^(https?:|blob:|data:)/i.test(path)) return path;
 
-    const toStaticPath = (value) => {
-      const clean = String(value || "").trim().replace(/^\/+/, "");
-
-      if (!clean) return "";
-
-      // The knowledge dataset stores many images as:
-      //   sop_images/kiosk_opening/step3_1.jpg
-      // while Flask serves them at:
-      //   /static/sop_images/kiosk_opening/step3_1.jpg
-      if (clean.startsWith("static/")) {
-        return `/${clean}`;
-      }
-
-      if (
-        clean.startsWith("sop_images/") ||
-        clean.startsWith("product_images/") ||
-        clean.startsWith("notice_images/") ||
-        clean.startsWith("uploads/")
-      ) {
-        return `/static/${clean}`;
-      }
-
-      return `/${clean}`;
-    };
-
-    // Normalise old absolute Railway static/reference-image URLs at render
-    // time instead of changing database article content.
-    if (/^https?:/i.test(path)) {
-      try {
-        const parsedUrl = new URL(path);
-
-        if (parsedUrl.origin === RAILWAY_BACKEND_ORIGIN) {
-          const normalisedRailwayPath = toStaticPath(parsedUrl.pathname);
-
-          if (
-            normalisedRailwayPath.startsWith("/static/") ||
-            parsedUrl.pathname.startsWith("/sop_images/") ||
-            parsedUrl.pathname.startsWith("/product_images/") ||
-            parsedUrl.pathname.startsWith("/notice_images/") ||
-            parsedUrl.pathname.startsWith("/uploads/")
-          ) {
-            const sameOriginPath =
-              `${normalisedRailwayPath}${parsedUrl.search}${parsedUrl.hash}`;
-
-            return BROWSER_IS_LOCAL
-              ? `${STATIC_ASSET_BASE_URL}${sameOriginPath}`
-              : sameOriginPath;
-          }
-        }
-      } catch (error) {
-        console.warn("Invalid file URL:", path, error);
-      }
-
-      // External links/images remain untouched.
-      return path;
-    }
-
-    // API downloads keep using the configured API route.
+    // API downloads use the configured API client route; ordinary upload
+    // files use the static origin rather than the /api proxy.
     if (path.startsWith("/api/")) {
       const apiOrigin = API_BASE_URL.replace(/\/api\/?$/, "");
       return `${apiOrigin}${path}`;
     }
-
     if (path.startsWith("api/")) {
       const apiOrigin = API_BASE_URL.replace(/\/api\/?$/, "");
       return `${apiOrigin}/${path}`;
     }
-
-    const normalisedPath = toStaticPath(path);
-
-    if (!BROWSER_IS_LOCAL) {
-      return normalisedPath;
-    }
-
-    return `${STATIC_ASSET_BASE_URL}${normalisedPath}`;
-  }
-
-  function isStaticAssetUrl(url) {
-    if (!url) return false;
-
-    const value = String(url).trim().replace(/^\/+/, "");
-
-    if (
-      value.startsWith("static/") ||
-      value.startsWith("sop_images/") ||
-      value.startsWith("product_images/") ||
-      value.startsWith("notice_images/") ||
-      value.startsWith("uploads/")
-    ) {
-      return true;
-    }
-
-    if (!/^https?:/i.test(String(url))) return false;
-
-    try {
-      const parsedUrl = new URL(String(url));
-      return (
-        parsedUrl.origin === RAILWAY_BACKEND_ORIGIN &&
-        (
-          parsedUrl.pathname.startsWith("/static/") ||
-          parsedUrl.pathname.startsWith("/sop_images/") ||
-          parsedUrl.pathname.startsWith("/product_images/") ||
-          parsedUrl.pathname.startsWith("/notice_images/") ||
-          parsedUrl.pathname.startsWith("/uploads/")
-        )
-      );
-    } catch {
-      return false;
-    }
+    return `${STATIC_ASSET_BASE_URL}/${path.replace(/^\/+/, "")}`;
   }
 
   function isImageFile(url, type) {
@@ -254,11 +149,8 @@ export default function ArticleDetail() {
       // saved before that change still have the real URL on href, so fall
       // back to it for those.
       const rawHref = anchor.getAttribute("href") || "";
-      const storedUrl =
-        anchor.dataset.fileUrl || (rawHref !== "#" ? rawHref : "");
-      const url = getFileUrl(storedUrl);
-      const name =
-        anchor.dataset.fileName || storedUrl.split("/").pop() || "Attached file";
+      const url = anchor.dataset.fileUrl || (rawHref !== "#" ? rawHref : "");
+      const name = anchor.dataset.fileName || url.split("/").pop() || "Attached file";
       const lowerUrl = url.toLowerCase();
       const isImage = /\.(png|jpe?g|gif|webp)$/.test(lowerUrl);
       const isPdf = lowerUrl.endsWith(".pdf");
@@ -575,28 +467,6 @@ export default function ArticleDetail() {
           element.removeAttribute(attribute.name);
         }
       });
-    });
-
-    // Rich-text articles can contain relative image paths such as
-    // "sop_images/kiosk_opening/step3_1.jpg". Flask serves those under
-    // /static, so normalise them before rendering.
-    wrapper.querySelectorAll("img[src], source[src]").forEach((element) => {
-      const src = element.getAttribute("src");
-      if (src) {
-        element.setAttribute("src", getFileUrl(src));
-      }
-    });
-
-    wrapper.querySelectorAll("a.article-inline-file").forEach((anchor) => {
-      const dataFileUrl = anchor.getAttribute("data-file-url");
-      if (dataFileUrl) {
-        anchor.setAttribute("data-file-url", getFileUrl(dataFileUrl));
-      }
-
-      const href = anchor.getAttribute("href");
-      if (href && href !== "#" && isStaticAssetUrl(href)) {
-        anchor.setAttribute("href", getFileUrl(href));
-      }
     });
 
     wrapper.querySelectorAll("table").forEach((table) => {
