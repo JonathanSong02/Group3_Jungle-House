@@ -335,3 +335,941 @@
   .ns-bulk-toolbar{flex-direction:column;align-items:stretch}
   .ns-selection-count{margin-right:0}
 }
+
+/* ==========================================================================
+   STEP 14F.8 — NOTION SYNC UI V2
+   UI-ONLY OVERRIDES
+   --------------------------------------------------------------------------
+   Functional safety:
+   - NotionSync.jsx is unchanged.
+   - OAuth popup/origin handling is unchanged.
+   - App credential save/reset is unchanged.
+   - Connect/disconnect is unchanged.
+   - Check-for-updates is unchanged.
+   - Pending update preview/apply/dismiss is unchanged.
+   - Existing sync history and API endpoints are unchanged.
+   ========================================================================== */
+
+.ns-page{
+  --ns-admin-green:#176b4a;
+  --ns-admin-green-dark:#10553a;
+  --ns-admin-green-soft:#eaf4ee;
+  --ns-admin-green-pale:#f5f9f5;
+  --ns-admin-cream:#fffdf8;
+  --ns-admin-cream-2:#faf7ef;
+  --ns-admin-honey:#d99113;
+  --ns-admin-honey-soft:#fff3d7;
+  --ns-admin-purple:#6d5bc7;
+  --ns-admin-purple-soft:#f1effb;
+  --ns-admin-red:#b95147;
+  --ns-admin-red-soft:#fff1ef;
+  --ns-admin-blue:#4e7897;
+  --ns-admin-blue-soft:#edf4f8;
+  --ns-admin-ink:#1f2b24;
+  --ns-admin-muted:#6d776f;
+  --ns-admin-muted-2:#8d978f;
+  --ns-admin-border:#dfe7dd;
+  --ns-admin-shadow:0 16px 45px rgba(31,56,40,.075);
+
+  color:var(--ns-admin-ink);
+}
+
+/* Feedback --------------------------------------------------------------- */
+
+.ns-feedback{
+  margin-top:13px;
+  padding:11px 13px;
+  color:#725519;
+  background:#fff7e5;
+  border-color:#ecd49e;
+  border-radius:12px;
+  font-size:13px;
+  font-weight:700;
+}
+
+/* Summary ---------------------------------------------------------------- */
+
+.ns-summary-grid{
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:13px;
+  margin-top:18px;
+}
+
+.ns-summary-card{
+  min-height:104px;
+  justify-content:center;
+  gap:7px;
+  padding:17px 18px;
+  background:rgba(255,253,248,.95);
+  border:1px solid var(--ns-admin-border);
+  border-radius:17px;
+  box-shadow:0 7px 22px rgba(31,56,40,.045);
+}
+
+.ns-summary-card span{
+  color:var(--ns-admin-muted);
+  font-size:13px;
+  font-weight:760;
+}
+
+.ns-summary-card strong{
+  color:var(--ns-admin-ink);
+  font-size:22px;
+  font-weight:850;
+  line-height:1.2;
+}
+
+.ns-summary-card.status strong{
+  color:var(--ns-admin-green);
+}
+
+.ns-summary-card.pending strong{
+  color:#a66c0d;
+}
+
+/* Shared cards ----------------------------------------------------------- */
+
+.ns-card{
+  background:#fff;
+  border:1px solid var(--ns-admin-border);
+  border-radius:22px;
+  box-shadow:var(--ns-admin-shadow);
+}
+
+.ns-app-card,
+.ns-pending-section,
+.ns-history{
+  margin-top:15px;
+  padding:21px;
+}
+
+.ns-layout{
+  grid-template-columns:minmax(0,1.15fr) minmax(320px,.85fr);
+  gap:15px;
+  margin-top:15px;
+}
+
+.ns-source-card,
+.ns-sync-card{
+  padding:22px;
+}
+
+/* Section headings ------------------------------------------------------- */
+
+.ns-section-head{
+  align-items:flex-start;
+}
+
+.ns-kicker{
+  margin-bottom:5px;
+  color:var(--ns-admin-green);
+  font-size:11px;
+  font-weight:850;
+}
+
+.ns-section-head h2,
+.ns-sync-hero h2{
+  color:var(--ns-admin-ink);
+  font-size:21px;
+}
+
+.ns-section-copy{
+  max-width:780px;
+  margin:7px 0 0;
+  color:var(--ns-admin-muted);
+  font-size:12.5px;
+  line-height:1.55;
+}
+
+/* Status pills ----------------------------------------------------------- */
+
+.ns-status-pill{
+  min-height:30px;
+  padding:5px 10px;
+  font-size:11px;
+}
+
+.ns-status-pill.connected{
+  color:#487347;
+  background:#edf5eb;
+  border-color:#cfe0cb;
+}
+
+.ns-status-pill.idle{
+  color:#98660b;
+  background:var(--ns-admin-honey-soft);
+  border-color:#ecd099;
+}
+
+/* App / workspace information ------------------------------------------- */
+
+.ns-source-info{
+  grid-template-columns:1.4fr .8fr .9fr;
+  gap:10px;
+  margin-top:17px;
+}
+
+.ns-source-info>div{
+  padding:13px 14px;
+  background:#f8faf7;
+  border:1px solid #e0e8df;
+  border-radius:13px;
+}
+
+.ns-source-info span,
+.ns-sync-result-grid span{
+  color:var(--ns-admin-muted);
+  font-size:11px;
+}
+
+.ns-source-info strong,
+.ns-sync-result-grid strong{
+  color:var(--ns-admin-ink);
+  font-size:12px;
+}
+
+/* Credentials form ------------------------------------------------------- */
+
+.ns-form{
+  gap:14px;
+  margin-top:18px;
+  padding-top:18px;
+  border-top-color:#e7ece5;
+}
+
+.ns-field{
+  gap:7px;
+}
+
+.ns-field>span{
+  color:#4f5c54;
+  font-size:12.5px;
+  font-weight:800;
+}
+
+.ns-field input{
+  min-height:44px;
+  padding:10px 12px;
+  color:var(--ns-admin-ink);
+  background:#fff;
+  border-color:#d9e3d8;
+  border-radius:10px;
+  font-size:13.5px;
+}
+
+.ns-field input::placeholder{
+  color:#9aa39c;
+}
+
+.ns-field input:focus{
+  background:#fff;
+  border-color:#94bda0;
+  box-shadow:0 0 0 3px rgba(23,107,74,.1);
+}
+
+/* Buttons ---------------------------------------------------------------- */
+
+.ns-actions{
+  gap:8px;
+}
+
+.ns-btn{
+  min-height:42px;
+  padding:9px 14px;
+  border-radius:11px;
+  font-size:12.5px;
+  font-weight:850;
+}
+
+.ns-btn.secondary{
+  color:var(--ns-admin-green-dark);
+  background:#f1f6f1;
+  border-color:#d3e0d4;
+}
+
+.ns-btn.secondary:hover:not(:disabled){
+  background:#e8f1e9;
+  border-color:#bfd2c2;
+}
+
+.ns-btn.primary{
+  color:#fff;
+  background:var(--ns-admin-green);
+  border-color:var(--ns-admin-green-dark);
+  box-shadow:0 8px 19px rgba(23,107,74,.16);
+}
+
+.ns-btn.primary:hover:not(:disabled){
+  background:var(--ns-admin-green-dark);
+  box-shadow:0 11px 24px rgba(23,107,74,.2);
+}
+
+/* Connection card -------------------------------------------------------- */
+
+.ns-source-card{
+  background:#fff;
+}
+
+.ns-connection-actions{
+  margin-top:16px;
+  padding-top:15px;
+  border-top-color:#e7ece5;
+}
+
+.ns-connect-empty{
+  min-height:220px;
+  grid-template-columns:54px minmax(0,1fr);
+  gap:14px;
+  margin-top:17px;
+  padding:20px;
+  background:
+    radial-gradient(circle at 100% 0%,rgba(23,107,74,.055),transparent 32%),
+    linear-gradient(145deg,#f8fbf8,#f1f6f2);
+  border:1px dashed #cbdccb;
+  border-radius:16px;
+}
+
+.ns-connect-empty strong{
+  color:var(--ns-admin-ink);
+  font-size:15px;
+}
+
+.ns-connect-empty p{
+  color:var(--ns-admin-muted);
+  font-size:12.5px;
+}
+
+/* Notion identity / sync ------------------------------------------------- */
+
+.ns-notion-icon{
+  width:48px;
+  height:48px;
+  color:#fff;
+  background:#2f2f2f;
+  border-radius:13px;
+  font-size:18px;
+  box-shadow:0 7px 17px rgba(25,25,25,.12);
+}
+
+.ns-sync-card{
+  background:
+    radial-gradient(circle at 100% 0%,rgba(0,0,0,.045),transparent 30%),
+    linear-gradient(150deg,#f8faf8,#f2f5f2);
+}
+
+.ns-sync-hero{
+  align-items:center;
+}
+
+.ns-sync-hero p{
+  color:var(--ns-admin-muted);
+  font-size:12px;
+  line-height:1.5;
+}
+
+.ns-sync-btn{
+  min-height:48px;
+  margin-top:21px;
+  color:#fff;
+  background:#252525;
+  border-radius:12px;
+  font-size:13px;
+  box-shadow:0 9px 22px rgba(25,25,25,.15);
+}
+
+.ns-sync-btn:hover:not(:disabled){
+  background:#111;
+}
+
+.ns-sync-result-grid{
+  gap:9px;
+  margin-top:14px;
+}
+
+.ns-sync-result-grid>div{
+  padding:12px;
+  background:#fff;
+  border:1px solid #e0e7df;
+  border-radius:11px;
+}
+
+.ns-sync-result-grid .failed strong{
+  color:var(--ns-admin-red);
+}
+
+.ns-sync-note{
+  margin-top:14px;
+  padding:11px 12px;
+  color:#5f6c63;
+  background:#f5f8f5;
+  border-color:#dfe7dd;
+  border-radius:11px;
+  font-size:11.5px;
+}
+
+/* Pending review queue --------------------------------------------------- */
+
+.ns-count{
+  min-width:31px;
+  height:31px;
+  color:var(--ns-admin-green-dark);
+  background:var(--ns-admin-green-soft);
+  border-color:#cfe1d4;
+  font-size:11px;
+}
+
+.ns-pending-list{
+  max-height:760px;
+  overflow-y:auto;
+  display:grid;
+  gap:10px;
+  margin-top:16px;
+  padding-right:5px;
+  scrollbar-gutter:stable;
+}
+
+.ns-pending-card{
+  padding:16px;
+  background:#fff;
+  border:1px solid #e1e8df;
+  border-radius:15px;
+  box-shadow:0 5px 17px rgba(31,56,40,.035);
+}
+
+.ns-pending-card:hover{
+  border-color:#c9d8ca;
+  box-shadow:0 8px 20px rgba(31,56,40,.05);
+}
+
+.ns-pending-head h3{
+  color:var(--ns-admin-ink);
+  font-size:14.5px;
+}
+
+.ns-pending-head p{
+  color:var(--ns-admin-muted);
+  font-size:11px;
+}
+
+.ns-review-pill{
+  min-height:28px;
+  padding:5px 9px;
+  color:#6653b6;
+  background:var(--ns-admin-purple-soft);
+  border-color:#ddd6f4;
+  font-size:10.5px;
+}
+
+.ns-pending-actions{
+  gap:8px;
+  margin-top:13px;
+}
+
+.ns-compare-grid{
+  gap:12px;
+  margin-top:15px;
+  padding-top:15px;
+  border-top-color:#e7ece5;
+}
+
+.ns-version-card{
+  padding:14px;
+  background:#fafcf9;
+  border-color:#dfe7dd;
+  border-radius:13px;
+}
+
+.ns-version-card.proposed{
+  background:#f7f5fc;
+  border-color:#ddd6f4;
+}
+
+.ns-version-label{
+  margin-bottom:10px;
+  padding:5px 8px;
+  color:#4e6955;
+  background:var(--ns-admin-green-soft);
+  border-radius:999px;
+  font-size:10px;
+}
+
+.ns-version-card.proposed .ns-version-label{
+  color:#6653b6;
+  background:var(--ns-admin-purple-soft);
+}
+
+.ns-version-card .article-rich-content{
+  color:#334039;
+  font-size:12.5px;
+}
+
+.ns-pending-list::-webkit-scrollbar{
+  width:7px;
+}
+
+.ns-pending-list::-webkit-scrollbar-track{
+  background:transparent;
+}
+
+.ns-pending-list::-webkit-scrollbar-thumb{
+  background:#cbd9cd;
+  border-radius:999px;
+}
+
+/* Sync history ----------------------------------------------------------- */
+
+.ns-table-wrap{
+  max-height:520px;
+  margin-top:14px;
+  overflow:auto;
+  background:#fff;
+  border:1px solid #e5ebe4;
+  border-radius:13px;
+}
+
+.ns-table{
+  min-width:760px;
+}
+
+.ns-table th{
+  position:sticky;
+  top:0;
+  z-index:2;
+  padding:12px 14px;
+  color:#7d8780;
+  background:#f7f9f6;
+  border-bottom-color:#e2e8e0;
+  font-size:10.5px;
+}
+
+.ns-table td{
+  padding:13px 14px;
+  color:#334039;
+  background:#fff;
+  border-bottom-color:#edf0ec;
+  font-size:12.5px;
+}
+
+.ns-table tbody tr:hover td{
+  background:#fbfcfa;
+}
+
+.ns-job-status{
+  min-height:28px;
+  padding:5px 9px;
+  font-size:10.5px;
+  border:1px solid transparent;
+}
+
+.ns-job-status.success,
+.ns-job-status.completed{
+  color:#487347;
+  background:#edf5eb;
+  border-color:#cfe0cb;
+}
+
+.ns-job-status.failed{
+  color:#9e4d45;
+  background:var(--ns-admin-red-soft);
+  border-color:#edc5c1;
+}
+
+.ns-table-wrap::-webkit-scrollbar{
+  width:8px;
+  height:8px;
+}
+
+.ns-table-wrap::-webkit-scrollbar-track{
+  background:#f5f8f4;
+}
+
+.ns-table-wrap::-webkit-scrollbar-thumb{
+  background:#cbd9cd;
+  border-radius:999px;
+}
+
+/* Empty / loading -------------------------------------------------------- */
+
+.ns-empty,
+.ns-loading{
+  color:var(--ns-admin-muted);
+  font-size:12.5px;
+}
+
+.ns-empty strong{
+  color:var(--ns-admin-ink);
+  font-size:14px;
+}
+
+/* Focus ------------------------------------------------------------------ */
+
+.ns-page button:focus-visible,
+.ns-page input:focus-visible{
+  outline:3px solid rgba(23,107,74,.18);
+  outline-offset:2px;
+}
+
+/* Responsive ------------------------------------------------------------- */
+
+@media(max-width:1100px){
+  .ns-summary-grid{
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+
+  .ns-layout{
+    grid-template-columns:1fr;
+  }
+
+  .ns-compare-grid{
+    grid-template-columns:1fr;
+  }
+}
+
+@media(max-width:700px){
+  .ns-summary-grid{
+    grid-template-columns:1fr;
+  }
+
+  .ns-source-info{
+    grid-template-columns:1fr;
+  }
+
+  .ns-actions{
+    flex-direction:column-reverse;
+  }
+
+  .ns-actions .ns-btn{
+    width:100%;
+  }
+
+  .ns-connect-empty{
+    grid-template-columns:1fr;
+  }
+
+  .ns-connect-empty>.ns-btn{
+    grid-column:auto;
+    width:100%;
+  }
+
+  .ns-pending-head{
+    flex-direction:column;
+  }
+
+  .ns-pending-actions{
+    flex-direction:column;
+  }
+
+  .ns-pending-actions .ns-btn{
+    width:100%;
+  }
+
+  .ns-pending-list{
+    max-height:none;
+    overflow-y:visible;
+    padding-right:0;
+  }
+}
+
+@media(max-width:520px){
+  .ns-summary-grid{
+    gap:9px;
+  }
+
+  .ns-summary-card{
+    min-height:82px;
+  }
+
+  .ns-card{
+    border-radius:16px;
+  }
+
+  .ns-app-card,
+  .ns-pending-section,
+  .ns-history,
+  .ns-source-card,
+  .ns-sync-card{
+    padding:17px;
+  }
+}
+
+/* ==========================================================================
+   POST-PULL SAFE MERGE — TEAMMATE FEATURES
+   --------------------------------------------------------------------------
+   Styles only for functionality added after the original Step 14F.8 pass:
+   - Pending / Trash tabs
+   - Multi-select and bulk actions
+   - Permanent delete
+   - Storage audit / cleanup
+   - Selected-card state
+
+   NotionSync.jsx remains unchanged.
+   ========================================================================== */
+
+/* Review tabs ------------------------------------------------------------ */
+
+.ns-review-tabs{
+  display:flex;
+  gap:5px;
+  margin-top:15px;
+  padding:4px;
+  width:fit-content;
+  max-width:100%;
+  overflow-x:auto;
+  background:#f7faf7;
+  border:1px solid var(--ns-admin-border);
+  border-radius:12px;
+}
+
+.ns-review-tabs button{
+  position:relative;
+  min-height:38px;
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+  flex:0 0 auto;
+  padding:8px 12px;
+  color:var(--ns-admin-muted);
+  background:transparent;
+  border:1px solid transparent;
+  border-radius:9px;
+  font-size:12px;
+  font-weight:800;
+  cursor:pointer;
+}
+
+.ns-review-tabs button:hover{
+  color:var(--ns-admin-green-dark);
+  background:#eef5ef;
+}
+
+.ns-review-tabs button.active{
+  color:var(--ns-admin-green-dark);
+  background:var(--ns-admin-green-soft);
+  border-color:#cfe1d4;
+}
+
+.ns-review-tabs button.active::after{
+  display:none;
+}
+
+.ns-review-tabs button span{
+  min-width:21px;
+  height:21px;
+  display:inline-grid;
+  place-items:center;
+  padding:0 5px;
+  color:#607067;
+  background:#fff;
+  border:1px solid #dce5dc;
+  border-radius:999px;
+  font-size:9.5px;
+  font-weight:850;
+}
+
+.ns-review-tabs button.active span{
+  color:#fff;
+  background:var(--ns-admin-green);
+  border-color:var(--ns-admin-green);
+}
+
+/* Bulk selection -------------------------------------------------------- */
+
+.ns-bulk-toolbar{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  flex-wrap:wrap;
+  margin-top:14px;
+  padding:11px 12px;
+  background:#f8faf7;
+  border:1px solid var(--ns-admin-border);
+  border-radius:13px;
+}
+
+.ns-select-all{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  color:#4f5c54;
+  font-size:12px;
+  font-weight:800;
+  cursor:pointer;
+}
+
+.ns-select-all input,
+.ns-pending-select input{
+  width:16px;
+  height:16px;
+  accent-color:var(--ns-admin-green);
+}
+
+.ns-selection-count{
+  margin-right:auto;
+  color:var(--ns-admin-muted);
+  font-size:11.5px;
+  font-weight:800;
+}
+
+.ns-pending-head{
+  gap:11px;
+}
+
+.ns-pending-select{
+  display:flex;
+  align-items:flex-start;
+  padding-top:2px;
+}
+
+.ns-pending-info{
+  flex:1;
+  min-width:0;
+}
+
+.ns-pending-card.selected{
+  background:#f8fbf8;
+  border-color:#9fc3a7;
+  box-shadow:0 0 0 3px rgba(23,107,74,.08);
+}
+
+/* Trash / destructive states -------------------------------------------- */
+
+.ns-btn.danger{
+  color:#9f473e;
+  background:var(--ns-admin-red-soft);
+  border:1px solid #edc5c1;
+}
+
+.ns-btn.danger:hover:not(:disabled){
+  color:#8e3e36;
+  background:#ffe8e5;
+  border-color:#e5b3ad;
+}
+
+.ns-review-pill{
+  text-transform:none;
+}
+
+.ns-pending-card .ns-review-pill{
+  white-space:nowrap;
+}
+
+/* Storage maintenance --------------------------------------------------- */
+
+.ns-storage-card{
+  margin-top:15px;
+  padding:21px;
+  background:#fff;
+}
+
+.ns-storage-card .ns-actions{
+  justify-content:flex-start;
+  margin-top:15px;
+}
+
+.ns-storage-card .ns-sync-result-grid{
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  margin-top:15px;
+}
+
+.ns-storage-card .ns-sync-result-grid > div{
+  min-height:76px;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  background:#f8faf7;
+}
+
+.ns-storage-card .ns-sync-result-grid > div.failed{
+  background:#fff7f5;
+  border-color:#edcfca;
+}
+
+.ns-storage-card .ns-sync-note{
+  background:#f7faf7;
+}
+
+/* Pending/trash list scrollbar ------------------------------------------ */
+
+.ns-pending-list{
+  overscroll-behavior:contain;
+}
+
+.ns-pending-list::-webkit-scrollbar-thumb:hover{
+  background:#aebfaf;
+}
+
+/* Keep large comparison content usable ---------------------------------- */
+
+.ns-version-card .article-rich-content{
+  max-height:520px;
+  overflow:auto;
+}
+
+.ns-version-card .article-rich-content img{
+  max-width:100%;
+  height:auto;
+  border-radius:10px;
+}
+
+.ns-version-card .article-rich-content table{
+  width:100%;
+  min-width:560px;
+  border-collapse:collapse;
+}
+
+.ns-version-card .article-rich-content th,
+.ns-version-card .article-rich-content td{
+  padding:8px;
+  border:1px solid #dfe7dd;
+  font-size:10.5px;
+}
+
+/* Mobile ---------------------------------------------------------------- */
+
+@media(max-width:900px){
+  .ns-storage-card .ns-sync-result-grid{
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+}
+
+@media(max-width:700px){
+  .ns-review-tabs{
+    width:100%;
+  }
+
+  .ns-review-tabs button{
+    flex:1 0 auto;
+    justify-content:center;
+  }
+
+  .ns-bulk-toolbar{
+    align-items:stretch;
+    flex-direction:column;
+  }
+
+  .ns-selection-count{
+    margin-right:0;
+  }
+
+  .ns-bulk-toolbar .ns-btn{
+    width:100%;
+  }
+
+  .ns-storage-card .ns-actions{
+    flex-direction:column;
+  }
+
+  .ns-storage-card .ns-actions .ns-btn{
+    width:100%;
+  }
+}
+
+@media(max-width:520px){
+  .ns-storage-card{
+    padding:17px;
+  }
+
+  .ns-storage-card .ns-sync-result-grid{
+    grid-template-columns:1fr;
+  }
+}
