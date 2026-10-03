@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../i18n/LanguageContext';
 import '../styles/Quiz.css';
 
 export default function QuizList() {
   const { user } = useAuth();
+  const { t, tOr } = useLanguage();
   const staffMode = String(user?.role || '').toLowerCase() === 'staff';
   const [categoryFilter, setCategoryFilter] = useState('All');
   const [quizError, setQuizError] = useState('');
@@ -22,6 +25,10 @@ export default function QuizList() {
   const [showWelcome, setShowWelcome] = useState(false);
   const [loadingQuizzes, setLoadingQuizzes] = useState(true);
   const [loadingQuestions, setLoadingQuestions] = useState(false);
+  const [showUnanswered, setShowUnanswered] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  const startedAtRef = useRef(null);
 
   const autoNextTimerRef = useRef(null);
 
@@ -55,6 +62,7 @@ export default function QuizList() {
           description: quiz.description,
           category: quiz.category,
           questionCount: quiz.question_count,
+          difficulty: quiz.difficulty,
           questions: [],
         }));
 
@@ -124,6 +132,15 @@ export default function QuizList() {
   // The pre-submission questions API intentionally does not expose answer keys.
   const score = serverResult?.percentage ?? 0;
   const correctCount = serverResult?.score ?? 0;
+  const passingScore = Number(serverResult?.passing_score ?? 80);
+  const passed = serverResult?.passed ?? score >= passingScore;
+  const sourceArticle = serverResult?.source_article || null;
+
+  const formatElapsed = (seconds) => {
+    const minutes = Math.floor(seconds / 60);
+    const rest = seconds % 60;
+    return minutes > 0 ? `${minutes}m ${String(rest).padStart(2, '0')}s` : `${rest}s`;
+  };
 
   const handleStartQuiz = async (quizId) => {
     clearAutoNextTimer();
@@ -144,6 +161,7 @@ export default function QuizList() {
   const handleBeginQuestions = () => {
     clearAutoNextTimer();
     if (loadingQuestions || questionError || totalQuestions === 0) return;
+    startedAtRef.current = Date.now();
     setShowWelcome(false);
   };
 
@@ -186,7 +204,12 @@ export default function QuizList() {
   };
 
   const handleSubmit = async () => {
-    if (submitting || submitted || !activeQuizId || !totalQuestions || answeredCount !== totalQuestions) {
+    if (submitting || submitted || !activeQuizId || !totalQuestions) {
+      return;
+    }
+
+    if (answeredCount !== totalQuestions) {
+      setShowUnanswered(true);
       return;
     }
 
@@ -207,6 +230,9 @@ export default function QuizList() {
         throw new Error('Server did not confirm a saved result.');
       }
       setServerResult(result);
+      setElapsedSeconds(
+        startedAtRef.current ? Math.round((Date.now() - startedAtRef.current) / 1000) : 0
+      );
       setSaveStatus('saved');
       setSubmitted(true);
     } catch (submitError) {
@@ -249,6 +275,9 @@ export default function QuizList() {
   };
 
   const answeredCount = Object.keys(selectedAnswers).length;
+  const unansweredNumbers = questions
+    .map((item, index) => (selectedAnswers[item.id] === undefined ? index + 1 : null))
+    .filter(Boolean);
 
   return (
     <div className={`quiz-page ${staffMode ? 'staff-quiz-page' : ''}`}>
@@ -304,6 +333,11 @@ export default function QuizList() {
                     </div>
                   </div>
 
+                  {quiz.difficulty ? (
+                    <span className={`quiz-diff-badge ${String(quiz.difficulty).toLowerCase()}`}>
+                      {tOr(`quiz.difficulty.${quiz.difficulty}`, quiz.difficulty)}
+                    </span>
+                  ) : null}
                   {!staffMode && <span className="status-badge pending">Training Quiz</span>}
                 </div>
 
@@ -468,7 +502,7 @@ export default function QuizList() {
                     />
                   </div>
                   <p className="muted small" style={{ marginBottom: 0 }}>
-                    Answered {answeredCount} / {totalQuestions}
+                    {t('quiz.answered', { n: answeredCount, total: totalQuestions })}
                   </p>
                 </div>
               </div>
@@ -537,9 +571,9 @@ export default function QuizList() {
                         <button
                           className="primary-btn"
                           onClick={handleSubmit}
-                          disabled={answeredCount !== totalQuestions || submitting}
+                          disabled={submitting}
                         >
-                          {submitting ? 'Submitting…' : 'Submit Quiz'}
+                          {submitting ? t('quiz.submitting') : t('quiz.submit')}
                         </button>
                       )}
                     </div>
@@ -555,77 +589,131 @@ export default function QuizList() {
             </>
           ) : (
             <div className="card-like quiz-result-card">
-              <div className="quiz-result-summary">
+              <div className={`quiz-result-summary quiz-rv-header ${passed ? 'is-pass' : 'is-fail'}`}>
                 <p role="status" className="quiz-save-status">
-                  {saveStatus === 'saved' ? 'Result saved to system.' : 'Saving not confirmed.'}
+                  {saveStatus === 'saved' ? t('quiz.result.saved') : 'Saving not confirmed.'}
                 </p>
-                <span className="quiz-result-kicker">Quiz Result</span>
+                <span className="quiz-result-kicker">{t('quiz.result.title')}</span>
                 <div className="quiz-result-score">{score}%</div>
-                <strong>
-                  {score >= 80
-                    ? 'Great work'
-                    : score >= 60
-                      ? 'Good progress'
-                      : 'Keep practising'}
-                </strong>
+                <span className={`quiz-rv-badge ${passed ? 'pass' : 'fail'}`}>
+                  {passed ? '✓ ' : '✗ '}
+                  {passed ? t('quiz.result.pass') : t('quiz.result.fail')}
+                </span>
                 <p>
-                  You answered {correctCount} out of {serverResult?.total_questions ?? totalQuestions} questions correctly.
+                  {t('quiz.result.summary', {
+                    score: correctCount,
+                    total: serverResult?.total_questions ?? totalQuestions,
+                  })}
+                </p>
+                <p className="muted small">
+                  {t('quiz.result.passMark', { n: passingScore })}
+                  {elapsedSeconds > 0
+                    ? ` · ${t('quiz.result.time', { time: formatElapsed(elapsedSeconds) })}`
+                    : ''}
                 </p>
               </div>
 
               <div className="stack-gap top-gap">
-                <p className="muted small">Review your answers below.</p>
+                <h3 className="quiz-rv-title">{t('quiz.result.review')}</h3>
                 {questions.map((question, index) => {
                   const selectedLetter = selectedAnswers[question.id];
-                  const selectedIndex = selectedLetter ? selectedLetter.charCodeAt(0) - 65 : -1;
-                  const selectedText = question.options?.[selectedIndex] || 'No answer';
                   const reviewEntry = serverResult?.review?.find(
                     (entry) => entry.question_id === question.id
                   );
-                  const correctIndex = reviewEntry
-                    ? reviewEntry.correct_option.charCodeAt(0) - 65
-                    : -1;
-                  const correctText = question.options?.[correctIndex] || '';
+                  const correctLetter = reviewEntry?.correct_answer || reviewEntry?.correct_option || '';
+                  const isCorrect = reviewEntry?.is_correct === true;
 
                   return (
-                    <div key={question.id} className="quiz-review-card">
-                      <h4 style={{ marginBottom: '8px' }}>{index + 1}. {question.question}</h4>
-                      <p
-                        className={
-                          reviewEntry ? (reviewEntry.is_correct ? 'success-text' : 'error-text') : 'muted'
-                        }
-                        style={{ marginBottom: 0 }}
-                      >
-                        Your answer: {selectedLetter ? `${selectedLetter}. ` : ''}{selectedText}
-                        {reviewEntry ? (reviewEntry.is_correct ? ' ✓' : ' ✗') : ''}
-                      </p>
-                      {reviewEntry && !reviewEntry.is_correct ? (
-                        <p className="success-text" style={{ marginBottom: 0 }}>
-                          Correct answer: {reviewEntry.correct_option}. {correctText}
-                        </p>
-                      ) : null}
+                    <div
+                      key={question.id}
+                      className={`quiz-review-card quiz-rv-card ${isCorrect ? 'is-correct' : 'is-wrong'}`}
+                    >
+                      <h4 className="quiz-rv-question">
+                        <span className="quiz-rv-mark" aria-hidden="true">{isCorrect ? '✓' : '✗'}</span>
+                        {index + 1}. {question.question}
+                      </h4>
+
+                      <ul className="quiz-rv-options">
+                        {(Array.isArray(question.options) ? question.options : []).map((option, optionIndex) => {
+                          const letter = String.fromCharCode(65 + optionIndex);
+                          const isChosen = selectedLetter === letter;
+                          const isAnswer = correctLetter === letter;
+                          let state = '';
+                          if (isAnswer) state = 'correct';
+                          else if (isChosen) state = 'wrong';
+
+                          return (
+                            <li key={letter} className={`quiz-rv-option ${state} ${isChosen ? 'chosen' : ''}`}>
+                              <span className="quiz-rv-letter">{letter}</span>
+                              <span className="quiz-rv-text">{option}</span>
+                              <span className="quiz-rv-tag">
+                                {isChosen && isAnswer ? `✓ ${t('quiz.result.yourAnswer')}` : null}
+                                {isChosen && !isAnswer ? `✗ ${t('quiz.result.yourAnswer')}` : null}
+                                {!isChosen && isAnswer ? t('quiz.result.correctAnswer') : null}
+                              </span>
+                            </li>
+                          );
+                        })}
+                        {!selectedLetter ? (
+                          <li className="quiz-rv-option wrong">{t('quiz.result.noAnswer')}</li>
+                        ) : null}
+                      </ul>
+
                       {reviewEntry?.explanation ? (
-                        <p className="muted" style={{ marginBottom: 0 }}>
-                          <strong>Explanation:</strong> {reviewEntry.explanation}
-                        </p>
+                        <div className="quiz-rv-explanation">
+                          <strong>{t('quiz.result.explanation')}:</strong> {reviewEntry.explanation}
+                        </div>
                       ) : null}
                     </div>
                   );
                 })}
               </div>
 
+              {sourceArticle ? (
+                <Link to={`/knowledge/${sourceArticle.id}`} className="quiz-rv-source">
+                  📖 {t('quiz.result.readSource', { title: sourceArticle.title })}
+                </Link>
+              ) : null}
+
               <div className="button-group wrap-gap top-gap">
                 <button className="secondary-btn" onClick={handleRetake}>
-                  Retake Quiz
+                  {t('quiz.result.retake')}
                 </button>
                 <button className="primary-btn" onClick={handleBackToList}>
-                  Back to Quiz List
+                  {t('quiz.result.back')}
                 </button>
               </div>
             </div>
           )}
         </div>
       )}
+
+      {showUnanswered ? (
+        <div className="quiz-rv-overlay" role="dialog" aria-modal="true" aria-labelledby="quiz-unanswered-title">
+          <div className="quiz-rv-modal">
+            <h3 id="quiz-unanswered-title">{t('quiz.unanswered.title')}</h3>
+            <p>
+              {t('quiz.unanswered.body', {
+                n: unansweredNumbers.length,
+                list: unansweredNumbers.map((n) => `Q${n}`).join(', '),
+              })}
+            </p>
+            <p className="muted small">{t('quiz.answerAll')}</p>
+            <div className="button-group wrap-gap">
+              <button
+                type="button"
+                className="primary-btn"
+                onClick={() => {
+                  setShowUnanswered(false);
+                  setCurrentQuestionIndex(Math.max(0, unansweredNumbers[0] - 1));
+                }}
+              >
+                {t('quiz.unanswered.go')}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import PageHeader from '../../components/PageHeader';
 import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
+import { useLanguage } from '../../i18n/LanguageContext';
 import './styles/QuizManagement.css';
 
 const emptyQuizForm = {
@@ -9,6 +10,7 @@ const emptyQuizForm = {
   description: '',
   category: 'Training',
   status: 'active',
+  difficulty: 'Medium',
 };
 
 const emptyQuestionForm = {
@@ -27,10 +29,21 @@ const aiSourceCategories = ['All', 'SOP', 'PRODUCT', 'SALES', 'Training', 'Notic
 const emptyAiForm = {
   title: '',
   sourceCategory: 'All',
+  articleId: '',
   questionCount: 5,
-  difficulty: 'intermediate',
-  status: 'active',
+  difficulty: 'Medium',
 };
+
+const aiQuestionCounts = [3, 5, 10];
+const aiDifficulties = ['Easy', 'Medium', 'Hard'];
+
+const blankAiQuestion = () => ({
+  question: '',
+  options: ['', '', '', ''],
+  correctAnswerIndex: 0,
+  explanation: '',
+  sourceTitle: '',
+});
 
 const optionLetters = ['A', 'B', 'C', 'D'];
 
@@ -126,6 +139,7 @@ function Icon({ name, size = 20 }) {
 
 export default function QuizManagement() {
   const { user } = useAuth();
+  const { t, tOr } = useLanguage();
 
   const [activeTab, setActiveTab] = useState('manage');
   const [searchTerm, setSearchTerm] = useState('');
@@ -147,6 +161,7 @@ export default function QuizManagement() {
   const [aiSaving, setAiSaving] = useState(false);
   const [aiError, setAiError] = useState('');
   const [aiPreview, setAiPreview] = useState(null);
+  const [aiArticles, setAiArticles] = useState([]);
 
   const [successModal, setSuccessModal] = useState({
     show: false,
@@ -165,11 +180,13 @@ export default function QuizManagement() {
       const title = String(quiz.title || '').toLowerCase();
       const category = String(quiz.category || '').toLowerCase();
       const status = String(quiz.status || '').toLowerCase();
+      const difficulty = String(quiz.difficulty || '').toLowerCase();
 
       return (
         title.includes(keyword) ||
         category.includes(keyword) ||
-        status.includes(keyword)
+        status.includes(keyword) ||
+        difficulty.includes(keyword)
       );
     });
   }, [quizzes, searchTerm]);
@@ -254,6 +271,19 @@ export default function QuizManagement() {
   useEffect(() => {
     fetchQuizzes();
   }, [fetchQuizzes]);
+
+  useEffect(() => {
+    if (activeTab !== 'ai-generate' || aiArticles.length > 0) return;
+
+    api
+      .get('/admin/quizzes/source-articles')
+      .then((response) =>
+        setAiArticles(Array.isArray(response.data) ? response.data : [])
+      )
+      .catch((error) => {
+        console.error('Load quiz source articles error:', error.response?.data || error);
+      });
+  }, [activeTab, aiArticles.length]);
 
   useEffect(() => {
     if (selectedQuizId && activeTab === 'manage') {
@@ -345,6 +375,7 @@ export default function QuizManagement() {
       description: quiz.description || '',
       category: quiz.category || 'Training',
       status: quiz.status || 'active',
+      difficulty: quiz.difficulty || 'Medium',
     });
     setActiveTab('create');
   };
@@ -478,14 +509,21 @@ export default function QuizManagement() {
     try {
       setAiLoading(true);
 
+      const chosenArticle = aiArticles.find(
+        (article) => String(article.article_id) === String(aiForm.articleId)
+      );
+
       const response = await api.post(
         '/admin/quizzes/ai-generate',
         {
-          title: aiForm.title.trim() || 'AI Generated Quiz',
+          title:
+            aiForm.title.trim() ||
+            (chosenArticle ? `${chosenArticle.title} Quiz` : 'AI Generated Quiz'),
           sourceCategory: aiForm.sourceCategory,
-          questionCount: Number(aiForm.questionCount) || 5,
+          articleId: aiForm.articleId ? Number(aiForm.articleId) : null,
+          count: Number(aiForm.questionCount) || 5,
           difficulty: aiForm.difficulty,
-          status: aiForm.status,
+          status: 'inactive',
         },
         { timeout: 150000 }
       );
@@ -494,7 +532,8 @@ export default function QuizManagement() {
     } catch (error) {
       console.error('AI generate quiz error:', error.response?.data || error);
 
-      let fallbackMessage = 'Quiz generation failed. Please try again.';
+      let fallbackMessage =
+        'Failed to generate quiz questions from this article. Please try again or refine article content.';
 
       if (error.code === 'ECONNABORTED' || !error.response) {
         fallbackMessage =
@@ -505,6 +544,45 @@ export default function QuizManagement() {
     } finally {
       setAiLoading(false);
     }
+  };
+
+  const updateAiQuestion = (index, changes) => {
+    setAiPreview((prev) =>
+      prev
+        ? {
+            ...prev,
+            questions: prev.questions.map((item, i) =>
+              i === index ? { ...item, ...changes } : item
+            ),
+          }
+        : prev
+    );
+  };
+
+  const updateAiOption = (index, optionIndex, value) => {
+    setAiPreview((prev) =>
+      prev
+        ? {
+            ...prev,
+            questions: prev.questions.map((item, i) =>
+              i === index
+                ? {
+                    ...item,
+                    options: item.options.map((option, o) =>
+                      o === optionIndex ? value : option
+                    ),
+                  }
+                : item
+            ),
+          }
+        : prev
+    );
+  };
+
+  const addAiPreviewQuestion = () => {
+    setAiPreview((prev) =>
+      prev ? { ...prev, questions: [...prev.questions, blankAiQuestion()] } : prev
+    );
   };
 
   const removeAiPreviewQuestion = (index) => {
@@ -523,9 +601,22 @@ export default function QuizManagement() {
     setAiError('');
   };
 
-  const saveAiGeneratedQuiz = async () => {
+  // One request saves the quiz and every question in a single DB transaction.
+  const saveAiGeneratedQuiz = async (publish) => {
     if (!aiPreview || aiPreview.questions.length === 0) {
-      setAiError('No questions left to save.');
+      setAiError(t('quiz.edit.noQuestions'));
+      return;
+    }
+
+    const incomplete = aiPreview.questions.some(
+      (question) =>
+        !question.question.trim() ||
+        question.options.length !== 4 ||
+        question.options.some((option) => !String(option).trim())
+    );
+
+    if (incomplete) {
+      setAiError(t('quiz.edit.incomplete'));
       return;
     }
 
@@ -537,26 +628,27 @@ export default function QuizManagement() {
         title: aiPreview.title,
         description: aiPreview.description,
         category: aiPreview.category,
-        status: aiPreview.status,
+        status: publish ? 'active' : 'inactive',
+        difficulty: aiPreview.difficulty,
+        source_article_id: aiPreview.sourceArticleId || null,
         created_by: user?.id || user?.user_id || null,
+        questions: aiPreview.questions.map((question) => ({
+          question_text: question.question.trim(),
+          option_a: question.options[0].trim(),
+          option_b: question.options[1].trim(),
+          option_c: question.options[2].trim(),
+          option_d: question.options[3].trim(),
+          correct_option: optionLetters[question.correctAnswerIndex] || 'A',
+          explanation: (question.explanation || '').trim(),
+        })),
       });
 
       const newQuizId = quizResponse.data?.quiz_id;
 
-      for (const question of aiPreview.questions) {
-        await api.post(`/admin/quizzes/${newQuizId}/questions`, {
-          question_text: question.question,
-          option_a: question.options[0],
-          option_b: question.options[1],
-          option_c: question.options[2],
-          option_d: question.options[3],
-          correct_option: optionLetters[question.correctAnswerIndex] || 'A',
-          explanation: question.explanation,
-          points: 1,
-        });
-      }
-
-      showSuccessModal('AI quiz saved', 'The quiz is ready to manage.');
+      showSuccessModal(
+        publish ? t('quiz.status.published') : t('quiz.status.draft'),
+        publish ? t('quiz.edit.published') : t('quiz.edit.savedDraft')
+      );
 
       setAiPreview(null);
       setAiForm(emptyAiForm);
@@ -573,8 +665,8 @@ export default function QuizManagement() {
         error.response?.data || error
       );
       setAiError(
-        error.response?.data?.error ||
-          error.response?.data?.message ||
+        error.response?.data?.message ||
+          error.response?.data?.error ||
           'Failed to save the AI generated quiz.'
       );
     } finally {
@@ -629,7 +721,7 @@ export default function QuizManagement() {
           className="qm-stat qm-stat-green"
           onClick={() => setActiveTab('manage')}
         >
-          <span>Active</span>
+          <span>{t('quiz.status.published')}</span>
           <strong>{quizStats.active}</strong>
         </button>
 
@@ -638,7 +730,7 @@ export default function QuizManagement() {
           className="qm-stat qm-stat-amber"
           onClick={() => setActiveTab('manage')}
         >
-          <span>Draft</span>
+          <span>{t('quiz.status.draft')}</span>
           <strong>{quizStats.draft}</strong>
         </button>
 
@@ -697,7 +789,7 @@ export default function QuizManagement() {
                 <input
                   value={searchTerm}
                   onChange={(event) => setSearchTerm(event.target.value)}
-                  placeholder="Search quizzes"
+                  placeholder={t('quiz.mgmt.searchPlaceholder')}
                 />
               </div>
 
@@ -734,7 +826,9 @@ export default function QuizManagement() {
                             quiz.status === 'active' ? 'active' : 'draft'
                           }`}
                         >
-                          {quiz.status === 'active' ? 'Active' : 'Draft'}
+                          {quiz.status === 'active'
+                            ? t('quiz.status.published')
+                            : t('quiz.status.draft')}
                         </span>
                       </div>
 
@@ -742,6 +836,9 @@ export default function QuizManagement() {
 
                       <div className="qm-quiz-meta">
                         <span>{quiz.category || 'Training'}</span>
+                        <span className={`qm-diff qm-diff-${String(quiz.difficulty || 'Medium').toLowerCase()}`}>
+                          {tOr(`quiz.difficulty.${quiz.difficulty || 'Medium'}`, quiz.difficulty)}
+                        </span>
                         <span>{quiz.question_count || 0} questions</span>
                       </div>
 
@@ -804,7 +901,9 @@ export default function QuizManagement() {
                               : 'qm-pill-amber'
                           }`}
                         >
-                          {selectedQuiz.status === 'active' ? 'Active' : 'Draft'}
+                          {selectedQuiz.status === 'active'
+                            ? t('quiz.status.published')
+                            : t('quiz.status.draft')}
                         </span>
                       </div>
 
@@ -840,7 +939,11 @@ export default function QuizManagement() {
                     </div>
                     <div>
                       <span>Status</span>
-                      <strong>{selectedQuiz.status || 'active'}</strong>
+                      <strong>
+                        {selectedQuiz.status === 'active'
+                          ? t('quiz.status.published')
+                          : t('quiz.status.draft')}
+                      </strong>
                     </div>
                   </div>
 
@@ -1088,11 +1191,26 @@ export default function QuizManagement() {
                       value={quizForm.status}
                       onChange={handleQuizChange}
                     >
-                      <option value="active">Active</option>
-                      <option value="inactive">Draft</option>
+                      <option value="active">{t('quiz.status.published')}</option>
+                      <option value="inactive">{t('quiz.status.draft')}</option>
                     </select>
                   </label>
                 </div>
+
+                <label className="qm-field">
+                  <span>{t('quiz.gen.difficulty')}</span>
+                  <select
+                    name="difficulty"
+                    value={quizForm.difficulty}
+                    onChange={handleQuizChange}
+                  >
+                    {aiDifficulties.map((level) => (
+                      <option key={level} value={level}>
+                        {t(`quiz.difficulty.${level}`)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
 
                 <div className="qm-form-actions">
                   {editingQuizId ? (
@@ -1165,9 +1283,25 @@ export default function QuizManagement() {
                   />
                 </label>
 
-                <div className="qm-form-grid">
-                  <label className="qm-field">
-                    <span>Source</span>
+                <label className="qm-field qm-field-full">
+                  <span>{t('quiz.gen.article')}</span>
+                  <select
+                    name="articleId"
+                    value={aiForm.articleId}
+                    onChange={handleAiFormChange}
+                  >
+                    <option value="">{t('quiz.gen.allKnowledge')}</option>
+                    {aiArticles.map((article) => (
+                      <option key={article.article_id} value={article.article_id}>
+                        {article.title}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                {!aiForm.articleId ? (
+                  <label className="qm-field qm-field-full">
+                    <span>Category</span>
                     <select
                       name="sourceCategory"
                       value={aiForm.sourceCategory}
@@ -1180,45 +1314,53 @@ export default function QuizManagement() {
                       ))}
                     </select>
                   </label>
+                ) : null}
 
-                  <label className="qm-field">
-                    <span>Questions</span>
-                    <select
-                      name="questionCount"
-                      value={aiForm.questionCount}
-                      onChange={handleAiFormChange}
-                    >
-                      <option value={5}>5</option>
-                      <option value={10}>10</option>
-                      <option value={15}>15</option>
-                      <option value={20}>20</option>
-                    </select>
-                  </label>
+                <div className="qm-field qm-field-full">
+                  <span>{t('quiz.gen.count')}</span>
+                  <div className="qm-chip-row" role="radiogroup">
+                    {aiQuestionCounts.map((count) => (
+                      <button
+                        key={count}
+                        type="button"
+                        role="radio"
+                        aria-checked={Number(aiForm.questionCount) === count}
+                        className={`qm-chip ${
+                          Number(aiForm.questionCount) === count ? 'active' : ''
+                        }`}
+                        onClick={() =>
+                          setAiForm((prev) => ({ ...prev, questionCount: count }))
+                        }
+                      >
+                        {count}
+                      </button>
+                    ))}
+                  </div>
+                </div>
 
-                  <label className="qm-field">
-                    <span>Difficulty</span>
-                    <select
-                      name="difficulty"
-                      value={aiForm.difficulty}
-                      onChange={handleAiFormChange}
-                    >
-                      <option value="basic">Basic</option>
-                      <option value="intermediate">Intermediate</option>
-                      <option value="advanced">Advanced</option>
-                    </select>
-                  </label>
-
-                  <label className="qm-field">
-                    <span>Status</span>
-                    <select
-                      name="status"
-                      value={aiForm.status}
-                      onChange={handleAiFormChange}
-                    >
-                      <option value="inactive">Draft</option>
-                      <option value="active">Active</option>
-                    </select>
-                  </label>
+                <div className="qm-field qm-field-full">
+                  <span>{t('quiz.gen.difficulty')}</span>
+                  <div className="qm-chip-row" role="radiogroup">
+                    {aiDifficulties.map((level) => (
+                      <button
+                        key={level}
+                        type="button"
+                        role="radio"
+                        aria-checked={aiForm.difficulty === level}
+                        className={`qm-chip qm-chip-${level.toLowerCase()} ${
+                          aiForm.difficulty === level ? 'active' : ''
+                        }`}
+                        onClick={() =>
+                          setAiForm((prev) => ({ ...prev, difficulty: level }))
+                        }
+                      >
+                        {t(`quiz.difficulty.${level}`)}
+                      </button>
+                    ))}
+                  </div>
+                  <small className="qm-chip-hint">
+                    {t(`quiz.gen.hint.${aiForm.difficulty}`)}
+                  </small>
                 </div>
 
                 <button
@@ -1227,7 +1369,7 @@ export default function QuizManagement() {
                   disabled={aiLoading}
                 >
                   <Icon name="sparkles" />
-                  {aiLoading ? 'Generating...' : 'Generate Quiz'}
+                  {aiLoading ? t('quiz.gen.generating') : t('quiz.gen.generate')}
                 </button>
               </form>
 
@@ -1235,7 +1377,21 @@ export default function QuizManagement() {
             </section>
 
             <section className="qm-ai-preview">
-              {!aiPreview ? (
+              {aiLoading ? (
+                <div className="qm-ai-skeleton" role="status" aria-live="polite">
+                  <strong>{t('quiz.gen.generating')}</strong>
+                  {Array.from({ length: Math.min(Number(aiForm.questionCount) || 3, 3) }).map(
+                    (_, index) => (
+                      <div key={index} className="qm-skel-card">
+                        <span className="qm-skel-line wide" />
+                        <span className="qm-skel-line" />
+                        <span className="qm-skel-line" />
+                        <span className="qm-skel-line short" />
+                      </div>
+                    )
+                  )}
+                </div>
+              ) : !aiPreview ? (
                 <div className="qm-ai-empty">
                   <div className="qm-ai-empty-orb">
                     <Icon name="sparkles" size={30} />
@@ -1254,12 +1410,25 @@ export default function QuizManagement() {
                             : 'Template Generated'}
                         </span>
                         <span className="qm-pill qm-pill-blue">
-                          {aiPreview.category}
+                          {aiPreview.sourceArticleTitle || aiPreview.category}
                         </span>
+                        <span className={`qm-pill qm-diff qm-diff-${String(aiPreview.difficulty || 'Medium').toLowerCase()}`}>
+                          {tOr(`quiz.difficulty.${aiPreview.difficulty}`, aiPreview.difficulty)}
+                        </span>
+                        <span className="qm-pill qm-pill-amber">{t('quiz.status.draft')}</span>
                       </div>
 
-                      <h2>{aiPreview.title}</h2>
-                      <p>{aiPreview.questions.length} questions</p>
+                      <input
+                        className="qm-ai-title-input"
+                        value={aiPreview.title}
+                        onChange={(event) =>
+                          setAiPreview((prev) => ({ ...prev, title: event.target.value }))
+                        }
+                        aria-label="Quiz title"
+                      />
+                      <p>
+                        {aiPreview.questions.length} {t('quiz.questions')}
+                      </p>
                     </div>
 
                     <div className="qm-ai-preview-actions">
@@ -1269,26 +1438,32 @@ export default function QuizManagement() {
                         onClick={cancelAiPreview}
                         disabled={aiSaving}
                       >
-                        Cancel
+                        {t('quiz.edit.discard')}
+                      </button>
+
+                      <button
+                        type="button"
+                        className="qm-btn qm-btn-soft"
+                        onClick={() => saveAiGeneratedQuiz(false)}
+                        disabled={aiSaving || aiPreview.questions.length === 0}
+                      >
+                        {t('quiz.edit.saveDraft')}
                       </button>
 
                       <button
                         type="button"
                         className="qm-btn qm-btn-primary"
-                        onClick={saveAiGeneratedQuiz}
+                        onClick={() => saveAiGeneratedQuiz(true)}
                         disabled={aiSaving || aiPreview.questions.length === 0}
                       >
-                        {aiSaving ? 'Saving...' : 'Save Quiz'}
+                        {aiSaving ? '...' : t('quiz.edit.publish')}
                       </button>
                     </div>
                   </div>
 
                   <div className="qm-ai-question-list">
                     {aiPreview.questions.map((question, index) => (
-                      <article
-                        key={`${question.question}-${index}`}
-                        className="qm-ai-question"
-                      >
+                      <article key={index} className="qm-ai-question qm-ai-edit">
                         <div className="qm-ai-question-head">
                           <span>Q{index + 1}</span>
                           <button
@@ -1296,44 +1471,76 @@ export default function QuizManagement() {
                             className="qm-mini-action danger"
                             onClick={() => removeAiPreviewQuestion(index)}
                             disabled={aiSaving}
-                            aria-label="Remove generated question"
+                            aria-label={t('quiz.edit.delete')}
                           >
                             <Icon name="trash" size={15} />
                           </button>
                         </div>
 
-                        <h4>{question.question}</h4>
+                        <label className="qm-field qm-field-full">
+                          <span>{t('quiz.edit.question')}</span>
+                          <textarea
+                            rows="2"
+                            value={question.question}
+                            onChange={(event) =>
+                              updateAiQuestion(index, { question: event.target.value })
+                            }
+                          />
+                        </label>
 
-                        <div className="qm-ai-options">
+                        <div className="qm-ai-edit-options" role="radiogroup" aria-label={t('quiz.edit.correct')}>
                           {question.options.map((option, optionIndex) => (
                             <div
-                              key={`${option}-${optionIndex}`}
-                              className={
-                                optionIndex === question.correctAnswerIndex
-                                  ? 'correct'
-                                  : ''
-                              }
+                              key={optionIndex}
+                              className={`qm-ai-edit-option ${
+                                optionIndex === question.correctAnswerIndex ? 'correct' : ''
+                              }`}
                             >
-                              <span>{optionLetters[optionIndex]}</span>
-                              <p>{option}</p>
-                              {optionIndex === question.correctAnswerIndex ? (
-                                <Icon name="check" size={15} />
-                              ) : null}
+                              <input
+                                type="radio"
+                                name={`correct-${index}`}
+                                checked={optionIndex === question.correctAnswerIndex}
+                                onChange={() =>
+                                  updateAiQuestion(index, { correctAnswerIndex: optionIndex })
+                                }
+                                aria-label={`${t('quiz.edit.correct')}: ${optionLetters[optionIndex]}`}
+                              />
+                              <span className="qm-ai-edit-letter">{optionLetters[optionIndex]}</span>
+                              <input
+                                className="qm-ai-edit-input"
+                                value={option}
+                                onChange={(event) =>
+                                  updateAiOption(index, optionIndex, event.target.value)
+                                }
+                                aria-label={t('quiz.edit.option', { letter: optionLetters[optionIndex] })}
+                                placeholder={t('quiz.edit.option', { letter: optionLetters[optionIndex] })}
+                              />
                             </div>
                           ))}
                         </div>
 
-                        {question.explanation ? (
-                          <div className="qm-ai-explanation">
-                            <strong>Explanation:</strong> {question.explanation}
-                          </div>
-                        ) : null}
-
-                        <div className="qm-ai-source">
-                          {question.sourceTitle || 'Knowledge Base'}
-                        </div>
+                        <label className="qm-field qm-field-full">
+                          <span>{t('quiz.edit.explanation')}</span>
+                          <textarea
+                            rows="2"
+                            value={question.explanation}
+                            onChange={(event) =>
+                              updateAiQuestion(index, { explanation: event.target.value })
+                            }
+                          />
+                        </label>
                       </article>
                     ))}
+
+                    <button
+                      type="button"
+                      className="qm-btn qm-btn-soft qm-add-question"
+                      onClick={addAiPreviewQuestion}
+                      disabled={aiSaving}
+                    >
+                      <Icon name="plus" size={16} />
+                      {t('quiz.edit.addQuestion')}
+                    </button>
                   </div>
                 </>
               )}

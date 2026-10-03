@@ -1609,7 +1609,7 @@ _APPROVER_ENDPOINTS = {
     "get_admin_users", "test_system_email", "get_admin_quizzes",
     "create_admin_quiz", "update_admin_quiz", "delete_admin_quiz",
     "get_admin_quiz_questions", "create_quiz_question", "update_admin_quiz_question",
-    "delete_admin_quiz_question", "ai_generate_quiz",
+    "delete_admin_quiz_question", "ai_generate_quiz", "get_quiz_source_articles",
     "get_reviews", "approve_review", "reject_review", "publish_review",
     "get_analytics",
     # Team Leaders may view Security Monitoring reports, but cannot manage
@@ -11519,6 +11519,75 @@ def generate_quiz():
         "message": "Automatic quiz generation is disabled. Please create quizzes manually from Quiz Management."
     }), 400
 
+_QUIZ_EXTRA_COLUMNS_READY = False
+QUIZ_DIFFICULTIES = ("Easy", "Medium", "Hard")
+_LEGACY_QUIZ_DIFFICULTY = {"basic": "Easy", "intermediate": "Medium", "advanced": "Hard"}
+
+
+def normalize_quiz_difficulty(value):
+    """Accept Easy/Medium/Hard (any case) plus the older basic/intermediate/advanced."""
+    text = str(value or "").strip().lower()
+    if text in _LEGACY_QUIZ_DIFFICULTY:
+        return _LEGACY_QUIZ_DIFFICULTY[text]
+    for name in QUIZ_DIFFICULTIES:
+        if text == name.lower():
+            return name
+    return "Medium"
+
+
+def ensure_quiz_extra_columns():
+    """Idempotently add quiz.difficulty / passing_score / source_article_id.
+
+    Additive only (no drops, no data changes). Returns True when the columns
+    are available so callers can fall back to the old behaviour if the ALTER
+    is not permitted.
+    """
+    global _QUIZ_EXTRA_COLUMNS_READY
+    if _QUIZ_EXTRA_COLUMNS_READY:
+        return True
+
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """SELECT COLUMN_NAME FROM information_schema.COLUMNS
+               WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'quiz'"""
+        )
+        existing = {str(row[0]).lower() for row in cursor.fetchall()}
+        alterations = {
+            "difficulty": "ALTER TABLE quiz ADD COLUMN difficulty VARCHAR(20) NOT NULL DEFAULT 'Medium'",
+            "passing_score": "ALTER TABLE quiz ADD COLUMN passing_score INT NOT NULL DEFAULT 80",
+            "source_article_id": "ALTER TABLE quiz ADD COLUMN source_article_id INT NULL",
+        }
+        for column, statement in alterations.items():
+            if column not in existing:
+                cursor.execute(statement)
+        conn.commit()
+        _QUIZ_EXTRA_COLUMNS_READY = True
+        return True
+    except Exception as error:
+        print("QUIZ: could not ensure difficulty/passing_score columns:", error)
+        return False
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+def quiz_extra_select(alias="q"):
+    """Aggregate-safe SELECT fragment for the optional quiz columns."""
+    if ensure_quiz_extra_columns():
+        return (
+            f"MAX({alias}.difficulty) AS difficulty, "
+            f"MAX({alias}.passing_score) AS passing_score, "
+            f"MAX({alias}.source_article_id) AS source_article_id"
+        )
+    return "'Medium' AS difficulty, 80 AS passing_score, NULL AS source_article_id"
+
+
 @app.route("/api/quizzes", methods=["GET"])
 def get_quizzes():
     conn = None
@@ -11528,14 +11597,15 @@ def get_quizzes():
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
 
-        cursor.execute("""
-            SELECT 
+        cursor.execute(f"""
+            SELECT
                 q.quiz_id,
                 q.title,
                 q.description,
                 q.category,
                 q.status,
                 q.created_at,
+                {quiz_extra_select()},
                 COUNT(qq.question_id) AS question_count
             FROM quiz q
             LEFT JOIN quiz_question qq ON q.quiz_id = qq.quiz_id
@@ -11568,8 +11638,17 @@ def get_quiz_questions(quiz_id):
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
 
+        # Only published (active) quizzes may be taken; managers preview drafts
+        # through /api/admin/quizzes/<id>/questions instead.
+        cursor.execute("SELECT status FROM quiz WHERE quiz_id = %s LIMIT 1", (quiz_id,))
+        quiz_row = cursor.fetchone()
+        if not quiz_row:
+            return jsonify({"message": "Quiz not found."}), 404
+        if str(quiz_row["status"]).lower() != "active":
+            return jsonify({"message": "This quiz is not published."}), 403
+
         cursor.execute("""
-            SELECT 
+            SELECT
                 question_id,
                 quiz_id,
                 question_text,
@@ -11651,13 +11730,33 @@ def submit_quiz(quiz_id):
         conn = get_db_connection()
         conn.start_transaction()
         cursor = conn.cursor(dictionary=True)
-        cursor.execute(
-            "SELECT quiz_id FROM quiz WHERE quiz_id = %s AND status = 'active' LIMIT 1",
-            (quiz_id,),
-        )
-        if not cursor.fetchone():
+        passing_score = 80
+        source_article = None
+        if ensure_quiz_extra_columns():
+            cursor.execute(
+                """SELECT q.quiz_id, q.passing_score, q.source_article_id,
+                          w.title AS source_title
+                   FROM quiz q
+                   LEFT JOIN wiki_article w ON w.article_id = q.source_article_id
+                   WHERE q.quiz_id = %s AND q.status = 'active' LIMIT 1""",
+                (quiz_id,),
+            )
+        else:
+            cursor.execute(
+                "SELECT quiz_id FROM quiz WHERE quiz_id = %s AND status = 'active' LIMIT 1",
+                (quiz_id,),
+            )
+        quiz_row = cursor.fetchone()
+        if not quiz_row:
             conn.rollback()
             return jsonify({"message": "This quiz is not available."}), 404
+        if quiz_row.get("passing_score") is not None:
+            passing_score = int(quiz_row["passing_score"])
+        if quiz_row.get("source_article_id"):
+            source_article = {
+                "id": int(quiz_row["source_article_id"]),
+                "title": quiz_row.get("source_title") or "",
+            }
 
         cursor.execute(
             "SELECT question_id, correct_option, explanation FROM quiz_question WHERE quiz_id = %s ORDER BY question_id ASC",
@@ -11699,6 +11798,8 @@ def submit_quiz(quiz_id):
                 "question_id": int(row["question_id"]),
                 "correct_option": str(row["correct_option"] or "").strip().upper(),
                 "selected_option": answers.get(int(row["question_id"])),
+                "user_answer": answers.get(int(row["question_id"])),
+                "correct_answer": str(row["correct_option"] or "").strip().upper(),
                 "is_correct": answers.get(int(row["question_id"])) == str(row["correct_option"] or "").strip().upper(),
                 "explanation": row.get("explanation") or "",
             }
@@ -11711,8 +11812,12 @@ def submit_quiz(quiz_id):
             "result_id": result_id,
             "quiz_id": quiz_id,
             "score": correct_count,
+            "total": total_questions,
             "total_questions": total_questions,
             "percentage": percentage,
+            "passing_score": passing_score,
+            "passed": percentage >= passing_score,
+            "source_article": source_article,
             "review": review,
         }), 201
     except Exception:
@@ -11740,8 +11845,8 @@ def get_admin_quizzes():
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
 
-        cursor.execute("""
-            SELECT 
+        cursor.execute(f"""
+            SELECT
                 q.quiz_id,
                 q.title,
                 q.description,
@@ -11750,6 +11855,7 @@ def get_admin_quizzes():
                 q.created_by,
                 q.created_at,
                 q.updated_at,
+                {quiz_extra_select()},
                 COUNT(qq.question_id) AS question_count
             FROM quiz q
             LEFT JOIN quiz_question qq ON q.quiz_id = qq.quiz_id
@@ -11802,6 +11908,32 @@ def create_admin_quiz():
     if created_by in ["", "undefined"]:
         created_by = None
 
+    difficulty = normalize_quiz_difficulty(data.get("difficulty"))
+    try:
+        source_article_id = int(data.get("source_article_id")) if data.get("source_article_id") else None
+    except (TypeError, ValueError):
+        source_article_id = None
+
+    # Optional: save the quiz and all of its questions in ONE transaction so a
+    # failed question never leaves an empty/partial quiz behind.
+    new_questions = []
+    raw_questions = data.get("questions")
+    if raw_questions is not None:
+        if not isinstance(raw_questions, list) or len(raw_questions) > 50:
+            return jsonify({"message": "Questions must be a list of at most 50 items."}), 400
+        for item in raw_questions:
+            if not isinstance(item, dict):
+                return jsonify({"message": "Invalid question in quiz."}), 400
+            q_text = str(item.get("question_text") or "").strip()
+            options = [str(item.get(f"option_{letter}") or "").strip() for letter in "abcd"]
+            correct = str(item.get("correct_option") or "").strip().upper()
+            if not q_text or not all(options) or correct not in ("A", "B", "C", "D"):
+                return jsonify({"message": "Every question needs text, four options and one correct answer (A-D)."}), 400
+            new_questions.append((q_text, *options, correct, str(item.get("explanation") or "").strip()))
+
+    if status == "active" and raw_questions is not None and not new_questions:
+        return jsonify({"message": "A published quiz needs at least one question."}), 400
+
     conn = None
     cursor = None
 
@@ -11809,21 +11941,45 @@ def create_admin_quiz():
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
 
-        cursor.execute("""
-            INSERT INTO quiz 
-            (title, description, category, created_by, status)
-            VALUES (%s, %s, %s, %s, %s)
-        """, (
-            title,
-            description,
-            category,
-            created_by,
-            status
-        ))
+        if ensure_quiz_extra_columns():
+            cursor.execute("""
+                INSERT INTO quiz
+                (title, description, category, created_by, status, difficulty, source_article_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, (
+                title,
+                description,
+                category,
+                created_by,
+                status,
+                difficulty,
+                source_article_id,
+            ))
+        else:
+            cursor.execute("""
+                INSERT INTO quiz
+                (title, description, category, created_by, status)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (
+                title,
+                description,
+                category,
+                created_by,
+                status
+            ))
+
+        quiz_id = cursor.lastrowid
+
+        for q_text, a, b, c, d, correct, explanation in new_questions:
+            cursor.execute("""
+                INSERT INTO quiz_question
+                (quiz_id, question_text, option_a, option_b, option_c, option_d,
+                 correct_option, explanation, points)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 1)
+            """, (quiz_id, q_text, a, b, c, d, correct, explanation))
 
         conn.commit()
 
-        quiz_id = cursor.lastrowid
         add_audit_log(
             actor_id=created_by,
             action="Created quiz",
@@ -11876,9 +12032,20 @@ def update_admin_quiz(quiz_id):
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
 
+        cursor.execute("SELECT status FROM quiz WHERE quiz_id = %s LIMIT 1", (quiz_id,))
+        current = cursor.fetchone()
+        if not current:
+            return jsonify({"message": "Quiz not found."}), 404
+
+        # Publishing a draft (inactive -> active) requires at least one question.
+        if status == "active" and str(current["status"]).lower() != "active":
+            cursor.execute("SELECT COUNT(*) AS n FROM quiz_question WHERE quiz_id = %s", (quiz_id,))
+            if int((cursor.fetchone() or {}).get("n") or 0) == 0:
+                return jsonify({"message": "Add at least one question before publishing."}), 400
+
         cursor.execute("""
             UPDATE quiz
-            SET 
+            SET
                 title = %s,
                 description = %s,
                 category = %s,
@@ -11892,10 +12059,13 @@ def update_admin_quiz(quiz_id):
             quiz_id
         ))
 
-        conn.commit()
+        if "difficulty" in data and ensure_quiz_extra_columns():
+            cursor.execute(
+                "UPDATE quiz SET difficulty = %s WHERE quiz_id = %s",
+                (normalize_quiz_difficulty(data.get("difficulty")), quiz_id),
+            )
 
-        if cursor.rowcount == 0:
-            return jsonify({"message": "Quiz not found."}), 404
+        conn.commit()
 
         add_audit_log(
             action="Updated quiz",
@@ -12374,7 +12544,7 @@ def build_ai_quiz_questions(category_filter, question_count, difficulty):
     return generated
 
 
-def build_ai_quiz_source_text(category_filter, max_chars=16000, max_chars_per_article=500):
+def build_ai_quiz_source_text(category_filter, max_chars=16000, max_chars_per_article=500, article_id=None):
     """
     Collect the latest verified article content into one text blob to feed
     a real AI provider as context. Each article's content is capped
@@ -12401,7 +12571,13 @@ def build_ai_quiz_source_text(category_filter, max_chars=16000, max_chars_per_ar
         """
         params = ()
 
-        if category_filter and str(category_filter).strip().lower() != "all":
+        if article_id:
+            # One specific article: give the model far more of it than the
+            # per-article cap used when sampling a whole category.
+            query += " AND article_id = %s"
+            params = (article_id,)
+            max_chars_per_article = max(max_chars_per_article, 8000)
+        elif category_filter and str(category_filter).strip().lower() != "all":
             query += " AND category = %s"
             params = (category_filter,)
 
@@ -12457,7 +12633,24 @@ def build_ai_quiz_source_text(category_filter, max_chars=16000, max_chars_per_ar
     return "\n".join(chunks)
 
 
-def build_ai_quiz_questions_via_provider(category_filter, question_count, difficulty):
+QUIZ_DIFFICULTY_GUIDANCE = {
+    "Easy": (
+        "Easy: direct factual recall -- numbers, ratios, tool or product names, "
+        "times, and definitions stated word-for-word in the source."
+    ),
+    "Medium": (
+        "Medium: procedural application -- the correct order of steps and what "
+        "to do in standard, everyday customer or store scenarios."
+    ),
+    "Hard": (
+        "Hard: troubleshooting and edge cases -- exceptions, safety or policy "
+        "violations, and what to do when something goes wrong. Use short "
+        "realistic scenarios; every wrong option must be plausible."
+    ),
+}
+
+
+def build_ai_quiz_questions_via_provider(category_filter, question_count, difficulty, article_id=None):
     """
     Same output shape as build_ai_quiz_questions(), but genuinely written by
     whichever AI provider the manager configured in AI Model Settings.
@@ -12465,7 +12658,7 @@ def build_ai_quiz_questions_via_provider(category_filter, question_count, diffic
     the caller can tell "nothing to work with" apart from "AI returned zero
     valid questions".
     """
-    source_text = build_ai_quiz_source_text(category_filter)
+    source_text = build_ai_quiz_source_text(category_filter, article_id=article_id)
 
     if not source_text.strip():
         print(
@@ -12488,11 +12681,14 @@ def build_ai_quiz_questions_via_provider(category_filter, question_count, diffic
 
 Use only the provided source content. Do not invent information outside the source.
 Generate practical staff training questions at {difficulty} difficulty.
+Difficulty guide -- {QUIZ_DIFFICULTY_GUIDANCE.get(difficulty, QUIZ_DIFFICULTY_GUIDANCE["Medium"])}
 
 Return ONLY valid JSON. No markdown. No explanation outside JSON.
-Return a JSON array of up to {question_count} question objects (fewer only if
-the source content truly does not support more distinct questions). Each
-object must have exactly these fields:
+Return a JSON array of EXACTLY {question_count} distinct question objects (fewer
+only if the source content truly cannot support that many). Each object must
+have exactly these fields, with exactly 4 options and exactly 1 correct answer;
+the explanation must state which part of the source (SOP step/rule) makes the
+answer correct:
 - "question": string
 - "options": array of exactly 4 strings
 - "correctAnswerIndex": integer, 0, 1, 2 or 3
@@ -12583,21 +12779,48 @@ def ai_generate_quiz():
 
     title = data.get("title", "").strip() or "AI Generated Quiz"
     source_category = str(data.get("sourceCategory") or data.get("category") or "All").strip()
-    status = str(data.get("status", "active")).strip().lower()
-    difficulty = str(data.get("difficulty", "intermediate")).strip().lower()
+    status = str(data.get("status", "inactive")).strip().lower()
+
+    # Accepts Easy/Medium/Hard (and the older basic/intermediate/advanced).
+    difficulty = normalize_quiz_difficulty(data.get("difficulty"))
+    legacy_difficulty = {"Easy": "basic", "Medium": "intermediate", "Hard": "advanced"}[difficulty]
 
     if status not in ("active", "inactive"):
-        status = "active"
-
-    if difficulty not in ("basic", "intermediate", "advanced"):
-        difficulty = "intermediate"
+        status = "inactive"
 
     try:
-        question_count = int(data.get("questionCount", 5))
+        question_count = int(data.get("count") or data.get("questionCount") or 5)
     except Exception:
         question_count = 5
 
     question_count = max(1, min(question_count, 20))
+
+    try:
+        article_id = int(data.get("articleId") or data.get("article_id") or 0) or None
+    except (TypeError, ValueError):
+        article_id = None
+
+    source_article = None
+    if article_id:
+        conn = None
+        cursor = None
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute(
+                """SELECT article_id, title, category FROM wiki_article
+                   WHERE article_id = %s AND COALESCE(is_deleted, 0) = 0 LIMIT 1""",
+                (article_id,),
+            )
+            source_article = cursor.fetchone()
+        finally:
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
+        if not source_article:
+            return jsonify({"message": "The selected article could not be found."}), 404
+        source_category = source_article.get("category") or source_category
 
     generation_method = "template"
     questions = []
@@ -12613,7 +12836,7 @@ def ai_generate_quiz():
     else:
         try:
             provider_questions = build_ai_quiz_questions_via_provider(
-                source_category, question_count, difficulty
+                source_category, question_count, difficulty, article_id=article_id
             )
 
             if provider_questions:
@@ -12631,9 +12854,11 @@ def ai_generate_quiz():
             ai_failure_reason = "provider_failed"
             print("AI QUIZ: AI provider request failed, falling back to template:", error)
 
-    if not questions:
+    # The template builder works per category, not per article, so it is only
+    # a valid fallback when the manager did not pick a specific article.
+    if not questions and not article_id:
         try:
-            questions = build_ai_quiz_questions(source_category, question_count, difficulty)
+            questions = build_ai_quiz_questions(source_category, question_count, legacy_difficulty)
 
             if questions:
                 generation_method = "template"
@@ -12652,12 +12877,14 @@ def ai_generate_quiz():
     ]
 
     if not questions:
+        generic_failure = (
+            "Failed to generate quiz questions from this article. "
+            "Please try again or refine article content."
+        )
         if ai_failure_reason == "not_configured":
             message = "AI model is not configured. Please configure it in AI Model Settings."
-        elif ai_failure_reason == "invalid_format":
-            message = "The AI returned an invalid quiz format. Please try again."
-        elif ai_failure_reason == "provider_failed":
-            message = "AI provider request failed. Please try again, or create the quiz manually."
+        elif ai_failure_reason in ("invalid_format", "provider_failed"):
+            message = generic_failure
         elif ai_failure_reason == "service_unavailable":
             message = "AI provider service is not available on this server. Please contact an administrator."
         else:
@@ -12684,10 +12911,37 @@ def ai_generate_quiz():
             "description": description,
             "category": category_label,
             "status": status,
+            "difficulty": difficulty,
+            "count": question_count,
+            "sourceArticleId": source_article["article_id"] if source_article else None,
+            "sourceArticleTitle": source_article["title"] if source_article else None,
             "questions": questions,
             "generationMethod": generation_method,
         }
     }), 200
+
+
+@app.route("/api/admin/quizzes/source-articles", methods=["GET"])
+def get_quiz_source_articles():
+    """Articles a manager can generate a quiz from (id, title, category only)."""
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute(
+            """SELECT article_id, title, category FROM wiki_article
+               WHERE COALESCE(is_deleted, 0) = 0 ORDER BY title ASC"""
+        )
+        return jsonify(cursor.fetchall() or []), 200
+    except Exception as error:
+        print("MYSQL ERROR /api/admin/quizzes/source-articles GET:", error)
+        return jsonify({"message": "Failed to load articles."}), 500
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 
 # =========================
