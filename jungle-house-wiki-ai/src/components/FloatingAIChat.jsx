@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import api from '../services/api';
+import { useLanguage } from '../i18n/LanguageContext';
 import './FloatingAIChat.css';
 
 // Backend answers sometimes embed raw "Image: /static/..." path lines as
@@ -126,6 +127,7 @@ function clampPosition(position, width, height) {
 }
 
 export default function FloatingAIChat() {
+  const { t } = useLanguage();
   const location = useLocation();
 
   const [open, setOpen] = useState(false);
@@ -343,15 +345,15 @@ export default function FloatingAIChat() {
         <div className="floating-ai-panel">
           <div className="floating-ai-header">
             <div>
-              <strong>AI Assistant</strong>
-              <p className="muted small">Ask me anything from the Wiki.</p>
+              <strong>{t('chat.aiAssistant')}</strong>
+              <p className="muted small">{t('float.intro')}</p>
             </div>
 
             <button
               type="button"
               className="floating-ai-close-btn"
               onClick={() => setOpen(false)}
-              aria-label="Close AI chat"
+              aria-label={t('float.close')}
             >
               ×
             </button>
@@ -360,7 +362,7 @@ export default function FloatingAIChat() {
           <div className="floating-ai-messages">
             {messages.length === 0 && (
               <div className="floating-ai-bubble ai">
-                Hi, I am your Jungle House AI Assistant. Ask me anything from the Wiki.
+                {t('float.greeting')}
               </div>
             )}
 
@@ -388,7 +390,7 @@ export default function FloatingAIChat() {
                         className="floating-ai-option-btn"
                         onClick={() => handleSelectOption(option)}
                       >
-                        {option.label || option.title || `Option ${index + 1}`}
+                        {option.label || option.title || t('float.option', { n: index + 1 })}
                       </button>
                     ))}
                   </div>
@@ -398,7 +400,7 @@ export default function FloatingAIChat() {
 
             {loading && (
               <div className="floating-ai-bubble ai floating-ai-thinking">
-                AI is thinking...
+                {t('float.thinking')}
               </div>
             )}
 
@@ -412,12 +414,12 @@ export default function FloatingAIChat() {
               type="text"
               value={question}
               onChange={(event) => setQuestion(event.target.value)}
-              placeholder="Type your question..."
+              placeholder={t('float.placeholder')}
               disabled={loading}
             />
 
             <button type="submit" className="floating-ai-send-btn" disabled={loading}>
-              Send
+              {t('chat.send')}
             </button>
           </form>
         </div>
@@ -430,7 +432,7 @@ export default function FloatingAIChat() {
         onPointerMove={handleButtonPointerMove}
         onPointerUp={handleButtonPointerUp}
         onPointerCancel={handleButtonPointerUp}
-        aria-label={open ? 'Close AI chat' : 'Open AI chat'}
+        aria-label={open ? t('float.close') : t('float.open')}
       >
         AI
       </button>

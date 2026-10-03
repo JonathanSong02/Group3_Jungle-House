@@ -3,41 +3,17 @@ import { Link } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../i18n/LanguageContext';
 import '../styles/KnowledgeBase.css';
 
 const defaultCategoryOrder = ['SOP', 'PRODUCT', 'SALES', 'FAQ', 'UNCATEGORIZED'];
 
-const categoryDetails = {
-  SOP: {
-    label: 'SOP',
-    title: 'Standard Operating Procedures',
-    description: 'Opening, closing, roadshow, backend, and daily operation guides.',
-    icon: '📋',
-  },
-  PRODUCT: {
-    label: 'Product',
-    title: 'Product Knowledge',
-    description: 'Gift guides, product notes, and customer-facing product information.',
-    icon: '🍯',
-  },
-  SALES: {
-    label: 'Sales',
-    title: 'Sales & Promotions',
-    description: 'Promotions, POS guides, sales scripts, and customer handling notes.',
-    icon: '🛒',
-  },
-  FAQ: {
-    label: 'FAQ',
-    title: 'Frequently Asked Questions',
-    description: 'Quick answers for common staff or customer questions.',
-    icon: '❓',
-  },
-  UNCATEGORIZED: {
-    label: 'Other',
-    title: 'Other Knowledge',
-    description: 'Articles that have not been assigned to a main category yet.',
-    icon: '📁',
-  },
+const categoryIcons = {
+  SOP: '📋',
+  PRODUCT: '🍯',
+  SALES: '🛒',
+  FAQ: '❓',
+  UNCATEGORIZED: '📁',
 };
 
 function normalizeCategory(category) {
@@ -45,16 +21,16 @@ function normalizeCategory(category) {
   return value || 'UNCATEGORIZED';
 }
 
-function getCategoryInfo(category) {
+// Known categories are translated; unknown (database-defined) ones keep their stored name.
+function getCategoryInfo(category, tOr) {
   const normalized = normalizeCategory(category);
-  return (
-    categoryDetails[normalized] || {
-      label: normalized,
-      title: normalized,
-      description: 'Company knowledge article.',
-      icon: '📁',
-    }
-  );
+  const known = Object.prototype.hasOwnProperty.call(categoryIcons, normalized);
+  return {
+    label: tOr(`kb.cat.${normalized}`, normalized),
+    title: tOr(`kb.cat.${normalized}.title`, normalized),
+    description: known ? tOr(`kb.cat.${normalized}.desc`, '') : '',
+    icon: known ? categoryIcons[normalized] : '📁',
+  };
 }
 
 function cleanPreview(content) {
@@ -67,11 +43,11 @@ function cleanPreview(content) {
     .replace(/\s+/g, ' ')
     .trim();
 
-  return text || 'No preview available yet.';
+  return text;
 }
 
 function truncateText(text, maxLength = 120) {
-  if (!text) return 'No preview available yet.';
+  if (!text) return '';
   return text.length > maxLength ? `${text.slice(0, maxLength).trim()}...` : text;
 }
 
@@ -92,6 +68,7 @@ function StaffKnowledgeView({
   setSelectedCategory,
   clearFilters,
 }) {
+  const { t, tOr } = useLanguage();
   // Fixed-size numbered pagination: every page replaces the six cards above it.
   // Search/category changes automatically show page 1; admin rendering is untouched.
   const filterKey = `${selectedCategory}\u0000${search}`;
@@ -143,18 +120,18 @@ function StaffKnowledgeView({
   };
 
   const renderArticle = (article, isShortcut = false) => {
-    const info = getCategoryInfo(article.category);
-    const preview = truncateText(cleanPreview(article.content), isShortcut ? 56 : 78);
+    const info = getCategoryInfo(article.category, tOr);
+    const preview = truncateText(cleanPreview(article.content), isShortcut ? 56 : 78) || t('kb.noPreview');
     return (
       <article key={article.article_id} className="card-like kb-article-card">
         <div className="kb-article-top">
           <span className="kb-mini-icon" aria-hidden="true">{info.icon}</span>
           <span className="kb-article-category">{info.label}</span>
         </div>
-        <h3>{article.title || 'Untitled article'}</h3>
+        <h3>{article.title || t('kb.untitled')}</h3>
         {!isShortcut && <p className="muted">{preview}</p>}
         <Link className="text-link kb-article-link" to={`/knowledge/${article.article_id}`}>
-          Open guide <span aria-hidden="true">→</span>
+          {t('kb.readArticle')} <span aria-hidden="true">→</span>
         </Link>
       </article>
     );
@@ -162,21 +139,21 @@ function StaffKnowledgeView({
 
   return (
     <div className="kb-page kb-compact-page">
-      <PageHeader title="Knowledge Base" subtitle="" />
+      <PageHeader title={t('kb.title')} subtitle="" />
 
-      <section className="kb-hero card-like" aria-label="Knowledge Base cover">
+      <section className="kb-hero card-like" aria-label={t('kb.title')}>
         <div>
-          <p className="eyebrow">Jungle House · Knowledge</p>
-          <h2>Find. Learn. Grow.</h2>
+          <p className="eyebrow">{t('kb.eyebrowStaff')}</p>
+          <h2>{t('kb.cover')}</h2>
         </div>
         {/* The illustrated document and leaf on the right come from the
             theme-aware CSS installed in Step 8B.1; no external image URL. */}
       </section>
 
       {!loading && !error && categoryOptions.length > 1 && (
-        <section className="kb-category-overview" aria-label="Browse categories">
+        <section className="kb-category-overview" aria-label={t('kb.browseCategories')}>
           {categoryOptions.filter((category) => category !== 'All').map((category) => {
-            const info = getCategoryInfo(category);
+            const info = getCategoryInfo(category, tOr);
             return (
               <button
                 key={category}
@@ -188,7 +165,7 @@ function StaffKnowledgeView({
                 <span className="kb-category-icon" aria-hidden="true">{info.icon}</span>
                 <span className="kb-category-content">
                   <strong>{info.label}</strong>
-                  <small>{categoryCounts[category] || 0} guides</small>
+                  <small>{t('kb.guides', { n: categoryCounts[category] || 0 })}</small>
                 </span>
               </button>
             );
@@ -198,24 +175,24 @@ function StaffKnowledgeView({
 
       <div className="kb-toolbar card-like">
         <label className="kb-search-field">
-          <span>Search</span>
+          <span>{t('kb.search')}</span>
           <input
             type="search"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search knowledge..."
-            aria-label="Search knowledge articles"
+            placeholder={t('kb.searchPlaceholder')}
+            aria-label={t('kb.searchLabel')}
           />
         </label>
         <label className="kb-filter-field">
-          <span>Category</span>
+          <span>{t('kb.category')}</span>
           <select
             value={selectedCategory}
             onChange={(event) => setSelectedCategory(event.target.value)}
           >
             {categoryOptions.map((category) => (
               <option key={category} value={category}>
-                {category === 'All' ? 'All categories' : getCategoryInfo(category).label}
+                {category === 'All' ? t('kb.allTopics') : getCategoryInfo(category, tOr).label}
               </option>
             ))}
           </select>
@@ -225,12 +202,12 @@ function StaffKnowledgeView({
       {loading && (
         <div className="kb-state-card" aria-live="polite">
           <span className="kb-loading-spinner" aria-hidden="true" />
-          <strong>Loading guides…</strong>
+          <strong>{t('kb.loadingGuides')}</strong>
         </div>
       )}
       {error && (
         <div className="kb-state-card kb-state-error" role="alert">
-          <strong>Unable to load knowledge base</strong>
+          <strong>{t('kb.loadFailed')}</strong>
           <p>{error}</p>
         </div>
       )}
@@ -238,9 +215,9 @@ function StaffKnowledgeView({
       {!loading && !error && (
         <>
           {!hasFilters && currentPage === 1 && quickGuides.length > 0 && (
-            <section className="kb-section" aria-label="Quick access">
+            <section className="kb-section" aria-label={t('kb.quickAccess')}>
               <div className="kb-section-header">
-                <div><h2>Quick access</h2></div>
+                <div><h2>{t('kb.quickAccess')}</h2></div>
               </div>
               <div
                 className="kb-card-grid"
@@ -251,49 +228,49 @@ function StaffKnowledgeView({
             </section>
           )}
 
-          <section className="kb-section" aria-label="Article results">
+          <section className="kb-section" aria-label={t('kb.articleResults')}>
             <div className="kb-section-header" ref={resultsRef}>
               <div>
-                <h2>{selectedCategory === 'All' ? 'All guides' : getCategoryInfo(selectedCategory).title}</h2>
+                <h2>{selectedCategory === 'All' ? t('kb.allGuides') : getCategoryInfo(selectedCategory, tOr).title}</h2>
               </div>
-              <span className="role-pill" aria-live="polite">{filteredArticles.length} guides</span>
+              <span className="role-pill" aria-live="polite">{t('kb.guides', { n: filteredArticles.length })}</span>
             </div>
             {hasFilters && (
               <div className="kb-results-summary">
                 <button type="button" className="secondary-btn narrow-btn" onClick={clearFilters}>
-                  Clear filters
+                  {t('kb.clearFilters')}
                 </button>
               </div>
             )}
             {filteredArticles.length === 0 ? (
               <div className="kb-state-card">
-                <h3>No guides found</h3>
-                <p>Try another search or category.</p>
-                {hasFilters && <button type="button" className="secondary-btn" onClick={clearFilters}>Show all guides</button>}
+                <h3>{t('kb.noGuides')}</h3>
+                <p>{t('kb.noGuidesNote')}</p>
+                {hasFilters && <button type="button" className="secondary-btn" onClick={clearFilters}>{t('kb.showAll')}</button>}
               </div>
             ) : (
               <>
                 <div className="kb-card-grid">
                   {visibleArticles.map((article) => renderArticle(article))}
                 </div>
-                <nav className="kb-pagination" aria-label="Knowledge Base pages">
+                <nav className="kb-pagination" aria-label={t('kb.pages')}>
                   <p className="kb-pagination-summary" aria-live="polite">
-                    {startIndex + 1}–{Math.min(startIndex + STAFF_PAGE_SIZE, filteredArticles.length)} of {filteredArticles.length}
+                    {startIndex + 1}–{Math.min(startIndex + STAFF_PAGE_SIZE, filteredArticles.length)} {t('kb.of')} {filteredArticles.length}
                   </p>
                   {pageCount > 1 && (
                     <div className="kb-pagination-controls">
                       <button type="button" onClick={() => goToPage(currentPage - 1)}
-                        disabled={currentPage === 1} aria-label="Previous page">‹ <span>Prev</span></button>
+                        disabled={currentPage === 1} aria-label={t('kb.previousPage')}>‹ <span>{t('kb.prev')}</span></button>
                       {pageItems.map((item) => typeof item === 'string' ? (
                         <span className="kb-pagination-ellipsis" aria-hidden="true" key={item}>…</span>
                       ) : (
                         <button type="button" key={item} onClick={() => goToPage(item)}
                           className={item === currentPage ? 'active' : ''}
                           aria-current={item === currentPage ? 'page' : undefined}
-                          aria-label={`Page ${item}`}>{item}</button>
+                          aria-label={t('kb.page', { n: item })}>{item}</button>
                       ))}
                       <button type="button" onClick={() => goToPage(currentPage + 1)}
-                        disabled={currentPage === pageCount} aria-label="Next page"><span>Next</span> ›</button>
+                        disabled={currentPage === pageCount} aria-label={t('kb.nextPageLabel')}><span>{t('kb.nextPage')}</span> ›</button>
                     </div>
                   )}
                 </nav>
@@ -308,6 +285,7 @@ function StaffKnowledgeView({
 
 export default function KnowledgeBase() {
   const { user } = useAuth();
+  const { t, tOr } = useLanguage();
   const staffMode = String(user?.role || '').trim().toLowerCase() === 'staff';
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
@@ -328,7 +306,7 @@ export default function KnowledgeBase() {
         setError(
           err.response?.data?.message ||
             err.message ||
-            'Failed to load knowledge base.'
+            t('kb.loadFailedFallback')
         );
       } finally {
         setLoading(false);
@@ -336,6 +314,8 @@ export default function KnowledgeBase() {
     };
 
     fetchArticles();
+    // t is only used for error text; a language change must not refetch articles.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const categoryOptions = useMemo(() => {
@@ -434,28 +414,25 @@ export default function KnowledgeBase() {
   return (
     <div className="kb-page">
       <PageHeader
-        title="Knowledge Base"
-        subtitle="Browse approved company knowledge by category or search for a specific article."
+        title={t('kb.title')}
+        subtitle={t('kb.subtitle')}
       />
 
       <section className="kb-hero card-like">
         <div>
-          <p className="eyebrow">Knowledge Library</p>
-          <h2>Find the right guide faster</h2>
-          <p>
-            Start with a category, then search by article title, keyword, SOP
-            name, product name, or sales topic.
-          </p>
+          <p className="eyebrow">{t('kb.eyebrowLibrary')}</p>
+          <h2>{t('kb.heroTitle')}</h2>
+          <p>{t('kb.heroText')}</p>
         </div>
 
         <div className="kb-hero-stats">
           <div>
             <strong>{articles.length}</strong>
-            <span>Total articles</span>
+            <span>{t('kb.totalArticles')}</span>
           </div>
           <div>
             <strong>{categoryOptions.length - 1}</strong>
-            <span>Categories</span>
+            <span>{t('kb.categories')}</span>
           </div>
         </div>
       </section>
@@ -464,7 +441,7 @@ export default function KnowledgeBase() {
         {categoryOptions
           .filter((category) => category !== 'All')
           .map((category) => {
-            const info = getCategoryInfo(category);
+            const info = getCategoryInfo(category, tOr);
             const count = categoryCounts[category] || 0;
 
             return (
@@ -480,7 +457,7 @@ export default function KnowledgeBase() {
 
                 <span className="kb-category-content">
                   <strong>{info.label}</strong>
-                  <small>{count} articles</small>
+                  <small>{t('kb.articlesCount', { n: count })}</small>
                   <p>{info.description}</p>
                 </span>
               </button>
@@ -490,27 +467,27 @@ export default function KnowledgeBase() {
 
       <div className="kb-toolbar card-like">
         <label className="kb-search-field">
-          <span>Search articles</span>
+          <span>{t('kb.searchArticles')}</span>
           <input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search article title or content"
-            aria-label="Search knowledge articles"
+            placeholder={t('kb.searchPlaceholder')}
+            aria-label={t('kb.searchLabel')}
           />
         </label>
 
         <label className="kb-filter-field">
-          <span>Filter category</span>
+          <span>{t('kb.filterCategory')}</span>
           <select
             value={selectedCategory}
             onChange={(event) => setSelectedCategory(event.target.value)}
           >
             {categoryOptions.map((category) => {
-              const info = getCategoryInfo(category);
+              const info = getCategoryInfo(category, tOr);
 
               return (
                 <option key={category} value={category}>
-                  {category === 'All' ? 'All categories' : info.label}
+                  {category === 'All' ? t('kb.allTopics') : info.label}
                 </option>
               );
             })}
@@ -521,14 +498,14 @@ export default function KnowledgeBase() {
       {loading ? (
         <div className="kb-state-card" aria-live="polite">
           <span className="kb-loading-spinner" aria-hidden="true" />
-          <strong>Loading knowledge base</strong>
-          <p>Preparing approved Jungle House articles...</p>
+          <strong>{t('kb.loadingTitle')}</strong>
+          <p>{t('kb.loadingNote')}</p>
         </div>
       ) : null}
 
       {error ? (
         <div className="kb-state-card kb-state-error" role="alert">
-          <strong>Unable to load knowledge base</strong>
+          <strong>{t('kb.loadFailed')}</strong>
           <p>{error}</p>
         </div>
       ) : null}
@@ -538,11 +515,11 @@ export default function KnowledgeBase() {
           <div className="kb-results-summary">
             <div>
               <strong>{filteredArticles.length}</strong>{' '}
-              {filteredArticles.length === 1 ? 'article' : 'articles'} found
+              {filteredArticles.length === 1 ? t('kb.articleOne') : t('kb.articleMany')} {t('kb.found')}
               {selectedCategory !== 'All' ? (
-                <span> in {getCategoryInfo(selectedCategory).label}</span>
+                <span> {t('kb.in')} {getCategoryInfo(selectedCategory, tOr).label}</span>
               ) : null}
-              {search.trim() ? <span> for “{search.trim()}”</span> : null}
+              {search.trim() ? <span> {t('kb.for')} “{search.trim()}”</span> : null}
             </div>
 
             {search || selectedCategory !== 'All' ? (
@@ -551,7 +528,7 @@ export default function KnowledgeBase() {
                 className="secondary-btn narrow-btn"
                 onClick={clearFilters}
               >
-                Clear filters
+                {t('kb.clearFilters')}
               </button>
             ) : null}
           </div>
@@ -559,15 +536,13 @@ export default function KnowledgeBase() {
           {filteredArticles.length === 0 ? (
             <div className="kb-state-card">
               <span className="kb-empty-icon" aria-hidden="true">⌕</span>
-              <h3>No articles found</h3>
-              <p>
-                Try using a shorter keyword or choose another category.
-              </p>
+              <h3>{t('kb.noArticles')}</h3>
+              <p>{t('kb.noArticlesNote')}</p>
             </div>
           ) : (
             <div className="kb-sections">
               {groupedArticles.map((group) => {
-                const info = getCategoryInfo(group.category);
+                const info = getCategoryInfo(group.category, tOr);
 
                 return (
                   <section key={group.category} className="kb-section">
@@ -579,8 +554,7 @@ export default function KnowledgeBase() {
                       </div>
 
                       <span className="role-pill">
-                        {group.articles.length}{' '}
-                        {group.articles.length === 1 ? 'article' : 'articles'}
+                        {t('kb.articlesCount', { n: group.articles.length })}
                       </span>
                     </div>
 
@@ -589,11 +563,11 @@ export default function KnowledgeBase() {
                         const articleCategory = normalizeCategory(
                           article.category
                         );
-                        const articleInfo = getCategoryInfo(articleCategory);
+                        const articleInfo = getCategoryInfo(articleCategory, tOr);
                         const preview = truncateText(
                           cleanPreview(article.content),
                           125
-                        );
+                        ) || t('kb.noPreview');
 
                         return (
                           <article
@@ -617,7 +591,7 @@ export default function KnowledgeBase() {
                               className="text-link kb-article-link"
                               to={`/knowledge/${article.article_id}`}
                             >
-                              View article details →
+                              {t('kb.viewDetails')} →
                             </Link>
                           </article>
                         );

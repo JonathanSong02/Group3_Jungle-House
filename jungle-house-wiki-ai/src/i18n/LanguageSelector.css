@@ -1,0 +1,138 @@
+/* Language selector. Uses currentColor / theme tokens so it fits the honey
+   (manager/team lead) and green (staff) themes, light and dark. */
+.jh-lang {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.jh-lang-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 7%, transparent);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.jh-lang-trigger:hover {
+  background: color-mix(in srgb, currentColor 13%, transparent);
+}
+
+.jh-lang-trigger:focus-visible,
+.jh-lang-option:focus-visible {
+  outline: 2px solid var(--primary, currentColor);
+  outline-offset: 2px;
+}
+
+.jh-lang-trigger svg {
+  flex-shrink: 0;
+}
+
+.jh-lang-menu {
+  position: absolute;
+  z-index: 6000;
+  right: 0;
+  min-width: 190px;
+  max-width: calc(100vw - 32px);
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  border: 1px solid var(--border, rgba(126, 88, 28, 0.2));
+  border-radius: 16px;
+  background: var(--surface, #fffdf8);
+  color: var(--text, #342414);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22);
+}
+
+.jh-lang[data-placement='down'] .jh-lang-menu { top: calc(100% + 8px); }
+.jh-lang[data-placement='up'] .jh-lang-menu { bottom: calc(100% + 8px); }
+.jh-lang[data-placement='up-start'] .jh-lang-menu { bottom: calc(100% + 8px); left: 0; right: auto; }
+
+.jh-lang-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.jh-lang-option:hover { background: color-mix(in srgb, currentColor 9%, transparent); }
+.jh-lang-option.is-selected { background: color-mix(in srgb, var(--primary, currentColor) 16%, transparent); }
+.jh-lang-option-check { color: var(--primary, currentColor); font-weight: 800; }
+
+/* Sidebar footer variant: full-width bar above the user card. */
+.jh-lang-sidebar { display: flex; width: 100%; margin: 0 0 10px; color: var(--sidebar-text, inherit); }
+.jh-lang-sidebar .jh-lang-trigger { width: 100%; justify-content: flex-start; }
+.jh-lang-sidebar .jh-lang-menu { left: 0; right: 0; max-width: none; }
+
+/* Collapsed desktop sidebar keeps only the globe. */
+body.sidebar-is-collapsed .jh-lang-sidebar .jh-lang-code { display: none; }
+body.sidebar-is-collapsed .jh-lang-sidebar .jh-lang-trigger { justify-content: center; padding: 0; }
+body.sidebar-is-collapsed .jh-lang-sidebar .jh-lang-menu { right: auto; min-width: 190px; }
+
+/* Staff top bar: icon + short code, tight enough for 320px next to the hamburger. */
+.staff-topbar .jh-lang-trigger { padding: 0 10px; font-size: 12px; }
+@media (max-width: 420px) {
+  .staff-topbar .jh-lang-code { display: none; }
+  .staff-topbar .jh-lang-trigger { padding: 0; }
+  /* Keep the title on one line (ellipsis) instead of wrapping to 3 lines beside the language button. */
+  .staff-topbar-label { min-width: 0; flex: 1 1 0; }
+  .staff-topbar-label span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+@media (max-width: 360px) {
+  .staff-topbar-label > svg { display: none; }
+}
+
+/* Typography + layout safety for the three languages. */
+html[data-lang='zh'] body,
+html[data-lang='zh'] button,
+html[data-lang='zh'] input,
+html[data-lang='zh'] textarea,
+html[data-lang='zh'] select {
+  font-family: system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+}
+
+/* Longer Malay labels wrap or truncate inside their container instead of
+   pushing the layout sideways. */
+.sidebar-link-text,
+.staff-nav-link > span,
+.dashboard-action-copy strong,
+.dashboard-stat-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.sidebar-link { min-width: 0; }
+.dashboard-hero-action strong,
+.ai-chat-send-btn,
+.ai-chat-tool-btn,
+.kb-category-content strong {
+  overflow-wrap: anywhere;
+}
+html[data-lang='ms'] .page-header-actions,
+html[data-lang='ms'] .ai-chat-input-row,
+html[data-lang='ms'] .kb-toolbar {
+  flex-wrap: wrap;
+}

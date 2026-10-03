@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { StaffChatProvider, useStaffChat } from '../context/StaffChatContext';
+import LanguageSelector from '../i18n/LanguageSelector';
 import { StaffPreferencesDialog, StaffPreferencesProvider, useStaffPreferences } from './StaffPreferences';
 
 function Symbol({ name, size = 20 }) {
@@ -40,17 +41,17 @@ const staffLinks = [
 ];
 
 const managementLinks = [
-  { to: '/dashboard', text: 'Dashboard', icon: 'dashboard', roles: ['teamlead'] },
-  { to: '/admin/dashboard', text: 'Management Dashboard', icon: 'dashboard', roles: ['manager', 'admin'] },
-  { to: '/admin/content', text: 'Content Management', icon: 'content', roles: ['teamlead', 'manager', 'admin'] },
-  { to: '/admin/quiz-management', text: 'Quiz Management', icon: 'quiz', roles: ['teamlead', 'manager', 'admin'] },
-  { to: '/admin/review', text: 'Review Management', icon: 'review', roles: ['manager', 'admin'] },
-  { to: '/admin/users', text: 'User Management', icon: 'users', roles: ['teamlead', 'manager', 'admin'] },
-  { to: '/admin/ai-settings', text: 'AI Settings', icon: 'settings', roles: ['manager', 'admin'] },
-  { to: '/admin/notion-sync', text: 'Notion Sync', icon: 'sync', roles: ['manager', 'admin'] },
-  { to: '/admin/analytics', text: 'Analytics', icon: 'analytics', roles: ['teamlead', 'manager', 'admin'] },
-  { to: '/admin/security', text: 'Security Monitoring', icon: 'security', roles: ['teamlead', 'manager', 'admin'] },
-  { to: '/escalation', text: 'Escalation', icon: 'escalation', roles: ['teamlead', 'manager', 'admin'] },
+  { to: '/dashboard', text: 'nav.dashboard', icon: 'dashboard', roles: ['teamlead'] },
+  { to: '/admin/dashboard', text: 'nav.managementDashboard', icon: 'dashboard', roles: ['manager', 'admin'] },
+  { to: '/admin/content', text: 'nav.contentManagement', icon: 'content', roles: ['teamlead', 'manager', 'admin'] },
+  { to: '/admin/quiz-management', text: 'nav.quizManagement', icon: 'quiz', roles: ['teamlead', 'manager', 'admin'] },
+  { to: '/admin/review', text: 'nav.reviewManagement', icon: 'review', roles: ['manager', 'admin'] },
+  { to: '/admin/users', text: 'nav.userManagement', icon: 'users', roles: ['teamlead', 'manager', 'admin'] },
+  { to: '/admin/ai-settings', text: 'nav.aiSettings', icon: 'settings', roles: ['manager', 'admin'] },
+  { to: '/admin/notion-sync', text: 'nav.notionSync', icon: 'sync', roles: ['manager', 'admin'] },
+  { to: '/admin/analytics', text: 'nav.analytics', icon: 'analytics', roles: ['teamlead', 'manager', 'admin'] },
+  { to: '/admin/security', text: 'nav.security', icon: 'security', roles: ['teamlead', 'manager', 'admin'] },
+  { to: '/escalation', text: 'nav.escalation', icon: 'escalation', roles: ['teamlead', 'manager', 'admin'] },
 ];
 
 function StaffShell() {
@@ -93,42 +94,42 @@ function StaffShell() {
     if (logoutBusy.current) return;
     logoutBusy.current = true; setLogoutPending(true); setLogoutError('');
     try { await logout(); navigate('/login', { replace: true }); }
-    catch (error) { setLogoutError(error?.message || 'Could not log out. Please retry.'); setProfileOpen(true); }
+    catch (error) { setLogoutError(error?.message || t('staff.logoutFailed')); setProfileOpen(true); }
     finally { logoutBusy.current = false; setLogoutPending(false); }
   };
   const visibleSessions = sessions.filter((item) => item.title?.toLowerCase().includes(search.trim().toLowerCase()));
 
   return (
     <div className={`staff-workspace ${collapsed ? 'staff-is-collapsed' : ''} ${mobileOpen ? 'staff-mobile-open' : ''}`} data-jh-theme={effectiveAppearance} data-jh-contrast={effectiveContrast} data-jh-accent={settings.accent} lang={settings.language === 'zh' ? 'zh-Hans' : settings.language}>
-      {mobileOpen && <button type="button" className="staff-overlay" aria-label="Close navigation" onClick={() => setMobileOpen(false)} />}
+      {mobileOpen && <button type="button" className="staff-overlay" aria-label={t('staff.closeNavigation')} onClick={() => setMobileOpen(false)} />}
       <aside className="staff-sidebar" aria-label="Staff navigation">
         <div className="staff-brand">
           <span className="staff-brand-icon"><Symbol name="leaf" size={25}/></span>
           {!collapsed && <div><strong>Jungle House AI</strong><small>{t('assistant')}</small></div>}
-          <button type="button" className="staff-icon-button staff-collapse-button" aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} onClick={() => setCollapsed((current) => !current)}><Symbol name="panel" size={19}/></button>
-          <button type="button" className="staff-icon-button staff-mobile-close" aria-label="Close navigation" onClick={() => setMobileOpen(false)}><Symbol name="close"/></button>
+          <button type="button" className="staff-icon-button staff-collapse-button" aria-label={collapsed ? t('staff.expandSidebar') : t('staff.collapseSidebar')} onClick={() => setCollapsed((current) => !current)}><Symbol name="panel" size={19}/></button>
+          <button type="button" className="staff-icon-button staff-mobile-close" aria-label={t('staff.closeNavigation')} onClick={() => setMobileOpen(false)}><Symbol name="close"/></button>
         </div>
         <div className="staff-nav-scroll">
           <nav aria-label="Main features" className="staff-primary-links">
-            <button type="button" className="staff-nav-link staff-new-chat" onClick={startChat} title="New chat"><Symbol name="edit"/><span>{t('newChat')}</span></button>
-            <button type="button" className="staff-nav-link" onClick={() => setSearchOpen(true)} title="Search chats"><Symbol name="search"/><span>{t('searchChats')}</span></button>
-            {staffLinks.map((link) => <NavLink key={link.to} className={({isActive}) => `staff-nav-link ${isActive ? 'active' : ''}`} to={link.to} title={link.text} onClick={() => setMobileOpen(false)}><Symbol name={link.icon}/><span>{t(({ '/knowledge': 'knowledge', '/quiz': 'quiz', '/messages': 'messages', '/notifications': 'notifications' })[link.to])}</span></NavLink>)}
-            <button type="button" className="staff-nav-link" aria-expanded={moreOpen} onClick={() => setMoreOpen((current) => !current)} title="More"><Symbol name="more"/><span>{t('more')}</span></button>
+            <button type="button" className="staff-nav-link staff-new-chat" onClick={startChat} title={t('newChat')}><Symbol name="edit"/><span>{t('newChat')}</span></button>
+            <button type="button" className="staff-nav-link" onClick={() => setSearchOpen(true)} title={t('searchChats')}><Symbol name="search"/><span>{t('searchChats')}</span></button>
+            {staffLinks.map((link) => <NavLink key={link.to} className={({isActive}) => `staff-nav-link ${isActive ? 'active' : ''}`} to={link.to} title={t(({ '/knowledge': 'knowledge', '/quiz': 'quiz', '/messages': 'messages', '/notifications': 'notifications' })[link.to])} onClick={() => setMobileOpen(false)}><Symbol name={link.icon}/><span>{t(({ '/knowledge': 'knowledge', '/quiz': 'quiz', '/messages': 'messages', '/notifications': 'notifications' })[link.to])}</span></NavLink>)}
+            <button type="button" className="staff-nav-link" aria-expanded={moreOpen} onClick={() => setMoreOpen((current) => !current)} title={t('more')}><Symbol name="more"/><span>{t('more')}</span></button>
             {moreOpen && <div className="staff-more-links"><NavLink to="/profile" onClick={() => setMobileOpen(false)} className="staff-nav-link"><Symbol name="user"/><span>{t('profile')}</span></NavLink><NavLink to="/sop-selection" onClick={() => setMobileOpen(false)} className="staff-nav-link"><Symbol name="book"/><span>{t('sop')}</span></NavLink><button type="button" className="staff-nav-link" onClick={openHistory}><Symbol name="search"/><span>{t('history')}</span></button></div>}
             {visibleManagementLinks.length > 0 && (
               <div className="staff-primary-links staff-management-links" role="group" aria-label="Management tools">
-                <div className="staff-recent-header" aria-hidden="true"><span>Management</span></div>
+                <div className="staff-recent-header" aria-hidden="true"><span>{t('nav.management')}</span></div>
                 {visibleManagementLinks.map((link) => (
-                  <NavLink key={link.to} to={link.to} title={link.text} onClick={() => setMobileOpen(false)} className={({ isActive }) => `staff-nav-link ${isActive ? 'active' : ''}`}>
-                    <Symbol name={link.icon}/><span>{link.text}</span>
+                  <NavLink key={link.to} to={link.to} title={t(link.text)} onClick={() => setMobileOpen(false)} className={({ isActive }) => `staff-nav-link ${isActive ? 'active' : ''}`}>
+                    <Symbol name={link.icon}/><span>{t(link.text)}</span>
                   </NavLink>
                 ))}
               </div>
             )}
           </nav>
-          <div className="staff-recent-header"><span>{t('recent')}</span><button type="button" aria-label="Open chat history" title="Open chat history" onClick={openHistory}><Symbol name="search" size={15}/></button></div>
+          <div className="staff-recent-header"><span>{t('recent')}</span><button type="button" aria-label={t('staff.openChatHistory')} title={t('staff.openChatHistory')} onClick={openHistory}><Symbol name="search" size={15}/></button></div>
           <div className="staff-recent-list" aria-label="Recent conversations">
-            {sessions.length ? sessions.slice(0, 18).map((item) => <div key={item.id} className="staff-recent-row"><button type="button" className={`staff-recent-chat ${String(activeSessionId) === String(item.id) && location.pathname === '/chat' ? 'active' : ''}`} onClick={() => chooseChat(item.id)} title={item.title}><Symbol name="chat" size={16}/><span>{item.title}</span></button><button type="button" className="staff-delete-recent" onClick={() => deleteChat(item.id)} aria-label={`Delete ${item.title}`} title="Delete chat">×</button></div>) : <p className="staff-sidebar-empty">{t('emptyChats')}</p>}
+            {sessions.length ? sessions.slice(0, 18).map((item) => <div key={item.id} className="staff-recent-row"><button type="button" className={`staff-recent-chat ${String(activeSessionId) === String(item.id) && location.pathname === '/chat' ? 'active' : ''}`} onClick={() => chooseChat(item.id)} title={item.title}><Symbol name="chat" size={16}/><span>{item.title}</span></button><button type="button" className="staff-delete-recent" onClick={() => deleteChat(item.id)} aria-label={`${t('staff.deleteChat')}: ${item.title}`} title={t('staff.deleteChat')}>×</button></div>) : <p className="staff-sidebar-empty">{t('emptyChats')}</p>}
             {sessions.length > 18 && <button type="button" className="staff-show-all" onClick={openHistory}>{t('allChats')} →</button>}
           </div>
         </div>
@@ -138,11 +139,11 @@ function StaffShell() {
         </div>
       </aside>
       <div className="staff-main">
-        <header className="staff-topbar"><button type="button" className="staff-icon-button staff-hamburger" onClick={() => setMobileOpen(true)} aria-label="Open navigation"><Symbol name="menu"/></button><div className="staff-topbar-label"><Symbol name="leaf" size={19}/><span>Jungle House AI</span><small>{t('workspace')}</small></div><div className="staff-topbar-actions"><button type="button" className="staff-icon-button jh-preferences-top-trigger" title={t('settings')} aria-label={t('openSettings')} onClick={() => setPreferencesOpen(true)}><Symbol name="more" size={20}/></button><NavLink to="/notifications" aria-label="Notifications" title="Notifications" className="staff-icon-button"><Symbol name="bell" size={20}/></NavLink><NavLink to="/profile" className="staff-avatar staff-avatar-top" aria-label={`My profile: ${fullName}`} title={fullName}>{initial}</NavLink></div></header>
+        <header className="staff-topbar"><button type="button" className="staff-icon-button staff-hamburger" onClick={() => setMobileOpen(true)} aria-label={t('staff.openNavigation')}><Symbol name="menu"/></button><div className="staff-topbar-label"><Symbol name="leaf" size={19}/><span>Jungle House AI</span><small>{t('workspace')}</small></div><div className="staff-topbar-actions"><LanguageSelector placement="down" /><button type="button" className="staff-icon-button jh-preferences-top-trigger" title={t('settings')} aria-label={t('openSettings')} onClick={() => setPreferencesOpen(true)}><Symbol name="more" size={20}/></button><NavLink to="/notifications" aria-label={t('nav.notifications')} title={t('nav.notifications')} className="staff-icon-button"><Symbol name="bell" size={20}/></NavLink><NavLink to="/profile" className="staff-avatar staff-avatar-top" aria-label={`${t('profile')}: ${fullName}`} title={fullName}>{initial}</NavLink></div></header>
         <main className={`staff-content ${location.pathname === '/chat' ? 'staff-content-chat' : ''}`} id="staff-content"><Outlet context={{ firstName }}/></main>
       </div>
       {preferencesOpen && <StaffPreferencesDialog onClose={closePreferences} />}
-      {searchOpen && <div className="staff-search-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSearchOpen(false); }}><section className="staff-search-dialog" role="dialog" aria-modal="true" aria-label="Search conversations"><div className="staff-search-bar"><Symbol name="search"/><input autoFocus aria-label="Search chats" placeholder={t('searchPlaceholder')} value={search} onChange={(event) => setSearch(event.target.value)}/><button type="button" className="staff-icon-button" aria-label="Close search" onClick={() => setSearchOpen(false)}><Symbol name="close"/></button></div><div className="staff-search-results">{visibleSessions.length ? visibleSessions.map((item) => <button key={item.id} type="button" onClick={() => chooseChat(item.id)}><Symbol name="chat" size={18}/><span>{item.title}</span><small>{item.updated_at}</small></button>) : <p>{t('noMatches')}</p>}</div><button type="button" className="staff-search-history" onClick={openHistory}>{t('viewHistory')} →</button></section></div>}
+      {searchOpen && <div className="staff-search-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSearchOpen(false); }}><section className="staff-search-dialog" role="dialog" aria-modal="true" aria-label={t('searchChats')}><div className="staff-search-bar"><Symbol name="search"/><input autoFocus aria-label={t('searchChats')} placeholder={t('searchPlaceholder')} value={search} onChange={(event) => setSearch(event.target.value)}/><button type="button" className="staff-icon-button" aria-label={t('close')} onClick={() => setSearchOpen(false)}><Symbol name="close"/></button></div><div className="staff-search-results">{visibleSessions.length ? visibleSessions.map((item) => <button key={item.id} type="button" onClick={() => chooseChat(item.id)}><Symbol name="chat" size={18}/><span>{item.title}</span><small>{item.updated_at}</small></button>) : <p>{t('noMatches')}</p>}</div><button type="button" className="staff-search-history" onClick={openHistory}>{t('viewHistory')} →</button></section></div>}
     </div>
   );
 }

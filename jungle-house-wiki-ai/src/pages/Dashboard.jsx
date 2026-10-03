@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../i18n/LanguageContext';
 
 function DashboardIcon({ name }) {
   const props = {
@@ -63,22 +64,22 @@ function DashboardIcon({ name }) {
 
 const QUICK_ACTIONS = [
   {
-    title: 'Ask AI',
-    description: 'Get answers from verified Jungle House knowledge and SOPs.',
+    title: 'dashboard.action.askAi',
+    description: 'dashboard.action.askAiDesc',
     route: '/chat',
     icon: 'chat',
     tone: 'primary',
   },
   {
-    title: 'Knowledge Base',
-    description: 'Browse SOPs, product information, and training resources.',
+    title: 'dashboard.action.browse',
+    description: 'dashboard.action.browseDesc',
     route: '/knowledge',
     icon: 'knowledge',
     tone: 'secondary',
   },
   {
-    title: 'Notifications',
-    description: 'Check account updates and reminders.',
+    title: 'dashboard.action.notifications',
+    description: 'dashboard.action.notificationsDesc',
     route: '/notifications',
     icon: 'notifications',
     tone: 'neutral',
@@ -100,6 +101,7 @@ function formatDateTime(value) {
 export default function Dashboard() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { t, tOr } = useLanguage();
   const role = String(user?.role || '').toLowerCase().replace(/[\s_-]/g, '');
   const viewerId = user?.id ?? user?.user_id ?? null;
   const canSeeManagementMetrics = ['manager', 'admin', 'teamlead'].includes(role);
@@ -126,7 +128,7 @@ export default function Dashboard() {
         setError('');
 
         if (viewerId == null) {
-          throw new Error('Unable to identify your account. Please sign in again.');
+          throw new Error(t('dashboard.identifyFailed'));
         }
 
         // The Notifications page uses this same endpoint. Derive the badge and
@@ -160,7 +162,7 @@ export default function Dashboard() {
           err.response?.data?.error ||
             err.response?.data?.message ||
             err.message ||
-            'Unable to load dashboard.'
+            t('dashboard.loadFailedFallback')
         );
       } finally {
         if (!cancelled) {
@@ -174,6 +176,8 @@ export default function Dashboard() {
     return () => {
       cancelled = true;
     };
+    // t is only used for error text; a language change must not refetch the dashboard.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewerId, role]);
 
   // Filter legacy API responses too; the backend separately enforces what each role receives.
@@ -190,15 +194,21 @@ export default function Dashboard() {
         <div className="dashboard-hero-copy">
           <span className="dashboard-hero-eyebrow">
             <DashboardIcon name="sparkle" />
-            Jungle House Workspace
+            {t('dashboard.eyebrow')}
           </span>
 
           <PageHeader
-            title="Dashboard"
+            title={t('dashboard.title')}
             subtitle={canSeeManagementMetrics
-              ? "Your central workspace for AI assistance, company knowledge, alerts, and training updates."
-              : "Access Jungle House knowledge, AI assistance and your updates."}
+              ? t('dashboard.subtitleManagement')
+              : t('dashboard.subtitleStaff')}
           />
+
+          <p className="dashboard-welcome muted">
+            {t('dashboard.welcome')}, {user?.full_name || user?.name || ''}
+            {' · '}
+            <span className="role-pill">{tOr(`role.${role}`, user?.role || '')}</span>
+          </p>
         </div>
 
         <button
@@ -210,8 +220,8 @@ export default function Dashboard() {
             <DashboardIcon name="chat" />
           </span>
           <span>
-            <small>Need help?</small>
-            <strong>Ask Jungle House AI</strong>
+            <small>{t('dashboard.needHelp')}</small>
+            <strong>{t('dashboard.askJungleHouseAI')}</strong>
           </span>
           <DashboardIcon name="arrow" />
         </button>
@@ -238,7 +248,7 @@ export default function Dashboard() {
             <span className="dashboard-skeleton-line" />
           </div>
 
-          <p className="dashboard-loading-text">Loading your workspace...</p>
+          <p className="dashboard-loading-text">{t('dashboard.loading')}</p>
         </div>
       ) : null}
 
@@ -249,7 +259,7 @@ export default function Dashboard() {
           </span>
 
           <div>
-            <strong>Unable to load dashboard</strong>
+            <strong>{t('dashboard.loadFailed')}</strong>
             <p>{error}</p>
           </div>
         </div>
@@ -257,13 +267,13 @@ export default function Dashboard() {
 
       {!loading && !error ? (
         <div className="dashboard-content">
-          <section className="dashboard-overview" aria-label="Dashboard overview">
+          <section className="dashboard-overview" aria-label={t('dashboard.overview')}>
             <div className="dashboard-section-title-row">
               <div>
-                <span className="dashboard-section-kicker">Overview</span>
-                <h2>Workspace snapshot</h2>
+                <span className="dashboard-section-kicker">{t('dashboard.overview')}</span>
+                <h2>{t('dashboard.snapshot')}</h2>
               </div>
-              <p>Live information from your Jungle House workspace.</p>
+              <p>{t('dashboard.snapshotNote')}</p>
             </div>
 
             <div
@@ -282,9 +292,9 @@ export default function Dashboard() {
                     <span className="dashboard-stat-indicator" />
                   </div>
 
-                  <span className="dashboard-stat-label">{item.label}</span>
+                  <span className="dashboard-stat-label">{tOr(`dashboard.stat.${item.label}`, item.label)}</span>
                   <strong className="dashboard-stat-value">{item.value}</strong>
-                  <span className="dashboard-stat-caption">Current overview</span>
+                  <span className="dashboard-stat-caption">{t('dashboard.currentOverview')}</span>
                 </article>
               ))}
 
@@ -297,10 +307,10 @@ export default function Dashboard() {
                   <span className="dashboard-stat-indicator" />
                 </div>
 
-                <span className="dashboard-stat-label">AI Accuracy</span>
+                <span className="dashboard-stat-label">{t('dashboard.aiAccuracy')}</span>
                 <strong className="dashboard-stat-value">{ai.accuracy}</strong>
                 <span className="dashboard-stat-caption">
-                  Current AI performance
+                  {t('dashboard.aiPerformance')}
                 </span>
                 </article>
               ) : null}
@@ -314,10 +324,11 @@ export default function Dashboard() {
               </span>
 
               <div className="dashboard-alert-copy">
-                <strong>Escalations need attention</strong>
+                <strong>{t('dashboard.escalationAttention')}</strong>
                 <p>
-                  There are {pendingEscalations} pending escalation
-                  {Number(pendingEscalations) === 1 ? '' : 's'} requiring attention.
+                  {t(Number(pendingEscalations) === 1
+                    ? 'dashboard.pendingEscalationsOne'
+                    : 'dashboard.pendingEscalationsMany', { n: pendingEscalations })}
                 </p>
               </div>
 
@@ -326,7 +337,7 @@ export default function Dashboard() {
                 className="dashboard-alert-action"
                 onClick={() => navigate('/escalation')}
               >
-                Review
+                {t('common.review')}
                 <DashboardIcon name="arrow" />
               </button>
             </div>
@@ -335,16 +346,16 @@ export default function Dashboard() {
           <section className="dashboard-section-card">
             <div className="dashboard-section-title-row">
               <div>
-                <span className="dashboard-section-kicker">Shortcuts</span>
-                <h2>Quick actions</h2>
+                <span className="dashboard-section-kicker">{t('dashboard.shortcuts')}</span>
+                <h2>{t('dashboard.quickActions')}</h2>
               </div>
-              <p>Jump directly to the tools you use most.</p>
+              <p>{t('dashboard.quickActionsNote')}</p>
             </div>
 
             <div className="dashboard-quick-actions">
               {QUICK_ACTIONS.map((action) => (
                 <button
-                  key={action.title}
+                  key={action.route}
                   type="button"
                   className={`dashboard-action-card dashboard-action-${action.tone}`}
                   onClick={() => navigate(action.route)}
@@ -354,8 +365,8 @@ export default function Dashboard() {
                   </span>
 
                   <span className="dashboard-action-copy">
-                    <strong>{action.title}</strong>
-                    <span>{action.description}</span>
+                    <strong>{t(action.title)}</strong>
+                    <span>{t(action.description)}</span>
                   </span>
 
                   <span className="dashboard-action-arrow">
@@ -370,8 +381,8 @@ export default function Dashboard() {
             <section className="dashboard-section-card dashboard-feed-card">
               <div className="dashboard-feed-header">
                 <div>
-                  <span className="dashboard-section-kicker">Updates</span>
-                  <h2>Recent notifications</h2>
+                  <span className="dashboard-section-kicker">{t('dashboard.updates')}</span>
+                  <h2>{t('dashboard.recentNotifications')}</h2>
                 </div>
 
                 <button
@@ -379,7 +390,7 @@ export default function Dashboard() {
                   className="dashboard-text-action"
                   onClick={() => navigate('/notifications')}
                 >
-                  View all
+                  {t('common.viewAll')}
                   <DashboardIcon name="arrow" />
                 </button>
               </div>
@@ -389,8 +400,8 @@ export default function Dashboard() {
                   <span className="dashboard-empty-icon">
                     <DashboardIcon name="notifications" />
                   </span>
-                  <strong>You&apos;re all caught up</strong>
-                  <p>No recent notifications.</p>
+                  <strong>{t('dashboard.caughtUp')}</strong>
+                  <p>{t('dashboard.noRecentNotifications')}</p>
                 </div>
               ) : (
                 <div className="dashboard-feed-list">
@@ -413,8 +424,8 @@ export default function Dashboard() {
             <section className="dashboard-section-card dashboard-feed-card">
               <div className="dashboard-feed-header">
                 <div>
-                  <span className="dashboard-section-kicker">Activity</span>
-                  <h2>{role === "manager" || role === "admin" ? "Recent activity" : "My recent activity"}</h2>
+                  <span className="dashboard-section-kicker">{t('dashboard.activity')}</span>
+                  <h2>{role === "manager" || role === "admin" ? t('dashboard.recentActivity') : t('dashboard.myRecentActivity')}</h2>
                 </div>
               </div>
 
@@ -423,8 +434,8 @@ export default function Dashboard() {
                   <span className="dashboard-empty-icon dashboard-empty-icon-secondary">
                     <DashboardIcon name="sparkle" />
                   </span>
-                  <strong>No activity yet</strong>
-                  <p>Recent account and system activity will appear here.</p>
+                  <strong>{t('dashboard.noActivity')}</strong>
+                  <p>{t('dashboard.noActivityNote')}</p>
                 </div>
               ) : (
                 <div className="dashboard-feed-list">

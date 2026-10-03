@@ -3,6 +3,7 @@ import PageHeader from '../components/PageHeader';
 import StatusBadge from '../components/StatusBadge';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../i18n/LanguageContext';
 
 function buildImageUrl(url) {
   if (!url) return '';
@@ -103,6 +104,7 @@ function AttachmentPreview({ url, type, label = 'Uploaded attachment' }) {
 const API_BASE_URL = 'https://group3jungle-house-production.up.railway.app';
 
 export default function Escalation() {
+  const { t, tOr } = useLanguage();
   const { user } = useAuth();
 
   const [items, setItems] = useState([]);
@@ -473,17 +475,15 @@ export default function Escalation() {
   return (
     <div>
       <PageHeader
-        title="Escalation"
-        subtitle="Handle weak AI answers through manual follow-up and review status tracking."
+        title={t('esc.title')}
+        subtitle={t('esc.subtitle')}
       />
 
       <section className="card-like top-gap-sm">
         <div className="row-between wrap-gap">
           <div>
-            <h3>Escalation Review</h3>
-            <p className="muted">
-              Pending questions need manual answers. Resolved questions have already been answered.
-            </p>
+            <h3>{t('esc.reviewTitle')}</h3>
+            <p className="muted">{t('esc.reviewNote')}</p>
           </div>
 
           <div className="row-gap escalation-top-actions">
@@ -496,7 +496,7 @@ export default function Escalation() {
                 setSelectedIds([]);
               }}
             >
-              Pending ({pendingItems.length})
+              {t('esc.tab.pending', { n: pendingItems.length })}
             </button>
 
             <button
@@ -508,7 +508,7 @@ export default function Escalation() {
                 setSelectedIds([]);
               }}
             >
-              Resolved ({resolvedItems.length})
+              {t('esc.tab.resolved', { n: resolvedItems.length })}
             </button>
 
             <button
@@ -520,7 +520,7 @@ export default function Escalation() {
                 setSelectedIds([]);
               }}
             >
-              Trash Bin ({trashItems.length})
+              {t('esc.tab.trash', { n: trashItems.length })}
             </button>
 
             {!deleteMode ? (
@@ -529,7 +529,7 @@ export default function Escalation() {
                 className="danger-btn"
                 onClick={startDeleteMode}
               >
-                Manage Delete
+                {t('esc.manageDelete')}
               </button>
             ) : (
               <button
@@ -537,7 +537,7 @@ export default function Escalation() {
                 className="secondary-btn"
                 onClick={cancelDeleteMode}
               >
-                Cancel Delete Mode
+                {t('esc.cancelDeleteMode')}
               </button>
             )}
           </div>
@@ -593,24 +593,16 @@ export default function Escalation() {
 
       {loading ? (
         <section className="card-like top-gap-sm">
-          <p className="muted">Loading escalations...</p>
+          <p className="muted">{t('esc.loading')}</p>
         </section>
       ) : filteredItems.length === 0 ? (
         <section className="card-like top-gap-sm">
           <h3>
-            {activeTab === 'pending'
-              ? 'No pending escalations'
-              : activeTab === 'resolved'
-                ? 'No resolved escalations'
-                : 'No deleted escalations'}
+            {t(`esc.empty.${activeTab === 'pending' || activeTab === 'resolved' ? activeTab : 'trash'}`)}
           </h3>
 
           <p className="muted">
-            {activeTab === 'pending'
-              ? 'Low-confidence AI questions will appear here for Team Lead or Manager review.'
-              : activeTab === 'resolved'
-                ? 'Resolved escalation questions will appear here after a manual answer is submitted.'
-                : 'Deleted escalation questions will appear here and can be restored when needed.'}
+            {t(`esc.emptyNote.${activeTab === 'pending' || activeTab === 'resolved' ? activeTab : 'trash'}`)}
           </p>
         </section>
       ) : (
@@ -662,7 +654,7 @@ export default function Escalation() {
                         className="danger-btn"
                         onClick={() => permanentDeleteEscalation(item.escalation_id)}
                       >
-                        Delete Forever
+                        {t('esc.deleteForever')}
                       </button>
                     </>
                   )}
@@ -677,7 +669,7 @@ export default function Escalation() {
                           onClick={() => approveEscalationAnswer(item.escalation_id)}
                           disabled={!!reviewActionLoading[item.escalation_id]}
                         >
-                          {reviewActionLoading[item.escalation_id] === 'approve' ? 'Approving...' : 'Approve'}
+                          {reviewActionLoading[item.escalation_id] === 'approve' ? t('esc.approving') : t('common.approve')}
                         </button>
 
                         <button
@@ -686,7 +678,7 @@ export default function Escalation() {
                           onClick={() => rejectEscalationAnswer(item.escalation_id)}
                           disabled={!!reviewActionLoading[item.escalation_id]}
                         >
-                          {reviewActionLoading[item.escalation_id] === 'reject' ? 'Rejecting...' : 'Reject'}
+                          {reviewActionLoading[item.escalation_id] === 'reject' ? t('esc.rejecting') : t('common.reject')}
                         </button>
                       </>
                     )}
@@ -816,7 +808,7 @@ export default function Escalation() {
                       className="primary-btn"
                       onClick={() => submitAnswer(item.escalation_id)}
                     >
-                      Submit Manual Answer
+                      {t('esc.submitAnswer')}
                     </button>
                   </div>
                 </>
@@ -828,7 +820,7 @@ export default function Escalation() {
                   </div>
 
                   <p className="muted small top-gap">
-                    Admin review: {item.review_status || 'pending'}
+                    {t('esc.adminReview')}: {tOr(`esc.status.${item.review_status || 'pending'}`, item.review_status || 'pending')}
                   </p>
 
                   {item.image_url ? (
@@ -914,7 +906,7 @@ export default function Escalation() {
                   onClick={closeBulkDeleteModal}
                   disabled={bulkDeleting}
                 >
-                  Cancel
+                  {t('common.cancel')}
                 </button>
 
                 <button
@@ -925,11 +917,11 @@ export default function Escalation() {
                 >
                   {bulkDeleting
                     ? activeTab === 'trash'
-                      ? 'Deleting...'
-                      : 'Moving...'
+                      ? t('esc.deleting')
+                      : t('esc.moving')
                     : activeTab === 'trash'
-                      ? 'Delete Forever'
-                      : 'Move to Trash Bin'}
+                      ? t('esc.deleteForever')
+                      : t('esc.moveToTrash')}
                 </button>
               </div>
             </div>

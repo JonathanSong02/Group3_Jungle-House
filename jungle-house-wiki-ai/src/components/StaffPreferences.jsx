@@ -1,8 +1,10 @@
 /* Staff presentation preferences: browser-only, per-user. No backend requests.
-   The language picker translates the staff navigation/settings UI only; AI/SOP
-   translations are intentionally left for the planned multilingual backend. */
+   The interface language is shared app-wide through LanguageContext (this
+   dialog is one more place to change it); appearance, contrast and accent stay
+   per-user here. AI answers and stored article content are never translated. */
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useLanguage } from '../i18n/LanguageContext';
 
 const PreferencesContext = createContext(null);
 const INITIAL = Object.freeze({ appearance: 'light', contrast: 'system', accent: 'forest', language: 'en' });
@@ -24,7 +26,7 @@ const translations = {
     light: 'Light', dark: 'Dark', system: 'System', contrast: 'Contrast', medium: 'Medium',
     increased: 'Increased', accent: 'Accent colour', forest: 'Forest', honey: 'Honey', ocean: 'Ocean',
     orchid: 'Orchid', language: 'Interface language', preview: 'Your preview', sampleTitle: 'Knowledge, beautifully organised.',
-    sampleDetail: 'A calmer space for every shift.', note: 'Language changes staff navigation and these settings only. AI responses, articles and other pages remain in their current language until multilingual support is implemented.',
+    sampleDetail: 'A calmer space for every shift.', note: 'Language changes menus, buttons and labels across the app. Articles, quiz content and AI answers stay in their original language.',
     saved: 'Saved on this browser for your account.', close: 'Close preferences', searchPlaceholder: 'Search your conversations…', noMatches: 'No matching conversations.', viewHistory: 'View detailed chat history', openSettings: 'Open workspace preferences',
   },
   zh: {
@@ -37,7 +39,7 @@ const translations = {
     dark: '深色', system: '跟随系统', contrast: '对比度', medium: '标准', increased: '增强',
     accent: '主题色', forest: '森林绿', honey: '蜂蜜金', ocean: '海洋蓝', orchid: '兰花紫',
     language: '界面语言', preview: '预览效果', sampleTitle: '让知识井然有序。', sampleDetail: '每个班次，都更从容。',
-    note: '目前仅翻译员工导航和此设置面板。AI 回复、文章及其他页面将在多语言后端完成后支持翻译。',
+    note: '语言设置会更改整个应用的菜单、按钮和标签。文章、测验内容及 AI 回答将保持原语言。',
     saved: '设置已在此浏览器中按账户保存。', close: '关闭设置', searchPlaceholder: '搜索您的对话…', noMatches: '未找到匹配的对话。', viewHistory: '查看详细聊天记录', openSettings: '打开工作空间设置',
   },
   ms: {
@@ -52,7 +54,7 @@ const translations = {
     medium: 'Sederhana', increased: 'Dipertingkat', accent: 'Warna tema', forest: 'Hutan',
     honey: 'Madu', ocean: 'Lautan', orchid: 'Orkid', language: 'Bahasa antara muka',
     preview: 'Pratonton anda', sampleTitle: 'Pengetahuan yang tersusun.', sampleDetail: 'Ruang lebih tenang untuk setiap syif.',
-    note: 'Buat masa ini, hanya navigasi kakitangan dan tetapan ini diterjemahkan. Jawapan AI, artikel dan halaman lain kekal dalam bahasa asal sehingga sokongan berbilang bahasa siap.',
+    note: 'Bahasa mengubah menu, butang dan label di seluruh aplikasi. Artikel, kandungan kuiz dan jawapan AI kekal dalam bahasa asal.',
     saved: 'Disimpan dalam pelayar ini untuk akaun anda.', close: 'Tutup tetapan',
     searchPlaceholder: 'Cari perbualan anda…', noMatches: 'Tiada perbualan sepadan.', viewHistory: 'Lihat sejarah sembang terperinci', openSettings: 'Buka tetapan ruang kerja',
   },
@@ -76,16 +78,19 @@ function readSettings(user) {
 }
 
 export function StaffPreferencesProvider({ user, children }) {
-  const [settings, setSettings] = useState(() => readSettings(user));
+  const [storedSettings, setSettings] = useState(() => readSettings(user));
+  const { language, setLanguage, t: appT } = useLanguage();
+  // Language comes from the shared LanguageContext; everything else is per-user.
+  const settings = useMemo(() => ({ ...storedSettings, language }), [storedSettings, language]);
   const [systemDark, setSystemDark] = useState(() =>
     typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches);
   const [systemContrast, setSystemContrast] = useState(() =>
     typeof window !== 'undefined' && window.matchMedia?.('(prefers-contrast: more)').matches);
 
   useEffect(() => {
-    try { localStorage.setItem(storageKey(user), JSON.stringify(settings)); }
+    try { localStorage.setItem(storageKey(user), JSON.stringify(storedSettings)); }
     catch { /* Blocked storage should not prevent settings being used in this tab. */ }
-  }, [settings, user]);
+  }, [storedSettings, user]);
 
   useEffect(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return undefined;
@@ -100,6 +105,7 @@ export function StaffPreferencesProvider({ user, children }) {
 
   const setPreference = (name, value) => {
     if (!Object.prototype.hasOwnProperty.call(VALID, name) || !VALID[name].includes(value)) return;
+    if (name === 'language') { setLanguage(value); return; }
     setSettings((current) => ({ ...current, [name]: value }));
   };
 
@@ -107,7 +113,8 @@ export function StaffPreferencesProvider({ user, children }) {
     ? (systemDark ? 'dark' : 'light') : settings.appearance;
   const effectiveContrast = settings.contrast === 'system'
     ? (systemContrast ? 'increased' : 'medium') : settings.contrast;
-  const t = (key) => translations[settings.language]?.[key] || translations.en[key] || key;
+  // Staff-specific labels first, then the shared app dictionary (nav.*, common.*, ...).
+  const t = (key) => translations[settings.language]?.[key] || translations.en[key] || appT(key);
   const contextValue = useMemo(() => ({ settings, setPreference, effectiveAppearance, effectiveContrast, t }),
     // settings captures the language as well as all other preferences.
     // eslint-disable-next-line react-hooks/exhaustive-deps

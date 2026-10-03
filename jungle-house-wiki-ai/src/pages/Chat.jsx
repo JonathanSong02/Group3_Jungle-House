@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api, { API_BASE_URL } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../i18n/LanguageContext';
 import { useStaffChat } from '../context/StaffChatContext';
 import '../styles/Chat.css';
 
@@ -948,7 +949,7 @@ function renderRichKnowledgeContent(text, fallbackLink = '') {
   return output;
 }
 
-function renderResponseMeta(message) {
+function renderResponseMeta(message, t) {
   if (message.sender !== 'ai') return null;
 
   const hasConfidence = message.confidence !== undefined && message.confidence !== null;
@@ -981,7 +982,7 @@ function renderResponseMeta(message) {
             border: '1px solid #dee2e6',
           }}
         >
-          Confidence: {confidencePercent}% {message.confidence_label ? `(${message.confidence_label})` : ''}
+          {t('chat.confidence')}: {confidencePercent}% {message.confidence_label ? `(${message.confidence_label})` : ''}
         </span>
       ) : null}
 
@@ -1001,7 +1002,7 @@ function renderResponseMeta(message) {
               fontWeight: 600,
             }}
           >
-            Source: {message.title || 'View article'} ↗
+            {t('chat.source')}: {message.title || t('chat.viewArticle')} ↗
           </Link>
         ) : (
           <span
@@ -1012,7 +1013,7 @@ function renderResponseMeta(message) {
               border: '1px solid #dee2e6',
             }}
           >
-            Source: {message.source}
+            {t('chat.source')}: {message.source}
           </span>
         )
       ) : null}
@@ -1027,7 +1028,7 @@ function renderResponseMeta(message) {
             color: '#b00020',
           }}
         >
-          {message.escalation_ready || message.escalation_required ? 'Escalation required' : 'Fallback'}
+          {message.escalation_ready || message.escalation_required ? t('chat.escalationRequired') : t('chat.fallback')}
         </span>
       ) : null}
     </div>
@@ -1487,6 +1488,7 @@ function ChatContent({ storageKeys }) {
   const staffMode = Boolean(staffChat);
   const publishStaffChat = staffChat?.publish;
   const { user } = useAuth();
+  const { t } = useLanguage();
   const firstName = String(user?.full_name || user?.name || 'there').trim().split(/\s+/)[0];
   const staffInputRef = useRef(null);
   const [activeTab, setActiveTab] = useState('ask');
@@ -2063,7 +2065,7 @@ const removeSelectedImage = () => {
         className={`message-bubble ${message.sender === 'user' ? 'user' : 'ai'}`}
       >
         <strong className="ai-chat-sender-label">{message.sender === 'user' ? 'You' : 'AI'}</strong>
-        {renderResponseMeta(message)}
+        {renderResponseMeta(message, t)}
         {renderKnowledgeLink(message.link || message.article_link)}
 
         {message.sender === 'ai' &&
@@ -2368,14 +2370,14 @@ const removeSelectedImage = () => {
     return (
       <aside className="chat-recents-panel">
         <div className="chat-recents-header">
-          <h3>Conversations</h3>
+          <h3>{t('chat.conversations')}</h3>
 
           <button
             type="button"
             className="secondary-btn"
             onClick={handleNewChat}
           >
-            New
+            {t('chat.new')}
           </button>
         </div>
 
@@ -2400,7 +2402,7 @@ const removeSelectedImage = () => {
                 type="button"
                 className="chat-recent-delete"
                 onClick={() => handleDeleteSession(session.id, session.title)}
-                title="Delete chat"
+                title={t('chat.deleteChat')}
               >
                 ×
               </button>
@@ -2419,22 +2421,22 @@ const removeSelectedImage = () => {
         <button
           type="button"
           className="mobile-ai-chat-menu-overlay"
-          aria-label="Close AI chat menu"
+          aria-label={t('chat.closeMenu')}
           onClick={() => setMobileChatMenuOpen(false)}
         />
 
-        <aside className="mobile-ai-chat-menu" aria-label="AI chat mobile menu">
+        <aside className="mobile-ai-chat-menu" aria-label={t('chat.aiChatMenu')}>
           <div className="mobile-ai-chat-menu-header">
             <div>
-              <p className="eyebrow">AI Chat</p>
-              <h3>Chat Menu</h3>
+              <p className="eyebrow">{t('chat.title')}</p>
+              <h3>{t('chat.menuTitle')}</h3>
             </div>
 
             <button
               type="button"
               className="mobile-ai-chat-close-btn"
               onClick={() => setMobileChatMenuOpen(false)}
-              aria-label="Close AI chat menu"
+              aria-label={t('chat.closeMenu')}
             >
               ×
             </button>
@@ -2446,7 +2448,7 @@ const removeSelectedImage = () => {
               className={activeTab === 'ask' ? 'primary-btn' : 'secondary-btn'}
               onClick={() => handleTabChange('ask')}
             >
-              Ask Question
+              {t('chat.askTab')}
             </button>
 
             <button
@@ -2454,7 +2456,7 @@ const removeSelectedImage = () => {
               className={activeTab === 'history' ? 'primary-btn' : 'secondary-btn'}
               onClick={() => handleTabChange('history')}
             >
-              Chat History
+              {t('chat.historyTab')}
             </button>
 
             <button
@@ -2462,14 +2464,14 @@ const removeSelectedImage = () => {
               className="secondary-btn mobile-ai-chat-new-btn"
               onClick={handleNewChat}
             >
-              + New Chat
+              {t('chat.newChatPlus')}
             </button>
           </div>
 
           <div className="mobile-ai-chat-recents">
             <div className="mobile-ai-chat-recents-title">
-              <h4>Recents</h4>
-              <span>{chatSessions.length} chat{chatSessions.length === 1 ? '' : 's'}</span>
+              <h4>{t('chat.recents')}</h4>
+              <span>{t(chatSessions.length === 1 ? 'chat.chatsOne' : 'chat.chatsMany', { n: chatSessions.length })}</span>
             </div>
 
             <div className="mobile-ai-chat-recents-list">
@@ -2496,7 +2498,7 @@ const removeSelectedImage = () => {
                       setMobileChatMenuOpen(false);
                       handleDeleteSession(session.id, session.title);
                     }}
-                    title="Delete chat"
+                    title={t('chat.deleteChat')}
                   >
                     ×
                   </button>
@@ -2515,7 +2517,7 @@ const removeSelectedImage = () => {
         <section className="card-like chat-panel ai-chat-panel">
           <div className="ai-chat-header">
             <div>
-              <h3>{activeSession?.title || 'New Chat'}</h3>
+              <h3>{activeSession?.title || t('chat.newChat')}</h3>
             </div>
 
             <button
@@ -2523,21 +2525,21 @@ const removeSelectedImage = () => {
               className="secondary-btn danger-btn"
               onClick={handleClearCurrentChat}
             >
-              Clear Chat
+              {t('chat.clearChat')}
             </button>
           </div>
 
           <div className="chat-messages ai-chat-messages">
             {messages.map((message) => renderMessageContent(message))}
 
-            {loading ? <p className="chat-loading">AI is generating a response...</p> : null}
+            {loading ? <p className="chat-loading">{t('chat.generating')}</p> : null}
             <div ref={messagesEndRef} />
           </div>
 
           {selectedImage ? (
             <div className="chat-upload-preview">
               {selectedImagePreview ? (
-                <img src={selectedImagePreview} alt="Selected upload" />
+                <img src={selectedImagePreview} alt={t('chat.selectedFile')} />
               ) : (
                 <div
                   style={{
@@ -2559,7 +2561,7 @@ const removeSelectedImage = () => {
 
               <div>
                 <p style={{ margin: '0 0 6px', fontWeight: 700 }}>
-                  {selectedImage?.name || 'Selected file'}
+                  {selectedImage?.name || t('chat.selectedFile')}
                 </p>
 
                 <p style={{ margin: '0 0 6px', fontSize: '12px', color: '#7a5c00' }}>
@@ -2567,7 +2569,7 @@ const removeSelectedImage = () => {
                 </p>
 
                 <button type="button" onClick={removeSelectedImage}>
-                  Remove
+                  {t('common.remove')}
                 </button>
               </div>
             </div>
@@ -2578,7 +2580,7 @@ const removeSelectedImage = () => {
               value={question}
               onChange={(event) => setQuestion(event.target.value)}
               onPaste={handleQuestionPaste}
-              placeholder="Ask product knowledge, SOP, sales, or paste/upload a photo..."
+              placeholder={t('chat.placeholder')}
               onKeyDown={(event) => {
                 // While an IME (e.g. Pinyin for Chinese) composition is in
                 // progress, Enter confirms the selected candidate rather
@@ -2603,7 +2605,7 @@ const removeSelectedImage = () => {
 
             <label className="chat-image-upload-btn ai-chat-tool-btn">
               <span>📷</span>
-              <span>Camera</span>
+              <span>{t('chat.camera')}</span>
               <input
                 type="file"
                 accept="image/*"
@@ -2615,7 +2617,7 @@ const removeSelectedImage = () => {
 
             <label className="chat-image-upload-btn ai-chat-tool-btn">
               <span>📎</span>
-              <span>File</span>
+              <span>{t('chat.file')}</span>
               <input
                 type="file"
                 accept="image/*,.pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -2629,10 +2631,10 @@ const removeSelectedImage = () => {
                 type="button"
                 className="primary-btn ai-chat-send-btn ai-chat-stop-btn"
                 onClick={handleStopGeneration}
-                title="Stop generating"
-                aria-label="Stop generating"
+                title={t('chat.stopGenerating')}
+                aria-label={t('chat.stopGenerating')}
               >
-                ■ Stop
+                ■ {t('chat.stop')}
               </button>
             ) : (
               <button
@@ -2640,7 +2642,7 @@ const removeSelectedImage = () => {
                 onClick={handleSend}
                 disabled={!question.trim() && !selectedImage}
               >
-                Send
+                {t('chat.send')}
               </button>
             )}
           </div>
@@ -2655,46 +2657,47 @@ const removeSelectedImage = () => {
   // SOP rendering and error handlers above are reused without API changes.
   const renderStaffAskQuestion = () => {
     const hasConversation = messages.some((message) => message.sender === 'user');
+    // The prompt text is what gets sent to the AI, so it stays as written; only the card labels are translated.
     const starters = [
-      { icon: '▤', title: 'Find SOPs', detail: 'Step-by-step procedures', prompt: 'Find the SOP for outlet opening' },
-      { icon: '◇', title: 'Product information', detail: 'Products and shelf life', prompt: 'Where can I find product information and shelf life?' },
-      { icon: '♧', title: 'Sales & policies', detail: 'Sales and customer guidance', prompt: 'Where can I find the return and refund policy?' },
-      { icon: '✳', title: 'Troubleshooting', detail: 'Help with common issues', prompt: 'Find troubleshooting SOPs for POS and receipt printers' },
+      { icon: '▤', title: t('chat.starter.sop'), detail: t('chat.starter.sopDetail'), prompt: 'Find the SOP for outlet opening' },
+      { icon: '◇', title: t('chat.starter.product'), detail: t('chat.starter.productDetail'), prompt: 'Where can I find product information and shelf life?' },
+      { icon: '♧', title: t('chat.starter.sales'), detail: t('chat.starter.salesDetail'), prompt: 'Where can I find the return and refund policy?' },
+      { icon: '✳', title: t('chat.starter.trouble'), detail: t('chat.starter.troubleDetail'), prompt: 'Find troubleshooting SOPs for POS and receipt printers' },
     ];
     return (
       <div className={`staff-chat-experience ${hasConversation ? 'has-conversation' : 'staff-chat-home'}`}>
         <div className="staff-chat-toolbar">
-          <div className="staff-chat-toolbar-title"><span className="staff-chat-mode-dot"/> <span>{hasConversation ? (activeSession?.title || 'Conversation') : 'AI Assistant'}</span></div>
+          <div className="staff-chat-toolbar-title"><span className="staff-chat-mode-dot"/> <span>{hasConversation ? (activeSession?.title || t('chat.conversation')) : t('chat.aiAssistant')}</span></div>
           <div className="staff-chat-toolbar-actions">
-            <button type="button" onClick={() => handleTabChange('history')}>Chat history</button>
-            {hasConversation && <button type="button" onClick={handleClearCurrentChat}>Clear chat</button>}
+            <button type="button" onClick={() => handleTabChange('history')}>{t('chat.historyLink')}</button>
+            {hasConversation && <button type="button" onClick={handleClearCurrentChat}>{t('chat.clearChatLower')}</button>}
           </div>
         </div>
-        <div className="staff-chat-scroll" role="log" aria-label="AI conversation" aria-live="polite">
+        <div className="staff-chat-scroll" role="log" aria-label={t('chat.conversationLog')} aria-live="polite">
           {!hasConversation ? (
             <div className="staff-chat-welcome">
               <span className="staff-welcome-icon" aria-hidden="true">✦</span>
-              <h1>Good to see you, {firstName}.</h1>
-              <p>What can I help you find today?</p>
+              <h1>{t('chat.goodToSeeYou', { name: firstName })}</h1>
+              <p>{t('chat.whatCanIHelp')}</p>
             </div>
           ) : (
             <div className="staff-chat-transcript">
               {messages.filter((message) => !(message.id === 1 && message.sender === 'ai' && message.text === starterMessages[0].text)).map((message) => renderMessageContent(message))}
-              {loading && <div className="staff-thinking" role="status"><span className="staff-pulse"/> Finding the best answer for you…</div>}
+              {loading && <div className="staff-thinking" role="status"><span className="staff-pulse"/> {t('chat.thinking')}</div>}
               <div ref={messagesEndRef}/>
             </div>
           )}
         </div>
         <div className="staff-chat-bottom">
-          <div className="staff-chat-composer" role="group" aria-label="Ask the knowledge assistant">
+          <div className="staff-chat-composer" role="group" aria-label={t('chat.askAssistantGroup')}>
             {selectedImage && <div className="staff-attachment-preview">
-              {selectedImagePreview ? <img src={selectedImagePreview} alt="Selected attachment"/> : <span className="staff-file-icon">FILE</span>}
-              <div><strong>{selectedImage.name || 'Attachment'}</strong><small>{selectedImage.type || 'Selected file'}</small></div>
-              <button type="button" onClick={removeSelectedImage} aria-label="Remove attachment">×</button>
+              {selectedImagePreview ? <img src={selectedImagePreview} alt={t('chat.selectedFile')}/> : <span className="staff-file-icon">FILE</span>}
+              <div><strong>{selectedImage.name || t('chat.attachFile')}</strong><small>{selectedImage.type || t('chat.selectedFile')}</small></div>
+              <button type="button" onClick={removeSelectedImage} aria-label={t('chat.removeAttachment')}>×</button>
             </div>}
             <textarea ref={staffInputRef} rows={2} value={question} onChange={(event) => setQuestion(event.target.value)}
-              onPaste={handleQuestionPaste} placeholder="Ask anything about Jungle House…"
-              aria-label="Your question"
+              onPaste={handleQuestionPaste} placeholder={t('chat.placeholderStaff')}
+              aria-label={t('chat.yourQuestion')}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
                   event.preventDefault();
@@ -2708,16 +2711,16 @@ const removeSelectedImage = () => {
               }} />
             <div className="staff-composer-actions">
               <div className="staff-upload-actions">
-                <label className="staff-composer-upload" title="Upload photo or document"><span aria-hidden="true">＋</span><span>Attach file</span><input type="file" accept="image/*,.pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={handleImageSelect} hidden /></label>
-                <label className="staff-composer-upload staff-camera-action" title="Take a photo"><span aria-hidden="true">◎</span><span>Camera</span><input type="file" accept="image/*" capture="environment" onChange={handleImageSelect} hidden /></label>
-                <span className="staff-knowledge-source"><span aria-hidden="true">▤</span> Knowledge Base</span>
+                <label className="staff-composer-upload" title={t('chat.uploadTitle')}><span aria-hidden="true">＋</span><span>{t('chat.attachFile')}</span><input type="file" accept="image/*,.pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={handleImageSelect} hidden /></label>
+                <label className="staff-composer-upload staff-camera-action" title={t('chat.takePhoto')}><span aria-hidden="true">◎</span><span>{t('chat.camera')}</span><input type="file" accept="image/*" capture="environment" onChange={handleImageSelect} hidden /></label>
+                <span className="staff-knowledge-source"><span aria-hidden="true">▤</span> {t('chat.knowledgeBaseSource')}</span>
               </div>
               {loading ? (
                 <button
                   className="staff-send-button staff-stop-button"
                   type="button"
-                  title="Stop generating"
-                  aria-label="Stop generating"
+                  title={t('chat.stopGenerating')}
+                  aria-label={t('chat.stopGenerating')}
                   onClick={handleStopGeneration}
                 >
                   ■
@@ -2726,8 +2729,8 @@ const removeSelectedImage = () => {
                 <button
                   className="staff-send-button"
                   type="button"
-                  title="Send message"
-                  aria-label="Send message"
+                  title={t('chat.sendMessage')}
+                  aria-label={t('chat.sendMessage')}
                   onClick={handleSend}
                   disabled={!question.trim() && !selectedImage}
                 >
@@ -2736,10 +2739,10 @@ const removeSelectedImage = () => {
               )}
             </div>
           </div>
-          {!hasConversation && <div className="staff-suggested-prompts" aria-label="Suggested questions">
+          {!hasConversation && <div className="staff-suggested-prompts" aria-label={t('chat.suggestedQuestions')}>
             {starters.map((item) => <button key={item.title} type="button" className="staff-prompt-card" onClick={() => { setQuestion(item.prompt); staffInputRef.current?.focus(); }}><span className="staff-prompt-icon">{item.icon}</span><strong>{item.title}</strong><small>{item.detail}</small><span className="staff-prompt-arrow" aria-hidden="true">↗</span></button>)}
           </div>}
-          <p className="staff-ai-disclaimer">Answers use the Jungle House knowledge base. Check important procedures with your supervisor.</p>
+          <p className="staff-ai-disclaimer">{t('chat.disclaimer')}</p>
         </div>
       </div>
     );
@@ -2750,10 +2753,8 @@ const removeSelectedImage = () => {
       <section className="card-like ai-chat-history-page">
         <div className="row-between wrap-gap" style={{ marginBottom: '1rem' }}>
           <div>
-            <h3>Chat History</h3>
-            <p className="muted">
-              Review previous question-and-answer sessions and reuse past questions.
-            </p>
+            <h3>{t('chat.historyTitle')}</h3>
+            <p className="muted">{t('chat.historyIntro')}</p>
           </div>
 
           <button
@@ -2762,22 +2763,22 @@ const removeSelectedImage = () => {
             onClick={handleClearHistory}
             disabled={history.length === 0}
           >
-            Clear History
+            {t('chat.clearHistory')}
           </button>
         </div>
 
         <div style={{ marginBottom: '1rem' }}>
-          <label className="form-label">Search History</label>
+          <label className="form-label">{t('chat.searchHistory')}</label>
           <input
             type="text"
-            placeholder="Search previous questions, answers, category, or source..."
+            placeholder={t('chat.searchHistoryPlaceholder')}
             value={historySearch}
             onChange={(event) => setHistorySearch(event.target.value)}
           />
         </div>
 
         {filteredHistory.length === 0 ? (
-          <p className="muted">No chat history found yet.</p>
+          <p className="muted">{t('chat.noHistory')}</p>
         ) : (
           <div className="stack-gap">
             {filteredHistory.map((item) => (
@@ -2787,7 +2788,7 @@ const removeSelectedImage = () => {
                     <p className="eyebrow">{item.created_at}</p>
                     <h3>{item.question}</h3>
                     <p className="muted">
-                      Category: {item.category || '-'} · Source: {item.source || '-'} · Confidence:{' '}
+                      {t('chat.category')}: {item.category || '-'} · {t('chat.source')}: {item.source || '-'} · {t('chat.confidence')}:{' '}
                       {Math.round(Number(item.confidence || 0) * 100)}%
                     </p>
                   </div>
@@ -2798,7 +2799,7 @@ const removeSelectedImage = () => {
                       className="secondary-btn"
                       onClick={() => handleReuseQuestion(item.question)}
                     >
-                      Ask Again
+                      {t('chat.askAgain')}
                     </button>
 
                     <button
@@ -2806,7 +2807,7 @@ const removeSelectedImage = () => {
                       className="secondary-btn danger-btn"
                       onClick={() => handleDeleteHistory(item.id)}
                     >
-                      Delete
+                      {t('common.delete')}
                     </button>
                   </div>
                 </div>
@@ -2822,14 +2823,14 @@ const removeSelectedImage = () => {
                       color: '#b00020',
                     }}
                   >
-                    This question required escalation or review.
+                    {t('chat.escalationNote')}
                   </p>
                 ) : null}
 
                 <div style={{ marginTop: '1rem' }}>
-                  <h4>AI Answer</h4>
+                  <h4>{t('chat.aiAnswer')}</h4>
                   <p className="muted" style={{ whiteSpace: 'pre-wrap' }}>
-                    {item.answer || 'No answer saved.'}
+                    {item.answer || t('chat.noAnswerSaved')}
                   </p>
                 </div>
               </article>
@@ -2845,6 +2846,27 @@ const removeSelectedImage = () => {
 
     const isDangerAction =
       confirmModal.type === 'delete-session' || confirmModal.type === 'clear-history';
+    const modalText = {
+      'delete-session': {
+        title: t('chat.modal.deleteTitle'),
+        message: t('chat.modal.deleteMessage', { title: confirmModal.sessionTitle || t('chat.modal.thisChat') }),
+        confirm: t('common.delete'),
+      },
+      'clear-current-chat': {
+        title: t('chat.modal.clearTitle'),
+        message: t('chat.modal.clearMessage'),
+        confirm: t('common.confirm'),
+      },
+      'clear-history': {
+        title: t('chat.modal.clearHistoryTitle'),
+        message: t('chat.modal.clearHistoryMessage'),
+        confirm: t('common.clear'),
+      },
+    }[confirmModal.type] || {
+      title: confirmModal.title,
+      message: confirmModal.message,
+      confirm: confirmModal.confirmText,
+    };
 
     return (
       <div
@@ -2884,7 +2906,7 @@ const removeSelectedImage = () => {
                 fontSize: '1.35rem',
               }}
             >
-              {confirmModal.title}
+              {modalText.title}
             </h3>
 
             <p
@@ -2894,7 +2916,7 @@ const removeSelectedImage = () => {
                 lineHeight: 1.6,
               }}
             >
-              {confirmModal.message}
+              {modalText.message}
             </p>
           </div>
 
@@ -2911,7 +2933,7 @@ const removeSelectedImage = () => {
               className="secondary-btn"
               onClick={closeConfirmModal}
             >
-              Cancel
+              {t('common.cancel')}
             </button>
 
             <button
@@ -2919,7 +2941,7 @@ const removeSelectedImage = () => {
               className={isDangerAction ? 'secondary-btn danger-btn' : 'primary-btn'}
               onClick={handleConfirmModalAction}
             >
-              {confirmModal.confirmText}
+              {modalText.confirm}
             </button>
           </div>
         </div>
@@ -2929,26 +2951,26 @@ const removeSelectedImage = () => {
 
   return staffMode ? (
     <div className="staff-chat-page">
-      {activeTab === 'ask' ? renderStaffAskQuestion() : <div className="staff-history-wrap"><div className="staff-history-top"><button type="button" onClick={() => handleTabChange('ask')}>← Back to chat</button><h1>Chat history</h1></div>{renderChatHistory()}</div>}
-      {previewImage && <div className="staff-image-overlay" role="dialog" aria-modal="true" aria-label="Image preview" onClick={() => setPreviewImage(null)}><button type="button" onClick={() => setPreviewImage(null)} aria-label="Close image preview">×</button><img src={previewImage} alt="Attachment preview" onClick={(event) => event.stopPropagation()}/></div>}
+      {activeTab === 'ask' ? renderStaffAskQuestion() : <div className="staff-history-wrap"><div className="staff-history-top"><button type="button" onClick={() => handleTabChange('ask')}>{t('chat.backToChat')}</button><h1>{t('chat.historyTab')}</h1></div>{renderChatHistory()}</div>}
+      {previewImage && <div className="staff-image-overlay" role="dialog" aria-modal="true" aria-label={t('chat.previewImage')} onClick={() => setPreviewImage(null)}><button type="button" onClick={() => setPreviewImage(null)} aria-label={t('chat.closePreview')}>×</button><img src={previewImage} alt="Attachment preview" onClick={(event) => event.stopPropagation()}/></div>}
       {renderConfirmModal()}
     </div>
   ) : (
     <div className="ai-chat-page">
       <div className="ai-chat-top-row">
         <div className="ai-chat-page-heading">
-          <span className="ai-chat-page-kicker">Knowledge assistant</span>
-          <h1>AI Chat</h1>
-          <p>Ask about Jungle House SOPs, products, training, and daily operations.</p>
+          <span className="ai-chat-page-kicker">{t('chat.kicker')}</span>
+          <h1>{t('chat.title')}</h1>
+          <p>{t('chat.subtitle')}</p>
         </div>
 
-        <div className="tab-row ai-chat-tabs" aria-label="AI chat sections">
+        <div className="tab-row ai-chat-tabs" aria-label={t('chat.title')}>
           <button
             type="button"
             className={activeTab === 'ask' ? 'primary-btn' : 'secondary-btn'}
             onClick={() => handleTabChange('ask')}
           >
-            Ask Question
+            {t('chat.askTab')}
           </button>
 
           <button
@@ -2956,7 +2978,7 @@ const removeSelectedImage = () => {
             className={activeTab === 'history' ? 'primary-btn' : 'secondary-btn'}
             onClick={() => handleTabChange('history')}
           >
-            Chat History
+            {t('chat.historyTab')}
           </button>
         </div>
 
@@ -2964,9 +2986,9 @@ const removeSelectedImage = () => {
           type="button"
           className="mobile-ai-chat-menu-btn"
           onClick={() => setMobileChatMenuOpen(true)}
-          aria-label="Open AI chat menu"
+          aria-label={t('chat.openMenu')}
         >
-          ☰ Menu
+          {t('chat.menu')}
         </button>
       </div>
 

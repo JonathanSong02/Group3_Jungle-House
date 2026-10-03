@@ -3,12 +3,14 @@ import { Link, useNavigate } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
 import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
+import { useLanguage } from '../../i18n/LanguageContext';
 
 const CATEGORIES = ['All', 'SOP', 'PRODUCT', 'SALES', 'Training', 'Notice'];
 
 export default function ContentManagement() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { t } = useLanguage();
   const currentUserId = user?.user_id || user?.id || null;
 
   const [articleList, setArticleList] = useState([]);
@@ -235,13 +237,13 @@ export default function ContentManagement() {
     <div className="cm-page">
       <div className="cm-page-heading">
         <PageHeader
-          title="Content Management"
-          subtitle="Manage knowledge articles."
+          title={t('nav.contentManagement')}
+          subtitle={t('cm.subtitle')}
         />
 
         <Link to="/admin/content/add" className="cm-add-btn">
           <span aria-hidden="true">+</span>
-          Add Article
+          {t('kb.newArticle')}
         </Link>
       </div>
 
@@ -297,8 +299,8 @@ export default function ContentManagement() {
               type="search"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search articles"
-              aria-label="Search articles"
+              placeholder={t('kb.searchPlaceholder')}
+              aria-label={t('kb.searchArticles')}
             />
 
             <select
@@ -394,7 +396,7 @@ export default function ContentManagement() {
 
             {activeTab === 'active' ? (
               <Link to="/admin/content/add" className="cm-btn primary">
-                Add Article
+                {t('kb.newArticle')}
               </Link>
             ) : null}
           </div>
@@ -476,7 +478,7 @@ export default function ContentManagement() {
                                   navigate(`/admin/content/edit/${article.article_id}`)
                                 }
                               >
-                                Edit
+                                {t('common.edit')}
                               </button>
 
                               <button
@@ -508,7 +510,7 @@ export default function ContentManagement() {
                                   permanentDeleteArticle(article.article_id)
                                 }
                               >
-                                Delete
+                                {t('common.delete')}
                               </button>
                             </>
                           )}
