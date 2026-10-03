@@ -87,7 +87,15 @@ export default function ResetPassword() {
       setTokenValid(false);
       setTimeout(() => navigate('/login', { replace: true }), 1600);
     } catch (requestError) {
+      const status = requestError.response?.status;
       setError(requestError.response?.data?.message || 'Unable to reset the password.');
+
+      // If the server says the token is invalid, expired, already used, or
+      // no longer eligible, stop showing the password form and offer a fresh
+      // reset link instead. Transient server errors keep the form available.
+      if ([400, 403, 409].includes(status)) {
+        setTokenValid(false);
+      }
     } finally {
       setLoading(false);
     }

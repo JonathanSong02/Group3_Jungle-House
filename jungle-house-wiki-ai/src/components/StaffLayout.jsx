@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { StaffChatProvider, useStaffChat } from '../context/StaffChatContext';
-import FloatingAIChat from './FloatingAIChat';
 import { StaffPreferencesDialog, StaffPreferencesProvider, useStaffPreferences } from './StaffPreferences';
 
 function Symbol({ name, size = 20 }) {
@@ -40,14 +39,12 @@ const staffLinks = [
   { to: '/notifications', text: 'Notifications', icon: 'bell' },
 ];
 
-// Keep navigation roles in sync with App.jsx; backend and RoleRoute remain
-// responsible for actual authorisation, not whether a sidebar link is visible.
 const managementLinks = [
   { to: '/dashboard', text: 'Dashboard', icon: 'dashboard', roles: ['teamlead'] },
   { to: '/admin/dashboard', text: 'Management Dashboard', icon: 'dashboard', roles: ['manager', 'admin'] },
   { to: '/admin/content', text: 'Content Management', icon: 'content', roles: ['teamlead', 'manager', 'admin'] },
   { to: '/admin/quiz-management', text: 'Quiz Management', icon: 'quiz', roles: ['teamlead', 'manager', 'admin'] },
-  { to: '/admin/review', text: 'Review Management', icon: 'review', roles: ['teamlead', 'manager', 'admin'] },
+  { to: '/admin/review', text: 'Review Management', icon: 'review', roles: ['manager', 'admin'] },
   { to: '/admin/users', text: 'User Management', icon: 'users', roles: ['teamlead', 'manager', 'admin'] },
   { to: '/admin/ai-settings', text: 'AI Settings', icon: 'settings', roles: ['manager', 'admin'] },
   { to: '/admin/notion-sync', text: 'Notion Sync', icon: 'sync', roles: ['manager', 'admin'] },
@@ -122,13 +119,7 @@ function StaffShell() {
               <div className="staff-primary-links staff-management-links" role="group" aria-label="Management tools">
                 <div className="staff-recent-header" aria-hidden="true"><span>Management</span></div>
                 {visibleManagementLinks.map((link) => (
-                  <NavLink
-                    key={link.to}
-                    to={link.to}
-                    title={link.text}
-                    onClick={() => setMobileOpen(false)}
-                    className={({ isActive }) => `staff-nav-link ${isActive ? 'active' : ''}`}
-                  >
+                  <NavLink key={link.to} to={link.to} title={link.text} onClick={() => setMobileOpen(false)} className={({ isActive }) => `staff-nav-link ${isActive ? 'active' : ''}`}>
                     <Symbol name={link.icon}/><span>{link.text}</span>
                   </NavLink>
                 ))}
@@ -150,7 +141,6 @@ function StaffShell() {
         <header className="staff-topbar"><button type="button" className="staff-icon-button staff-hamburger" onClick={() => setMobileOpen(true)} aria-label="Open navigation"><Symbol name="menu"/></button><div className="staff-topbar-label"><Symbol name="leaf" size={19}/><span>Jungle House AI</span><small>{t('workspace')}</small></div><div className="staff-topbar-actions"><button type="button" className="staff-icon-button jh-preferences-top-trigger" title={t('settings')} aria-label={t('openSettings')} onClick={() => setPreferencesOpen(true)}><Symbol name="more" size={20}/></button><NavLink to="/notifications" aria-label="Notifications" title="Notifications" className="staff-icon-button"><Symbol name="bell" size={20}/></NavLink><NavLink to="/profile" className="staff-avatar staff-avatar-top" aria-label={`My profile: ${fullName}`} title={fullName}>{initial}</NavLink></div></header>
         <main className={`staff-content ${location.pathname === '/chat' ? 'staff-content-chat' : ''}`} id="staff-content"><Outlet context={{ firstName }}/></main>
       </div>
-      {location.pathname !== '/chat' && <FloatingAIChat />}
       {preferencesOpen && <StaffPreferencesDialog onClose={closePreferences} />}
       {searchOpen && <div className="staff-search-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSearchOpen(false); }}><section className="staff-search-dialog" role="dialog" aria-modal="true" aria-label="Search conversations"><div className="staff-search-bar"><Symbol name="search"/><input autoFocus aria-label="Search chats" placeholder={t('searchPlaceholder')} value={search} onChange={(event) => setSearch(event.target.value)}/><button type="button" className="staff-icon-button" aria-label="Close search" onClick={() => setSearchOpen(false)}><Symbol name="close"/></button></div><div className="staff-search-results">{visibleSessions.length ? visibleSessions.map((item) => <button key={item.id} type="button" onClick={() => chooseChat(item.id)}><Symbol name="chat" size={18}/><span>{item.title}</span><small>{item.updated_at}</small></button>) : <p>{t('noMatches')}</p>}</div><button type="button" className="staff-search-history" onClick={openHistory}>{t('viewHistory')} →</button></section></div>}
     </div>

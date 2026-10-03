@@ -23,12 +23,21 @@ export default function ForgotPassword() {
         response.data?.message ||
           'If this email belongs to an eligible account, a password reset link will be sent shortly.'
       );
-    } catch {
-      // Keep the response generic so the page does not reveal account existence.
-      console.error('FORGOT PASSWORD: Request failed.');
-      setMessage(
-        'If this email belongs to an eligible account, a password reset link will be sent shortly.'
-      );
+    } catch (requestError) {
+      const data = requestError.response?.data || {};
+
+      if (data.code === 'PASSWORD_RECOVERY_UNAVAILABLE') {
+        setError(
+          data.message ||
+            'Password recovery email is not configured yet. Please contact your Manager.'
+        );
+      } else {
+        // Keep the response generic so the page does not reveal account existence.
+        console.error('FORGOT PASSWORD: Request failed.');
+        setMessage(
+          'If this email belongs to an eligible account, a password reset link will be sent shortly.'
+        );
+      }
     } finally {
       setLoading(false);
     }

@@ -1797,6 +1797,29 @@ def allowed_domain_message():
     return f"Please register using an approved staff email domain: {readable_domains}."
 
 
+def password_recovery_email_is_configured():
+    """Return True only when usable SMTP credentials are configured."""
+    smtp_user = os.getenv("SMTP_USER", "").strip()
+    smtp_password = os.getenv("SMTP_PASSWORD", "").strip()
+    smtp_from = os.getenv("SMTP_FROM_EMAIL", smtp_user).strip()
+
+    values = (smtp_user, smtp_password, smtp_from)
+    if not all(values):
+        return False
+
+    placeholder_markers = (
+        "YOUR_",
+        "CHANGE_ME",
+        "REPLACE_ME",
+        "EXAMPLE",
+    )
+
+    return not any(
+        str(value).upper().startswith(placeholder_markers)
+        for value in values
+    )
+
+
 def send_email_safe(to_email, subject, body):
     """
     Optional email notification helper.
@@ -4581,11 +4604,10 @@ def register():
 def forgot_password():
     # Email-based recovery is still supported only where the mailbox is real.
     # Do not simulate delivery or silently issue an unusable reset token.
-    if (PRESENTATION_DEMO_MODE or not os.getenv("SMTP_USER", "").strip()
-            or not os.getenv("SMTP_PASSWORD", "").strip()):
+    if PRESENTATION_DEMO_MODE or not password_recovery_email_is_configured():
         return jsonify({
             "code": "PASSWORD_RECOVERY_UNAVAILABLE",
-            "message": "Password recovery is currently unavailable. Please contact your Manager."
+            "message": "Password recovery email is not configured yet. Please contact your Manager."
         }), 503
     data = request.get_json(silent=True) or {}
     email = str(data.get("email", "")).strip().lower()
