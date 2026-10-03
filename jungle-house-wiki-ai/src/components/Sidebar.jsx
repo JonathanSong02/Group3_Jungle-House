@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../context/LanguageContext';
 
 const SHOW_AI_SETTINGS = true;
 
@@ -178,6 +179,7 @@ function SidebarLogo() {
 
 export default function Sidebar() {
   const { user, logout } = useAuth();
+  const { language, setLanguage, t, languages } = useLanguage();
   const navigate = useNavigate();
   const role = user?.role;
   const normalizedRole = String(role || '').toLowerCase().replace(/[\s_-]/g, '');
@@ -312,36 +314,36 @@ export default function Sidebar() {
             <nav className="sidebar-nav">
               {(isStaff || isTeamLead) && (
                 <>
-                  <div className="sidebar-section-label">Staff Workspace</div>
+                  <div className="sidebar-section-label">{t('nav.staffWorkspace')}</div>
 
                   <NavLink className={linkClass} to="/dashboard" onClick={closeMobileAfterClick}>
                     <SidebarIcon name="dashboard" />
-                    <span className="sidebar-link-text">Dashboard</span>
+                    <span className="sidebar-link-text">{t('nav.dashboard')}</span>
                   </NavLink>
 
                   <NavLink className={linkClass} to="/chat" onClick={closeMobileAfterClick}>
                     <SidebarIcon name="chat" />
-                    <span className="sidebar-link-text">AI Chat</span>
+                    <span className="sidebar-link-text">{t('nav.aiChat')}</span>
                   </NavLink>
 
                   <NavLink className={linkClass} to="/knowledge" onClick={closeMobileAfterClick}>
                     <SidebarIcon name="knowledge" />
-                    <span className="sidebar-link-text">Knowledge Base</span>
+                    <span className="sidebar-link-text">{t('nav.knowledgeBase')}</span>
                   </NavLink>
 
                   <NavLink className={linkClass} to="/messages" onClick={closeMobileAfterClick}>
                     <SidebarIcon name="messages" />
-                    <span className="sidebar-link-text">Messages</span>
+                    <span className="sidebar-link-text">{t('nav.messages')}</span>
                   </NavLink>
 
                   <NavLink className={linkClass} to="/notifications" onClick={closeMobileAfterClick}>
                     <SidebarIcon name="notifications" />
-                    <span className="sidebar-link-text">Notifications</span>
+                    <span className="sidebar-link-text">{t('nav.notifications')}</span>
                   </NavLink>
 
                   <NavLink className={linkClass} to="/quiz" onClick={closeMobileAfterClick}>
                     <SidebarIcon name="quiz" />
-                    <span className="sidebar-link-text">Quiz / Training</span>
+                    <span className="sidebar-link-text">{t('nav.quizTraining')}</span>
                   </NavLink>
                 </>
               )}
@@ -349,26 +351,26 @@ export default function Sidebar() {
               {(isTeamLead || isManager) && (
                 <>
                   <div className="sidebar-section-label">
-                    {isManager ? 'Admin Workspace' : 'Team Lead Workspace'}
+                    {isManager ? t('nav.adminWorkspace') : t('nav.teamLeadWorkspace')}
                   </div>
 
                   {isManager && (
                     <NavLink className={linkClass} to="/admin/dashboard" onClick={closeMobileAfterClick}>
                       <SidebarIcon name="dashboard" />
-                      <span className="sidebar-link-text">Admin Dashboard</span>
+                      <span className="sidebar-link-text">{t('nav.adminDashboard')}</span>
                     </NavLink>
                   )}
 
                   {isManager && (
                     <NavLink className={linkClass} to="/chat" onClick={closeMobileAfterClick}>
                       <SidebarIcon name="chat" />
-                      <span className="sidebar-link-text">AI Chat</span>
+                      <span className="sidebar-link-text">{t('nav.aiChat')}</span>
                     </NavLink>
                   )}
 
                   <NavLink className={linkClass} to="/admin/content" onClick={closeMobileAfterClick}>
                     <SidebarIcon name="content" />
-                    <span className="sidebar-link-text">Content Management</span>
+                    <span className="sidebar-link-text">{t('nav.contentManagement')}</span>
                   </NavLink>
 
                   <NavLink
@@ -377,80 +379,98 @@ export default function Sidebar() {
                     onClick={closeMobileAfterClick}
                   >
                     <SidebarIcon name="quiz" />
-                    <span className="sidebar-link-text">Quiz Management</span>
+                    <span className="sidebar-link-text">{t('nav.quizManagement')}</span>
                   </NavLink>
 
                   {isManager && (
                     <NavLink className={linkClass} to="/messages" onClick={closeMobileAfterClick}>
                       <SidebarIcon name="messages" />
-                      <span className="sidebar-link-text">Messages</span>
+                      <span className="sidebar-link-text">{t('nav.messages')}</span>
                     </NavLink>
                   )}
 
                   {isManager && (
                     <NavLink className={linkClass} to="/notifications" onClick={closeMobileAfterClick}>
                       <SidebarIcon name="notifications" />
-                      <span className="sidebar-link-text">Notifications</span>
+                      <span className="sidebar-link-text">{t('nav.notifications')}</span>
                     </NavLink>
                   )}
 
                   {isManager && (
                     <NavLink className={linkClass} to="/admin/review" onClick={closeMobileAfterClick}>
                       <SidebarIcon name="review" />
-                      <span className="sidebar-link-text">Review Management</span>
+                      <span className="sidebar-link-text">{t('nav.reviewManagement')}</span>
                     </NavLink>
                   )}
 
                   {(isManager || isTeamLead) && (
                     <NavLink className={linkClass} to="/admin/users" onClick={closeMobileAfterClick}>
                       <SidebarIcon name="users" />
-                      <span className="sidebar-link-text">User Management</span>
+                      <span className="sidebar-link-text">{t('nav.userManagement')}</span>
                     </NavLink>
                   )}
 
                   {SHOW_AI_SETTINGS && isManager && (
                     <NavLink className={linkClass} to="/admin/ai-settings" onClick={closeMobileAfterClick}>
                       <SidebarIcon name="settings" />
-                      <span className="sidebar-link-text">AI Model Settings</span>
+                      <span className="sidebar-link-text">{t('nav.aiModelSettings')}</span>
                     </NavLink>
                   )}
 
                   {isManager && (
                     <NavLink className={linkClass} to="/admin/notion-sync" onClick={closeMobileAfterClick}>
                       <SidebarIcon name="settings" />
-                      <span className="sidebar-link-text">Notion Sync</span>
+                      <span className="sidebar-link-text">{t('nav.notionSync')}</span>
                     </NavLink>
                   )}
 
                   <NavLink className={linkClass} to="/admin/analytics" onClick={closeMobileAfterClick}>
                     <SidebarIcon name="analytics" />
-                    <span className="sidebar-link-text">Analytics</span>
+                    <span className="sidebar-link-text">{t('nav.analytics')}</span>
                   </NavLink>
 
                   <NavLink className={linkClass} to="/admin/security" onClick={closeMobileAfterClick}>
                     <SidebarIcon name="security" />
-                    <span className="sidebar-link-text">Security / Monitoring</span>
+                    <span className="sidebar-link-text">{t('nav.securityMonitoring')}</span>
                   </NavLink>
                 </>
               )}
 
               {(isTeamLead || isManager) && (
                 <>
-                  <div className="sidebar-section-label">Review</div>
+                  <div className="sidebar-section-label">{t('nav.review')}</div>
 
                   <NavLink className={linkClass} to="/escalation" onClick={closeMobileAfterClick}>
                     <SidebarIcon name="escalation" />
-                    <span className="sidebar-link-text">Escalation</span>
+                    <span className="sidebar-link-text">{t('nav.escalation')}</span>
                   </NavLink>
                 </>
               )}
 
-              <div className="sidebar-section-label">Account</div>
+              <div className="sidebar-section-label">{t('nav.account')}</div>
 
               <NavLink className={linkClass} to="/profile" onClick={closeMobileAfterClick}>
                 <SidebarIcon name="profile" />
-                <span className="sidebar-link-text">Profile</span>
+                <span className="sidebar-link-text">{t('nav.profile')}</span>
               </NavLink>
+
+              <div className="sidebar-language-switcher">
+                <label htmlFor="sidebar-language-select" className="sidebar-link-text sidebar-language-label">
+                  {t('nav.language')}
+                </label>
+                <select
+                  id="sidebar-language-select"
+                  value={language}
+                  onChange={(event) => setLanguage(event.target.value)}
+                  aria-label={t('nav.language')}
+                >
+                  {languages.map((entry) => (
+                    <option key={entry.code} value={entry.code}>
+                      {entry.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </nav>
           </div>
 
@@ -499,7 +519,7 @@ export default function Sidebar() {
                   <span className="sidebar-user-menu-icon">
                     <Icon name="profile" />
                   </span>
-                  <strong>Profile</strong>
+                  <strong>{t('nav.profile')}</strong>
                 </NavLink>
 
                 <button
@@ -512,7 +532,7 @@ export default function Sidebar() {
                   <span className="sidebar-user-menu-icon">
                     <Icon name="logout" />
                   </span>
-                  <strong>{isLoggingOut ? 'Logging out...' : 'Log out'}</strong>
+                  <strong>{isLoggingOut ? t('nav.loggingOut') : t('nav.logout')}</strong>
                 </button>
                 {logoutError ? (
                   <p
