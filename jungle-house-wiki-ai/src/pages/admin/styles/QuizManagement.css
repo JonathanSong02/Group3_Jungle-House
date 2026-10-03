@@ -2937,7 +2937,7 @@ button.qm-stat:hover {
 .qm-chip.active { background: var(--qm-violet); border-color: var(--qm-violet); color: #fff; }
 .qm-chip-easy.active { background: var(--qm-green); border-color: var(--qm-green); }
 .qm-chip-hard.active { background: var(--qm-red); border-color: var(--qm-red); }
-.qm-chip-hint { display: block; margin-top: 6px; color: var(--qm-muted); }
+.qm-chip-hint { display: block; margin-top: 6px; color: rgba(255, 255, 255, 0.9); }
 
 .qm-diff {
   padding: 2px 10px;

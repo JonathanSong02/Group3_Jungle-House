@@ -12704,12 +12704,30 @@ Source content:
         json_text = re.sub(r"^```(?:json)?\s*", "", json_text)
         json_text = re.sub(r"\s*```$", "", json_text)
 
-        parsed = json.loads(json_text)
+        # Models sometimes append commentary or a second JSON block after the
+        # array ("Extra data" errors). Decode every leading JSON value and merge
+        # their question lists instead of rejecting the whole reply.
+        decoder = json.JSONDecoder()
+        parsed = []
+        position = 0
+        while position < len(json_text):
+            starts = [i for i in (json_text.find("[", position), json_text.find("{", position)) if i != -1]
+            if not starts:
+                break
+            try:
+                value, position = decoder.raw_decode(json_text, min(starts))
+            except json.JSONDecodeError:
+                if parsed:
+                    break  # trailing junk after valid data is fine
+                raise
+            if isinstance(value, dict) and isinstance(value.get("questions"), list):
+                value = value["questions"]
+            if isinstance(value, list):
+                parsed.extend(value)
+            elif isinstance(value, dict) and "options" in value:
+                parsed.append(value)
 
-        if isinstance(parsed, dict) and isinstance(parsed.get("questions"), list):
-            parsed = parsed["questions"]
-
-        if not isinstance(parsed, list):
+        if not parsed:
             raise ValueError("AI did not return a JSON array of questions.")
 
         result = []
