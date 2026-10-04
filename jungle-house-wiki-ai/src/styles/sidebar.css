@@ -863,3 +863,152 @@ body.sidebar-is-collapsed .sidebar-user-menu {
     animation: none;
   }
 }
+
+/* ==========================================================================
+   MOBILE MANAGEMENT UI REFRESH
+   --------------------------------------------------------------------------
+   Manager / Team Leader use this Sidebar layout. Keep the desktop sidebar
+   unchanged, but make the phone/tablet drawer match the newer green/cream
+   management workspace instead of the older honey-only mobile appearance.
+
+   Functional behaviour is unchanged:
+   - same mobile drawer
+   - same overlay
+   - same collapse/open state
+   - same links and role permissions
+   ========================================================================== */
+
+@media (max-width: 1024px) {
+  /* Management palette used by the refreshed admin pages. */
+  .sidebar.modern-sidebar,
+  body.sidebar-is-collapsed .sidebar.modern-sidebar {
+    --sidebar-bg-1: #fffdf8;
+    --sidebar-bg-2: #eef6f0;
+    --sidebar-surface: rgba(255, 255, 255, 0.82);
+    --sidebar-surface-hover: #ffffff;
+    --sidebar-heading: #1f2b24;
+    --sidebar-text: #526158;
+    --sidebar-muted: #758078;
+    --sidebar-primary: #176b4a;
+    --sidebar-primary-dark: #10553a;
+    --sidebar-primary-soft: #eaf4ee;
+    --sidebar-border: #dbe6dc;
+    --sidebar-focus: rgba(23, 107, 74, 0.20);
+
+    background:
+      radial-gradient(circle at 9% 3%, rgba(23, 107, 74, 0.09), transparent 31%),
+      linear-gradient(180deg, #fffdf8 0%, #eef6f0 100%);
+    border-right-color: #dbe6dc;
+    box-shadow: 20px 0 55px rgba(31, 56, 40, 0.16);
+  }
+
+  /* Floating mobile menu trigger. */
+  .mobile-sidebar-open-btn {
+    color: #10553a;
+    background: rgba(255, 253, 248, 0.97);
+    border-color: #dbe6dc;
+    box-shadow: 0 8px 24px rgba(31, 56, 40, 0.12);
+  }
+
+  .mobile-sidebar-open-btn:hover,
+  .mobile-sidebar-open-btn:focus-visible {
+    color: #10553a;
+    background: #f5faf6;
+    border-color: #bcd2c1;
+  }
+
+  /* Brand mark. */
+  .sidebar.modern-sidebar .sidebar-logo {
+    color: #ffffff;
+    background: linear-gradient(145deg, #2f8060, #176b4a);
+    border-color: rgba(16, 85, 58, 0.12);
+    box-shadow:
+      0 10px 20px rgba(23, 107, 74, 0.18),
+      inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  }
+
+  .sidebar.modern-sidebar .sidebar-brand-text .eyebrow {
+    color: #176b4a;
+  }
+
+  .sidebar.modern-sidebar .sidebar-title {
+    color: #1f2b24;
+  }
+
+  .sidebar.modern-sidebar .sidebar-subtitle,
+  .sidebar.modern-sidebar .sidebar-section-label {
+    color: #758078;
+  }
+
+  /* Navigation. */
+  .sidebar.modern-sidebar .sidebar-link {
+    color: #526158;
+  }
+
+  .sidebar.modern-sidebar .sidebar-link:hover {
+    color: #1f2b24;
+    background: rgba(255, 255, 255, 0.86);
+    border-color: #dbe6dc;
+  }
+
+  .sidebar.modern-sidebar .sidebar-link.active,
+  body.sidebar-is-collapsed .sidebar.modern-sidebar .sidebar-link.active {
+    color: #10553a;
+    background: #ffffff;
+    border-color: #c9ddce;
+    box-shadow:
+      0 7px 18px rgba(31, 56, 40, 0.07),
+      inset 3px 0 0 #176b4a;
+  }
+
+  .sidebar.modern-sidebar .sidebar-icon {
+    color: #718078;
+  }
+
+  .sidebar.modern-sidebar .sidebar-link:hover .sidebar-icon,
+  .sidebar.modern-sidebar .sidebar-link.active .sidebar-icon {
+    color: #176b4a;
+  }
+
+  /* Bottom account card. */
+  .sidebar.modern-sidebar .sidebar-user-card {
+    border-top-color: #dbe6dc;
+  }
+
+  .sidebar.modern-sidebar .sidebar-user-main {
+    color: #526158;
+    background: rgba(255, 255, 255, 0.80);
+    border-color: #dbe6dc;
+    box-shadow: 0 10px 28px rgba(31, 56, 40, 0.07);
+  }
+
+  .sidebar.modern-sidebar .sidebar-user-main:hover,
+  .sidebar.modern-sidebar .sidebar-user-card.menu-open .sidebar-user-main {
+    background: #ffffff;
+    border-color: #bfd5c5;
+  }
+
+  .sidebar.modern-sidebar .sidebar-user-avatar {
+    background: linear-gradient(145deg, #2f8060, #176b4a);
+    box-shadow: 0 7px 16px rgba(23, 107, 74, 0.18);
+  }
+
+  .sidebar.modern-sidebar .sidebar-user-info strong {
+    color: #1f2b24;
+  }
+
+  .sidebar.modern-sidebar .sidebar-user-info > span {
+    color: #10553a;
+    background: #eaf4ee;
+  }
+
+  .sidebar.modern-sidebar .sidebar-user-arrow {
+    color: #758078;
+  }
+
+  /* Slightly softer mobile overlay to match the management workspace. */
+  .mobile-sidebar-overlay {
+    background: rgba(25, 39, 31, 0.28);
+  }
+}
+
