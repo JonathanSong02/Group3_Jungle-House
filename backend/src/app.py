@@ -6735,6 +6735,10 @@ def check_notion_sync():
                 f" {result['inaccessible']} page(s) are no longer accessible and were skipped "
                 "-- they may have been removed from the integration's permissions."
             )
+        if result.get("obsoleteUpdated"):
+            response_message += f" {result['obsoleteUpdated']} Obsolete page(s) have changed in Notion."
+        if result.get("obsoleteMissing"):
+            response_message += f" {result['obsoleteMissing']} Obsolete page(s) are no longer found in Notion."
     else:
         response_message = result.get("errorMessage") or "Failed to check Notion for updates."
 
@@ -7047,7 +7051,8 @@ def _permanently_delete_pending_updates(pending_ids, actor_id):
 
         placeholders = ",".join(["%s"] * len(pending_ids))
         cursor.execute(f"""
-            SELECT id, proposed_content, previous_content
+            SELECT id, article_id, notion_page_id, proposed_title, previous_title,
+                   proposed_content, previous_content, notion_last_edited_time
             FROM notion_pending_updates
             WHERE id IN ({placeholders}) AND status = 'trashed'
         """, tuple(pending_ids))
@@ -7055,7 +7060,7 @@ def _permanently_delete_pending_updates(pending_ids, actor_id):
 
         if not rows:
             conn.rollback()
-            return 0, {"deleted": 0, "kept_shared": 0, "failed": 0}
+            return 0, {"deleted": 0, "kept_shared": 0, "failed": 0}, 0
 
         trash_ids = [row["id"] for row in rows]
         trash_placeholders = ",".join(["%s"] * len(trash_ids))
@@ -7065,6 +7070,28 @@ def _permanently_delete_pending_updates(pending_ids, actor_id):
             WHERE id IN ({trash_placeholders}) AND status = 'trashed'
         """, tuple(trash_ids))
         deleted_count = cursor.rowcount
+
+        # Obsolete tracking only applies to a page that was never approved
+        # into the Knowledge Base (article_id IS NULL) -- permanently
+        # deleting a proposed EDIT to an already-live article just discards
+        # that proposal; the live wiki_article/notion_page_id link is
+        # untouched, so the next sync correctly re-proposes the edit on its
+        # own if Notion still differs. Nothing to mark Obsolete there.
+        obsolete_created = 0
+        for row in rows:
+            if row.get("article_id") is not None:
+                continue
+            page_title = row.get("proposed_title") or row.get("previous_title") or "Untitled"
+            content_for_hash = row.get("proposed_content") or row.get("previous_content") or ""
+            notion_sync_service.create_obsolete_record(
+                cursor,
+                notion_page_id=row["notion_page_id"],
+                page_title=page_title,
+                last_known_edited_time=row.get("notion_last_edited_time"),
+                last_known_content_hash=_hash_text(content_for_hash),
+                actor_id=actor_id,
+            )
+            obsolete_created += 1
 
         conn.commit()
 
@@ -7078,7 +7105,7 @@ def _permanently_delete_pending_updates(pending_ids, actor_id):
         print(f"[Asset Cleanup] Candidate files: {len(all_filenames)}")
         file_stats = delete_upload_filenames(all_filenames, cursor=cursor)
 
-        return deleted_count, file_stats
+        return deleted_count, file_stats, obsolete_created
     finally:
         cursor.close()
         conn.close()
@@ -7109,7 +7136,7 @@ def permanently_delete_notion_pending_update(pending_id):
         cursor = None
         conn = None
 
-        deleted_count, file_stats = _permanently_delete_pending_updates([pending_id], actor_id)
+        deleted_count, file_stats, obsolete_created = _permanently_delete_pending_updates([pending_id], actor_id)
 
         if deleted_count == 0:
             return jsonify({"success": False, "message": "Item not found in Trash."}), 404
@@ -7119,7 +7146,8 @@ def permanently_delete_notion_pending_update(pending_id):
             action="Permanently deleted Notion update",
             module="Notion Sync",
             description=f"Pending Notion update #{pending_id} permanently deleted "
-                        f"({file_stats['deleted']} file(s) removed, {file_stats['kept_shared']} kept shared)."
+                        f"({file_stats['deleted']} file(s) removed, {file_stats['kept_shared']} kept shared, "
+                        f"{obsolete_created} moved to Obsolete)."
         )
 
         return jsonify({
@@ -7129,6 +7157,7 @@ def permanently_delete_notion_pending_update(pending_id):
             "deletedFiles": file_stats["deleted"],
             "keptSharedFiles": file_stats["kept_shared"],
             "failedFiles": file_stats["failed"],
+            "obsoleteCreated": obsolete_created,
         }), 200
 
     except Exception as error:
@@ -7295,7 +7324,7 @@ def bulk_permanently_delete_notion_pending_updates():
         cursor = None
         conn = None
 
-        deleted_count, file_stats = _permanently_delete_pending_updates(pending_ids, actor_id)
+        deleted_count, file_stats, obsolete_created = _permanently_delete_pending_updates(pending_ids, actor_id)
 
         if deleted_count == 0:
             return jsonify({"success": False, "message": "None of the selected items were found in Trash."}), 404
@@ -7305,7 +7334,8 @@ def bulk_permanently_delete_notion_pending_updates():
             action="Bulk permanently deleted Notion updates",
             module="Notion Sync",
             description=f"{deleted_count} pending Notion update(s) permanently deleted "
-                        f"({file_stats['deleted']} file(s) removed, {file_stats['kept_shared']} kept shared)."
+                        f"({file_stats['deleted']} file(s) removed, {file_stats['kept_shared']} kept shared, "
+                        f"{obsolete_created} moved to Obsolete)."
         )
 
         return jsonify({
@@ -7315,11 +7345,167 @@ def bulk_permanently_delete_notion_pending_updates():
             "deletedFiles": file_stats["deleted"],
             "keptSharedFiles": file_stats["kept_shared"],
             "failedFiles": file_stats["failed"],
+            "obsoleteCreated": obsolete_created,
         }), 200
 
     except Exception as error:
         print("BULK PERMANENT DELETE NOTION PENDING UPDATES ERROR:", error)
         return jsonify({"success": False, "message": "Failed to permanently delete selected updates."}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/notion-sync/obsolete", methods=["GET"])
+def get_notion_obsolete_articles():
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = notion_sync_service.get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        notion_sync_service.ensure_notion_sync_tables(cursor)
+        obsolete = notion_sync_service.list_obsolete_articles(cursor)
+
+        return jsonify({"success": True, "obsolete": obsolete}), 200
+
+    except Exception as error:
+        print("GET NOTION OBSOLETE ARTICLES ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to load Obsolete Notion articles."}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/notion-sync/obsolete/<int:obsolete_id>", methods=["GET"])
+def get_notion_obsolete_article_detail(obsolete_id):
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = notion_sync_service.get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        notion_sync_service.ensure_notion_sync_tables(cursor)
+        record = notion_sync_service.get_obsolete_article(cursor, obsolete_id)
+
+        if not record:
+            return jsonify({"success": False, "message": "Obsolete record not found."}), 404
+
+        return jsonify({"success": True, "obsolete": record}), 200
+
+    except Exception as error:
+        print("GET NOTION OBSOLETE ARTICLE DETAIL ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to load this Obsolete article."}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/notion-sync/obsolete/<int:obsolete_id>/restore", methods=["POST"])
+def restore_notion_obsolete_article(obsolete_id):
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
+
+    data = request.get_json(silent=True) or {}
+    actor_id = data.get("user_id")
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = notion_sync_service.get_db_connection()
+        conn.start_transaction()
+        cursor = conn.cursor(dictionary=True)
+
+        notion_sync_service.ensure_notion_sync_tables(cursor)
+
+        if not is_ai_settings_manager(cursor, actor_id):
+            conn.rollback()
+            return jsonify({"success": False, "message": "Only managers can restore Obsolete Notion articles."}), 403
+
+        record = notion_sync_service.get_obsolete_article(cursor, obsolete_id)
+
+        if not record:
+            conn.rollback()
+            return jsonify({"success": False, "message": "Obsolete record not found."}), 404
+
+        raw_token, connection_status = notion_sync_service.get_active_notion_connection(cursor)
+
+        if not raw_token:
+            conn.rollback()
+            return jsonify({"success": False, "message": "No Notion workspace is connected. Reconnect Notion first."}), 400
+
+        if connection_status == "reconnect_required":
+            conn.rollback()
+            return jsonify({
+                "success": False,
+                "connectionStatus": "reconnect_required",
+                "message": "Your Notion connection needs to be renewed. Please reconnect Notion."
+            }), 400
+
+        try:
+            pending_id = notion_sync_service.restore_obsolete_to_pending(
+                cursor, raw_token, record, actor_id, UPLOAD_FOLDER
+            )
+        except notion_sync_service.NotionAuthError:
+            conn.rollback()
+            return jsonify({
+                "success": False,
+                "connectionStatus": "reconnect_required",
+                "message": "Your Notion connection needs to be renewed. Please reconnect Notion."
+            }), 400
+        except requests.HTTPError as http_error:
+            status_code = http_error.response.status_code if http_error.response is not None else None
+            if status_code in (403, 404):
+                # Keep the Obsolete record (per spec: don't erase history
+                # just because the source page is currently unreachable) --
+                # just flag it missing and commit that much.
+                notion_sync_service.mark_obsolete_missing(cursor, obsolete_id)
+                conn.commit()
+                return jsonify({
+                    "success": False,
+                    "message": "This Notion page can no longer be accessed. It may have been deleted, archived, or removed from the integration's permissions."
+                }), 409
+            raise
+
+        conn.commit()
+
+        add_audit_log(
+            actor_id=actor_id,
+            action="Restored Obsolete Notion article",
+            module="Notion Sync",
+            description=f"Obsolete Notion page '{record.get('page_title') or record.get('notion_page_id')}' restored to Pending (#{pending_id})."
+        )
+
+        return jsonify({
+            "success": True,
+            "message": "Fetched the latest Notion version. Review it in Pending.",
+            "pendingId": pending_id,
+        }), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("RESTORE NOTION OBSOLETE ARTICLE ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to restore this article."}), 500
 
     finally:
         if cursor:

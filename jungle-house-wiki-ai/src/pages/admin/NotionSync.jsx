@@ -60,6 +60,16 @@ export default function NotionSync() {
   const [runningAudit, setRunningAudit] = useState(false);
   const [cleaningStorage, setCleaningStorage] = useState(false);
 
+  // Obsolete: Notion pages permanently deleted from stored content, kept as
+  // a lightweight record so a future sync recognises them instead of
+  // re-staging them as brand-new Pending items. Deliberately not folded
+  // into `activeList`/the bulk toolbar below -- its cards show different
+  // fields (deleted/modified dates, Updated-in-Notion badge) and only ever
+  // have one action (Restore), so it gets its own small render branch.
+  const [obsolete, setObsolete] = useState([]);
+  const [expandedObsoleteId, setExpandedObsoleteId] = useState(null);
+  const [restoringObsoleteId, setRestoringObsoleteId] = useState(null);
+
   const oauthPopupRef = useRef(null);
   const oauthPopupPollRef = useRef(null);
 
@@ -182,6 +192,15 @@ export default function NotionSync() {
     }
   };
 
+  const fetchObsolete = async () => {
+    try {
+      const response = await api.get('/notion-sync/obsolete');
+      setObsolete(Array.isArray(response.data?.obsolete) ? response.data.obsolete : []);
+    } catch (error) {
+      console.error('Fetch Notion obsolete articles error:', error);
+    }
+  };
+
   const handleCheckForUpdates = async ({ silent } = {}) => {
     try {
       setChecking(true);
@@ -194,7 +213,7 @@ export default function NotionSync() {
 
       setCheckResult(response.data);
       if (!silent) setMessage(response.data?.message || '');
-      await Promise.all([fetchJobs(), fetchPending()]);
+      await Promise.all([fetchJobs(), fetchPending(), fetchObsolete()]);
     } catch (error) {
       console.error('Check Notion for updates error:', error);
       if (!silent) {
@@ -248,6 +267,7 @@ export default function NotionSync() {
     fetchJobs();
     fetchPending();
     fetchTrashed();
+    fetchObsolete();
     fetchAppConfig();
 
     if (connected) {
@@ -436,7 +456,18 @@ export default function NotionSync() {
   };
 
   const handlePermanentDeleteItem = async (pendingId) => {
-    if (!window.confirm('Permanently delete this item and its unused local images/files? This cannot be undone.')) {
+    const item = trashed.find((t) => t.id === pendingId);
+    const isNewPage = !item || item.article_id === null || item.article_id === undefined;
+
+    const confirmText = isNewPage
+      ? 'Move this article to Obsolete and permanently delete its stored files?\n\n' +
+        'The stored article content and downloaded images will be permanently removed.\n\n' +
+        'A lightweight Obsolete record will remain so the system can recognise this Notion page during future syncs. ' +
+        'If the Notion page is updated later, the Obsolete section will show that a newer version is available.'
+      : 'Permanently delete this item and its unused local images/files? ' +
+        'This only discards the proposed edit -- the live Knowledge Base article is not affected. This cannot be undone.';
+
+    if (!window.confirm(confirmText)) {
       return;
     }
 
@@ -454,11 +485,42 @@ export default function NotionSync() {
       );
       setTrashed((prev) => prev.filter((item) => item.id !== pendingId));
       setSelectedIds((prev) => prev.filter((id) => id !== pendingId));
+      if (response.data?.obsoleteCreated) {
+        fetchObsolete();
+      }
     } catch (error) {
       console.error('Permanent delete Notion pending update error:', error);
       setMessage(error.response?.data?.message || 'Failed to permanently delete this update.');
     } finally {
       setSingleActionId(null);
+    }
+  };
+
+  const handleRestoreObsolete = async (obsoleteId) => {
+    try {
+      setRestoringObsoleteId(obsoleteId);
+      setMessage('');
+
+      const response = await api.post(`/notion-sync/obsolete/${obsoleteId}/restore`, {
+        user_id: actorId,
+      });
+
+      setMessage(response.data?.message || 'Fetched the latest Notion version. Review it in Pending.');
+      setObsolete((prev) => prev.filter((item) => item.id !== obsoleteId));
+      if (expandedObsoleteId === obsoleteId) setExpandedObsoleteId(null);
+      await fetchPending();
+    } catch (error) {
+      console.error('Restore Notion obsolete article error:', error);
+      setMessage(error.response?.data?.message || 'Failed to restore this article.');
+      if (error.response?.data?.connectionStatus === 'reconnect_required') {
+        fetchConfig();
+      }
+      // A 409 (source page inaccessible) marks the record 'missing'
+      // server-side -- refresh so the card reflects that instead of
+      // silently staying stale until the next full page load.
+      fetchObsolete();
+    } finally {
+      setRestoringObsoleteId(null);
     }
   };
 
@@ -528,7 +590,9 @@ export default function NotionSync() {
 
     if (
       !window.confirm(
-        `Permanently delete ${idsToUse.length} selected item(s) and their unused local images/files? This action cannot be undone.`
+        `Move ${idsToUse.length} selected item(s) to Obsolete and permanently delete their stored files?\n\n` +
+        'Stored content and downloaded images will be removed. A lightweight Obsolete record is kept for each ' +
+        'new page so future syncs recognise it instead of showing it again. This cannot be undone.'
       )
     ) {
       return;
@@ -545,9 +609,13 @@ export default function NotionSync() {
 
       const deletedArticles = response.data?.deletedArticles ?? 0;
       const deletedFiles = response.data?.deletedFiles ?? 0;
+      const obsoleteCreated = response.data?.obsoleteCreated ?? 0;
       setMessage(`${deletedArticles} item(s) permanently deleted. ${deletedFiles} unused file(s) removed from storage.`);
       setSelectedIds([]);
       await Promise.all([fetchPending(), fetchTrashed()]);
+      if (obsoleteCreated) {
+        fetchObsolete();
+      }
     } catch (error) {
       console.error('Bulk permanent delete error:', error);
       setMessage(error.response?.data?.message || 'Unable to permanently delete selected items.');
@@ -953,14 +1021,122 @@ export default function NotionSync() {
             Trash
             <span>{trashed.length}</span>
           </button>
+          <button
+            type="button"
+            className={activeTab === 'obsolete' ? 'active' : ''}
+            onClick={() => switchTab('obsolete')}
+          >
+            Obsolete
+            <span>{obsolete.length}</span>
+          </button>
         </div>
 
         <p className="ns-section-copy">
           {activeTab === 'pending'
             ? 'Every new or changed Notion page waits here first -- nothing reaches the Knowledge Base until you approve it below.'
-            : 'Items here are held temporarily. Restore them back to Pending, or delete them permanently to free up storage.'}
+            : activeTab === 'trash'
+            ? 'Items here are held temporarily. Restore them back to Pending, or delete them permanently to free up storage.'
+            : 'Pages permanently deleted from the Knowledge Base. Their stored content and images are gone, but this record keeps future syncs from showing them again as new.'}
         </p>
 
+        {activeTab === 'obsolete' ? (
+          obsolete.length === 0 ? (
+            <div className="ns-empty small">
+              <strong>Nothing Obsolete</strong>
+              <span>Pages you permanently delete from Trash will appear here.</span>
+            </div>
+          ) : (
+            <div className="ns-pending-list">
+              {obsolete.map((item) => {
+                const isExpanded = expandedObsoleteId === item.id;
+                const isRestoring = restoringObsoleteId === item.id;
+                const isMissing = item.obsolete_status === 'missing';
+                const isUpdated = item.obsolete_status === 'updated';
+
+                return (
+                  <article className="ns-pending-card" key={item.id}>
+                    <div className="ns-pending-head">
+                      <div className="ns-pending-info">
+                        <h3>{item.page_title || 'Untitled'}</h3>
+                        <p>
+                          {isMissing
+                            ? 'Status: Missing from Notion'
+                            : `Deleted: ${item.deleted_at || '-'}`}
+                          {!isMissing && item.latest_notion_edited_time
+                            ? ` · Notion modified: ${item.latest_notion_edited_time}`
+                            : ''}
+                        </p>
+                      </div>
+                      <span className={`ns-review-pill ${isUpdated ? 'updated' : ''}`}>
+                        {isMissing ? 'Missing' : isUpdated ? 'Updated in Notion' : 'Obsolete'}
+                      </span>
+                    </div>
+
+                    {isMissing ? (
+                      <p className="ns-section-copy">
+                        The source Notion page may have been deleted, archived, or permission may have been removed.
+                      </p>
+                    ) : null}
+
+                    <div className="ns-pending-actions">
+                      <button
+                        type="button"
+                        className="ns-btn secondary"
+                        onClick={() => setExpandedObsoleteId(isExpanded ? null : item.id)}
+                      >
+                        {isExpanded ? 'Hide Details' : 'View Details'}
+                      </button>
+                      <button
+                        type="button"
+                        className="ns-btn primary"
+                        disabled={isRestoring}
+                        onClick={() => handleRestoreObsolete(item.id)}
+                      >
+                        {isRestoring
+                          ? 'Working...'
+                          : isUpdated ? 'Restore Latest Version' : 'Restore'}
+                      </button>
+                    </div>
+
+                    {isExpanded && (
+                      <div className="ns-source-info">
+                        <div>
+                          <span>Notion Page ID</span>
+                          <strong>{item.notion_page_id}</strong>
+                        </div>
+                        <div>
+                          <span>Deleted At</span>
+                          <strong>{item.deleted_at || '-'}</strong>
+                        </div>
+                        <div>
+                          <span>Last Known Edit (before deletion)</span>
+                          <strong>{item.last_known_notion_edited_time || '-'}</strong>
+                        </div>
+                        <div>
+                          <span>Latest Notion Edit</span>
+                          <strong>{item.latest_notion_edited_time || '-'}</strong>
+                        </div>
+                        <div>
+                          <span>Status</span>
+                          <strong>{item.obsolete_status}</strong>
+                        </div>
+                        <div>
+                          <span>Last Checked</span>
+                          <strong>{item.last_checked_at || '-'}</strong>
+                        </div>
+                        <div>
+                          <span>Updated After Deletion</span>
+                          <strong>{item.updated_after_obsolete ? 'Yes' : 'No'}</strong>
+                        </div>
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+          )
+        ) : (
+          <>
         {activeList.length > 0 ? (
           <div className="ns-bulk-toolbar" role="toolbar" aria-label="Bulk actions">
             <label className="ns-select-all">
@@ -1135,6 +1311,8 @@ export default function NotionSync() {
               );
             })}
           </div>
+        )}
+          </>
         )}
       </section>
 

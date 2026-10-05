@@ -2,6 +2,7 @@ import os
 import re
 import json
 import time
+import hashlib
 import mysql.connector
 import requests
 from flask import request as flask_request
@@ -279,6 +280,37 @@ def ensure_notion_sync_tables(cursor):
     # language/script the page was written in -- same utf8mb4 reasoning as
     # notion_sync_configs above.
     _ensure_utf8mb4_table(cursor, "notion_pending_updates")
+
+    # Lightweight historical record for a Notion page whose stored content
+    # was permanently deleted (see app.py's _permanently_delete_pending_updates,
+    # which creates these) -- lets check_for_notion_updates recognise "we
+    # already looked at this page and the admin chose to remove it" instead
+    # of re-staging it as a brand-new Pending item on every future sync.
+    # notion_page_id is UNIQUE: one active Obsolete record per page, never
+    # one per tenant/workspace (this app is single-tenant per deployment --
+    # see get_public_base_url's docstring and the rest of this file).
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS notion_obsolete_articles (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            notion_page_id VARCHAR(64) NOT NULL,
+            page_title VARCHAR(500) NULL,
+            deleted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            deleted_by INT NULL,
+            last_known_notion_edited_time DATETIME NULL,
+            last_known_content_hash VARCHAR(64) NULL,
+            latest_notion_edited_time DATETIME NULL,
+            latest_content_hash VARCHAR(64) NULL,
+            obsolete_status ENUM('unchanged', 'updated', 'missing') NOT NULL DEFAULT 'unchanged',
+            updated_after_obsolete TINYINT(1) NOT NULL DEFAULT 0,
+            last_checked_at DATETIME NULL,
+            last_sync_result VARCHAR(255) NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE INDEX idx_notion_obsolete_page (notion_page_id),
+            INDEX idx_notion_obsolete_status (obsolete_status)
+        )
+    """)
+    _ensure_utf8mb4_table(cursor, "notion_obsolete_articles")
 
 
 def _describe_table(cursor, table_name):
@@ -1049,6 +1081,9 @@ def check_for_notion_updates(token, actor_id, upload_folder):
     failed_count = 0
     inaccessible_count = 0
     inaccessible_pages = []
+    obsolete_checked_count = 0
+    obsolete_updated_count = 0
+    obsolete_missing_count = 0
     error_message = None
     flagged_items = []
     auth_failed = False
@@ -1130,6 +1165,20 @@ def check_for_notion_updates(token, actor_id, upload_folder):
                         "pending_id": pending_id,
                     })
                 else:
+                    # Before treating this as a brand-new page, check
+                    # whether it was previously permanently deleted -- if
+                    # so, this is an Obsolete status check, not a fresh
+                    # Pending candidate (see _check_obsolete_page).
+                    obsolete_record = get_obsolete_record_by_page_id(cursor, page_id)
+
+                    if obsolete_record:
+                        obsolete_status = _check_obsolete_page(cursor, obsolete_record, page)
+                        obsolete_checked_count += 1
+                        if obsolete_status == "updated":
+                            obsolete_updated_count += 1
+                        conn.commit()
+                        continue
+
                     # Brand-new page, never imported. Same dedupe as the
                     # edit branch above -- don't create a second pending
                     # entry for a page already sitting pending/resolved at
@@ -1197,6 +1246,36 @@ def check_for_notion_updates(token, actor_id, upload_folder):
                 print("NOTION PAGE CHECK ERROR:", page_id, page_error)
                 continue
 
+        # Any tracked Obsolete page NOT in this run's discover_notion_content
+        # results is no longer shared with the integration -- verify with a
+        # direct GET before marking it missing (search pagination issues or
+        # a one-off API hiccup shouldn't be enough to flip the status; see
+        # section U/V of the spec this implements -- Notion's 404 doesn't
+        # distinguish "deleted" from "access removed", so both land on the
+        # same 'missing' status with the same user-facing message).
+        discovered_page_ids = {page.get("id") for page in pages}
+        cursor.execute("""
+            SELECT id, notion_page_id FROM notion_obsolete_articles
+            WHERE obsolete_status != 'missing'
+        """)
+        for obsolete_row in (cursor.fetchall() or []):
+            if obsolete_row["notion_page_id"] in discovered_page_ids:
+                continue
+            try:
+                notion_request(token, "GET", f"/pages/{obsolete_row['notion_page_id']}")
+                # Still accessible despite not showing up in search -- leave
+                # its status alone rather than guess.
+            except NotionAuthError:
+                raise
+            except requests.HTTPError as http_error:
+                status_code = http_error.response.status_code if http_error.response is not None else None
+                if status_code in (403, 404):
+                    mark_obsolete_missing(cursor, obsolete_row["id"])
+                    obsolete_missing_count += 1
+                    conn.commit()
+            except Exception as verify_error:
+                print("NOTION OBSOLETE VERIFY ERROR:", obsolete_row["notion_page_id"], verify_error)
+
         status = "completed"
     except NotionAuthError as auth_error:
         if conn:
@@ -1244,6 +1323,9 @@ def check_for_notion_updates(token, actor_id, upload_folder):
         "failed": failed_count,
         "inaccessible": inaccessible_count,
         "inaccessiblePages": inaccessible_pages,
+        "obsoleteChecked": obsolete_checked_count,
+        "obsoleteUpdated": obsolete_updated_count,
+        "obsoleteMissing": obsolete_missing_count,
         "errorMessage": error_message,
         "flaggedItems": flagged_items,
     }
@@ -1360,3 +1442,180 @@ def dismiss_pending_update(cursor, pending_id, actor_id):
     """, (actor_id, pending_id))
 
     return cursor.rowcount > 0
+
+
+# =========================
+# OBSOLETE ARTICLES (Notion pages permanently deleted from stored content,
+# but still tracked so a future "Check for Updates" doesn't re-stage them
+# as brand-new Pending items -- see check_for_notion_updates, which skips
+# straight to _check_obsolete_page for any page with an Obsolete record,
+# and app.py's _permanently_delete_pending_updates, which creates these.)
+# =========================
+def compute_notion_content_hash(text):
+    return hashlib.md5(str(text or "").encode("utf-8", errors="ignore")).hexdigest()
+
+
+def get_obsolete_record_by_page_id(cursor, notion_page_id):
+    cursor.execute("""
+        SELECT * FROM notion_obsolete_articles WHERE notion_page_id = %s LIMIT 1
+    """, (notion_page_id,))
+    return cursor.fetchone()
+
+
+def get_obsolete_article(cursor, obsolete_id):
+    cursor.execute("""
+        SELECT * FROM notion_obsolete_articles WHERE id = %s LIMIT 1
+    """, (obsolete_id,))
+    return cursor.fetchone()
+
+
+def list_obsolete_articles(cursor):
+    # Updated-in-Notion items surface first -- that's the one state that
+    # actually needs an admin's attention; unchanged/missing items are
+    # purely historical.
+    cursor.execute("""
+        SELECT * FROM notion_obsolete_articles
+        ORDER BY (obsolete_status = 'updated') DESC, deleted_at DESC
+    """)
+    return cursor.fetchall() or []
+
+
+def create_obsolete_record(cursor, notion_page_id, page_title, last_known_edited_time, last_known_content_hash, actor_id):
+    """
+    notion_page_id is UNIQUE -- ON DUPLICATE KEY UPDATE handles the (normally
+    unreachable, since an Obsolete page is skipped rather than re-staged as
+    Pending) edge case of a page somehow being permanently deleted a second
+    time while an Obsolete record for it already exists.
+    """
+    cursor.execute("""
+        INSERT INTO notion_obsolete_articles
+        (notion_page_id, page_title, deleted_by, last_known_notion_edited_time,
+         last_known_content_hash, latest_notion_edited_time, latest_content_hash,
+         obsolete_status, updated_after_obsolete, last_checked_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, 'unchanged', 0, NOW())
+        ON DUPLICATE KEY UPDATE
+            page_title = VALUES(page_title),
+            deleted_by = VALUES(deleted_by),
+            deleted_at = NOW(),
+            last_known_notion_edited_time = VALUES(last_known_notion_edited_time),
+            last_known_content_hash = VALUES(last_known_content_hash),
+            latest_notion_edited_time = VALUES(latest_notion_edited_time),
+            latest_content_hash = VALUES(latest_content_hash),
+            obsolete_status = 'unchanged',
+            updated_after_obsolete = 0,
+            last_checked_at = NOW()
+    """, (
+        notion_page_id, page_title, actor_id, last_known_edited_time,
+        last_known_content_hash, last_known_edited_time, last_known_content_hash,
+    ))
+    return cursor.lastrowid
+
+
+def delete_obsolete_record(cursor, obsolete_id):
+    cursor.execute("DELETE FROM notion_obsolete_articles WHERE id = %s", (obsolete_id,))
+    return cursor.rowcount > 0
+
+
+def mark_obsolete_missing(cursor, obsolete_id):
+    cursor.execute("""
+        UPDATE notion_obsolete_articles
+        SET obsolete_status = 'missing', last_checked_at = NOW(), last_sync_result = 'missing'
+        WHERE id = %s
+    """, (obsolete_id,))
+
+
+def _check_obsolete_page(cursor, obsolete_record, page):
+    """
+    Called from check_for_notion_updates for any discovered page that has
+    an Obsolete record, in place of staging a new Pending item. Uses
+    last_edited_time alone (already present on `page` from
+    discover_notion_content's /v1/search response -- zero extra API calls)
+    as the change signal, the same way the rest of this file already trusts
+    it alone for live wiki_article pages -- fetching full blocks just to
+    hash content on every sync, for every unchanged Obsolete page, would
+    defeat the point of keeping Obsolete lightweight. Content hashing still
+    happens, just at delete-time and restore-time instead (see
+    app.py's create_obsolete_record call and restore_obsolete_to_pending).
+
+    Returns the resulting status string ('unchanged' or 'updated').
+    """
+    edited_time_mysql = _normalize_notion_edited_time(page.get("last_edited_time"))
+
+    reference_edited = obsolete_record.get("latest_notion_edited_time") or obsolete_record.get("last_known_notion_edited_time")
+    reference_edited_str = reference_edited.strftime("%Y-%m-%d %H:%M:%S") if reference_edited else None
+
+    if reference_edited_str == edited_time_mysql:
+        status = "unchanged"
+        updated_flag = bool(obsolete_record.get("updated_after_obsolete"))
+    else:
+        status = "updated"
+        updated_flag = True
+
+    page_title = extract_notion_page_title(page)
+
+    cursor.execute("""
+        UPDATE notion_obsolete_articles
+        SET obsolete_status = %s,
+            updated_after_obsolete = %s,
+            latest_notion_edited_time = %s,
+            last_checked_at = NOW(),
+            last_sync_result = 'ok',
+            page_title = %s
+        WHERE id = %s
+    """, (status, updated_flag, edited_time_mysql, page_title, obsolete_record["id"]))
+
+    return status
+
+
+def restore_obsolete_to_pending(cursor, token, obsolete_record, actor_id, upload_folder):
+    """
+    Obsolete -> Restore Latest Version. Fetches the CURRENT Notion content
+    (full HTML, downloading/hosting any images via notion_blocks_to_html --
+    this is the one point in the Obsolete flow that deliberately does that,
+    per "only download images when the user chooses Restore") and stages it
+    as a fresh Pending item, exactly like a brand-new page discovered by
+    Check for Updates. Does not touch wiki_article directly -- the restored
+    item still goes through the normal Pending review/approve flow.
+
+    Raises NotionAuthError if the whole connection is dead, or
+    requests.HTTPError (via notion_request, typically 403/404) if just this
+    one page is gone/inaccessible -- callers distinguish these to show the
+    right message instead of crashing.
+    """
+    notion_page_id = obsolete_record["notion_page_id"]
+
+    page = notion_request(token, "GET", f"/pages/{notion_page_id}")
+    title = extract_notion_page_title(page)
+    edited_time_mysql = _normalize_notion_edited_time(page.get("last_edited_time"))
+
+    blocks = fetch_notion_block_children(token, notion_page_id)
+    content_html = notion_blocks_to_html(token, blocks, upload_folder)
+
+    if not content_html.strip():
+        content_html = "<p>(No readable content found in this Notion page.)</p>"
+
+    # Guard against a race with a concurrent "Check for Updates" that
+    # somehow already re-staged this exact page while Restore was in
+    # flight -- reuse that row instead of creating a duplicate.
+    cursor.execute("""
+        SELECT id FROM notion_pending_updates
+        WHERE article_id IS NULL AND notion_page_id = %s AND status IN ('pending', 'trashed')
+        LIMIT 1
+    """, (notion_page_id,))
+    existing_pending = cursor.fetchone()
+
+    if existing_pending:
+        delete_obsolete_record(cursor, obsolete_record["id"])
+        return existing_pending["id"]
+
+    cursor.execute("""
+        INSERT INTO notion_pending_updates
+        (article_id, notion_page_id, proposed_title, proposed_content,
+         previous_title, previous_content, notion_last_edited_time, status)
+        VALUES (NULL, %s, %s, %s, NULL, NULL, %s, 'pending')
+    """, (notion_page_id, title, content_html, edited_time_mysql))
+    pending_id = cursor.lastrowid
+
+    delete_obsolete_record(cursor, obsolete_record["id"])
+
+    return pending_id
