@@ -6700,10 +6700,19 @@ def check_notion_sync():
         if not is_ai_settings_manager(cursor, actor_id):
             return jsonify({"success": False, "message": "Only managers can check for Notion updates."}), 403
 
-        raw_token = notion_sync_service.get_active_notion_access_token(cursor)
+        raw_token, connection_status = notion_sync_service.get_active_notion_connection(cursor)
 
         if not raw_token:
             return jsonify({"success": False, "message": "No Notion workspace is connected yet."}), 400
+
+        if connection_status == "reconnect_required":
+            # Fail fast on a token already known to be invalid, instead of
+            # calling Notion and getting the same 401 again.
+            return jsonify({
+                "success": False,
+                "connectionStatus": "reconnect_required",
+                "message": "Your Notion connection needs to be renewed. Please reconnect Notion."
+            }), 400
 
     except Exception as error:
         print("CHECK NOTION SYNC SETUP ERROR:", error)
@@ -6716,6 +6725,18 @@ def check_notion_sync():
             conn.close()
 
     result = notion_sync_service.check_for_notion_updates(raw_token, actor_id, UPLOAD_FOLDER)
+
+    if result["status"] == "reconnect_required":
+        response_message = "Your Notion connection needs to be renewed. Please reconnect Notion."
+    elif result["status"] == "completed":
+        response_message = f"Checked Notion: {result['new']} new, {result['flagged']} updated, {result['unchanged']} unchanged."
+        if result.get("inaccessible"):
+            response_message += (
+                f" {result['inaccessible']} page(s) are no longer accessible and were skipped "
+                "-- they may have been removed from the integration's permissions."
+            )
+    else:
+        response_message = result.get("errorMessage") or "Failed to check Notion for updates."
 
     if result.get("flaggedItems"):
         notify_conn = None
@@ -6741,10 +6762,19 @@ def check_notion_sync():
         actor_id=actor_id,
         action="Checked Notion for updates",
         module="Notion Sync",
-        description=f"New {result['new']}, flagged {result['flagged']}, unchanged {result['unchanged']}, failed {result['failed']}."
+        description=(
+            f"New {result['new']}, flagged {result['flagged']}, unchanged {result['unchanged']}, "
+            f"failed {result['failed']}, inaccessible {result.get('inaccessible', 0)}."
+            if result["status"] != "reconnect_required"
+            else "Notion token rejected (401) -- connection marked as needing reconnect."
+        )
     )
 
-    return jsonify({"success": result["status"] == "completed", **result}), 200
+    return jsonify({
+        "success": result["status"] == "completed",
+        "message": response_message,
+        **result,
+    }), 200
 
 
 @app.route("/api/notion-sync/pending-updates", methods=["GET"])

@@ -35,6 +35,16 @@ NOTION_API_BASE = "https://api.notion.com/v1"
 NOTION_VERSION = "2022-06-28"
 
 
+class NotionAuthError(Exception):
+    """
+    Raised when Notion rejects the stored access token itself (401) -- as
+    opposed to a single page being unavailable (404/403, handled per-page in
+    check_for_notion_updates). Signals the whole connection needs to be
+    re-authorized rather than just a transient/per-item failure.
+    """
+    pass
+
+
 # =========================
 # DATABASE CONNECTION (own connection, same pattern as db_helper.py /
 # ai_provider_service.py, to avoid a circular import with app.py)
@@ -108,12 +118,21 @@ def ensure_notion_sync_tables(cursor):
         )
     """)
 
+    # connection_status/last_sync_at/last_error let the UI distinguish
+    # "connected and working" from "token no longer valid, needs reconnect"
+    # without guessing from the presence of a token alone -- see
+    # mark_notion_connection_status/mark_notion_sync_success and
+    # check_for_notion_updates, which set these based on what Notion's API
+    # actually returns (401 vs. a successful run).
     config_columns = {
         "encrypted_access_token": "ALTER TABLE notion_sync_configs ADD COLUMN encrypted_access_token TEXT NULL",
         "notion_workspace_id": "ALTER TABLE notion_sync_configs ADD COLUMN notion_workspace_id VARCHAR(64) NULL",
         "notion_workspace_name": "ALTER TABLE notion_sync_configs ADD COLUMN notion_workspace_name VARCHAR(255) NULL",
         "notion_workspace_icon": "ALTER TABLE notion_sync_configs ADD COLUMN notion_workspace_icon VARCHAR(500) NULL",
         "notion_bot_id": "ALTER TABLE notion_sync_configs ADD COLUMN notion_bot_id VARCHAR(64) NULL",
+        "connection_status": "ALTER TABLE notion_sync_configs ADD COLUMN connection_status VARCHAR(20) NOT NULL DEFAULT 'connected'",
+        "last_sync_at": "ALTER TABLE notion_sync_configs ADD COLUMN last_sync_at DATETIME NULL",
+        "last_error": "ALTER TABLE notion_sync_configs ADD COLUMN last_error TEXT NULL",
     }
     existing_config_columns = {
         row["Field"] if isinstance(row, dict) else row[0]
@@ -244,20 +263,29 @@ def get_active_notion_config(cursor):
 def get_notion_public_config(cursor):
     """
     Connection status for the OAuth flow: whether a workspace is connected,
-    and its name/icon -- never the access token itself. The old token-hint
-    shape is no longer needed since the OAuth flow replaces manual token
-    entry, but get_active_notion_config()/save_notion_config() (the old
-    integration-token path) are left in place, unused, so any pre-existing
-    row and the encrypted_notion_token/source_id NOT NULL columns are never
-    touched or lost.
+    its name/icon, and sync health -- never the access token itself. The old
+    token-hint shape is no longer needed since the OAuth flow replaces
+    manual token entry, but get_active_notion_config()/save_notion_config()
+    (the old integration-token path) are left in place, unused, so any
+    pre-existing row and the encrypted_notion_token/source_id NOT NULL
+    columns are never touched or lost.
+
+    "connected" stays True only while connection_status == 'connected'. A
+    row can still exist with connection_status == 'reconnect_required'
+    (Notion rejected the stored token -- see NotionAuthError) so the UI can
+    keep showing the workspace name/last sync info while prompting the
+    admin to reconnect, instead of looking identical to "never connected".
     """
     config = get_active_notion_config(cursor)
 
     if not config or not config.get("encrypted_access_token"):
         return None
 
+    status = config.get("connection_status") or "connected"
+
     return {
-        "connected": True,
+        "connected": status == "connected",
+        "connectionStatus": status,
         "workspaceId": config.get("notion_workspace_id"),
         "workspaceName": config.get("notion_workspace_name"),
         "workspaceIcon": config.get("notion_workspace_icon"),
@@ -266,16 +294,51 @@ def get_notion_public_config(cursor):
             if config.get("updated_at")
             else None
         ),
+        "lastSyncAt": (
+            config["last_sync_at"].strftime("%d/%m/%Y %I:%M %p")
+            if config.get("last_sync_at")
+            else None
+        ),
+        "lastError": config.get("last_error"),
     }
 
 
-def get_active_notion_access_token(cursor):
+def get_active_notion_connection(cursor):
+    """
+    Returns (decrypted_access_token, connection_status), or (None, None) if
+    no workspace is connected. Used by /notion-sync/check to fail fast with
+    a friendly "reconnect" message instead of calling Notion with a token
+    already known to be invalid.
+    """
     config = get_active_notion_config(cursor)
 
     if not config or not config.get("encrypted_access_token"):
-        return None
+        return None, None
 
-    return ai_provider_service.decrypt_api_key(config["encrypted_access_token"])
+    token = ai_provider_service.decrypt_api_key(config["encrypted_access_token"])
+    status = config.get("connection_status") or "connected"
+    return token, status
+
+
+def get_active_notion_access_token(cursor):
+    token, _status = get_active_notion_connection(cursor)
+    return token
+
+
+def mark_notion_connection_status(cursor, status, error_message=None):
+    cursor.execute("""
+        UPDATE notion_sync_configs
+        SET connection_status = %s, last_error = %s
+        WHERE is_active = 1
+    """, (status, error_message))
+
+
+def mark_notion_sync_success(cursor):
+    cursor.execute("""
+        UPDATE notion_sync_configs
+        SET connection_status = 'connected', last_error = NULL, last_sync_at = NOW()
+        WHERE is_active = 1
+    """)
 
 
 def save_notion_config(cursor, raw_token, source_id, source_name, actor_id):
@@ -312,6 +375,13 @@ def save_notion_oauth_config(cursor, access_token, workspace_id, workspace_name,
 
 
 def disconnect_notion(cursor):
+    # Notion's public OAuth API has no token-revocation endpoint to call
+    # here -- deactivating our own stored copy is all a public integration
+    # can do on this side. (The admin can additionally remove the
+    # integration's access from https://www.notion.so/my-integrations if
+    # they want it revoked on Notion's side too.) wiki_article content
+    # imported from Notion is untouched -- only the connection row is
+    # deactivated.
     cursor.execute("UPDATE notion_sync_configs SET is_active = 0 WHERE is_active = 1")
 
 
@@ -516,6 +586,15 @@ def notion_request(token, method, path, json_body=None, timeout=20):
         json=json_body,
         timeout=timeout,
     )
+
+    if response.status_code == 401:
+        # The stored token itself is invalid/revoked -- distinct from a
+        # single page being inaccessible (404/403), which Notion returns
+        # per-item and callers handle separately. Not a subclass of
+        # requests.HTTPError, so it isn't accidentally swallowed by
+        # `except requests.HTTPError` blocks elsewhere (e.g. list_notion_pages).
+        raise NotionAuthError("Notion rejected the stored access token (401 Unauthorized).")
+
     response.raise_for_status()
     return response.json()
 
@@ -928,8 +1007,11 @@ def check_for_notion_updates(token, actor_id, upload_folder):
     flagged_count = 0
     unchanged_count = 0
     failed_count = 0
+    inaccessible_count = 0
+    inaccessible_pages = []
     error_message = None
     flagged_items = []
+    auth_failed = False
 
     try:
         conn = get_db_connection()
@@ -1047,6 +1129,28 @@ def check_for_notion_updates(token, actor_id, upload_folder):
                     })
 
                 conn.commit()
+            except NotionAuthError:
+                # The whole token is dead, not just this page -- stop
+                # iterating (every remaining page would fail the same way)
+                # and let the outer handler mark the connection for
+                # reconnect instead of burning through the rest of `pages`.
+                conn.rollback()
+                raise
+            except requests.HTTPError as http_error:
+                conn.rollback()
+                status_code = http_error.response.status_code if http_error.response is not None else None
+                if status_code in (403, 404):
+                    # Notion deliberately returns 404 (sometimes 403) for a
+                    # page the integration can no longer see, rather than
+                    # distinguishing "doesn't exist" from "access removed" --
+                    # treat both as a permission change on this one page and
+                    # keep going, instead of failing the whole sync over it.
+                    inaccessible_count += 1
+                    inaccessible_pages.append(page_id)
+                else:
+                    failed_count += 1
+                print("NOTION PAGE CHECK ERROR:", page_id, http_error)
+                continue
             except Exception as page_error:
                 conn.rollback()
                 failed_count += 1
@@ -1054,12 +1158,30 @@ def check_for_notion_updates(token, actor_id, upload_folder):
                 continue
 
         status = "completed"
+    except NotionAuthError as auth_error:
+        if conn:
+            conn.rollback()
+        status = "reconnect_required"
+        auth_failed = True
+        error_message = str(auth_error)
+        print("NOTION AUTH ERROR:", auth_error)
     except Exception as error:
+        if conn:
+            conn.rollback()
         status = "failed"
         error_message = str(error)
         print("NOTION CHECK ERROR:", error)
     finally:
         if cursor:
+            try:
+                if auth_failed:
+                    mark_notion_connection_status(cursor, "reconnect_required", error_message)
+                elif status == "completed":
+                    mark_notion_sync_success(cursor)
+                conn.commit()
+            except Exception:
+                pass
+
             try:
                 cursor.execute("""
                     INSERT INTO notion_sync_jobs
@@ -1080,6 +1202,8 @@ def check_for_notion_updates(token, actor_id, upload_folder):
         "flagged": flagged_count,
         "unchanged": unchanged_count,
         "failed": failed_count,
+        "inaccessible": inaccessible_count,
+        "inaccessiblePages": inaccessible_pages,
         "errorMessage": error_message,
         "flaggedItems": flagged_items,
     }

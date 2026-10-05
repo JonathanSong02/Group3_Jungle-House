@@ -122,6 +122,7 @@
 }
 .ns-status-pill.connected{color:#39704c;background:#edf6ee;border:1px solid #cde4d3}
 .ns-status-pill.idle{color:#8b641f;background:#fff2d5;border:1px solid #ead29c}
+.ns-status-pill.warning{color:var(--ns-red);background:#fbeceb;border:1px solid #e8c6c2}
 
 .ns-source-info {
   display:grid;
@@ -499,6 +500,12 @@
   color:#98660b;
   background:var(--ns-admin-honey-soft);
   border-color:#ecd099;
+}
+
+.ns-status-pill.warning{
+  color:var(--ns-red);
+  background:#fbeceb;
+  border-color:#e8c6c2;
 }
 
 /* App / workspace information ------------------------------------------- */

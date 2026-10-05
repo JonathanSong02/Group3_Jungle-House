@@ -193,6 +193,7 @@ export default function NotionSync() {
       });
 
       setCheckResult(response.data);
+      if (!silent) setMessage(response.data?.message || '');
       await Promise.all([fetchJobs(), fetchPending()]);
     } catch (error) {
       console.error('Check Notion for updates error:', error);
@@ -200,6 +201,12 @@ export default function NotionSync() {
         setMessage(
           error.response?.data?.message || 'Failed to check Notion for updates.'
         );
+      }
+      if (error.response?.data?.connectionStatus === 'reconnect_required') {
+        // The connection just flipped to needing reconnect -- refresh so
+        // the status card/button reflect that instead of only showing the
+        // error text while still looking "connected".
+        fetchConfig();
       }
     } finally {
       setChecking(false);
@@ -326,6 +333,14 @@ export default function NotionSync() {
   };
 
   const handleDisconnect = async () => {
+    if (
+      !window.confirm(
+        'Disconnect this Notion workspace?\n\nFuture Notion syncs will stop until the workspace is reconnected. Existing Knowledge Base articles will not be deleted.'
+      )
+    ) {
+      return;
+    }
+
     try {
       setDisconnecting(true);
       setMessage('');
@@ -592,6 +607,13 @@ export default function NotionSync() {
   };
 
   const latestJob = jobs[0] || null;
+  const connectionStatus = config?.connectionStatus || (config?.connected ? 'connected' : 'disconnected');
+  const needsReconnect = connectionStatus === 'reconnect_required';
+  const connectionLabel = needsReconnect
+    ? 'Reconnect required'
+    : config?.connected
+    ? 'Connected'
+    : 'Not connected';
 
   return (
     <div className="ns-page">
@@ -605,7 +627,7 @@ export default function NotionSync() {
       <section className="ns-summary-grid">
         <div className="ns-summary-card status">
           <span>Connection</span>
-          <strong>{config?.connected ? 'Connected' : 'Not connected'}</strong>
+          <strong>{connectionLabel}</strong>
         </div>
 
         <div className="ns-summary-card pending">
@@ -723,16 +745,64 @@ export default function NotionSync() {
               <h2>Notion Connection</h2>
             </div>
 
-            <span className={`ns-status-pill ${config?.connected ? 'connected' : 'idle'}`}>
+            <span className={`ns-status-pill ${needsReconnect ? 'warning' : config?.connected ? 'connected' : 'idle'}`}>
               <i />
-              {config?.connected ? 'Connected' : 'Not connected'}
+              {connectionLabel}
             </span>
           </div>
 
           {loading ? (
             <div className="ns-loading">Loading connection...</div>
+          ) : needsReconnect ? (
+            <>
+              <p className="ns-section-copy">
+                Your Notion authorization is no longer valid. Please reconnect your workspace.
+              </p>
+
+              <div className="ns-source-info">
+                <div>
+                  <span>Workspace</span>
+                  <strong>{config.workspaceName || 'Notion workspace'}</strong>
+                </div>
+
+                <div>
+                  <span>Last Sync</span>
+                  <strong>{config.lastSyncAt || '-'}</strong>
+                </div>
+
+                {config.lastError ? (
+                  <div>
+                    <span>Last Error</span>
+                    <strong>{config.lastError}</strong>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="ns-connection-actions">
+                <button
+                  type="button"
+                  className="ns-btn primary"
+                  onClick={handleConnect}
+                  disabled={connecting || !appConfig?.configured}
+                >
+                  {connecting ? 'Opening Notion...' : 'Reconnect Notion'}
+                </button>
+                <button
+                  type="button"
+                  className="ns-btn secondary"
+                  onClick={handleDisconnect}
+                  disabled={disconnecting}
+                >
+                  {disconnecting ? 'Disconnecting...' : 'Disconnect'}
+                </button>
+              </div>
+            </>
           ) : config?.connected ? (
             <>
+              <p className="ns-section-copy">
+                Notion is connected. You do not need to remain logged in to Notion for future syncs.
+              </p>
+
               <div className="ns-source-info">
                 <div>
                   <span>Workspace</span>
@@ -745,8 +815,8 @@ export default function NotionSync() {
                 </div>
 
                 <div>
-                  <span>Status</span>
-                  <strong>Ready</strong>
+                  <span>Last Sync</span>
+                  <strong>{config.lastSyncAt || 'Never'}</strong>
                 </div>
               </div>
 
@@ -767,8 +837,9 @@ export default function NotionSync() {
               <div>
                 <strong>No workspace connected</strong>
                 <p>
-                  Sign in to Notion and choose the pages or databases you want
-                  to share with this Knowledge Base.
+                  Connect and authorize your Notion workspace once. After
+                  connection, future syncs do not require you to stay logged
+                  in to Notion.
                 </p>
               </div>
 
@@ -809,6 +880,12 @@ export default function NotionSync() {
             {checking ? 'Checking Notion...' : 'Check for Updates'}
           </button>
 
+          {needsReconnect ? (
+            <div className="ns-sync-note">
+              <span>Reconnect Notion above to resume syncing.</span>
+            </div>
+          ) : null}
+
           {checkResult ? (
             <div className="ns-sync-result-grid">
               <div>
@@ -827,12 +904,27 @@ export default function NotionSync() {
                 <span>Failed</span>
                 <strong>{checkResult.failed ?? 0}</strong>
               </div>
+              {Number(checkResult.inaccessible) > 0 ? (
+                <div className="failed">
+                  <span>Inaccessible</span>
+                  <strong>{checkResult.inaccessible}</strong>
+                </div>
+              ) : null}
             </div>
           ) : (
             <div className="ns-sync-note">
               <span>Safe to run again — unchanged pages are skipped.</span>
             </div>
           )}
+
+          {checkResult?.inaccessible > 0 ? (
+            <div className="ns-sync-note">
+              <span>
+                Some Notion pages are no longer accessible. They may have
+                been removed from the integration's permissions.
+              </span>
+            </div>
+          ) : null}
         </section>
       </div>
 
