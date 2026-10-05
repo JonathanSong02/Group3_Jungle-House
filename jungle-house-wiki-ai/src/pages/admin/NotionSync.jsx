@@ -571,7 +571,7 @@ export default function NotionSync() {
   const bulkApplySelected = () =>
     runBulkAction({
       endpoint: '/notion-sync/pending-updates/bulk-apply',
-      confirmText: (count) => `Add ${count} selected item(s) to the Knowledge Base?`,
+      confirmText: null,
       successFallback: (count) => `${count} item(s) published to the Knowledge Base.`,
       errorFallback: 'Unable to publish selected items.',
     });

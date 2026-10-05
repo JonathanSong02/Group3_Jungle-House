@@ -5,7 +5,7 @@ import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../i18n/LanguageContext';
 
-const CATEGORIES = ['All', 'SOP', 'PRODUCT', 'SALES', 'Training', 'Notice'];
+const CATEGORIES = ['All', 'SOP', 'PRODUCT', 'SALES', 'Training', 'Notice', 'Notion'];
 
 export default function ContentManagement() {
   const navigate = useNavigate();
