@@ -50,12 +50,22 @@ class NotionAuthError(Exception):
 # ai_provider_service.py, to avoid a circular import with app.py)
 # =========================
 def get_db_connection():
+    # charset is explicit here (unlike db_helper.get_db_connection, which
+    # this intentionally mirrors otherwise) because Notion content is
+    # routinely non-Latin-1 -- a workspace's emoji icon, or a page/workspace
+    # name in Chinese/Malay -- and without it, the connector negotiates
+    # whatever the server's default happens to be. On at least one
+    # deployment that default is latin1, which raises a Python
+    # UnicodeEncodeError before the write ever reaches MySQL (see
+    # ensure_notion_sync_tables, which also upgrades any table already
+    # created under that default).
     return mysql.connector.connect(
         host=os.getenv("MYSQL_HOST"),
         port=int(os.getenv("MYSQL_PORT", 3306)),
         user=os.getenv("MYSQL_USER"),
         password=os.getenv("MYSQL_PASSWORD"),
         database=os.getenv("MYSQL_DATABASE"),
+        charset="utf8mb4",
     )
 
 
@@ -94,6 +104,29 @@ def ensure_notion_columns_on_wiki_article(cursor):
             ALTER TABLE wiki_article
             ADD COLUMN notion_last_edited_time DATETIME NULL
         """)
+
+
+def _ensure_utf8mb4_table(cursor, table_name):
+    """
+    A table created (via CREATE TABLE IF NOT EXISTS, before charset="utf8mb4"
+    was added to get_db_connection) inherited whatever the MySQL server's
+    default charset happened to be -- latin1 on at least one deployment --
+    and keeps that charset even after the connection itself switches to
+    utf8mb4. Converts it once; a no-op (cheap INFORMATION_SCHEMA check, no
+    ALTER) once the table is already utf8mb4.
+    """
+    cursor.execute("""
+        SELECT ccsa.CHARACTER_SET_NAME
+        FROM INFORMATION_SCHEMA.TABLES t
+        JOIN INFORMATION_SCHEMA.COLLATION_CHARACTER_SET_APPLICABILITY ccsa
+          ON t.TABLE_COLLATION = ccsa.COLLATION_NAME
+        WHERE t.TABLE_SCHEMA = DATABASE() AND t.TABLE_NAME = %s
+    """, (table_name,))
+    row = cursor.fetchone()
+    charset = (row["CHARACTER_SET_NAME"] if isinstance(row, dict) else row[0]) if row else None
+
+    if charset and charset.lower() != "utf8mb4":
+        cursor.execute(f"ALTER TABLE {table_name} CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
 
 
 def ensure_notion_sync_tables(cursor):
@@ -141,6 +174,8 @@ def ensure_notion_sync_tables(cursor):
     for column_name, statement in config_columns.items():
         if column_name not in existing_config_columns:
             cursor.execute(statement)
+
+    _ensure_utf8mb4_table(cursor, "notion_sync_configs")
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS notion_sync_jobs (
@@ -239,6 +274,11 @@ def ensure_notion_sync_tables(cursor):
         cursor.execute("ALTER TABLE notion_pending_updates ADD COLUMN trashed_by INT NULL")
     if "trashed_at" not in pending_updates_columns:
         cursor.execute("ALTER TABLE notion_pending_updates ADD COLUMN trashed_at DATETIME NULL")
+
+    # proposed_title/content hold Notion page content verbatim, in whatever
+    # language/script the page was written in -- same utf8mb4 reasoning as
+    # notion_sync_configs above.
+    _ensure_utf8mb4_table(cursor, "notion_pending_updates")
 
 
 def _describe_table(cursor, table_name):
