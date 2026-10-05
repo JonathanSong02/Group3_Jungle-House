@@ -765,3 +765,179 @@
   min-height: 0;
   overflow-y: auto;
 }
+
+/* ========================================================================
+   MOBILE WEB EXPERIENCE FIX — iOS / Android
+   ------------------------------------------------------------------------
+   Keeps /chat inside one app viewport so Safari/Chrome do not create a
+   second page scroll underneath the conversation. Only the conversation
+   stream scrolls; the header and composer remain stable.
+   ======================================================================== */
+
+@media (max-width: 1024px) {
+  .staff-workspace.staff-chat-route {
+    width: 100%;
+    height: 100dvh;
+    min-height: 100dvh;
+    max-height: 100dvh;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  .staff-workspace.staff-chat-route .staff-main,
+  .staff-workspace.staff-chat-route.staff-is-collapsed .staff-main {
+    width: 100%;
+    height: 100dvh;
+    min-height: 0;
+    max-height: 100dvh;
+    margin-left: 0;
+    overflow: hidden;
+  }
+
+  .staff-workspace.staff-chat-route .staff-topbar {
+    flex: 0 0 62px;
+    height: 62px;
+    min-height: 62px;
+    padding-top: env(safe-area-inset-top);
+    box-sizing: content-box;
+  }
+
+  .staff-workspace.staff-chat-route .staff-content-chat {
+    flex: 1 1 auto;
+    width: 100%;
+    height: 0;
+    min-height: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  .staff-workspace.staff-chat-route .staff-chat-page,
+  .staff-workspace.staff-chat-route .staff-chat-experience {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    max-height: 100%;
+    overflow: hidden;
+  }
+
+  .staff-workspace.staff-chat-route .staff-chat-toolbar {
+    flex: 0 0 auto;
+  }
+
+  .staff-workspace.staff-chat-route .staff-chat-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+    touch-action: pan-y;
+    scroll-behavior: auto;
+  }
+
+  .staff-workspace.staff-chat-route .staff-chat-bottom {
+    flex: 0 0 auto;
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
+  }
+
+  .staff-workspace.staff-chat-route .staff-chat-composer textarea {
+    resize: none;
+  }
+
+  .staff-workspace.staff-chat-route .staff-sidebar,
+  .staff-workspace.staff-chat-route .staff-overlay {
+    overscroll-behavior: contain;
+  }
+}
+
+@media (max-width: 680px) {
+  .staff-workspace.staff-chat-route .staff-topbar {
+    flex-basis: 58px;
+    height: 58px;
+    min-height: 58px;
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .staff-workspace.staff-chat-route .staff-chat-toolbar {
+    min-height: 50px;
+    padding: 0 12px;
+  }
+
+  .staff-workspace.staff-chat-route .staff-chat-toolbar-actions button {
+    min-height: 34px;
+    padding: 6px 9px;
+  }
+
+  .staff-workspace.staff-chat-route .staff-chat-transcript {
+    width: calc(100% - 20px);
+    margin: 8px auto 0;
+    gap: 12px;
+    padding-bottom: 12px;
+  }
+
+  .staff-workspace.staff-chat-route .staff-chat-bottom {
+    width: calc(100% - 20px);
+    padding-top: 8px;
+  }
+
+  .staff-workspace.staff-chat-route .staff-chat-composer {
+    border-radius: 17px;
+    padding: 9px 9px 8px;
+  }
+
+  .staff-workspace.staff-chat-route .staff-chat-composer textarea {
+    min-height: 44px;
+    max-height: 112px;
+    padding: 5px 6px;
+    line-height: 1.45;
+  }
+
+  .staff-workspace.staff-chat-route .staff-composer-actions {
+    min-height: 34px;
+  }
+
+  .staff-workspace.staff-chat-route .staff-composer-upload {
+    padding: 6px 7px;
+  }
+
+  .staff-workspace.staff-chat-route .staff-send-button {
+    width: 34px;
+    height: 34px;
+  }
+
+  .staff-workspace.staff-chat-route .staff-ai-disclaimer {
+    margin: 6px 0 0;
+    line-height: 1.35;
+  }
+}
+
+@media (max-width: 430px) {
+  .staff-workspace.staff-chat-route .staff-topbar-label span {
+    font-size: 12.5px;
+  }
+
+  .staff-workspace.staff-chat-route .staff-topbar-actions .jh-language-selector-label {
+    display: none;
+  }
+
+  .staff-workspace.staff-chat-route .staff-chat-toolbar-title {
+    max-width: 42vw;
+  }
+
+  .staff-workspace.staff-chat-route .staff-chat-toolbar-actions {
+    gap: 5px;
+  }
+
+  .staff-workspace.staff-chat-route .staff-chat-toolbar-actions button {
+    font-size: 10.5px;
+    padding-inline: 8px;
+  }
+
+  .staff-workspace.staff-chat-route .staff-knowledge-source {
+    max-width: 112px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+

@@ -76,6 +76,17 @@ function StaffShell() {
   const initial = firstName[0]?.toUpperCase() || 'S';
   const role = String(user?.role || '').trim().toLowerCase().replace(/[\s_-]/g, '');
   const visibleManagementLinks = managementLinks.filter((link) => link.roles.includes(role));
+  const isChatRoute = location.pathname === '/chat';
+  const workspaceLabel = role === 'manager' || role === 'admin'
+    ? t('nav.adminWorkspace')
+    : role === 'teamlead'
+      ? t('nav.teamLeadWorkspace')
+      : t('workspace');
+  const roleLabel = role === 'manager' || role === 'admin'
+    ? t('role.manager')
+    : role === 'teamlead'
+      ? t('role.teamlead')
+      : t('assistant');
 
   useEffect(() => { setMobileOpen(false); setMoreOpen(false); setSearchOpen(false); setProfileOpen(false); setPreferencesOpen(false); }, [location.pathname]);
   useEffect(() => {
@@ -100,12 +111,12 @@ function StaffShell() {
   const visibleSessions = sessions.filter((item) => item.title?.toLowerCase().includes(search.trim().toLowerCase()));
 
   return (
-    <div className={`staff-workspace ${collapsed ? 'staff-is-collapsed' : ''} ${mobileOpen ? 'staff-mobile-open' : ''}`} data-jh-theme={effectiveAppearance} data-jh-contrast={effectiveContrast} data-jh-accent={settings.accent} lang={settings.language === 'zh' ? 'zh-Hans' : settings.language}>
+    <div className={`staff-workspace ${collapsed ? 'staff-is-collapsed' : ''} ${mobileOpen ? 'staff-mobile-open' : ''} ${isChatRoute ? 'staff-chat-route' : ''}`} data-jh-theme={effectiveAppearance} data-jh-contrast={effectiveContrast} data-jh-accent={settings.accent} lang={settings.language === 'zh' ? 'zh-Hans' : settings.language}>
       {mobileOpen && <button type="button" className="staff-overlay" aria-label={t('staff.closeNavigation')} onClick={() => setMobileOpen(false)} />}
       <aside className="staff-sidebar" aria-label="Staff navigation">
         <div className="staff-brand">
           <span className="staff-brand-icon"><Symbol name="leaf" size={25}/></span>
-          {!collapsed && <div><strong>Jungle House AI</strong><small>{t('assistant')}</small></div>}
+          {!collapsed && <div><strong>Jungle House AI</strong><small>{roleLabel}</small></div>}
           <button type="button" className="staff-icon-button staff-collapse-button" aria-label={collapsed ? t('staff.expandSidebar') : t('staff.collapseSidebar')} onClick={() => setCollapsed((current) => !current)}><Symbol name="panel" size={19}/></button>
           <button type="button" className="staff-icon-button staff-mobile-close" aria-label={t('staff.closeNavigation')} onClick={() => setMobileOpen(false)}><Symbol name="close"/></button>
         </div>
@@ -135,11 +146,11 @@ function StaffShell() {
         </div>
         <div className="staff-profile-area">
           {profileOpen && <div className="staff-account-menu" role="menu"><div className="staff-account-head"><strong>{fullName}</strong><small>{user?.email || 'Staff'}</small></div><button type="button" role="menuitem" onClick={() => { setProfileOpen(false); setPreferencesOpen(true); }}><Symbol name="leaf" size={18}/>{t('settings')}</button><NavLink to="/profile" role="menuitem" onClick={() => setProfileOpen(false)}><Symbol name="user" size={18}/> {t('account')}</NavLink><button type="button" role="menuitem" disabled={logoutPending} onClick={signOut}><Symbol name="logout" size={18}/>{logoutPending ? t('loggingOut') : t('logout')}</button>{logoutError && <p role="alert" className="staff-logout-error">{logoutError}</p>}</div>}
-          <button type="button" className="staff-profile-trigger" aria-haspopup="menu" aria-expanded={profileOpen} onClick={() => setProfileOpen((current) => !current)}><span className="staff-avatar">{initial}</span><span className="staff-profile-identity"><strong>{fullName}</strong><small>{t('assistant')}</small></span><Symbol name="more" size={18}/></button>
+          <button type="button" className="staff-profile-trigger" aria-haspopup="menu" aria-expanded={profileOpen} onClick={() => setProfileOpen((current) => !current)}><span className="staff-avatar">{initial}</span><span className="staff-profile-identity"><strong>{fullName}</strong><small>{roleLabel}</small></span><Symbol name="more" size={18}/></button>
         </div>
       </aside>
       <div className="staff-main">
-        <header className="staff-topbar"><button type="button" className="staff-icon-button staff-hamburger" onClick={() => setMobileOpen(true)} aria-label={t('staff.openNavigation')}><Symbol name="menu"/></button><div className="staff-topbar-label"><Symbol name="leaf" size={19}/><span>Jungle House AI</span><small>{t('workspace')}</small></div><div className="staff-topbar-actions"><LanguageSelector placement="down" /><button type="button" className="staff-icon-button jh-preferences-top-trigger" title={t('settings')} aria-label={t('openSettings')} onClick={() => setPreferencesOpen(true)}><Symbol name="more" size={20}/></button><NavLink to="/notifications" aria-label={t('nav.notifications')} title={t('nav.notifications')} className="staff-icon-button"><Symbol name="bell" size={20}/></NavLink><NavLink to="/profile" className="staff-avatar staff-avatar-top" aria-label={`${t('profile')}: ${fullName}`} title={fullName}>{initial}</NavLink></div></header>
+        <header className="staff-topbar"><button type="button" className="staff-icon-button staff-hamburger" onClick={() => setMobileOpen(true)} aria-label={t('staff.openNavigation')}><Symbol name="menu"/></button><div className="staff-topbar-label"><Symbol name="leaf" size={19}/><span>Jungle House AI</span><small>{workspaceLabel}</small></div><div className="staff-topbar-actions"><LanguageSelector placement="down" /><button type="button" className="staff-icon-button jh-preferences-top-trigger" title={t('settings')} aria-label={t('openSettings')} onClick={() => setPreferencesOpen(true)}><Symbol name="more" size={20}/></button><NavLink to="/notifications" aria-label={t('nav.notifications')} title={t('nav.notifications')} className="staff-icon-button"><Symbol name="bell" size={20}/></NavLink><NavLink to="/profile" className="staff-avatar staff-avatar-top" aria-label={`${t('profile')}: ${fullName}`} title={fullName}>{initial}</NavLink></div></header>
         <main className={`staff-content ${location.pathname === '/chat' ? 'staff-content-chat' : ''}`} id="staff-content"><Outlet context={{ firstName }}/></main>
       </div>
       {preferencesOpen && <StaffPreferencesDialog onClose={closePreferences} />}
