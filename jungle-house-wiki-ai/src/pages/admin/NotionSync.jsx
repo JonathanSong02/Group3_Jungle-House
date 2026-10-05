@@ -568,6 +568,14 @@ export default function NotionSync() {
     }
   };
 
+  const bulkApplySelected = () =>
+    runBulkAction({
+      endpoint: '/notion-sync/pending-updates/bulk-apply',
+      confirmText: (count) => `Add ${count} selected item(s) to the Knowledge Base?`,
+      successFallback: (count) => `${count} item(s) published to the Knowledge Base.`,
+      errorFallback: 'Unable to publish selected items.',
+    });
+
   const bulkTrashSelected = () =>
     runBulkAction({
       endpoint: '/notion-sync/pending-updates/bulk-trash',
@@ -1155,14 +1163,24 @@ export default function NotionSync() {
                 </span>
 
                 {activeTab === 'pending' ? (
-                  <button
-                    type="button"
-                    className="ns-btn secondary"
-                    onClick={bulkTrashSelected}
-                    disabled={bulkProcessing}
-                  >
-                    {bulkProcessing ? 'Working...' : 'Move to Trash'}
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className="ns-btn primary"
+                      onClick={bulkApplySelected}
+                      disabled={bulkProcessing}
+                    >
+                      {bulkProcessing ? 'Working...' : 'Add to Knowledge Base'}
+                    </button>
+                    <button
+                      type="button"
+                      className="ns-btn secondary"
+                      onClick={bulkTrashSelected}
+                      disabled={bulkProcessing}
+                    >
+                      {bulkProcessing ? 'Working...' : 'Move to Trash'}
+                    </button>
+                  </>
                 ) : (
                   <>
                     <button

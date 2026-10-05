@@ -7183,6 +7183,70 @@ def _clean_pending_id_list(raw_ids):
     return clean_ids
 
 
+@app.route("/api/notion-sync/pending-updates/bulk-apply", methods=["POST"])
+def bulk_apply_notion_pending_updates():
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
+
+    data = request.get_json(silent=True) or {}
+    actor_id = data.get("user_id")
+    pending_ids = _clean_pending_id_list(data.get("ids"))
+
+    if not pending_ids:
+        return jsonify({"success": False, "message": "No items selected."}), 400
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = notion_sync_service.get_db_connection()
+        conn.start_transaction()
+        cursor = conn.cursor(dictionary=True)
+
+        notion_sync_service.ensure_notion_sync_tables(cursor)
+
+        if not is_ai_settings_manager(cursor, actor_id):
+            conn.rollback()
+            return jsonify({"success": False, "message": "Only managers can approve Notion updates."}), 403
+
+        applied_count = 0
+        failed_ids = []
+        for pending_id in pending_ids:
+            if notion_sync_service.apply_pending_update(cursor, pending_id, actor_id):
+                applied_count += 1
+            else:
+                failed_ids.append(pending_id)
+
+        conn.commit()
+
+        add_audit_log(
+            actor_id=actor_id,
+            action="Bulk applied Notion updates",
+            module="Notion Sync",
+            description=f"{applied_count} pending Notion update(s) published to the Knowledge Base."
+        )
+
+        return jsonify({
+            "success": True,
+            "message": f"{applied_count} item(s) published to the Knowledge Base.",
+            "count": applied_count,
+            "failedIds": failed_ids,
+        }), 200
+
+    except Exception as error:
+        if conn:
+            conn.rollback()
+
+        print("BULK APPLY NOTION PENDING UPDATES ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to publish selected updates."}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
 @app.route("/api/notion-sync/pending-updates/bulk-trash", methods=["POST"])
 def bulk_trash_notion_pending_updates():
     if not NOTION_SYNC_SERVICE_AVAILABLE:

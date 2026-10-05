@@ -20,16 +20,38 @@ def get_public_base_url():
     completely different domains (Vercel / Railway), so any image URL we
     bake into article content MUST be absolute -- a relative path only
     ever resolves against whichever domain is currently loaded.
+
+    Outside an active Flask request -- the background auto-sync loop
+    (_notion_auto_sync_loop in app.py) runs check_for_notion_updates on its
+    own daemon thread with no request to read host_url from at all -- this
+    used to silently fall back to a bare "http://localhost:4000" placeholder,
+    permanently baking a broken image URL into the article HTML for every
+    image an automatic sync downloaded (manual "Check for Updates" clicks
+    were unaffected, since those run inside a real request). Falls back
+    instead to RAILWAY_PUBLIC_DOMAIN, which Railway sets automatically for
+    any service with a public domain, or the explicit NOTION_PUBLIC_BASE_URL
+    override if set -- only genuine local dev with neither present still
+    gets the localhost placeholder.
     """
     try:
         base_url = flask_request.host_url.rstrip("/")
+
+        if base_url.startswith("http://"):
+            base_url = "https://" + base_url[len("http://"):]
+
+        return base_url
     except RuntimeError:
-        return "http://localhost:4000"
+        pass
 
-    if base_url.startswith("http://"):
-        base_url = "https://" + base_url[len("http://"):]
+    override = os.getenv("NOTION_PUBLIC_BASE_URL", "").strip()
+    if override:
+        return override.rstrip("/")
 
-    return base_url
+    railway_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()
+    if railway_domain:
+        return f"https://{railway_domain}"
+
+    return "http://localhost:4000"
 
 
 NOTION_API_BASE = "https://api.notion.com/v1"
