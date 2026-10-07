@@ -10,6 +10,15 @@ export default function QuizList() {
   const { user } = useAuth();
   const { t, tOr } = useLanguage();
   const staffMode = String(user?.role || '').toLowerCase() === 'staff';
+  const titleLabel = (title) => (title === 'AI Generated Quiz' ? t('qm.defaultAiTitle') : title);
+  const catLabel = (category) => tOr(`cat.${category}`, category);
+  // Descriptions written by the AI builder are stored in English; translate those.
+  const localizeDescription = (text) => {
+    const match = String(text || '').match(/^AI generated quiz based on the latest verified (.*) content\.$/);
+    if (match) return t('quiz.autoDesc', { category: catLabel(match[1]) });
+    const plain = String(text || '').match(/^Quiz generated from the latest verified (.*) content\.$/);
+    return plain ? t('quiz.autoDescTemplate', { category: catLabel(plain[1]) }) : text;
+  };
   const [categoryFilter, setCategoryFilter] = useState('All');
   const [quizError, setQuizError] = useState('');
   const [questionError, setQuestionError] = useState('');
@@ -73,7 +82,7 @@ export default function QuizList() {
     } catch (err) {
       console.error('Failed to load quizzes:', err);
       setQuizItems([]);
-      setQuizError(err.response?.data?.message || 'Could not load quizzes. Please try again.');
+      setQuizError(err.response?.data?.message || t('quiz.err.loadList'));
     } finally {
       setLoadingQuizzes(false);
     }
@@ -105,7 +114,7 @@ export default function QuizList() {
       }
     } catch (err) {
       console.error('Failed to load quiz questions:', err);
-      setQuestionError(err.response?.data?.message || 'Questions could not be loaded. Try again.');
+      setQuestionError(err.response?.data?.message || t('quiz.err.loadQs'));
     } finally {
       setLoadingQuestions(false);
     }
@@ -240,7 +249,7 @@ export default function QuizList() {
       setSaveStatus('unsaved');
       setSaveError(
         submitError.response?.data?.message ||
-        'Could not confirm that your attempt was saved. Check your training record before submitting again to avoid duplicates.'
+        t('quiz.err.unconfirmed')
       );
       // Keep answers and the quiz visible. Never show a fabricated score.
     } finally {
@@ -282,18 +291,18 @@ export default function QuizList() {
   return (
     <div className={`quiz-page ${staffMode ? 'staff-quiz-page' : ''}`}>
       <PageHeader
-        title={staffMode ? 'Training' : 'Quiz / Training'}
-        subtitle={staffMode ? 'Learn. Practise. Grow.' : 'Support onboarding with basic quizzes and learning reinforcement.'}
+        title={staffMode ? t('quiz.page.titleStaff') : t('quiz.page.title')}
+        subtitle={staffMode ? t('quiz.page.subtitleStaff') : t('quiz.page.subtitle')}
       />
 
       {staffMode && !activeQuiz && !loadingQuizzes && quizItems.length > 0 ? (
-        <div className="staff-quiz-filters" role="group" aria-label="Filter training quizzes"
+        <div className="staff-quiz-filters" role="group" aria-label={t('quiz.filterAria')}
           style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
           {categories.map((category) => (
             <button key={category} type="button"
               className={categoryFilter === category ? 'primary-btn' : 'secondary-btn'}
               aria-pressed={categoryFilter === category}
-              onClick={() => setCategoryFilter(category)}>{category}</button>
+              onClick={() => setCategoryFilter(category)}>{catLabel(category)}</button>
           ))}
         </div>
       ) : null}
@@ -304,20 +313,20 @@ export default function QuizList() {
           {loadingQuizzes ? (
             <div className="quiz-state-card" aria-live="polite">
               <span className="quiz-loading-spinner" aria-hidden="true" />
-              <strong>Loading training quizzes</strong>
-              <p>Preparing the available learning activities...</p>
+              <strong>{t('quiz.loadingList')}</strong>
+              <p>{t('quiz.loadingListHint')}</p>
             </div>
           ) : quizError ? (
             <div className="quiz-state-card" role="alert">
-              <strong>Unable to load training</strong>
+              <strong>{t('quiz.loadFailedTitle')}</strong>
               <p>{quizError}</p>
-              <button type="button" className="secondary-btn" onClick={fetchQuizzes}>Retry</button>
+              <button type="button" className="secondary-btn" onClick={fetchQuizzes}>{t('quiz.retry')}</button>
             </div>
           ) : quizItems.length === 0 ? (
             <div className="quiz-state-card">
               <span className="quiz-state-icon" aria-hidden="true">?</span>
-              <strong>No quizzes available</strong>
-              <p>Training quizzes will appear here when they are published.</p>
+              <strong>{t('quiz.noneTitle')}</strong>
+              <p>{t('quiz.noneHint')}</p>
             </div>
           ) : (
             visibleQuizzes.map((quiz) => (
@@ -327,9 +336,9 @@ export default function QuizList() {
                     <span className="quiz-card-icon" aria-hidden="true">✓</span>
                     <div>
                       <span className="quiz-card-kicker">
-                        {quiz.category || 'Training'}
+                        {catLabel(quiz.category || 'Training')}
                       </span>
-                      <h3>{quiz.title}</h3>
+                      <h3>{titleLabel(quiz.title)}</h3>
                     </div>
                   </div>
 
@@ -338,21 +347,21 @@ export default function QuizList() {
                       {tOr(`quiz.difficulty.${quiz.difficulty}`, quiz.difficulty)}
                     </span>
                   ) : null}
-                  {!staffMode && <span className="status-badge pending">Training Quiz</span>}
+                  {!staffMode && <span className="status-badge pending">{t('quiz.trainingQuiz')}</span>}
                 </div>
 
                 {quiz.description ? (
-                  <p className="quiz-card-description">{staffMode && quiz.description.length > 100 ? `${quiz.description.slice(0, 97).trim()}…` : quiz.description}</p>
+                  <p className="quiz-card-description">{staffMode && quiz.description.length > 100 ? `${localizeDescription(quiz.description).slice(0, 97).trim()}…` : localizeDescription(quiz.description)}</p>
                 ) : (
                   !staffMode && <p className="quiz-card-description">
-                    Complete this quiz to reinforce your Jungle House knowledge.
+                    {t('quiz.defaultDesc')}
                   </p>
                 )}
 
                 <div className="quiz-card-meta">
                   <span>
                     <strong>{quiz.questionCount ?? 0}</strong>
-                    Questions
+                    {t('quiz.questionsLabel')}
                   </span>
                   {/* The current /quizzes API provides no previous score. Do not show a fabricated 0%. */}
                 </div>
@@ -363,7 +372,7 @@ export default function QuizList() {
                   onClick={() => handleStartQuiz(quiz.id)}
                   disabled={!quiz.questionCount}
                 >
-                  {staffMode ? 'Start' : 'Attempt Quiz'}
+                  {staffMode ? t('quiz.start') : t('quiz.attempt')}
                   <span aria-hidden="true">→</span>
                 </button>
               </article>
@@ -375,21 +384,21 @@ export default function QuizList() {
           <div className="card-like quiz-session-header">
             <div className="row-between wrap-gap">
               <div>
-                <h2 className="quiz-session-title">{activeQuiz.title}</h2>
+                <h2 className="quiz-session-title">{titleLabel(activeQuiz.title)}</h2>
                 {!showWelcome ? (
                   <p className="muted" style={{ marginBottom: 0 }}>
-                    Question {currentQuestionIndex + 1} of {totalQuestions}
+                    {t('quiz.questionN', { n: currentQuestionIndex + 1, total: totalQuestions })}
                   </p>
                 ) : (
                   <p className="muted" style={{ marginBottom: 0 }}>
-                    Welcome to this training quiz
+                    {t('quiz.welcomeTo')}
                   </p>
                 )}
               </div>
 
               <div className="button-group wrap-gap">
                 <button className="secondary-btn" onClick={handleBackToList}>
-                  Back to Quiz List
+                  {t('quiz.backToList')}
                 </button>
               </div>
             </div>
@@ -397,60 +406,39 @@ export default function QuizList() {
 
           {showWelcome ? staffMode ? (
             <div className="card-like quiz-welcome-card staff-quiz-welcome">
-              <span className="eyebrow">Ready?</span>
-              <h2>{activeQuiz.title}</h2>
-              <p>{totalQuestions} questions · Choose one answer per question.</p>
-              {loadingQuestions && <p role="status">Loading questions…</p>}
+              <span className="eyebrow">{t('quiz.ready')}</span>
+              <h2>{titleLabel(activeQuiz.title)}</h2>
+              <p>{t('quiz.readyInfo', { n: totalQuestions })}</p>
+              {loadingQuestions && <p role="status">{t('quiz.loadingQs')}</p>}
               {questionError && <p role="alert">{questionError}</p>}
-              {!loadingQuestions && !questionError && totalQuestions === 0 && <p>No questions available.</p>}
+              {!loadingQuestions && !questionError && totalQuestions === 0 && <p>{t('quiz.noQs')}</p>}
               <div className="button-group wrap-gap top-gap">
-                <button type="button" className="secondary-btn" onClick={handleBackToList}>Back</button>
+                <button type="button" className="secondary-btn" onClick={handleBackToList}>{t('quiz.back')}</button>
                 {questionError ? (
-                  <button type="button" className="primary-btn" onClick={() => fetchQuizQuestions(activeQuizId)}>Retry</button>
+                  <button type="button" className="primary-btn" onClick={() => fetchQuizQuestions(activeQuizId)}>{t('quiz.retry')}</button>
                 ) : (
                   <button type="button" className="primary-btn"
-                    onClick={handleBeginQuestions} disabled={loadingQuestions || totalQuestions === 0}>Begin →</button>
+                    onClick={handleBeginQuestions} disabled={loadingQuestions || totalQuestions === 0}>{t('quiz.begin')}</button>
                 )}
               </div>
             </div>
           ) : (
             <div className="card-like quiz-welcome-card">
-              <p className="eyebrow">Welcome</p>
+              <p className="eyebrow">{t('quiz.welcome.kicker')}</p>
               <h2 style={{ marginBottom: '10px' }}>
-                Pre-Official Interview Training Session
+                {t('quiz.welcome.title')}
               </h2>
 
               <div className="quiz-welcome-message">
-                <p>Dear Candidate,</p>
-
-                <p>
-                  Welcome to the Pre-Official Interview Training Session!
-                </p>
-
-                <p>
-                  We’re excited to have you here and appreciate your interest in joining
-                  our team. This session is designed to help you better understand our
-                  interview process, set clear expectations, and equip you with valuable
-                  tips to present your best self during the official interview.
-                </p>
-
-                <p>
-                  Whether you're new to our industry or bringing in prior experience,
-                  this training will guide you through the essential aspects of what
-                  we’re looking for, our company culture, and how to confidently
-                  communicate your strengths.
-                </p>
-
-                <p>
-                  Take this opportunity to prepare, learn, and ask questions. Our goal
-                  is to support you in making this journey as smooth and insightful as
-                  possible.
-                </p>
-
-                <p>Let’s get started!</p>
+                <p>{t('quiz.welcome.dear')}</p>
+                <p>{t('quiz.welcome.p1')}</p>
+                <p>{t('quiz.welcome.p2')}</p>
+                <p>{t('quiz.welcome.p3')}</p>
+                <p>{t('quiz.welcome.p4')}</p>
+                <p>{t('quiz.welcome.p5')}</p>
 
                 <p style={{ marginBottom: 0 }}>
-                  Warm regards,
+                  {t('quiz.welcome.regards')}
                   <br />
                   <strong>Eno Wong</strong>
                   <br />
@@ -460,26 +448,26 @@ export default function QuizList() {
 
               <div className="button-group wrap-gap top-gap">
                 <button className="secondary-btn" onClick={handleBackToList}>
-                  Back
+                  {t('quiz.back')}
                 </button>
                 <button className="primary-btn" onClick={handleBeginQuestions}>
-                  Start Quiz Now
+                  {t('quiz.welcome.start')}
                 </button>
               </div>
             </div>
           ) : loadingQuestions ? (
             <div className="card-like">
-              <p>Loading quiz questions...</p>
+              <p>{t('quiz.loadingQuiz')}</p>
             </div>
           ) : !submitted ? (
             <>
               {staffMode && totalQuestions > 0 && (
-                <nav className="staff-quiz-question-nav" aria-label="Quiz questions"
+                <nav className="staff-quiz-question-nav" aria-label={t('quiz.questionsNav')}
                   style={{ display: 'flex', flexWrap: 'nowrap', overflowX: 'auto', gap: 8, marginBottom: 12, paddingBottom: 4, maxWidth: '100%' }}>
                   {questions.map((item, index) => (
                     <button key={item.id} type="button"
                       className={index === currentQuestionIndex ? 'primary-btn' : 'secondary-btn'}
-                      aria-label={`Question ${index + 1}${selectedAnswers[item.id] !== undefined ? ', answered' : ''}`}
+                      aria-label={selectedAnswers[item.id] !== undefined ? t('quiz.navAnswered', { n: index + 1 }) : t('quiz.navQuestion', { n: index + 1 })}
                       aria-current={index === currentQuestionIndex ? 'step' : undefined}
                       onClick={() => { clearAutoNextTimer(); setCurrentQuestionIndex(index); }}
                       style={{ minWidth: 42, minHeight: 42, padding: '8px 12px', flex: '0 0 auto' }}>
@@ -509,7 +497,7 @@ export default function QuizList() {
 
               {saveError && (
                 <div className="quiz-state-card" role="alert" style={{ marginBottom: 12 }}>
-                  <strong>Result not confirmed</strong>
+                  <strong>{t('quiz.notConfirmed')}</strong>
                   <p>{saveError}</p>
                 </div>
               )}
@@ -517,8 +505,8 @@ export default function QuizList() {
               {currentQuestion ? (
                 <div className="card-like quiz-question-card">
                   <div className="quiz-question-label">
-                    <span>Question {currentQuestionIndex + 1}</span>
-                    <small>{totalQuestions} total</small>
+                    <span>{t('quiz.navQuestion', { n: currentQuestionIndex + 1 })}</span>
+                    <small>{t('quiz.totalN', { n: totalQuestions })}</small>
                   </div>
                   <h3 className="quiz-question-title">{currentQuestion.question}</h3>
 
@@ -555,7 +543,7 @@ export default function QuizList() {
                       onClick={handlePrevious}
                       disabled={currentQuestionIndex === 0}
                     >
-                      Previous
+                      {t('quiz.previous')}
                     </button>
 
                     <div className="button-group wrap-gap">
@@ -565,7 +553,7 @@ export default function QuizList() {
                           onClick={handleNext}
                           disabled={selectedAnswers[currentQuestion.id] === undefined}
                         >
-                          Next
+                          {t('quiz.next')}
                         </button>
                       ) : (
                         <button
@@ -582,8 +570,8 @@ export default function QuizList() {
               ) : (
                 <div className="quiz-state-card">
                   <span className="quiz-state-icon" aria-hidden="true">!</span>
-                  <strong>No questions found</strong>
-                  <p>This quiz does not contain any questions yet.</p>
+                  <strong>{t('quiz.noQsFound')}</strong>
+                  <p>{t('quiz.noQsFoundHint')}</p>
                 </div>
               )}
             </>
@@ -591,7 +579,7 @@ export default function QuizList() {
             <div className="card-like quiz-result-card">
               <div className={`quiz-result-summary quiz-rv-header ${passed ? 'is-pass' : 'is-fail'}`}>
                 <p role="status" className="quiz-save-status">
-                  {saveStatus === 'saved' ? t('quiz.result.saved') : 'Saving not confirmed.'}
+                  {saveStatus === 'saved' ? t('quiz.result.saved') : t('quiz.savingNotConfirmed')}
                 </p>
                 <span className="quiz-result-kicker">{t('quiz.result.title')}</span>
                 <div className="quiz-result-score">{score}%</div>

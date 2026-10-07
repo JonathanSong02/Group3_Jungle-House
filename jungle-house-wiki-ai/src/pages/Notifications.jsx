@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
+import { useLanguage } from '../i18n/LanguageContext';
+import { translateNotificationTitle, translateNotificationDetail } from '../i18n/notificationText';
 import '../styles/Notifications.css';
 
 function formatNotificationDate(value) {
@@ -30,6 +32,7 @@ function getNotificationIcon(type, title = '') {
 
 export default function Notifications() {
   const { user } = useAuth();
+  const { t, tOr } = useLanguage();
   const userId = user?.id ?? user?.user_id ?? null;
   const role = String(user?.role || user?.role_name || '').toLowerCase().replace(/[\s_-]/g, '');
   const canReviewRegistrations = ['manager', 'admin', 'teamlead'].includes(role);
@@ -77,8 +80,8 @@ export default function Notifications() {
       const code = err.response?.data?.code;
       setError(
         code === 'SESSION_EXPIRED' || err.response?.status === 401
-          ? 'Your session has expired. Please sign in again.'
-          : err.response?.data?.message || 'Unable to load notifications.'
+          ? t('notif.sessionExpired')
+          : err.response?.data?.message || t('notif.loadFailedMsg')
       );
       // Do not display outdated summary counts after a failed reload.
       setNotificationData((prev) => prev.userId === userId ? { userId, items: [] } : prev);
@@ -87,7 +90,7 @@ export default function Notifications() {
         setLoading(false);
       }
     }
-  }, [userId]);
+  }, [userId, t]);
 
   useEffect(() => {
     setActionError('');
@@ -102,6 +105,9 @@ export default function Notifications() {
   }, [items]);
 
   const readCount = items.length - unreadCount;
+
+  const translateTitle = (title) => translateNotificationTitle(t, title);
+  const translateDetail = (detail) => translateNotificationDetail(t, detail);
 
   const filteredItems = useMemo(() => {
     if (filter === 'unread') {
@@ -139,7 +145,7 @@ export default function Notifications() {
     } catch (err) {
       if (currentUserIdRef.current !== requestUserId || markInFlightRef.current !== operation) return;
       console.error('Mark notification error:', err);
-      setActionError(err.response?.data?.message || 'Unable to mark notification as read.');
+      setActionError(err.response?.data?.message || t('notif.markFailed'));
     } finally {
       if (markInFlightRef.current === operation) {
         markInFlightRef.current = null;
@@ -151,23 +157,23 @@ export default function Notifications() {
   return (
     <div className="notifications-page">
       <PageHeader
-        title="Notifications"
-        subtitle="Your latest system updates and alerts."
+        title={t('notif.title')}
+        subtitle={t('notif.subtitle')}
       />
 
       <section className="notifications-summary-grid">
         <div className="notifications-summary-card total">
-          <span>Total</span>
+          <span>{t('notif.total')}</span>
           <strong>{items.length}</strong>
         </div>
 
         <div className="notifications-summary-card unread">
-          <span>Unread</span>
+          <span>{t('notif.unread')}</span>
           <strong>{unreadCount}</strong>
         </div>
 
         <div className="notifications-summary-card read">
-          <span>Read</span>
+          <span>{t('notif.read')}</span>
           <strong>{readCount}</strong>
         </div>
       </section>
@@ -175,8 +181,8 @@ export default function Notifications() {
       <section className="notifications-workspace">
         <div className="notifications-toolbar">
           <div className="notifications-toolbar-title">
-            <span className="notifications-kicker">Activity Centre</span>
-            <h2>Recent Updates</h2>
+            <span className="notifications-kicker">{t('notif.kicker')}</span>
+            <h2>{t('notif.recent')}</h2>
           </div>
 
           <div className="notification-actions">
@@ -187,7 +193,7 @@ export default function Notifications() {
                 onClick={() => setFilter('all')}
                 aria-pressed={filter === 'all'}
               >
-                All
+                {t('notif.all')}
                 <span>{items.length}</span>
               </button>
 
@@ -197,7 +203,7 @@ export default function Notifications() {
                 onClick={() => setFilter('unread')}
                 aria-pressed={filter === 'unread'}
               >
-                Unread
+                {t('notif.unread')}
                 <span>{unreadCount}</span>
               </button>
 
@@ -207,7 +213,7 @@ export default function Notifications() {
                 onClick={() => setFilter('read')}
                 aria-pressed={filter === 'read'}
               >
-                Read
+                {t('notif.read')}
                 <span>{readCount}</span>
               </button>
             </div>
@@ -217,9 +223,9 @@ export default function Notifications() {
               className="notification-refresh-btn"
               onClick={fetchNotifications}
               disabled={loading || markingId !== null || userId == null}
-              aria-label="Refresh notifications"
+              aria-label={t('notif.refreshAria')}
             >
-              Refresh
+              {t('notif.refresh')}
             </button>
           </div>
         </div>
@@ -227,14 +233,14 @@ export default function Notifications() {
         {loading && (
           <div className="notifications-state-card" role="status">
             <div className="notifications-state-icon">•••</div>
-            <strong>Loading notifications</strong>
+            <strong>{t('notif.loading')}</strong>
           </div>
         )}
 
         {!loading && error && (
           <div className="notifications-state-card error" role="alert">
             <div className="notifications-state-icon">!</div>
-            <strong>Unable to load notifications</strong>
+            <strong>{t('notif.loadFailed')}</strong>
             <p>{error}</p>
           </div>
         )}
@@ -248,8 +254,8 @@ export default function Notifications() {
         {!loading && !error && filteredItems.length === 0 && (
           <div className="notifications-state-card">
             <div className="notifications-state-icon">✓</div>
-            <strong>No notifications found</strong>
-            <p>Nothing to show under this filter.</p>
+            <strong>{t('notif.none')}</strong>
+            <p>{t('notif.noneHint')}</p>
           </div>
         )}
 
@@ -268,11 +274,11 @@ export default function Notifications() {
                   <div className="notification-top-row">
                     <div className="notification-meta-row">
                       <span className={`notification-status ${item.isRead ? 'read' : 'unread'}`}>
-                        {item.isRead ? 'Read' : 'New'}
+                        {item.isRead ? t('notif.read') : t('notif.new')}
                       </span>
 
                       <span className="notification-type">
-                        {item.type || 'system'}
+                        {tOr(`notif.type.${String(item.type || 'system').toLowerCase()}`, item.type || 'system')}
                       </span>
                     </div>
 
@@ -286,13 +292,13 @@ export default function Notifications() {
                     )}
                   </div>
 
-                  <h3>{item.title || 'Notification'}</h3>
-                  <p>{item.detail || ''}</p>
+                  <h3>{translateTitle(item.title)}</h3>
+                  <p>{translateDetail(item.detail)}</p>
                 </div>
 
                 {canReviewRegistrations && item.title === 'New account approval needed' ? (
                   <Link to="/admin/users" className="notification-mark-btn">
-                    Review account
+                    {t('notif.reviewAccount')}
                   </Link>
                 ) : null}
 
@@ -303,7 +309,7 @@ export default function Notifications() {
                     onClick={() => markAsRead(item.id)}
                     disabled={markingId !== null}
                   >
-                    {markingId === item.id ? 'Saving...' : 'Mark read'}
+                    {markingId === item.id ? t('notif.saving') : t('notif.markRead')}
                   </button>
                 )}
               </article>

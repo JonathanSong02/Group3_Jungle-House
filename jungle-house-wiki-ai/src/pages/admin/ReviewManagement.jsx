@@ -2,20 +2,16 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import PageHeader from '../../components/PageHeader';
 import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
+import { useLanguage } from '../../i18n/LanguageContext';
 import './styles/ReviewManagement.css';
 
-const TABS = [
-  { key: 'pending', label: 'Pending' },
-  { key: 'approved', label: 'Approved' },
-  { key: 'published', label: 'Published' },
-  { key: 'rejected', label: 'Rejected' },
-  { key: 'all', label: 'All' },
-];
+const TABS = ['pending', 'approved', 'published', 'rejected', 'all'];
 
 const REVIEWS_PER_PAGE = 10;
 
 export default function ReviewManagement() {
   const { user } = useAuth();
+  const { t, tOr, locale } = useLanguage();
 
   const [activeTab, setActiveTab] = useState('pending');
   const [reviews, setReviews] = useState([]);
@@ -39,7 +35,7 @@ export default function ReviewManagement() {
       setReviews(Array.isArray(response.data) ? response.data : []);
     } catch (err) {
       console.error('REVIEW MANAGEMENT ERROR:', err);
-      setError(err.response?.data?.message || 'Unable to load review queue.');
+      setError(err.response?.data?.message || t('rev.err.load'));
     } finally {
       setLoading(false);
     }
@@ -134,15 +130,15 @@ export default function ReviewManagement() {
 
       await api.put(`/reviews/${reviewId}/${action}`, payload);
 
-      if (action === 'approve') setSuccess('Answer approved.');
-      if (action === 'reject') setSuccess('Answer rejected.');
-      if (action === 'publish') setSuccess('Knowledge published.');
+      if (action === 'approve') setSuccess(t('rev.ok.approve'));
+      if (action === 'reject') setSuccess(t('rev.ok.reject'));
+      if (action === 'publish') setSuccess(t('rev.ok.publish'));
 
       setExpandedReviewId(null);
       await fetchReviews();
     } catch (err) {
       console.error('REVIEW ACTION ERROR:', err);
-      setError(err.response?.data?.message || `Unable to ${action} answer.`);
+      setError(err.response?.data?.message || t(`rev.err.${action}`));
     } finally {
       setActionLoadingId(null);
     }
@@ -154,7 +150,7 @@ export default function ReviewManagement() {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return String(value);
 
-    return date.toLocaleDateString(undefined, {
+    return date.toLocaleDateString(locale, {
       day: '2-digit',
       month: 'short',
       year: 'numeric',
@@ -162,11 +158,7 @@ export default function ReviewManagement() {
   };
 
   const statusLabel = (status) => {
-    if (status === 'pending') return 'Pending';
-    if (status === 'approved') return 'Approved';
-    if (status === 'published') return 'Published';
-    if (status === 'rejected') return 'Rejected';
-    return status || 'Unknown';
+    return tOr(`status.${status}`, status || t('rev.unknown'));
   };
 
   const toggleExpanded = (reviewId) => {
@@ -178,11 +170,11 @@ export default function ReviewManagement() {
   return (
     <div className="rm2-page">
       <PageHeader
-        title="Review Management"
-        subtitle="Review staff answers and publish approved knowledge."
+        title={t('rev.title')}
+        subtitle={t('rev.subtitle')}
       />
 
-      <section className="rm2-overview" aria-label="Review overview">
+      <section className="rm2-overview" aria-label={t('rev.overviewAria')}>
         <button
           type="button"
           className={`rm2-stat attention ${activeTab === 'pending' ? 'selected' : ''}`}
@@ -190,7 +182,7 @@ export default function ReviewManagement() {
         >
           <span className="rm2-stat-icon pending" aria-hidden="true">!</span>
           <span className="rm2-stat-copy">
-            <small>Needs review</small>
+            <small>{t('rev.needsReview')}</small>
             <strong>{loading && reviews.length === 0 ? '—' : counts.pending}</strong>
           </span>
           {counts.pending > 0 ? <span className="rm2-attention-dot" aria-hidden="true" /> : null}
@@ -203,7 +195,7 @@ export default function ReviewManagement() {
         >
           <span className="rm2-stat-icon approved" aria-hidden="true">✓</span>
           <span className="rm2-stat-copy">
-            <small>Approved</small>
+            <small>{t('rev.tab.approved')}</small>
             <strong>{loading && reviews.length === 0 ? '—' : counts.approved}</strong>
           </span>
         </button>
@@ -215,7 +207,7 @@ export default function ReviewManagement() {
         >
           <span className="rm2-stat-icon published" aria-hidden="true">↗</span>
           <span className="rm2-stat-copy">
-            <small>Published</small>
+            <small>{t('rev.tab.published')}</small>
             <strong>{loading && reviews.length === 0 ? '—' : counts.published}</strong>
           </span>
         </button>
@@ -227,7 +219,7 @@ export default function ReviewManagement() {
         >
           <span className="rm2-stat-icon rejected" aria-hidden="true">×</span>
           <span className="rm2-stat-copy">
-            <small>Rejected</small>
+            <small>{t('rev.tab.rejected')}</small>
             <strong>{loading && reviews.length === 0 ? '—' : counts.rejected}</strong>
           </span>
         </button>
@@ -235,20 +227,20 @@ export default function ReviewManagement() {
 
       <section className="rm2-shell">
         <div className="rm2-shell-top">
-          <nav className="rm2-tabs" aria-label="Review filters">
+          <nav className="rm2-tabs" aria-label={t('rev.filtersAria')}>
             {TABS.map((tab) => (
               <button
-                key={tab.key}
+                key={tab}
                 type="button"
-                className={activeTab === tab.key ? 'active' : ''}
+                className={activeTab === tab ? 'active' : ''}
                 onClick={() => {
-                  setActiveTab(tab.key);
+                  setActiveTab(tab);
                   setError('');
                   setSuccess('');
                 }}
               >
-                {tab.label}
-                <span>{counts[tab.key]}</span>
+                {t(`rev.tab.${tab}`)}
+                <span>{counts[tab]}</span>
               </button>
             ))}
           </nav>
@@ -260,8 +252,8 @@ export default function ReviewManagement() {
                 type="search"
                 value={searchText}
                 onChange={(event) => setSearchText(event.target.value)}
-                placeholder="Search questions, answers or staff"
-                aria-label="Search reviews"
+                placeholder={t('rev.search')}
+                aria-label={t('rev.searchAria')}
               />
             </label>
 
@@ -271,7 +263,7 @@ export default function ReviewManagement() {
               onClick={fetchReviews}
               disabled={loading}
             >
-              {loading ? 'Refreshing...' : 'Refresh'}
+              {loading ? t('rev.refreshing') : t('rev.refresh')}
             </button>
           </div>
         </div>
@@ -283,11 +275,7 @@ export default function ReviewManagement() {
           <div>
             <div className="rm2-title-line">
               <h2>
-                {activeTab === 'pending' && 'Needs Review'}
-                {activeTab === 'approved' && 'Approved Answers'}
-                {activeTab === 'published' && 'Published Knowledge'}
-                {activeTab === 'rejected' && 'Rejected Answers'}
-                {activeTab === 'all' && 'All Reviews'}
+                {t(`rev.h.${activeTab}`)}
               </h2>
               <span className={`rm2-count ${activeTab === 'pending' && counts.pending > 0 ? 'attention' : ''}`}>
                 {counts[activeTab]}
@@ -295,39 +283,35 @@ export default function ReviewManagement() {
             </div>
 
             <p>
-              {activeTab === 'pending' && 'Check answer quality before approving or rejecting it.'}
-              {activeTab === 'approved' && 'Approved answers are ready to be published.'}
-              {activeTab === 'published' && 'Knowledge already published to the system.'}
-              {activeTab === 'rejected' && 'Answers that were not accepted.'}
-              {activeTab === 'all' && 'Complete review history across all statuses.'}
+              {t(`rev.d.${activeTab}`)}
             </p>
           </div>
 
           {filteredReviews.length > 0 ? (
             <span className="rm2-result-range">
-              {((currentPage - 1) * REVIEWS_PER_PAGE) + 1}
-              {'–'}
-              {Math.min(currentPage * REVIEWS_PER_PAGE, filteredReviews.length)}
-              {' of '}
-              {filteredReviews.length}
+              {t('rev.range', {
+                from: ((currentPage - 1) * REVIEWS_PER_PAGE) + 1,
+                to: Math.min(currentPage * REVIEWS_PER_PAGE, filteredReviews.length),
+                total: filteredReviews.length,
+              })}
             </span>
           ) : null}
         </div>
 
         {loading && reviews.length === 0 ? (
-          <div className="rm2-loading" aria-label="Loading reviews">
+          <div className="rm2-loading" aria-label={t('rev.loadingAria')}>
             <span /><span /><span />
           </div>
         ) : filteredReviews.length === 0 ? (
           <div className="rm2-empty">
             <span className="rm2-empty-icon" aria-hidden="true">✓</span>
-            <strong>No reviews found</strong>
+            <strong>{t('rev.noReviews')}</strong>
             <p>
               {searchText
-                ? 'No review matches your current search.'
+                ? t('rev.noMatch')
                 : activeTab === 'pending'
-                  ? 'There are no answers waiting for review.'
-                  : 'There are no records in this section yet.'}
+                  ? t('rev.noPending')
+                  : t('rev.noRecords')}
             </p>
           </div>
         ) : activeTab === 'pending' ? (
@@ -344,19 +328,19 @@ export default function ReviewManagement() {
                   <div className="rm2-card-top">
                     <span className="rm2-status pending">
                       <i aria-hidden="true" />
-                      Pending
+                      {t('rev.tab.pending')}
                     </span>
                     <span className="rm2-date">{formatDate(item.created_at)}</span>
                   </div>
 
                   <div className="rm2-card-question">
-                    <span>Question</span>
+                    <span>{t('rev.question')}</span>
                     <h3>{item.question}</h3>
                   </div>
 
                   <div className="rm2-card-answer">
-                    <span>Staff answer</span>
-                    <p>{item.answer || 'No answer provided.'}</p>
+                    <span>{t('rev.staffAnswer')}</span>
+                    <p>{item.answer || t('rev.noAnswer')}</p>
                   </div>
 
                   <div className="rm2-card-footer">
@@ -370,8 +354,8 @@ export default function ReviewManagement() {
                           .join('')}
                       </span>
                       <div>
-                        <small>Submitted by</small>
-                        <strong>{item.submitted_by_name || 'Unknown'}</strong>
+                        <small>{t('rev.submittedBy')}</small>
+                        <strong>{item.submitted_by_name || t('rev.unknown')}</strong>
                       </div>
                     </div>
 
@@ -380,7 +364,7 @@ export default function ReviewManagement() {
                       className="rm2-details-btn"
                       onClick={() => toggleExpanded(item.review_id)}
                     >
-                      {isExpanded ? 'Close details' : 'Review answer'}
+                      {isExpanded ? t('rev.closeDetails') : t('rev.reviewAnswer')}
                       <span aria-hidden="true">{isExpanded ? '↑' : '→'}</span>
                     </button>
                   </div>
@@ -388,11 +372,11 @@ export default function ReviewManagement() {
                   {isExpanded ? (
                     <div className="rm2-review-panel">
                       <label className="rm2-comment-field" htmlFor={`review-comment-${item.review_id}`}>
-                        <span>Reviewer comment <small>Optional</small></span>
+                        <span>{t('rev.comment')} <small>{t('rev.optional')}</small></span>
                         <textarea
                           id={`review-comment-${item.review_id}`}
                           rows="3"
-                          placeholder="Add a note for this review"
+                          placeholder={t('rev.commentPh')}
                           value={reviewerComment[item.review_id] || ''}
                           onChange={(event) =>
                             setReviewerComment((prev) => ({
@@ -410,7 +394,7 @@ export default function ReviewManagement() {
                           disabled={isProcessing}
                           onClick={() => handleReviewAction(item.review_id, 'reject')}
                         >
-                          {isProcessing ? 'Working...' : 'Reject'}
+                          {isProcessing ? t('rev.working') : t('rev.reject')}
                         </button>
                         <button
                           type="button"
@@ -418,7 +402,7 @@ export default function ReviewManagement() {
                           disabled={isProcessing}
                           onClick={() => handleReviewAction(item.review_id, 'approve')}
                         >
-                          {isProcessing ? 'Working...' : 'Approve answer'}
+                          {isProcessing ? t('rev.working') : t('rev.approveAnswer')}
                         </button>
                       </div>
                     </div>
@@ -432,11 +416,11 @@ export default function ReviewManagement() {
             <table className="rm2-table">
               <thead>
                 <tr>
-                  <th>Question</th>
-                  <th>Submitted by</th>
-                  <th>Status</th>
-                  <th>Date</th>
-                  <th className="rm2-action-col">Action</th>
+                  <th>{t('rev.question')}</th>
+                  <th>{t('rev.col.submittedBy')}</th>
+                  <th>{t('rev.col.status')}</th>
+                  <th>{t('rev.col.date')}</th>
+                  <th className="rm2-action-col">{t('rev.col.action')}</th>
                 </tr>
               </thead>
 
@@ -452,13 +436,13 @@ export default function ReviewManagement() {
                         <td>
                           <div className="rm2-question-cell">
                             <strong>{item.question}</strong>
-                            <span>{item.answer || 'No answer provided'}</span>
+                            <span>{item.answer || t('rev.noAnswer')}</span>
                           </div>
                         </td>
 
                         <td>
                           <span className="rm2-submitter-name">
-                            {item.submitted_by_name || 'Unknown'}
+                            {item.submitted_by_name || t('rev.unknown')}
                           </span>
                         </td>
 
@@ -479,7 +463,7 @@ export default function ReviewManagement() {
                             className="rm2-details-btn compact"
                             onClick={() => toggleExpanded(item.review_id)}
                           >
-                            {isExpanded ? 'Close' : 'View'}
+                            {isExpanded ? t('rev.close') : t('rev.view')}
                           </button>
                         </td>
                       </tr>
@@ -490,18 +474,18 @@ export default function ReviewManagement() {
                             <div className="rm2-detail-panel">
                               <div className="rm2-detail-grid">
                                 <div>
-                                  <span className="rm2-detail-label">Question</span>
+                                  <span className="rm2-detail-label">{t('rev.question')}</span>
                                   <p>{item.question}</p>
                                 </div>
                                 <div>
-                                  <span className="rm2-detail-label">Answer</span>
-                                  <p>{item.answer || 'No answer provided.'}</p>
+                                  <span className="rm2-detail-label">{t('rev.answer')}</span>
+                                  <p>{item.answer || t('rev.noAnswer')}</p>
                                 </div>
                               </div>
 
                               {item.reviewer_comment ? (
                                 <div className="rm2-existing-comment">
-                                  <span className="rm2-detail-label">Reviewer comment</span>
+                                  <span className="rm2-detail-label">{t('rev.comment')}</span>
                                   <p>{item.reviewer_comment}</p>
                                 </div>
                               ) : null}
@@ -514,7 +498,7 @@ export default function ReviewManagement() {
                                     disabled={isProcessing}
                                     onClick={() => handleReviewAction(item.review_id, 'publish')}
                                   >
-                                    {isProcessing ? 'Publishing...' : 'Publish knowledge'}
+                                    {isProcessing ? t('rev.publishing') : t('rev.publish')}
                                   </button>
                                 </div>
                               ) : null}
@@ -531,13 +515,13 @@ export default function ReviewManagement() {
         )}
 
         {filteredReviews.length > REVIEWS_PER_PAGE ? (
-          <nav className="rm2-pagination" aria-label="Review pages">
+          <nav className="rm2-pagination" aria-label={t('rev.pagesAria')}>
             <button
               type="button"
               className="rm2-page-arrow"
               onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
               disabled={currentPage === 1}
-              aria-label="Previous page"
+              aria-label={t('rev.prevPage')}
             >
               ‹
             </button>
@@ -568,7 +552,7 @@ export default function ReviewManagement() {
               className="rm2-page-arrow"
               onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
               disabled={currentPage === totalPages}
-              aria-label="Next page"
+              aria-label={t('rev.nextPage')}
             >
               ›
             </button>

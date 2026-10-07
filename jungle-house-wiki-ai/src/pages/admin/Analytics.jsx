@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import PageHeader from '../../components/PageHeader';
 import api from '../../services/api';
+import { useLanguage } from '../../i18n/LanguageContext';
 import './styles/Analytics.css';
 
 export default function Analytics() {
+  const { t, tOr } = useLanguage();
+  const catLabel = (category) => (category ? tOr(`cat.${category}`, category) : '-');
   const [activeTab, setActiveTab] = useState('questions');
 
   const [summary, setSummary] = useState({
@@ -35,7 +38,7 @@ export default function Analytics() {
       setSearchLogs(response.data.search_logs || []);
     } catch (err) {
       console.error('ANALYTICS ERROR:', err);
-      setError(err.response?.data?.message || 'Unable to load analytics data.');
+      setError(err.response?.data?.message || t('an.err.load'));
     } finally {
       setLoading(false);
     }
@@ -95,33 +98,33 @@ export default function Analytics() {
   return (
     <div className="an-page">
       <PageHeader
-        title="Analytics"
-        subtitle="Track usage and knowledge gaps."
+        title={t('an.title')}
+        subtitle={t('an.subtitle')}
       />
 
       <section className="an-summary-grid">
         <div className="an-summary-card questions">
-          <span>Total Questions</span>
+          <span>{t('an.totalQuestions')}</span>
           <strong>{summary.total_questions || 0}</strong>
         </div>
 
         <div className="an-summary-card unique">
-          <span>Unique</span>
+          <span>{t('an.unique')}</span>
           <strong>{summary.unique_questions || 0}</strong>
         </div>
 
         <div className="an-summary-card gaps">
-          <span>Knowledge Gaps</span>
+          <span>{t('an.gaps')}</span>
           <strong>{summary.knowledge_gap_count || 0}</strong>
         </div>
 
         <div className="an-summary-card fallback">
-          <span>Fallback</span>
+          <span>{t('an.fallback')}</span>
           <strong>{summary.fallback_count || 0}</strong>
         </div>
 
         <div className="an-summary-card escalation">
-          <span>Escalations</span>
+          <span>{t('an.escalations')}</span>
           <strong>{summary.escalation_count || 0}</strong>
         </div>
       </section>
@@ -136,7 +139,7 @@ export default function Analytics() {
               className={activeTab === 'questions' ? 'active' : ''}
               onClick={() => setActiveTab('questions')}
             >
-              Questions
+              {t('an.tab.questions')}
               <span>{topQuestions.length}</span>
             </button>
 
@@ -145,7 +148,7 @@ export default function Analytics() {
               className={activeTab === 'gaps' ? 'active' : ''}
               onClick={() => setActiveTab('gaps')}
             >
-              Knowledge Gaps
+              {t('an.gaps')}
               <span>{knowledgeGaps.length}</span>
             </button>
 
@@ -154,7 +157,7 @@ export default function Analytics() {
               className={activeTab === 'search' ? 'active' : ''}
               onClick={() => setActiveTab('search')}
             >
-              Search Log
+              {t('an.tab.search')}
               <span>{searchLogs.length}</span>
             </button>
           </div>
@@ -162,7 +165,7 @@ export default function Analytics() {
           <div className="an-tools">
             <input
               type="search"
-              placeholder="Search analytics"
+              placeholder={t('an.search')}
               value={searchText}
               onChange={(event) => setSearchText(event.target.value)}
             />
@@ -173,28 +176,28 @@ export default function Analytics() {
               onClick={fetchAnalytics}
               disabled={loading}
             >
-              {loading ? 'Refreshing...' : 'Refresh'}
+              {loading ? t('an.refreshing') : t('an.refresh')}
             </button>
           </div>
         </div>
 
         {loading && topQuestions.length === 0 && knowledgeGaps.length === 0 && searchLogs.length === 0 ? (
           <div className="an-empty">
-            <strong>Loading analytics...</strong>
+            <strong>{t('an.loading')}</strong>
           </div>
         ) : activeRows.length === 0 ? (
           <div className="an-empty">
-            <strong>No analytics found</strong>
+            <strong>{t('an.none')}</strong>
           </div>
         ) : activeTab === 'questions' ? (
           <div className="an-table-wrap">
             <table className="an-table">
               <thead>
                 <tr>
-                  <th>Question</th>
-                  <th>Category</th>
-                  <th>Asked</th>
-                  <th>Last Asked</th>
+                  <th>{t('an.col.question')}</th>
+                  <th>{t('an.col.category')}</th>
+                  <th>{t('an.col.asked')}</th>
+                  <th>{t('an.col.lastAsked')}</th>
                 </tr>
               </thead>
 
@@ -202,7 +205,7 @@ export default function Analytics() {
                 {filteredTopQuestions.map((item, index) => (
                   <tr key={`${item.question}-${index}`}>
                     <td><strong>{item.question}</strong></td>
-                    <td><span className="an-chip blue">{item.category || '-'}</span></td>
+                    <td><span className="an-chip blue">{catLabel(item.category)}</span></td>
                     <td><span className="an-count">{item.count}</span></td>
                     <td>{item.last_asked || '-'}</td>
                   </tr>
@@ -215,12 +218,12 @@ export default function Analytics() {
             <table className="an-table">
               <thead>
                 <tr>
-                  <th>Question</th>
-                  <th>Category</th>
-                  <th>Confidence</th>
-                  <th>Source</th>
-                  <th>Reason</th>
-                  <th>Time</th>
+                  <th>{t('an.col.question')}</th>
+                  <th>{t('an.col.category')}</th>
+                  <th>{t('an.col.confidence')}</th>
+                  <th>{t('an.col.source')}</th>
+                  <th>{t('an.col.reason')}</th>
+                  <th>{t('an.col.time')}</th>
                 </tr>
               </thead>
 
@@ -228,7 +231,7 @@ export default function Analytics() {
                 {filteredKnowledgeGaps.map((item, index) => (
                   <tr key={`${item.question}-${index}`}>
                     <td><strong>{item.question}</strong></td>
-                    <td><span className="an-chip amber">{item.category || '-'}</span></td>
+                    <td><span className="an-chip amber">{catLabel(item.category)}</span></td>
                     <td>
                       <span className="an-confidence">
                         <i style={{ width: formatConfidence(item.confidence) }} />
@@ -248,13 +251,13 @@ export default function Analytics() {
             <table className="an-table">
               <thead>
                 <tr>
-                  <th>Question</th>
-                  <th>Category</th>
-                  <th>Confidence</th>
-                  <th>Source</th>
-                  <th>Fallback</th>
-                  <th>Escalation</th>
-                  <th>Time</th>
+                  <th>{t('an.col.question')}</th>
+                  <th>{t('an.col.category')}</th>
+                  <th>{t('an.col.confidence')}</th>
+                  <th>{t('an.col.source')}</th>
+                  <th>{t('an.col.fallback')}</th>
+                  <th>{t('an.col.escalation')}</th>
+                  <th>{t('an.col.time')}</th>
                 </tr>
               </thead>
 
@@ -262,17 +265,17 @@ export default function Analytics() {
                 {filteredSearchLogs.map((item, index) => (
                   <tr key={`${item.question}-${index}`}>
                     <td><strong>{item.question}</strong></td>
-                    <td><span className="an-chip violet">{item.category || '-'}</span></td>
+                    <td><span className="an-chip violet">{catLabel(item.category)}</span></td>
                     <td>{formatConfidence(item.confidence)}</td>
                     <td>{item.source || '-'}</td>
                     <td>
                       <span className={`an-boolean ${item.fallback ? 'yes' : 'no'}`}>
-                        {item.fallback ? 'Yes' : 'No'}
+                        {item.fallback ? t('an.yes') : t('an.no')}
                       </span>
                     </td>
                     <td>
                       <span className={`an-boolean ${item.escalation_ready ? 'yes' : 'no'}`}>
-                        {item.escalation_ready ? 'Yes' : 'No'}
+                        {item.escalation_ready ? t('an.yes') : t('an.no')}
                       </span>
                     </td>
                     <td>{item.timestamp || '-'}</td>

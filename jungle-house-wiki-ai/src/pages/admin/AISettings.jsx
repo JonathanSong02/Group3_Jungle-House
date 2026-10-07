@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import PageHeader from '../../components/PageHeader';
 import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
+import { useLanguage } from '../../i18n/LanguageContext';
+import { translateServerMessage } from '../../i18n/serverMessages';
 import './styles/AISettings.css';
 
 const PROVIDER_OPTIONS = [
@@ -33,13 +35,15 @@ const PROVIDER_OPTIONS = [
 const getModelSuggestions = (providerValue) =>
   PROVIDER_OPTIONS.find((option) => option.value === providerValue)?.models || [];
 
-const getProviderLabel = (providerValue) =>
+const getProviderLabel = (providerValue, fallback = 'AI Provider') =>
   PROVIDER_OPTIONS.find((option) => option.value === providerValue)?.label ||
   providerValue ||
-  'AI Provider';
+  fallback;
 
 export default function AISettings() {
   const { user } = useAuth();
+  const { t } = useLanguage();
+  const providerLabel = (value) => getProviderLabel(value, t('ai.providerDefault'));
   const actorId = user?.id || user?.user_id || null;
 
   const [form, setForm] = useState({
@@ -73,7 +77,7 @@ export default function AISettings() {
       }
     } catch (error) {
       console.error('Fetch AI settings error:', error);
-      setMessage('Failed to load AI settings.');
+      setMessage(t('ai.err.load'));
     } finally {
       setLoading(false);
     }
@@ -109,12 +113,12 @@ export default function AISettings() {
 
   const handleTestConnection = async () => {
     if (!form.model_name.trim()) {
-      setMessage('Please enter a model name before testing.');
+      setMessage(t('ai.err.modelBeforeTest'));
       return;
     }
 
     if (!form.api_key.trim() && !currentConfig) {
-      setMessage('Please paste an API key before testing.');
+      setMessage(t('ai.err.keyBeforeTest'));
       return;
     }
 
@@ -139,7 +143,7 @@ export default function AISettings() {
 
       setTestResult({
         success: Boolean(response.data?.success),
-        message: response.data?.message || 'Test completed.',
+        message: translateServerMessage(t, response.data?.message) || t('ai.testDone'),
       });
 
       if (!form.api_key.trim()) {
@@ -150,8 +154,8 @@ export default function AISettings() {
       setTestResult({
         success: false,
         message:
-          error.response?.data?.message ||
-          'AI provider connection failed. Please check your API key.',
+          translateServerMessage(t, error.response?.data?.message) ||
+          t('ai.err.connection'),
       });
 
       if (!form.api_key.trim()) {
@@ -166,12 +170,12 @@ export default function AISettings() {
     event.preventDefault();
 
     if (!form.model_name.trim()) {
-      setMessage('Model name is required.');
+      setMessage(t('ai.err.modelRequired'));
       return;
     }
 
     if (!form.api_key.trim()) {
-      setMessage('API key is required.');
+      setMessage(t('ai.err.keyRequired'));
       return;
     }
 
@@ -186,7 +190,7 @@ export default function AISettings() {
         api_key: form.api_key.trim(),
       });
 
-      setMessage(response.data?.message || 'AI settings saved successfully.');
+      setMessage(t('ai.ok.saved'));
       setCurrentConfig(response.data?.config || null);
       setTestResult(null);
 
@@ -195,7 +199,7 @@ export default function AISettings() {
     } catch (error) {
       console.error('Save AI settings error:', error);
       setMessage(
-        error.response?.data?.message || 'Failed to save AI settings.'
+        error.response?.data?.message || t('ai.err.save')
       );
     } finally {
       setSaving(false);
@@ -204,10 +208,10 @@ export default function AISettings() {
 
   const currentStatus =
     currentConfig?.testStatus === 'connected'
-      ? 'Connected'
+      ? t('ai.status.connected')
       : currentConfig?.testStatus === 'failed'
-      ? 'Failed'
-      : 'Not tested';
+      ? t('ai.status.failed')
+      : t('ai.status.untested');
 
   const currentStatusClass =
     currentConfig?.testStatus === 'connected'
@@ -219,8 +223,8 @@ export default function AISettings() {
   return (
     <div className="ais-page">
       <PageHeader
-        title="AI Model Settings"
-        subtitle="Configure the AI provider and model."
+        title={t('ai.title')}
+        subtitle={t('ai.subtitle')}
       />
 
       {message ? <div className="ais-feedback">{message}</div> : null}
@@ -233,14 +237,14 @@ export default function AISettings() {
             </div>
 
             <div>
-              <span className="ais-kicker">Current Model</span>
+              <span className="ais-kicker">{t('ai.currentModel')}</span>
               <h2>
                 {loading
-                  ? 'Loading...'
+                  ? t('ai.loading')
                   : currentConfig
                   ? currentConfig.providerLabel ||
-                    getProviderLabel(currentConfig.provider)
-                  : 'Not configured'}
+                    providerLabel(currentConfig.provider)
+                  : t('ai.notConfigured')}
               </h2>
             </div>
 
@@ -261,34 +265,34 @@ export default function AISettings() {
           ) : currentConfig ? (
             <>
               <div className="ais-model-name">
-                <span>Model</span>
+                <span>{t('ai.model')}</span>
                 <strong>{currentConfig.modelName}</strong>
               </div>
 
               <div className="ais-config-grid">
                 <div>
-                  <span>API Key</span>
+                  <span>{t('ai.apiKey')}</span>
                   <strong>{currentConfig.keyHint || '-'}</strong>
                 </div>
 
                 <div>
-                  <span>Last Tested</span>
+                  <span>{t('ai.lastTested')}</span>
                   <strong>{currentConfig.lastTestedAt || '-'}</strong>
                 </div>
               </div>
             </>
           ) : (
             <div className="ais-empty-config">
-              <strong>No provider connected</strong>
-              <span>Add an API key to enable AI features.</span>
+              <strong>{t('ai.noProvider')}</strong>
+              <span>{t('ai.noProviderHint')}</span>
             </div>
           )}
 
           <div className="ais-ai-note">
             <span className="ais-ai-note-icon">✦</span>
             <div>
-              <strong>AI Engine</strong>
-              <span>Used by Chat and AI Quiz Generation.</span>
+              <strong>{t('ai.engine')}</strong>
+              <span>{t('ai.engineHint')}</span>
             </div>
           </div>
         </section>
@@ -296,19 +300,19 @@ export default function AISettings() {
         <section className="ais-settings-card">
           <div className="ais-section-head">
             <div>
-              <span className="ais-kicker">Configuration</span>
-              <h2>Provider Settings</h2>
+              <span className="ais-kicker">{t('ai.configuration')}</span>
+              <h2>{t('ai.providerSettings')}</h2>
             </div>
 
             <span className="ais-provider-chip">
-              {getProviderLabel(form.provider)}
+              {providerLabel(form.provider)}
             </span>
           </div>
 
           <form className="ais-form" onSubmit={handleSave}>
             <div className="ais-form-grid">
               <label className="ais-field">
-                <span>Provider</span>
+                <span>{t('ai.provider')}</span>
                 <select
                   name="provider"
                   value={form.provider}
@@ -323,13 +327,13 @@ export default function AISettings() {
               </label>
 
               <label className="ais-field">
-                <span>Model</span>
+                <span>{t('ai.model')}</span>
                 <input
                   list="ai-model-suggestions"
                   name="model_name"
                   value={form.model_name}
                   onChange={handleChange}
-                  placeholder="Model name"
+                  placeholder={t('ai.modelName')}
                 />
 
                 <datalist id="ai-model-suggestions">
@@ -341,7 +345,7 @@ export default function AISettings() {
             </div>
 
             <label className="ais-field ais-field-full">
-              <span>API Key</span>
+              <span>{t('ai.apiKey')}</span>
               <div className="ais-key-input">
                 <input
                   type="password"
@@ -350,12 +354,12 @@ export default function AISettings() {
                   onChange={handleChange}
                   placeholder={
                     currentConfig
-                      ? 'Enter a new key to replace the saved one'
-                      : 'Paste API key'
+                      ? t('ai.replaceKey')
+                      : t('ai.pasteKey')
                   }
                   autoComplete="off"
                 />
-                <span>Encrypted</span>
+                <span>{t('ai.encrypted')}</span>
               </div>
             </label>
 
@@ -377,7 +381,7 @@ export default function AISettings() {
                 onClick={handleTestConnection}
                 disabled={testing}
               >
-                {testing ? 'Testing...' : 'Test Connection'}
+                {testing ? t('ai.testing') : t('ai.test')}
               </button>
 
               <button
@@ -385,7 +389,7 @@ export default function AISettings() {
                 type="submit"
                 disabled={saving}
               >
-                {saving ? 'Saving...' : 'Save Settings'}
+                {saving ? t('ai.saving') : t('ai.save')}
               </button>
             </div>
           </form>

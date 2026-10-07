@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../i18n/LanguageContext';
 import '../styles/Messages.css';
 
 // UI hint only: the backend independently enforces the five-minute rule using MySQL time.
@@ -16,7 +17,7 @@ const getInitials = (value = '') => {
     .join('') || '?';
 };
 
-const formatThreadTime = (value) => {
+const formatThreadTime = (value, locale = 'en-GB') => {
   if (!value) return '';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '';
@@ -25,8 +26,8 @@ const formatThreadTime = (value) => {
   const sameDay = date.toDateString() === now.toDateString();
 
   return sameDay
-    ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    : date.toLocaleDateString([], { day: '2-digit', month: 'short' });
+    ? date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })
+    : date.toLocaleDateString(locale, { day: '2-digit', month: 'short' });
 };
 
 const isWithinMessageActionWindow = (createdAt, nowValue = Date.now()) => {
@@ -73,6 +74,7 @@ function MoreIcon() {
 
 export default function Messages() {
   const { user } = useAuth();
+  const { t, tOr, locale } = useLanguage();
   const currentUserId = user?.user_id || user?.id;
 
   const [users, setUsers] = useState([]);
@@ -104,7 +106,7 @@ export default function Messages() {
   const fetchData = useCallback(async () => {
     if (!currentUserId) {
       setLoading(false);
-      setMessageText('Unable to load messages because user ID is missing.');
+      setMessageText(t('msg.err.noUser'));
       return;
     }
 
@@ -121,11 +123,11 @@ export default function Messages() {
       setThreads(Array.isArray(threadsResponse.data) ? threadsResponse.data : []);
     } catch (error) {
       console.error('Fetch messages error:', error);
-      setMessageText(error.response?.data?.message || 'Failed to load messages.');
+      setMessageText(error.response?.data?.message || t('msg.err.load'));
     } finally {
       setLoading(false);
     }
-  }, [currentUserId]);
+  }, [currentUserId, t]);
 
   useEffect(() => {
     fetchData();
@@ -218,9 +220,7 @@ export default function Messages() {
     event.preventDefault();
 
     if (!form.receiver_id || !form.subject.trim() || !form.message.trim()) {
-      setMessageText(
-        'Please select a receiver and fill in the subject and message.'
-      );
+      setMessageText(t('msg.err.fillAll'));
       return;
     }
 
@@ -242,12 +242,12 @@ export default function Messages() {
       });
 
       setShowComposer(false);
-      setMessageText('Message sent successfully.');
+      setMessageText(t('msg.sentOk'));
       setActiveTab('sent');
       await fetchData();
     } catch (error) {
       console.error('Send message error:', error);
-      setMessageText(error.response?.data?.message || 'Failed to send message.');
+      setMessageText(error.response?.data?.message || t('msg.err.send'));
     } finally {
       setSending(false);
     }
@@ -272,7 +272,7 @@ export default function Messages() {
     } catch (error) {
       console.error('Open thread error:', error);
       setMessageText(
-        error.response?.data?.message || 'Failed to open conversation.'
+        error.response?.data?.message || t('msg.err.open')
       );
     } finally {
       setThreadLoading(false);
@@ -295,14 +295,14 @@ export default function Messages() {
     event.preventDefault();
 
     if (!selectedThread || !replyText.trim()) {
-      setMessageText('Please write a reply first.');
+      setMessageText(t('msg.err.replyFirst'));
       return;
     }
 
     const receiverId = getReplyReceiverId();
 
     if (!receiverId) {
-      setMessageText('Unable to identify receiver.');
+      setMessageText(t('msg.err.noReceiver'));
       return;
     }
 
@@ -325,7 +325,7 @@ export default function Messages() {
       await openThread(selectedThread);
     } catch (error) {
       console.error('Reply error:', error);
-      setMessageText(error.response?.data?.message || 'Failed to send reply.');
+      setMessageText(error.response?.data?.message || t('msg.err.reply'));
     } finally {
       setSending(false);
     }
@@ -333,7 +333,7 @@ export default function Messages() {
 
   const startEdit = (item) => {
     if (!isWithinMessageActionWindow(item.created_at, Date.now())) {
-      setMessageText('Messages can only be edited within 5 minutes after sending.');
+      setMessageText(t('msg.err.editWindow'));
       setOpenMenuId(null);
       return;
     }
@@ -350,7 +350,7 @@ export default function Messages() {
 
   const saveEdit = async (messageId) => {
     if (!editingText.trim()) {
-      setMessageText('Message cannot be empty.');
+      setMessageText(t('msg.err.empty'));
       return;
     }
 
@@ -371,15 +371,13 @@ export default function Messages() {
     } catch (error) {
       console.error('Edit message error:', error);
       setMessageText(
-        error.response?.data?.message || 'Failed to edit message.'
+        error.response?.data?.message || t('msg.err.edit')
       );
     }
   };
 
   const deleteMessageForMe = async (messageId) => {
-    const confirmDelete = window.confirm(
-      'Delete this message for you? The other person will still be able to see it.'
-    );
+    const confirmDelete = window.confirm(t('msg.confirm.deleteMe'));
 
     if (!confirmDelete) return;
 
@@ -399,29 +397,25 @@ export default function Messages() {
     } catch (error) {
       console.error('Delete message error:', error);
       setMessageText(
-        error.response?.data?.message || 'Failed to delete message.'
+        error.response?.data?.message || t('msg.err.delete')
       );
     }
   };
 
   const deleteMessageForEveryone = async (item) => {
     if (!isWithinMessageActionWindow(item.created_at, Date.now())) {
-      setMessageText(
-        'Delete for everyone is only available within 5 minutes after sending.'
-      );
+      setMessageText(t('msg.err.deleteWindow'));
       setOpenMenuId(null);
       return;
     }
 
     if (Number(item.sender_id) !== Number(currentUserId)) {
-      setMessageText('You can only delete your own messages for everyone.');
+      setMessageText(t('msg.err.deleteOwn'));
       setOpenMenuId(null);
       return;
     }
 
-    const confirmDelete = window.confirm(
-      'Delete this message for everyone?'
-    );
+    const confirmDelete = window.confirm(t('msg.confirm.deleteEveryone'));
 
     if (!confirmDelete) return;
 
@@ -442,7 +436,7 @@ export default function Messages() {
       console.error('Delete for everyone error:', error);
       setMessageText(
         error.response?.data?.message ||
-          'Unable to delete this message for everyone.'
+          t('msg.err.deleteEveryone')
       );
     }
   };
@@ -450,8 +444,8 @@ export default function Messages() {
   return (
     <div className="messages-page">
       <PageHeader
-        title="Messages"
-        subtitle="Internal chat for staff, team leads, and managers."
+        title={t('msg.title')}
+        subtitle={t('msg.subtitle')}
       />
 
       {messageText && (
@@ -464,8 +458,8 @@ export default function Messages() {
         <aside className="messages-sidebar">
           <div className="messages-sidebar-top">
             <div>
-              <p className="messages-overline">Workspace Chat</p>
-              <h3>Conversations</h3>
+              <p className="messages-overline">{t('msg.overline')}</p>
+              <h3>{t('msg.conversations')}</h3>
             </div>
 
             <div className="messages-sidebar-actions">
@@ -473,8 +467,8 @@ export default function Messages() {
                 type="button"
                 className="messages-icon-btn"
                 onClick={fetchData}
-                title="Refresh conversations"
-                aria-label="Refresh conversations"
+                title={t('msg.refreshConv')}
+                aria-label={t('msg.refreshConv')}
               >
                 <RefreshIcon />
               </button>
@@ -484,7 +478,7 @@ export default function Messages() {
                 className="messages-primary-pill"
                 onClick={() => setShowComposer((prev) => !prev)}
               >
-                {showComposer ? 'Close' : 'New'}
+                {showComposer ? t('common.close') : t('msg.new')}
               </button>
             </div>
           </div>
@@ -494,7 +488,7 @@ export default function Messages() {
               type="text"
               value={threadSearch}
               onChange={(event) => setThreadSearch(event.target.value)}
-              placeholder="Search chats"
+              placeholder={t('msg.searchChats')}
             />
           </div>
 
@@ -504,7 +498,7 @@ export default function Messages() {
               className={activeTab === 'inbox' ? 'active' : ''}
               onClick={() => setActiveTab('inbox')}
             >
-              Inbox
+              {t('msg.inbox')}
               {inboxThreads.length > 0 && <span>{inboxThreads.length}</span>}
             </button>
 
@@ -513,7 +507,7 @@ export default function Messages() {
               className={activeTab === 'sent' ? 'active' : ''}
               onClick={() => setActiveTab('sent')}
             >
-              Sent
+              {t('msg.sent')}
               {sentThreads.length > 0 && <span>{sentThreads.length}</span>}
             </button>
           </div>
@@ -522,39 +516,39 @@ export default function Messages() {
             <form className="messages-composer-card" onSubmit={sendMessage}>
               <div className="messages-form-grid">
                 <label>
-                  <span>Receiver</span>
+                  <span>{t('msg.receiver')}</span>
                   <select
                     name="receiver_id"
                     value={form.receiver_id}
                     onChange={handleChange}
                   >
-                    <option value="">Select receiver</option>
+                    <option value="">{t('msg.selectReceiver')}</option>
                     {receiverOptions.map((item) => (
                       <option key={item.user_id} value={item.user_id}>
-                        {item.full_name} ({item.role_name || 'User'})
+                        {item.full_name} ({tOr(`role.${String(item.role_name || 'user').toLowerCase().replace(/[\s_-]/g, '')}`, item.role_name || 'User')})
                       </option>
                     ))}
                   </select>
                 </label>
 
                 <label>
-                  <span>Subject</span>
+                  <span>{t('msg.subject')}</span>
                   <input
                     name="subject"
                     value={form.subject}
                     onChange={handleChange}
-                    placeholder="Subject"
+                    placeholder={t('msg.subject')}
                   />
                 </label>
 
                 <label className="messages-full-width">
-                  <span>Message</span>
+                  <span>{t('msg.message')}</span>
                   <textarea
                     name="message"
                     rows="4"
                     value={form.message}
                     onChange={handleChange}
-                    placeholder="Write your message"
+                    placeholder={t('msg.writeMessage')}
                   />
                 </label>
               </div>
@@ -564,17 +558,17 @@ export default function Messages() {
                 className="messages-send-new-btn"
                 disabled={sending}
               >
-                {sending ? 'Sending...' : 'Send'}
+                {sending ? t('msg.sending') : t('msg.send')}
               </button>
             </form>
           )}
 
           <div className="messages-thread-list">
             {loading ? (
-              <div className="messages-empty-card">Loading conversations...</div>
+              <div className="messages-empty-card">{t('msg.loadingConv')}</div>
             ) : filteredThreads.length === 0 ? (
               <div className="messages-empty-card">
-                No conversations found.
+                {t('msg.noConv')}
               </div>
             ) : (
               filteredThreads.map((thread) => {
@@ -597,9 +591,9 @@ export default function Messages() {
 
                     <div className="messages-thread-content">
                       <div className="messages-thread-row">
-                        <h4>{thread.other_user_name || 'Unknown'}</h4>
+                        <h4>{thread.other_user_name || t('msg.unknown')}</h4>
                         <span className="messages-thread-time">
-                          {formatThreadTime(thread.latest_created_at)}
+                          {formatThreadTime(thread.latest_created_at, locale)}
                         </span>
                       </div>
 
@@ -623,8 +617,8 @@ export default function Messages() {
           </div>
 
           <div className="messages-sidebar-footer">
-            <span>{unreadCount} unread</span>
-            <span>{threads.length} total</span>
+            <span>{t('msg.unreadN', { n: unreadCount })}</span>
+            <span>{t('msg.totalN', { n: threads.length })}</span>
           </div>
         </aside>
 
@@ -632,8 +626,8 @@ export default function Messages() {
           {!selectedThread ? (
             <div className="messages-chat-empty">
               <div className="messages-chat-empty-icon">✉</div>
-              <h3>Select a conversation</h3>
-              <p>Choose a chat on the left to read and reply.</p>
+              <h3>{t('msg.selectConv')}</h3>
+              <p>{t('msg.selectConvHint')}</p>
             </div>
           ) : (
             <>
@@ -645,7 +639,7 @@ export default function Messages() {
 
                   <div>
                     <h3>
-                      {selectedThread.other_user_name || 'Unknown User'}
+                      {selectedThread.other_user_name || t('msg.unknownUser')}
                     </h3>
                     <p>{selectedThread.subject}</p>
                   </div>
@@ -657,18 +651,18 @@ export default function Messages() {
                   onClick={() => openThread(selectedThread)}
                 >
                   <RefreshIcon />
-                  <span>Refresh</span>
+                  <span>{t('msg.refresh')}</span>
                 </button>
               </header>
 
               <div className="messages-chat-body">
                 {threadLoading ? (
                   <div className="messages-inline-empty">
-                    Loading conversation...
+                    {t('msg.loadingThread')}
                   </div>
                 ) : threadMessages.length === 0 ? (
                   <div className="messages-inline-empty">
-                    No messages yet.
+                    {t('msg.noMessages')}
                   </div>
                 ) : (
                   threadMessages.map((item) => {
@@ -698,14 +692,14 @@ export default function Messages() {
                         >
                           <div className="messages-bubble-meta">
                             <strong>
-                              {isMine ? 'You' : item.sender_name}
+                              {isMine ? t('msg.you') : item.sender_name}
                             </strong>
 
                             <div className="messages-bubble-meta-right">
                               <span>
                                 {new Date(
                                   item.created_at
-                                ).toLocaleString()}
+                                ).toLocaleString(locale)}
                               </span>
 
                               <div className="messages-message-menu">
@@ -720,7 +714,7 @@ export default function Messages() {
                                         : item.message_id
                                     );
                                   }}
-                                  aria-label="Message actions"
+                                  aria-label={t('msg.actions')}
                                   aria-expanded={
                                     openMenuId === item.message_id
                                   }
@@ -742,7 +736,7 @@ export default function Messages() {
                                         <span className="messages-menu-icon">
                                           ✎
                                         </span>
-                                        Edit
+                                        {t('msg.edit')}
                                       </button>
                                     )}
 
@@ -757,7 +751,7 @@ export default function Messages() {
                                         <span className="messages-menu-icon">
                                           ⌫
                                         </span>
-                                        Delete for everyone
+                                        {t('msg.deleteEveryone')}
                                       </button>
                                     )}
 
@@ -771,7 +765,7 @@ export default function Messages() {
                                       <span className="messages-menu-icon">
                                         🗑
                                       </span>
-                                      Delete for me
+                                      {t('msg.deleteMe')}
                                     </button>
                                   </div>
                                 )}
@@ -797,7 +791,7 @@ export default function Messages() {
                                     saveEdit(item.message_id)
                                   }
                                 >
-                                  Save
+                                  {t('msg.save')}
                                 </button>
 
                                 <button
@@ -805,7 +799,7 @@ export default function Messages() {
                                   className="messages-light-btn small"
                                   onClick={cancelEdit}
                                 >
-                                  Cancel
+                                  {t('msg.cancel')}
                                 </button>
                               </div>
                             </div>
@@ -815,7 +809,7 @@ export default function Messages() {
 
                           {item.edited_at && (
                             <small className="messages-edited-tag">
-                              Edited
+                              {t('msg.edited')}
                             </small>
                           )}
                         </div>
@@ -830,7 +824,7 @@ export default function Messages() {
                   rows="2"
                   value={replyText}
                   onChange={(event) => setReplyText(event.target.value)}
-                  placeholder="Write a reply..."
+                  placeholder={t('msg.writeReply')}
                 />
 
                 <button
@@ -838,7 +832,7 @@ export default function Messages() {
                   className="messages-reply-send"
                   disabled={sending}
                 >
-                  {sending ? 'Sending...' : 'Send'}
+                  {sending ? t('msg.sending') : t('msg.send')}
                 </button>
               </form>
             </>

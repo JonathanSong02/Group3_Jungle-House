@@ -47,6 +47,15 @@ const blankAiQuestion = () => ({
 
 const optionLetters = ['A', 'B', 'C', 'D'];
 
+const SERVER_MESSAGE_KEYS = {
+  'Failed to generate quiz questions from this article. Please try again or refine article content.': 'qm.err.generateFailed',
+  'AI model is not configured. Please configure it in AI Model Settings.': 'qm.srv.notConfigured',
+  'No verified Knowledge Base content is available for quiz generation.': 'qm.srv.noContent',
+  'AI provider service is not available on this server. Please contact an administrator.': 'qm.srv.unavailable',
+  'The selected article could not be found.': 'qm.srv.articleMissing',
+};
+
+
 function Icon({ name, size = 20 }) {
   const props = {
     width: size,
@@ -140,6 +149,14 @@ function Icon({ name, size = 20 }) {
 export default function QuizManagement() {
   const { user } = useAuth();
   const { t, tOr } = useLanguage();
+  const catLabel = (category) => tOr(`cat.${category}`, category);
+  const localizeDescription = (text) => {
+    const match = String(text || '').match(/^AI generated quiz based on the latest verified (.*) content\.$/);
+    if (match) return t('quiz.autoDesc', { category: catLabel(match[1]) });
+    const plain = String(text || '').match(/^Quiz generated from the latest verified (.*) content\.$/);
+    return plain ? t('quiz.autoDescTemplate', { category: catLabel(plain[1]) }) : text;
+  };
+  const titleLabel = (title) => (title === 'AI Generated Quiz' ? t('qm.defaultAiTitle') : title);
 
   const [activeTab, setActiveTab] = useState('manage');
   const [searchTerm, setSearchTerm] = useState('');
@@ -236,7 +253,7 @@ export default function QuizManagement() {
       setMessage(
         error.response?.data?.error ||
           error.response?.data?.message ||
-          'Failed to load quizzes.'
+          t('qm.err.loadQuizzes')
       );
     } finally {
       setLoading(false);
@@ -261,7 +278,7 @@ export default function QuizManagement() {
       setMessage(
         error.response?.data?.error ||
           error.response?.data?.message ||
-          'Failed to load quiz questions.'
+          t('qm.err.loadQuestions')
       );
     } finally {
       setQuestionLoading(false);
@@ -330,7 +347,7 @@ export default function QuizManagement() {
     event.preventDefault();
 
     if (!quizForm.title.trim()) {
-      setMessage('Enter a quiz title.');
+      setMessage(t('qm.err.enterTitle'));
       return;
     }
 
@@ -344,11 +361,11 @@ export default function QuizManagement() {
 
       if (editingQuizId) {
         await api.put(`/admin/quizzes/${editingQuizId}`, payload);
-        showSuccessModal('Quiz updated', 'Your changes are saved.');
+        showSuccessModal(t('qm.ok.updatedTitle'), t('qm.ok.changesSaved'));
         setSelectedQuizId(editingQuizId);
       } else {
         const response = await api.post('/admin/quizzes', payload);
-        showSuccessModal('Quiz created', 'Your quiz is ready to edit.');
+        showSuccessModal(t('qm.ok.createdTitle'), t('qm.ok.createdText'));
 
         if (response.data?.quiz_id) {
           setSelectedQuizId(response.data.quiz_id);
@@ -363,7 +380,7 @@ export default function QuizManagement() {
       setMessage(
         error.response?.data?.error ||
           error.response?.data?.message ||
-          'Failed to save quiz.'
+          t('qm.err.saveQuiz')
       );
     }
   };
@@ -381,9 +398,7 @@ export default function QuizManagement() {
   };
 
   const deleteQuiz = async (quizId) => {
-    const confirmDelete = window.confirm(
-      'Delete this quiz and all of its questions and results?'
-    );
+    const confirmDelete = window.confirm(t('qm.confirm.deleteQuiz'));
 
     if (!confirmDelete) return;
 
@@ -397,14 +412,14 @@ export default function QuizManagement() {
         setQuestions([]);
       }
 
-      setMessage('Quiz deleted.');
+      setMessage(t('qm.ok.deleted'));
       await fetchQuizzes();
     } catch (error) {
       console.error('Delete quiz error:', error.response?.data || error);
       setMessage(
         error.response?.data?.error ||
           error.response?.data?.message ||
-          'Failed to delete quiz.'
+          t('qm.err.deleteQuiz')
       );
     }
   };
@@ -413,7 +428,7 @@ export default function QuizManagement() {
     event.preventDefault();
 
     if (!selectedQuizId) {
-      setMessage('Select a quiz first.');
+      setMessage(t('qm.err.selectFirst'));
       return;
     }
 
@@ -424,7 +439,7 @@ export default function QuizManagement() {
       !questionForm.option_c.trim() ||
       !questionForm.option_d.trim()
     ) {
-      setMessage('Complete the question and all four options.');
+      setMessage(t('qm.err.completeQuestion'));
       return;
     }
 
@@ -433,13 +448,13 @@ export default function QuizManagement() {
 
       if (editingQuestionId) {
         await api.put(`/admin/questions/${editingQuestionId}`, questionForm);
-        showSuccessModal('Question updated', 'Your changes are saved.');
+        showSuccessModal(t('qm.ok.questionUpdated'), t('qm.ok.changesSaved'));
       } else {
         await api.post(
           `/admin/quizzes/${selectedQuizId}/questions`,
           questionForm
         );
-        showSuccessModal('Question added', 'The question is now in this quiz.');
+        showSuccessModal(t('qm.ok.questionAdded'), t('qm.ok.questionAddedText'));
       }
 
       resetQuestionForm();
@@ -452,7 +467,7 @@ export default function QuizManagement() {
       setMessage(
         error.response?.data?.error ||
           error.response?.data?.message ||
-          'Failed to save question.'
+          t('qm.err.saveQuestion')
       );
     }
   };
@@ -473,14 +488,14 @@ export default function QuizManagement() {
   };
 
   const deleteQuestion = async (questionId) => {
-    if (!window.confirm('Delete this question?')) return;
+    if (!window.confirm(t('qm.confirm.deleteQuestion'))) return;
 
     try {
       setMessage('');
 
       await api.delete(`/admin/questions/${questionId}`);
 
-      setMessage('Question deleted.');
+      setMessage(t('qm.ok.questionDeleted'));
       await Promise.all([
         fetchQuestions(selectedQuizId),
         fetchQuizzes(),
@@ -490,7 +505,7 @@ export default function QuizManagement() {
       setMessage(
         error.response?.data?.error ||
           error.response?.data?.message ||
-          'Failed to delete question.'
+          t('qm.err.deleteQuestion')
       );
     }
   };
@@ -518,7 +533,7 @@ export default function QuizManagement() {
         {
           title:
             aiForm.title.trim() ||
-            (chosenArticle ? `${chosenArticle.title} Quiz` : 'AI Generated Quiz'),
+            (chosenArticle ? t('qm.titleSuffix', { title: chosenArticle.title }) : t('qm.defaultAiTitle')),
           sourceCategory: aiForm.sourceCategory,
           articleId: aiForm.articleId ? Number(aiForm.articleId) : null,
           count: Number(aiForm.questionCount) || 5,
@@ -532,15 +547,18 @@ export default function QuizManagement() {
     } catch (error) {
       console.error('AI generate quiz error:', error.response?.data || error);
 
-      let fallbackMessage =
-        'Failed to generate quiz questions from this article. Please try again or refine article content.';
+      let fallbackMessage = t('qm.err.generateFailed');
 
       if (error.code === 'ECONNABORTED' || !error.response) {
-        fallbackMessage =
-          'AI request failed. Try again or create the quiz manually.';
+        fallbackMessage = t('qm.err.aiFailed');
       }
 
-      setAiError(error.response?.data?.message || fallbackMessage);
+      const serverMessage = error.response?.data?.message;
+      setAiError(
+        serverMessage
+          ? (SERVER_MESSAGE_KEYS[serverMessage] ? t(SERVER_MESSAGE_KEYS[serverMessage]) : serverMessage)
+          : fallbackMessage
+      );
     } finally {
       setAiLoading(false);
     }
@@ -667,7 +685,7 @@ export default function QuizManagement() {
       setAiError(
         error.response?.data?.message ||
           error.response?.data?.error ||
-          'Failed to save the AI generated quiz.'
+          t('qm.err.saveAi')
       );
     } finally {
       setAiSaving(false);
@@ -678,8 +696,8 @@ export default function QuizManagement() {
     <div className="qm-page">
       <div className="qm-heading-row">
         <PageHeader
-          title="Quiz Management"
-          subtitle="Build and manage training quizzes."
+          title={t('qm.title')}
+          subtitle={t('qm.subtitle')}
         />
 
         <div className="qm-heading-actions">
@@ -692,7 +710,7 @@ export default function QuizManagement() {
             }}
           >
             <Icon name="sparkles" />
-            AI Generate
+            {t('qm.aiGenerate')}
           </button>
 
           <button
@@ -701,7 +719,7 @@ export default function QuizManagement() {
             onClick={startCreateQuiz}
           >
             <Icon name="plus" />
-            New Quiz
+            {t('qm.newQuiz')}
           </button>
         </div>
       </div>
@@ -712,7 +730,7 @@ export default function QuizManagement() {
           className="qm-stat qm-stat-blue"
           onClick={() => setActiveTab('manage')}
         >
-          <span>Total Quizzes</span>
+          <span>{t('qm.totalQuizzes')}</span>
           <strong>{quizStats.total}</strong>
         </button>
 
@@ -735,7 +753,7 @@ export default function QuizManagement() {
         </button>
 
         <div className="qm-stat qm-stat-violet">
-          <span>Questions</span>
+          <span>{t('qm.questionsStat')}</span>
           <strong>{quizStats.questionTotal}</strong>
         </div>
       </section>
@@ -750,7 +768,7 @@ export default function QuizManagement() {
             onClick={() => setActiveTab('manage')}
           >
             <Icon name="quiz" size={18} />
-            Quizzes
+            {t('qm.tab.quizzes')}
           </button>
 
           <button
@@ -759,7 +777,7 @@ export default function QuizManagement() {
             onClick={startCreateQuiz}
           >
             <Icon name="plus" size={18} />
-            {editingQuizId ? 'Edit Quiz' : 'Create'}
+            {editingQuizId ? t('qm.tab.edit') : t('qm.tab.create')}
           </button>
 
           <button
@@ -768,7 +786,7 @@ export default function QuizManagement() {
             onClick={() => setActiveTab('ai-generate')}
           >
             <Icon name="sparkles" size={18} />
-            AI Builder
+            {t('qm.tab.ai')}
           </button>
         </div>
 
@@ -777,8 +795,8 @@ export default function QuizManagement() {
             <aside className="qm-library">
               <div className="qm-section-head">
                 <div>
-                  <span className="qm-kicker">Library</span>
-                  <h2>Quizzes</h2>
+                  <span className="qm-kicker">{t('qm.library')}</span>
+                  <h2>{t('qm.tab.quizzes')}</h2>
                 </div>
 
                 <span className="qm-count-badge">{filteredQuizzes.length}</span>
@@ -794,16 +812,16 @@ export default function QuizManagement() {
               </div>
 
               {loading ? (
-                <div className="qm-empty">Loading...</div>
+                <div className="qm-empty">{t('qm.loading')}</div>
               ) : filteredQuizzes.length === 0 ? (
                 <div className="qm-empty">
-                  <strong>No quizzes found</strong>
+                  <strong>{t('qm.noQuizzes')}</strong>
                   <button
                     type="button"
                     className="qm-btn qm-btn-primary"
                     onClick={startCreateQuiz}
                   >
-                    Create Quiz
+                    {t('qm.createQuiz')}
                   </button>
                 </div>
               ) : (
@@ -832,14 +850,14 @@ export default function QuizManagement() {
                         </span>
                       </div>
 
-                      <h3>{quiz.title}</h3>
+                      <h3>{titleLabel(quiz.title)}</h3>
 
                       <div className="qm-quiz-meta">
-                        <span>{quiz.category || 'Training'}</span>
+                        <span>{catLabel(quiz.category || 'Training')}</span>
                         <span className={`qm-diff qm-diff-${String(quiz.difficulty || 'Medium').toLowerCase()}`}>
                           {tOr(`quiz.difficulty.${quiz.difficulty || 'Medium'}`, quiz.difficulty)}
                         </span>
-                        <span>{quiz.question_count || 0} questions</span>
+                        <span>{t('qm.nQuestions', { n: quiz.question_count || 0 })}</span>
                       </div>
 
                       <div className="qm-card-actions">
@@ -850,7 +868,7 @@ export default function QuizManagement() {
                             event.stopPropagation();
                             editQuiz(quiz);
                           }}
-                          aria-label={`Edit ${quiz.title}`}
+                          aria-label={t('qm.editAria', { title: quiz.title })}
                         >
                           <Icon name="edit" size={16} />
                         </button>
@@ -862,13 +880,13 @@ export default function QuizManagement() {
                             event.stopPropagation();
                             deleteQuiz(quiz.quiz_id);
                           }}
-                          aria-label={`Delete ${quiz.title}`}
+                          aria-label={t('qm.deleteAria', { title: quiz.title })}
                         >
                           <Icon name="trash" size={16} />
                         </button>
 
                         <span className="qm-open-link">
-                          Open <Icon name="arrow" size={15} />
+                          {t('qm.open')} <Icon name="arrow" size={15} />
                         </span>
                       </div>
                     </article>
@@ -883,8 +901,8 @@ export default function QuizManagement() {
                   <div className="qm-empty-icon">
                     <Icon name="quiz" size={28} />
                   </div>
-                  <strong>Select a quiz</strong>
-                  <span>Choose one from the library.</span>
+                  <strong>{t('qm.selectQuiz')}</strong>
+                  <span>{t('qm.selectQuizHint')}</span>
                 </div>
               ) : (
                 <>
@@ -892,7 +910,7 @@ export default function QuizManagement() {
                     <div>
                       <div className="qm-detail-tags">
                         <span className="qm-pill qm-pill-blue">
-                          {selectedQuiz.category || 'Training'}
+                          {catLabel(selectedQuiz.category || 'Training')}
                         </span>
                         <span
                           className={`qm-pill ${
@@ -907,10 +925,10 @@ export default function QuizManagement() {
                         </span>
                       </div>
 
-                      <h2>{selectedQuiz.title}</h2>
+                      <h2>{titleLabel(selectedQuiz.title)}</h2>
 
                       {selectedQuiz.description ? (
-                        <p>{selectedQuiz.description}</p>
+                        <p>{localizeDescription(selectedQuiz.description)}</p>
                       ) : null}
                     </div>
 
@@ -924,21 +942,21 @@ export default function QuizManagement() {
                       }}
                     >
                       <Icon name="plus" size={17} />
-                      Question
+                      {t('qm.addQuestionBtn')}
                     </button>
                   </div>
 
                   <div className="qm-mini-stats">
                     <div>
-                      <span>Questions</span>
+                      <span>{t('qm.questionsStat')}</span>
                       <strong>{selectedQuiz.question_count || questions.length || 0}</strong>
                     </div>
                     <div>
-                      <span>Category</span>
-                      <strong>{selectedQuiz.category || 'Training'}</strong>
+                      <span>{t('qm.stat.category')}</span>
+                      <strong>{catLabel(selectedQuiz.category || 'Training')}</strong>
                     </div>
                     <div>
-                      <span>Status</span>
+                      <span>{t('qm.stat.status')}</span>
                       <strong>
                         {selectedQuiz.status === 'active'
                           ? t('quiz.status.published')
@@ -952,10 +970,10 @@ export default function QuizManagement() {
                       <div className="qm-section-head">
                         <div>
                           <span className="qm-kicker">
-                            {editingQuestionId ? 'Editing' : 'New'}
+                            {editingQuestionId ? t('qm.editor.editing') : t('qm.editor.new')}
                           </span>
                           <h3>
-                            {editingQuestionId ? 'Edit Question' : 'Add Question'}
+                            {editingQuestionId ? t('qm.editor.editQuestion') : t('qm.editor.addQuestion')}
                           </h3>
                         </div>
 
@@ -963,34 +981,34 @@ export default function QuizManagement() {
                           type="button"
                           className="qm-icon-close"
                           onClick={resetQuestionForm}
-                          aria-label="Close question editor"
+                          aria-label={t('qm.editor.closeAria')}
                         >
                           ×
                         </button>
                       </div>
 
                       <label className="qm-field qm-field-full">
-                        <span>Question</span>
+                        <span>{t('quiz.edit.question')}</span>
                         <textarea
                           rows="3"
                           name="question_text"
                           value={questionForm.question_text}
                           onChange={handleQuestionChange}
-                          placeholder="Enter question"
+                          placeholder={t('qm.editor.enterQuestion')}
                         />
                       </label>
 
                       <div className="qm-option-grid">
                         {optionLetters.map((letter) => (
                           <label key={letter} className="qm-field">
-                            <span>Option {letter}</span>
+                            <span>{t('quiz.edit.option', { letter })}</span>
                             <input
                               name={`option_${letter.toLowerCase()}`}
                               value={
                                 questionForm[`option_${letter.toLowerCase()}`]
                               }
                               onChange={handleQuestionChange}
-                              placeholder={`Option ${letter}`}
+                              placeholder={t('quiz.edit.option', { letter })}
                             />
                           </label>
                         ))}
@@ -998,7 +1016,7 @@ export default function QuizManagement() {
 
                       <div className="qm-editor-bottom-grid">
                         <label className="qm-field">
-                          <span>Correct</span>
+                          <span>{t('qm.editor.correct')}</span>
                           <select
                             name="correct_option"
                             value={questionForm.correct_option}
@@ -1013,7 +1031,7 @@ export default function QuizManagement() {
                         </label>
 
                         <label className="qm-field">
-                          <span>Points</span>
+                          <span>{t('qm.editor.points')}</span>
                           <input
                             type="number"
                             min="1"
@@ -1025,13 +1043,13 @@ export default function QuizManagement() {
                       </div>
 
                       <label className="qm-field qm-field-full">
-                        <span>Explanation</span>
+                        <span>{t('quiz.edit.explanation')}</span>
                         <textarea
                           rows="2"
                           name="explanation"
                           value={questionForm.explanation}
                           onChange={handleQuestionChange}
-                          placeholder="Optional"
+                          placeholder={t('qm.editor.optional')}
                         />
                       </label>
 
@@ -1041,14 +1059,14 @@ export default function QuizManagement() {
                           className="qm-btn qm-btn-soft"
                           onClick={resetQuestionForm}
                         >
-                          Cancel
+                          {t('qm.editor.cancel')}
                         </button>
 
                         <button
                           type="submit"
                           className="qm-btn qm-btn-primary"
                         >
-                          {editingQuestionId ? 'Save Changes' : 'Add Question'}
+                          {editingQuestionId ? t('qm.editor.saveChanges') : t('qm.editor.addQuestion')}
                         </button>
                       </div>
                     </form>
@@ -1057,22 +1075,22 @@ export default function QuizManagement() {
                   <div className="qm-question-section">
                     <div className="qm-section-head">
                       <div>
-                        <span className="qm-kicker">Question Bank</span>
-                        <h3>{questions.length} Questions</h3>
+                        <span className="qm-kicker">{t('qm.bank')}</span>
+                        <h3>{t('qm.nQuestionsHeading', { n: questions.length })}</h3>
                       </div>
                     </div>
 
                     {questionLoading ? (
-                      <div className="qm-empty">Loading questions...</div>
+                      <div className="qm-empty">{t('qm.loadingQuestions')}</div>
                     ) : questions.length === 0 ? (
                       <div className="qm-empty qm-empty-soft">
-                        <strong>No questions yet</strong>
+                        <strong>{t('qm.noQuestionsYet')}</strong>
                         <button
                           type="button"
                           className="qm-btn qm-btn-primary"
                           onClick={() => setQuestionEditorOpen(true)}
                         >
-                          Add Question
+                          {t('qm.editor.addQuestion')}
                         </button>
                       </div>
                     ) : (
@@ -1093,9 +1111,9 @@ export default function QuizManagement() {
 
                               <div className="qm-question-meta">
                                 <span className="qm-pill qm-pill-green">
-                                  Answer {question.correct_option}
+                                  {t('qm.answerLetter', { letter: question.correct_option })}
                                 </span>
-                                <span>{question.points || 1} pt</span>
+                                <span>{t('qm.pt', { n: question.points || 1 })}</span>
                               </div>
                             </div>
 
@@ -1104,7 +1122,7 @@ export default function QuizManagement() {
                                 type="button"
                                 className="qm-mini-action"
                                 onClick={() => editQuestion(question)}
-                                aria-label="Edit question"
+                                aria-label={t('qm.editQuestionAria')}
                               >
                                 <Icon name="edit" size={16} />
                               </button>
@@ -1117,7 +1135,7 @@ export default function QuizManagement() {
                                     question.question_id || question.id
                                   )
                                 }
-                                aria-label="Delete question"
+                                aria-label={t('qm.deleteQuestionAria')}
                               >
                                 <Icon name="trash" size={16} />
                               </button>
@@ -1139,10 +1157,10 @@ export default function QuizManagement() {
               <div className="qm-section-head">
                 <div>
                   <span className="qm-kicker">
-                    {editingQuizId ? 'Edit Quiz' : 'New Quiz'}
+                    {editingQuizId ? t('qm.tab.edit') : t('qm.form.newQuiz')}
                   </span>
                   <h2>
-                    {editingQuizId ? 'Update quiz' : 'Create quiz'}
+                    {editingQuizId ? t('qm.form.update') : t('qm.form.create')}
                   </h2>
                 </div>
 
@@ -1153,29 +1171,29 @@ export default function QuizManagement() {
 
               <form className="qm-form" onSubmit={submitQuiz}>
                 <label className="qm-field qm-field-full">
-                  <span>Title</span>
+                  <span>{t('qm.form.title')}</span>
                   <input
                     name="title"
                     value={quizForm.title}
                     onChange={handleQuizChange}
-                    placeholder="Quiz title"
+                    placeholder={t('qm.form.titlePh')}
                   />
                 </label>
 
                 <label className="qm-field qm-field-full">
-                  <span>Description</span>
+                  <span>{t('qm.form.description')}</span>
                   <textarea
                     rows="3"
                     name="description"
                     value={quizForm.description}
                     onChange={handleQuizChange}
-                    placeholder="Short description"
+                    placeholder={t('qm.form.descriptionPh')}
                   />
                 </label>
 
                 <div className="qm-form-grid">
                   <label className="qm-field">
-                    <span>Category</span>
+                    <span>{t('qm.form.category')}</span>
                     <input
                       name="category"
                       value={quizForm.category}
@@ -1185,7 +1203,7 @@ export default function QuizManagement() {
                   </label>
 
                   <label className="qm-field">
-                    <span>Status</span>
+                    <span>{t('qm.form.status')}</span>
                     <select
                       name="status"
                       value={quizForm.status}
@@ -1219,7 +1237,7 @@ export default function QuizManagement() {
                       className="qm-btn qm-btn-soft"
                       onClick={startCreateQuiz}
                     >
-                      Cancel
+                      {t('qm.editor.cancel')}
                     </button>
                   ) : null}
 
@@ -1227,7 +1245,7 @@ export default function QuizManagement() {
                     type="submit"
                     className="qm-btn qm-btn-primary"
                   >
-                    {editingQuizId ? 'Save Changes' : 'Create Quiz'}
+                    {editingQuizId ? t('qm.editor.saveChanges') : t('qm.form.createBtn')}
                   </button>
                 </div>
               </form>
@@ -1237,8 +1255,8 @@ export default function QuizManagement() {
               <div className="qm-side-orb qm-side-orb-blue">
                 <Icon name="quiz" size={26} />
               </div>
-              <h3>Manual Builder</h3>
-              <p>Create a quiz, then add questions from the quiz workspace.</p>
+              <h3>{t('qm.manual')}</h3>
+              <p>{t('qm.manualHint')}</p>
 
               <button
                 type="button"
@@ -1249,8 +1267,8 @@ export default function QuizManagement() {
                   <Icon name="sparkles" size={20} />
                 </span>
                 <span>
-                  <strong>Use AI instead</strong>
-                  <small>Generate from Knowledge Base</small>
+                  <strong>{t('qm.useAi')}</strong>
+                  <small>{t('qm.useAiHint')}</small>
                 </span>
                 <Icon name="arrow" size={18} />
               </button>
@@ -1267,19 +1285,19 @@ export default function QuizManagement() {
                 </div>
 
                 <div>
-                  <span>AI Quiz Builder</span>
-                  <h2>Generate from knowledge</h2>
+                  <span>{t('qm.ai.kicker')}</span>
+                  <h2>{t('qm.ai.heading')}</h2>
                 </div>
               </div>
 
               <form className="qm-ai-form" onSubmit={generateAiQuiz}>
                 <label className="qm-field qm-field-full">
-                  <span>Quiz Title</span>
+                  <span>{t('qm.ai.quizTitle')}</span>
                   <input
                     name="title"
                     value={aiForm.title}
                     onChange={handleAiFormChange}
-                    placeholder="Opening SOP Quiz"
+                    placeholder={t('qm.ai.titlePh')}
                   />
                 </label>
 
@@ -1301,7 +1319,7 @@ export default function QuizManagement() {
 
                 {!aiForm.articleId ? (
                   <label className="qm-field qm-field-full">
-                    <span>Category</span>
+                    <span>{t('qm.ai.category')}</span>
                     <select
                       name="sourceCategory"
                       value={aiForm.sourceCategory}
@@ -1309,7 +1327,7 @@ export default function QuizManagement() {
                     >
                       {aiSourceCategories.map((category) => (
                         <option key={category} value={category}>
-                          {category === 'All' ? 'All Knowledge' : category}
+                          {category === 'All' ? t('qm.ai.allKnowledge') : catLabel(category)}
                         </option>
                       ))}
                     </select>
@@ -1396,8 +1414,8 @@ export default function QuizManagement() {
                   <div className="qm-ai-empty-orb">
                     <Icon name="sparkles" size={30} />
                   </div>
-                  <strong>AI preview</strong>
-                  <span>Generated questions appear here.</span>
+                  <strong>{t('qm.ai.previewTitle')}</strong>
+                  <span>{t('qm.ai.previewHint')}</span>
                 </div>
               ) : (
                 <>
@@ -1406,11 +1424,11 @@ export default function QuizManagement() {
                       <div className="qm-detail-tags">
                         <span className="qm-pill qm-pill-violet">
                           {aiPreview.generationMethod === 'ai_provider'
-                            ? 'AI Generated'
-                            : 'Template Generated'}
+                            ? t('qm.ai.generated')
+                            : t('qm.ai.template')}
                         </span>
                         <span className="qm-pill qm-pill-blue">
-                          {aiPreview.sourceArticleTitle || aiPreview.category}
+                          {aiPreview.sourceArticleTitle || catLabel(aiPreview.category)}
                         </span>
                         <span className={`qm-pill qm-diff qm-diff-${String(aiPreview.difficulty || 'Medium').toLowerCase()}`}>
                           {tOr(`quiz.difficulty.${aiPreview.difficulty}`, aiPreview.difficulty)}
@@ -1424,7 +1442,7 @@ export default function QuizManagement() {
                         onChange={(event) =>
                           setAiPreview((prev) => ({ ...prev, title: event.target.value }))
                         }
-                        aria-label="Quiz title"
+                        aria-label={t('qm.ai.titleAria')}
                       />
                       <p>
                         {aiPreview.questions.length} {t('quiz.questions')}
@@ -1564,7 +1582,7 @@ export default function QuizManagement() {
               className="qm-btn qm-btn-primary"
               onClick={closeSuccessModal}
             >
-              Done
+              {t('qm.done')}
             </button>
           </div>
         </div>

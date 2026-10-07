@@ -2,15 +2,18 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../services/api';
+import { useLanguage } from '../../i18n/LanguageContext';
+import { translateAuditAction } from '../../i18n/auditText';
+import { translateNotificationTitle, translateNotificationDetail } from '../../i18n/notificationText';
 import './styles/AdminDashboard.css';
 
 const QUICK_ACTIONS = [
-  { title: 'Users', route: '/admin/users', icon: 'users' },
-  { title: 'Content', route: '/admin/content', icon: 'knowledge' },
-  { title: 'Reviews', route: '/admin/review', icon: 'review' },
-  { title: 'Quiz', route: '/admin/quiz-management', icon: 'quiz' },
-  { title: 'AI Settings', route: '/admin/ai-settings', icon: 'settings' },
-  { title: 'Notion', route: '/admin/notion-sync', icon: 'sync' },
+  { titleKey: 'adm.quick.users', route: '/admin/users', icon: 'users' },
+  { titleKey: 'adm.quick.content', route: '/admin/content', icon: 'knowledge' },
+  { titleKey: 'adm.quick.reviews', route: '/admin/review', icon: 'review' },
+  { titleKey: 'adm.quick.quiz', route: '/admin/quiz-management', icon: 'quiz' },
+  { titleKey: 'adm.quick.ai', route: '/admin/ai-settings', icon: 'settings' },
+  { titleKey: 'adm.quick.notion', route: '/admin/notion-sync', icon: 'sync' },
 ];
 
 function DashboardIcon({ name, size = 22 }) {
@@ -123,10 +126,10 @@ function DashboardIcon({ name, size = 22 }) {
   }
 }
 
-function formatDateTime(value) {
+function formatDateTime(value, locale) {
   if (!value) return '';
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString(locale);
 }
 
 function parsePercent(value) {
@@ -137,6 +140,7 @@ function parsePercent(value) {
 
 export default function AdminDashboard() {
   const { user } = useAuth();
+  const { t, tOr, locale } = useLanguage();
 
   const [stats, setStats] = useState([]);
   const [users, setUsers] = useState([]);
@@ -179,7 +183,7 @@ export default function AdminDashboard() {
         setError(
           requestError.response?.data?.message ||
             requestError.response?.data?.error ||
-            'Some dashboard data is unavailable.'
+            t('adm.unavailable')
         );
       } finally {
         if (!cancelled) setLoading(false);
@@ -191,7 +195,7 @@ export default function AdminDashboard() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [t]);
 
   const statMap = useMemo(
     () => Object.fromEntries(stats.map((item) => [item.label, item.value])),
@@ -210,41 +214,42 @@ export default function AdminDashboard() {
 
   const confidence = parsePercent(ai.accuracy);
   const managerName = user?.name || user?.full_name || 'Manager';
-  const managerRole = String(user?.role || 'Manager').replace(/[_-]/g, ' ');
+  const managerRoleRaw = String(user?.role || 'Manager').replace(/[_-]/g, ' ');
+  const managerRole = tOr(`role.${managerRoleRaw.toLowerCase().replace(/\s/g, '')}`, managerRoleRaw);
   const attentionCount = pendingUsers + pendingEscalations;
 
   const overviewCards = [
     {
-      label: 'Users',
+      label: t('adm.users'),
       value: totalUsers,
       route: '/admin/users',
       icon: 'users',
       tone: 'blue',
-      helper: pendingUsers > 0 ? `${pendingUsers} pending` : 'All accounts',
+      helper: pendingUsers > 0 ? t('adm.helper.pendingN', { n: pendingUsers }) : t('adm.helper.allAccounts'),
     },
     {
-      label: 'Pending',
+      label: t('adm.pending'),
       value: pendingUsers,
       route: '/admin/users',
       icon: 'review',
       tone: pendingUsers > 0 ? 'amber' : 'green',
-      helper: pendingUsers > 0 ? 'Needs review' : 'Up to date',
+      helper: pendingUsers > 0 ? t('adm.helper.needsReview') : t('adm.helper.upToDate'),
     },
     {
-      label: 'Articles',
+      label: t('adm.articles'),
       value: articles,
       route: '/admin/content',
       icon: 'knowledge',
       tone: 'green',
-      helper: 'Knowledge base',
+      helper: t('adm.helper.kb'),
     },
     {
-      label: 'Escalations',
+      label: t('adm.escalations'),
       value: pendingEscalations,
       route: '/escalation',
       icon: 'question',
       tone: pendingEscalations > 0 ? 'amber' : 'slate',
-      helper: pendingEscalations > 0 ? 'Needs action' : 'Clear',
+      helper: pendingEscalations > 0 ? t('adm.helper.needsAction') : t('adm.helper.clear'),
     },
   ];
 
@@ -254,15 +259,15 @@ export default function AdminDashboard() {
         <div className="hd-admin-hero-copy">
           <div className="hd-admin-hero-kicker">
             <span className="hd-admin-live-dot" aria-hidden="true" />
-            Management workspace
+            {t('adm.workspace')}
           </div>
-          <h1>Welcome back, {managerName}</h1>
-          <p>Manage people, knowledge and system activity from one place.</p>
+          <h1>{t('adm.welcome', { name: managerName })}</h1>
+          <p>{t('adm.welcomeSub')}</p>
 
-          <div className="hd-admin-hero-meta" aria-label="Account and system status">
+          <div className="hd-admin-hero-meta" aria-label={t('adm.accountStatusAria')}>
             <span className="hd-admin-role-chip">{managerRole}</span>
             <span className={`hd-admin-attention-chip ${attentionCount > 0 ? 'is-active' : ''}`}>
-              {loading ? 'Checking status…' : attentionCount > 0 ? `${attentionCount} need attention` : 'Everything looks good'}
+              {loading ? t('adm.checking') : attentionCount > 0 ? t('adm.needAttention', { n: attentionCount }) : t('adm.allGood')}
             </span>
           </div>
         </div>
@@ -270,12 +275,12 @@ export default function AdminDashboard() {
         <div className="hd-admin-header-actions">
           <Link to="/chat" className="hd-admin-btn hd-admin-btn-secondary">
             <DashboardIcon name="question" size={19} />
-            Ask AI
+            {t('adm.askAi')}
           </Link>
 
           <Link to="/admin/content/add" className="hd-admin-btn hd-admin-btn-primary">
             <span className="hd-admin-btn-plus" aria-hidden="true">+</span>
-            Add Article
+            {t('adm.addArticle')}
           </Link>
         </div>
       </header>
@@ -287,7 +292,7 @@ export default function AdminDashboard() {
         </div>
       ) : null}
 
-      <section className="hd-admin-overview-grid" aria-label="System overview">
+      <section className="hd-admin-overview-grid" aria-label={t('adm.overviewAria')}>
         {overviewCards.map((item) => (
           <Link
             key={item.label}
@@ -303,7 +308,7 @@ export default function AdminDashboard() {
 
             <div className="hd-admin-metric-body">
               <strong>{loading ? '—' : item.value}</strong>
-              <span>{loading ? 'Loading' : item.helper}</span>
+              <span>{loading ? t('adm.loading') : item.helper}</span>
             </div>
 
             <span className="hd-admin-card-arrow" aria-hidden="true">
@@ -317,18 +322,18 @@ export default function AdminDashboard() {
         <article className="hd-admin-command-panel">
           <div className="hd-admin-section-heading">
             <div>
-              <span className="hd-admin-section-kicker">Management</span>
-              <h2>Quick actions</h2>
+              <span className="hd-admin-section-kicker">{t('adm.management')}</span>
+              <h2>{t('adm.quickActions')}</h2>
             </div>
           </div>
 
           <div className="hd-admin-quick-grid">
             {QUICK_ACTIONS.map((item) => (
-              <Link key={item.title} to={item.route} className="hd-admin-quick-card">
+              <Link key={item.titleKey} to={item.route} className="hd-admin-quick-card">
                 <span className="hd-admin-quick-icon">
                   <DashboardIcon name={item.icon} size={20} />
                 </span>
-                <strong>{item.title}</strong>
+                <strong>{t(item.titleKey)}</strong>
                 <span className="hd-admin-quick-arrow" aria-hidden="true">
                   <DashboardIcon name="arrow" size={17} />
                 </span>
@@ -337,19 +342,19 @@ export default function AdminDashboard() {
           </div>
         </article>
 
-        <aside className="hd-admin-health-panel" aria-label="System pulse">
+        <aside className="hd-admin-health-panel" aria-label={t('adm.pulseAria')}>
           <div className="hd-admin-section-heading hd-admin-section-heading-tight">
             <div>
-              <span className="hd-admin-section-kicker">System</span>
-              <h2>Pulse</h2>
+              <span className="hd-admin-section-kicker">{t('adm.system')}</span>
+              <h2>{t('adm.pulse')}</h2>
             </div>
-            <Link to="/admin/analytics" className="hd-admin-inline-link">Analytics</Link>
+            <Link to="/admin/analytics" className="hd-admin-inline-link">{t('adm.analytics')}</Link>
           </div>
 
           <div className="hd-admin-health-list">
             <div className="hd-admin-health-item hd-admin-health-item-ai">
               <div>
-                <span>AI confidence</span>
+                <span>{t('adm.aiConfidence')}</span>
                 <strong>{loading ? '—' : ai.accuracy || '0%'}</strong>
               </div>
               <div className="hd-admin-confidence-ring" style={{ '--confidence': `${confidence * 3.6}deg` }} aria-hidden="true">
@@ -358,12 +363,12 @@ export default function AdminDashboard() {
             </div>
 
             <div className="hd-admin-health-item">
-              <span>Questions this week</span>
+              <span>{t('adm.questionsWeek')}</span>
               <strong>{loading ? '—' : weeklyQuestions}</strong>
             </div>
 
             <div className="hd-admin-health-item">
-              <span>Unread notifications</span>
+              <span>{t('adm.unreadNotif')}</span>
               <strong>{loading ? '—' : unreadNotifications}</strong>
             </div>
           </div>
@@ -374,10 +379,10 @@ export default function AdminDashboard() {
         <article className="hd-admin-panel">
           <div className="hd-admin-panel-heading">
             <div>
-              <span className="hd-admin-section-kicker">Latest</span>
-              <h3>Recent activity</h3>
+              <span className="hd-admin-section-kicker">{t('adm.latest')}</span>
+              <h3>{t('adm.recentActivity')}</h3>
             </div>
-            <Link to="/admin/security" className="hd-admin-inline-link">View all</Link>
+            <Link to="/admin/security" className="hd-admin-inline-link">{t('adm.viewAll')}</Link>
           </div>
 
           {loading ? (
@@ -389,8 +394,8 @@ export default function AdminDashboard() {
           ) : activities.length === 0 ? (
             <div className="hd-admin-empty-state">
               <span className="hd-admin-empty-icon"><DashboardIcon name="shield" size={20} /></span>
-              <strong>No recent activity</strong>
-              <p>New system activity will appear here.</p>
+              <strong>{t('adm.noActivity')}</strong>
+              <p>{t('adm.noActivityHint')}</p>
             </div>
           ) : (
             <div className="hd-admin-activity-list">
@@ -398,9 +403,9 @@ export default function AdminDashboard() {
                 <div key={`${item.action}-${index}`} className="hd-admin-activity-item">
                   <span className="hd-admin-activity-marker" aria-hidden="true" />
                   <div>
-                    <strong>{item.action}</strong>
+                    <strong>{translateAuditAction(t, item.action)}</strong>
                     {item.created_at ? (
-                      <time dateTime={item.created_at}>{formatDateTime(item.created_at)}</time>
+                      <time dateTime={item.created_at}>{formatDateTime(item.created_at, locale)}</time>
                     ) : null}
                   </div>
                 </div>
@@ -412,8 +417,8 @@ export default function AdminDashboard() {
         <article className="hd-admin-panel">
           <div className="hd-admin-panel-heading">
             <div>
-              <span className="hd-admin-section-kicker">Inbox</span>
-              <h3>Notifications</h3>
+              <span className="hd-admin-section-kicker">{t('adm.inbox')}</span>
+              <h3>{t('adm.notifications')}</h3>
             </div>
             <span className="hd-admin-panel-count">{loading ? '—' : unreadNotifications}</span>
           </div>
@@ -427,8 +432,8 @@ export default function AdminDashboard() {
           ) : notifications.length === 0 ? (
             <div className="hd-admin-empty-state">
               <span className="hd-admin-empty-icon"><DashboardIcon name="bell" size={20} /></span>
-              <strong>You're all caught up</strong>
-              <p>New notifications will appear here.</p>
+              <strong>{t('adm.caughtUp')}</strong>
+              <p>{t('adm.caughtUpHint')}</p>
             </div>
           ) : (
             <div className="hd-admin-notification-list">
@@ -436,8 +441,8 @@ export default function AdminDashboard() {
                 <div key={item.id ?? `${item.title}-${index}`} className="hd-admin-notification-item">
                   <span className="hd-admin-notification-dot" aria-hidden="true" />
                   <div>
-                    <strong>{item.title}</strong>
-                    <p>{item.detail || item.message || 'System update'}</p>
+                    <strong>{translateNotificationTitle(t, item.title)}</strong>
+                    <p>{translateNotificationDetail(t, item.detail || item.message || t('adm.systemUpdate'))}</p>
                   </div>
                 </div>
               ))}

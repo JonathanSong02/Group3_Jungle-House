@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import PageHeader from '../../components/PageHeader';
 import api from '../../services/api';
+import { useLanguage } from '../../i18n/LanguageContext';
+import { translateAuditAction, translateAuditModule } from '../../i18n/auditText';
 import './styles/SecurityMonitoring.css';
 
 export default function SecurityMonitoring() {
+  const { t, tOr } = useLanguage();
   const [activeTab, setActiveTab] = useState('login');
 
   const [loginHistory, setLoginHistory] = useState([]);
@@ -34,7 +37,7 @@ export default function SecurityMonitoring() {
       setAuditLogs(auditResponse.data.audit_logs || []);
     } catch (err) {
       console.error('SECURITY MONITORING ERROR:', err);
-      setError(err.response?.data?.message || 'Unable to load security monitoring data.');
+      setError(err.response?.data?.message || t('sec.err.load'));
     } finally {
       setLoading(false);
     }
@@ -50,9 +53,7 @@ export default function SecurityMonitoring() {
   }, [searchText, statusFilter, activeTab]);
 
   const formatStatus = (status) => {
-    if (status === 'success') return 'Success';
-    if (status === 'failed') return 'Failed';
-    return status || '-';
+    return status ? tOr(`status.${status}`, status) : '-';
   };
 
   const successCount = loginHistory.filter((log) => log.status === 'success').length;
@@ -100,7 +101,7 @@ export default function SecurityMonitoring() {
 
   const Pagination = ({ currentPage, totalPages, onPrevious, onNext }) => (
     <div className="sm-pagination">
-      <span>Page {currentPage} / {totalPages}</span>
+      <span>{t('sec.pageOf', { page: currentPage, total: totalPages })}</span>
 
       <div>
         <button
@@ -109,7 +110,7 @@ export default function SecurityMonitoring() {
           onClick={onPrevious}
           disabled={currentPage <= 1}
         >
-          Previous
+          {t('common.previous')}
         </button>
 
         <button
@@ -118,7 +119,7 @@ export default function SecurityMonitoring() {
           onClick={onNext}
           disabled={currentPage >= totalPages}
         >
-          Next
+          {t('common.next')}
         </button>
       </div>
     </div>
@@ -127,28 +128,28 @@ export default function SecurityMonitoring() {
   return (
     <div className="sm-page">
       <PageHeader
-        title="Security Monitoring"
-        subtitle="Monitor login and system activity."
+        title={t('sec.title')}
+        subtitle={t('sec.subtitle')}
       />
 
       <section className="sm-summary-grid">
         <div className="sm-summary-card total">
-          <span>Login Records</span>
+          <span>{t('sec.loginRecords')}</span>
           <strong>{loginHistory.length}</strong>
         </div>
 
         <div className="sm-summary-card success">
-          <span>Successful</span>
+          <span>{t('sec.successful')}</span>
           <strong>{successCount}</strong>
         </div>
 
         <div className="sm-summary-card failed">
-          <span>Failed</span>
+          <span>{t('sec.failed')}</span>
           <strong>{failedCount}</strong>
         </div>
 
         <div className="sm-summary-card audit">
-          <span>Audit Events</span>
+          <span>{t('sec.auditEvents')}</span>
           <strong>{auditLogs.length}</strong>
         </div>
       </section>
@@ -163,7 +164,7 @@ export default function SecurityMonitoring() {
               className={activeTab === 'login' ? 'active' : ''}
               onClick={() => setActiveTab('login')}
             >
-              Login History
+              {t('sec.tab.login')}
               <span>{loginHistory.length}</span>
             </button>
 
@@ -172,7 +173,7 @@ export default function SecurityMonitoring() {
               className={activeTab === 'audit' ? 'active' : ''}
               onClick={() => setActiveTab('audit')}
             >
-              Audit Log
+              {t('sec.tab.audit')}
               <span>{auditLogs.length}</span>
             </button>
           </div>
@@ -180,7 +181,7 @@ export default function SecurityMonitoring() {
           <div className="sm-tools">
             <input
               type="search"
-              placeholder={activeTab === 'login' ? 'Search user, email or IP' : 'Search audit logs'}
+              placeholder={activeTab === 'login' ? t('sec.searchLogin') : t('sec.searchAudit')}
               value={searchText}
               onChange={(event) => setSearchText(event.target.value)}
             />
@@ -190,9 +191,9 @@ export default function SecurityMonitoring() {
                 value={statusFilter}
                 onChange={(event) => setStatusFilter(event.target.value)}
               >
-                <option value="all">All Status</option>
-                <option value="success">Success</option>
-                <option value="failed">Failed</option>
+                <option value="all">{t('sec.allStatus')}</option>
+                <option value="success">{t('status.success')}</option>
+                <option value="failed">{t('status.failed')}</option>
               </select>
             ) : null}
 
@@ -202,19 +203,19 @@ export default function SecurityMonitoring() {
               onClick={fetchSecurityData}
               disabled={loading}
             >
-              {loading ? 'Refreshing...' : 'Refresh'}
+              {loading ? t('an.refreshing') : t('an.refresh')}
             </button>
           </div>
         </div>
 
         {loading && loginHistory.length === 0 && auditLogs.length === 0 ? (
           <div className="sm-empty">
-            <strong>Loading security data...</strong>
+            <strong>{t('sec.loading')}</strong>
           </div>
         ) : activeTab === 'login' ? (
           filteredLoginHistory.length === 0 ? (
             <div className="sm-empty">
-              <strong>No login records found</strong>
+              <strong>{t('sec.noLogin')}</strong>
             </div>
           ) : (
             <>
@@ -222,18 +223,18 @@ export default function SecurityMonitoring() {
                 <table className="sm-table">
                   <thead>
                     <tr>
-                      <th>User</th>
-                      <th>Email</th>
-                      <th>Time</th>
-                      <th>Status</th>
-                      <th>IP Address</th>
+                      <th>{t('sec.col.user')}</th>
+                      <th>{t('sec.col.email')}</th>
+                      <th>{t('sec.col.time')}</th>
+                      <th>{t('sec.col.status')}</th>
+                      <th>{t('sec.col.ip')}</th>
                     </tr>
                   </thead>
 
                   <tbody>
                     {loginRows.map((log) => (
                       <tr key={log.login_id}>
-                        <td><strong>{log.user || 'Unknown'}</strong></td>
+                        <td><strong>{log.user || t('sec.unknown')}</strong></td>
                         <td>{log.email || '-'}</td>
                         <td>{log.time || '-'}</td>
                         <td>
@@ -259,7 +260,7 @@ export default function SecurityMonitoring() {
           )
         ) : filteredAuditLogs.length === 0 ? (
           <div className="sm-empty">
-            <strong>No audit records found</strong>
+            <strong>{t('sec.noAudit')}</strong>
           </div>
         ) : (
           <>
@@ -267,20 +268,20 @@ export default function SecurityMonitoring() {
               <table className="sm-table">
                 <thead>
                   <tr>
-                    <th>Action</th>
-                    <th>Module</th>
-                    <th>Actor</th>
-                    <th>Description</th>
-                    <th>Time</th>
+                    <th>{t('sec.col.action')}</th>
+                    <th>{t('sec.col.module')}</th>
+                    <th>{t('sec.col.actor')}</th>
+                    <th>{t('sec.col.description')}</th>
+                    <th>{t('sec.col.time')}</th>
                   </tr>
                 </thead>
 
                 <tbody>
                   {auditRows.map((log) => (
                     <tr key={log.audit_id}>
-                      <td><strong>{log.action || '-'}</strong></td>
-                      <td><span className="sm-module">{log.module || '-'}</span></td>
-                      <td>{log.actor || 'System'}</td>
+                      <td><strong>{translateAuditAction(t, log.action) || '-'}</strong></td>
+                      <td><span className="sm-module">{translateAuditModule(t, log.module) || '-'}</span></td>
+                      <td>{log.actor && log.actor !== 'System' ? log.actor : t('sec.system')}</td>
                       <td className="sm-description">{log.description || '-'}</td>
                       <td>{log.time || '-'}</td>
                     </tr>

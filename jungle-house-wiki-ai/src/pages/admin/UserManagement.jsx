@@ -2,15 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import PageHeader from '../../components/PageHeader';
 import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
+import { useLanguage } from '../../i18n/LanguageContext';
 import './styles/UserManagement.css';
 
-const NAV_ITEMS = [
-  { key: 'all', label: 'All Users' },
-  { key: 'pending', label: 'Pending' },
-  { key: 'active', label: 'Active' },
-  { key: 'history', label: 'Registration History' },
-  { key: 'email', label: 'Email Test' },
-];
+const NAV_ITEMS = ['all', 'pending', 'active', 'history', 'email'];
 
 function normalizeRole(roleValue) {
   const normalizedRole = String(roleValue || 'staff').toLowerCase().replace(/[\s_-]/g, '');
@@ -38,6 +33,8 @@ function formatRegistrationDate(value) {
 
 export default function UserManagement() {
   const { user } = useAuth();
+  const { t, tOr } = useLanguage();
+  const roleName = (role) => (normalizeRole(role) === 'teamlead' ? t('role.teamlead') : t('role.staff'));
 
   const actorRole = String(user?.role || '').toLowerCase().replace(/[\s_-]/g, '');
   const isManagerActor = actorRole === 'manager' || actorRole === 'admin';
@@ -78,11 +75,11 @@ export default function UserManagement() {
       setUsers(Array.isArray(response.data) ? response.data : []);
     } catch (error) {
       console.error('Fetch users error:', error);
-      setMessage(error.response?.data?.message || 'Unable to load users.');
+      setMessage(error.response?.data?.message || t('um.err.load'));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     fetchUsers();
@@ -99,11 +96,11 @@ export default function UserManagement() {
     } catch (error) {
       console.error('Fetch registration history error:', error);
       setHistoryRecords([]);
-      setHistoryError(error.response?.data?.message || 'Unable to load registration history.');
+      setHistoryError(error.response?.data?.message || t('um.err.history'));
     } finally {
       setHistoryLoading(false);
     }
-  }, [isApproverActor]);
+  }, [isApproverActor, t]);
 
   useEffect(() => {
     if (activeView === 'history' && isApproverActor) {
@@ -122,8 +119,8 @@ export default function UserManagement() {
 
   const getDecisionReason = (record) => {
     const description = String(record.decision_description || '').trim();
-    if (!description) return 'Not recorded';
-    return description.replace(/^User ID \d+ registration declined\. Reason:\s*/i, '') || 'Not specified';
+    if (!description) return t('um.notRecorded');
+    return description.replace(/^User ID \d+ registration declined\. Reason:\s*/i, '') || t('um.notSpecified');
   };
 
   useEffect(() => {
@@ -198,10 +195,10 @@ export default function UserManagement() {
       await api.put(`/admin/users/${userId}/status`, {
         status: newStatus,
       });
-      setMessage(newStatus === 'active' ? 'User activated.' : 'User deactivated.');
+      setMessage(newStatus === 'active' ? t('um.ok.activated') : t('um.ok.deactivated'));
       await fetchUsers();
     } catch (error) {
-      setMessage(error.response?.data?.message || 'Unable to update user status.');
+      setMessage(error.response?.data?.message || t('um.err.status'));
     } finally {
       setActionLoadingId(null);
     }
@@ -213,10 +210,10 @@ export default function UserManagement() {
       await api.put(`/admin/users/${userId}/role`, {
         role: newRole,
       });
-      setMessage('Role updated.');
+      setMessage(t('um.ok.role'));
       await fetchUsers();
     } catch (error) {
-      setMessage(error.response?.data?.message || 'Unable to update role.');
+      setMessage(error.response?.data?.message || t('um.err.role'));
     } finally {
       setActionLoadingId(null);
     }
@@ -251,14 +248,14 @@ export default function UserManagement() {
       );
 
       if (response.data?.account_status && response.data.account_status !== 'active') {
-        throw new Error('Approval was not confirmed. Please refresh the list and check this account.');
+        throw new Error(t('um.err.approveUnconfirmed'));
       }
 
-      setMessage(response.data?.message || 'Registration approved. The user can now sign in.');
+      setMessage(t('um.ok.approved'));
       setApprovalDialog((prev) => ({ ...prev, open: false }));
       await fetchUsers();
     } catch (error) {
-      setMessage(error.response?.data?.message || error.message || 'Approval failed.');
+      setMessage(error.response?.data?.message || error.message || t('um.err.approve'));
       await fetchUsers();
     } finally {
       setActionLoadingId(null);
@@ -267,22 +264,22 @@ export default function UserManagement() {
 
   const declineUser = async (userId) => {
     if (!isApproverActor) return;
-    const reason = window.prompt('Decline reason (optional)');
+    const reason = window.prompt(t('um.prompt.reason'));
     if (reason === null) return;
 
-    if (!window.confirm('Decline this registration? The account will remain in the audit history and cannot sign in.')) return;
+    if (!window.confirm(t('um.confirm.decline'))) return;
 
     try {
       setActionLoadingId(userId);
       setMessage('');
       const response = await api.put(`/admin/registration-requests/${userId}/decline`, { reason });
       if (response.data?.account_status !== 'declined') {
-        throw new Error('Decline was not confirmed. Please refresh the list and check this account.');
+        throw new Error(t('um.err.declineUnconfirmed'));
       }
-      setMessage(response.data?.message || 'Registration declined. Account history preserved.');
+      setMessage(t('um.ok.declined'));
       await fetchUsers();
     } catch (error) {
-      setMessage(error.response?.data?.message || error.message || 'Decline failed.');
+      setMessage(error.response?.data?.message || error.message || t('um.err.decline'));
       await fetchUsers();
     } finally {
       setActionLoadingId(null);
@@ -296,13 +293,13 @@ export default function UserManagement() {
       setEmailTestLoading(true);
       setEmailTestMessage('');
 
-      const response = await api.post('/admin/email/test', {
+      await api.post('/admin/email/test', {
         email: testRecipient.trim().toLowerCase(),
       });
 
-      setEmailTestMessage(response.data?.message || 'Test email sent.');
+      setEmailTestMessage(t('um.ok.emailSent'));
     } catch (error) {
-      setEmailTestMessage(error.response?.data?.message || 'Email test failed.');
+      setEmailTestMessage(error.response?.data?.message || t('um.err.email'));
     } finally {
       setEmailTestLoading(false);
     }
@@ -318,11 +315,7 @@ export default function UserManagement() {
   };
 
   const stageLabel = (stage) => {
-    if (stage === 'pending') return 'Pending';
-    if (stage === 'active') return 'Active';
-    if (stage === 'inactive') return 'Inactive';
-    if (stage === 'declined') return 'Declined';
-    return stage;
+    return tOr(`status.${stage}`, stage);
   };
 
   const isDirectoryView = activeView === 'all' || activeView === 'active';
@@ -336,9 +329,9 @@ export default function UserManagement() {
 
   return (
     <div className="user-management-page um2-page">
-      <PageHeader title="User Management" subtitle="Review access requests and manage staff accounts." />
+      <PageHeader title={t('um.title')} subtitle={t('um.subtitle')} />
 
-      <section className="um2-overview" aria-label="User account overview">
+      <section className="um2-overview" aria-label={t('um.overviewAria')}>
         <button
           type="button"
           className={`um2-stat ${activeView === 'all' ? 'selected' : ''}`}
@@ -346,7 +339,7 @@ export default function UserManagement() {
         >
           <span className="um2-stat-icon users" aria-hidden="true">U</span>
           <span>
-            <small>Total accounts</small>
+            <small>{t('um.totalAccounts')}</small>
             <strong>{loading ? '—' : counts.all}</strong>
           </span>
         </button>
@@ -358,7 +351,7 @@ export default function UserManagement() {
         >
           <span className="um2-stat-icon active" aria-hidden="true">✓</span>
           <span>
-            <small>Active staff</small>
+            <small>{t('um.activeStaff')}</small>
             <strong>{loading ? '—' : counts.active}</strong>
           </span>
         </button>
@@ -370,29 +363,29 @@ export default function UserManagement() {
         >
           <span className="um2-stat-icon pending" aria-hidden="true">!</span>
           <span>
-            <small>Needs review</small>
+            <small>{t('um.needsReview')}</small>
             <strong>{loading ? '—' : counts.pending}</strong>
           </span>
-          {counts.pending > 0 ? <span className="um2-attention-dot" aria-label="Pending registrations" /> : null}
+          {counts.pending > 0 ? <span className="um2-attention-dot" aria-label={t('um.pendingAria')} /> : null}
         </button>
       </section>
 
       <section className="um2-shell">
         <div className="um2-shell-top">
-          <nav className="um2-tabs" aria-label="User management sections">
+          <nav className="um2-tabs" aria-label={t('um.sectionsAria')}>
             {NAV_ITEMS.map((item) => (
               <button
-                key={item.key}
+                key={item}
                 type="button"
-                className={activeView === item.key ? 'active' : ''}
+                className={activeView === item ? 'active' : ''}
                 onClick={() => {
-                  setActiveView(item.key);
+                  setActiveView(item);
                   setMessage('');
                   setEmailTestMessage('');
                 }}
               >
-                {item.label}
-                {item.key === 'pending' && counts.pending > 0 ? (
+                {t(`um.nav.${item}`)}
+                {item === 'pending' && counts.pending > 0 ? (
                   <span className="um2-tab-count">{counts.pending}</span>
                 ) : null}
               </button>
@@ -406,8 +399,8 @@ export default function UserManagement() {
                 type="search"
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search staff"
-                aria-label="Search users"
+                placeholder={t('um.searchStaff')}
+                aria-label={t('um.searchUsersAria')}
               />
             </div>
           ) : null}
@@ -419,8 +412,8 @@ export default function UserManagement() {
                 type="search"
                 value={historySearch}
                 onChange={(event) => setHistorySearch(event.target.value)}
-                placeholder="Search history"
-                aria-label="Search registration history"
+                placeholder={t('um.searchHistory')}
+                aria-label={t('um.searchHistoryAria')}
               />
             </div>
           ) : null}
@@ -431,7 +424,7 @@ export default function UserManagement() {
         ) : null}
 
         {(isDirectoryView || activeView === 'pending') && loading ? (
-          <div className="um2-loading-grid" aria-label="Loading users">
+          <div className="um2-loading-grid" aria-label={t('um.loadingAria')}>
             <span /><span /><span />
           </div>
         ) : null}
@@ -441,12 +434,12 @@ export default function UserManagement() {
             <div className="um2-section-heading">
               <div>
                 <div className="um2-heading-line">
-                  <h2>Needs Review</h2>
+                  <h2>{t('um.reviewHeading')}</h2>
                   <span className={`um2-count-pill ${counts.pending > 0 ? 'has-items' : ''}`}>
                     {counts.pending}
                   </span>
                 </div>
-                <p>New account requests waiting for approval.</p>
+                <p>{t('um.reviewHint')}</p>
               </div>
 
               {activeView === 'all' && counts.pending > 0 ? (
@@ -455,7 +448,7 @@ export default function UserManagement() {
                   className="um2-text-action"
                   onClick={() => setActiveView('pending')}
                 >
-                  Review all
+                  {t('um.reviewAll')}
                   <span aria-hidden="true">→</span>
                 </button>
               ) : null}
@@ -465,8 +458,8 @@ export default function UserManagement() {
               <div className="um2-clear-state">
                 <span className="um2-clear-icon" aria-hidden="true">✓</span>
                 <div>
-                  <strong>No registrations waiting</strong>
-                  <p>{search ? 'No pending account matches your search.' : 'You are all caught up.'}</p>
+                  <strong>{t('um.noWaiting')}</strong>
+                  <p>{search ? t('um.noMatchPending') : t('um.caughtUp')}</p>
                 </div>
               </div>
             ) : (
@@ -479,19 +472,19 @@ export default function UserManagement() {
                       <div className="um2-review-person">
                         {renderUserAvatar(item.full_name, 'pending')}
                         <div>
-                          <strong>{item.full_name || 'Unnamed user'}</strong>
+                          <strong>{item.full_name || t('um.unnamed')}</strong>
                           <span>{item.email}</span>
                         </div>
-                        <span className="um2-status pending">Pending</span>
+                        <span className="um2-status pending">{t('status.pending')}</span>
                       </div>
 
                       <div className="um2-review-meta">
                         <div>
-                          <span>Requested role</span>
-                          <strong>{normalizeRole(item.role_name) === 'teamlead' ? 'Team Lead' : 'Staff'}</strong>
+                          <span>{t('um.requestedRole')}</span>
+                          <strong>{roleName(item.role_name)}</strong>
                         </div>
                         <div>
-                          <span>Registered</span>
+                          <span>{t('um.registered')}</span>
                           <strong>{formatRegistrationDate(item.created_at)}</strong>
                         </div>
                       </div>
@@ -503,7 +496,7 @@ export default function UserManagement() {
                           disabled={isBusy}
                           onClick={() => openApprovalDialog(item)}
                         >
-                          {isBusy ? 'Working...' : 'Approve'}
+                          {isBusy ? t('um.working') : t('um.approve')}
                         </button>
                         <button
                           type="button"
@@ -511,7 +504,7 @@ export default function UserManagement() {
                           disabled={isBusy}
                           onClick={() => declineUser(item.user_id)}
                         >
-                          Decline
+                          {t('um.decline')}
                         </button>
                       </div>
                     </article>
@@ -526,41 +519,41 @@ export default function UserManagement() {
           <section className="um2-section um2-directory-section">
             <div className="um2-directory-head">
               <div>
-                <h2>{activeView === 'active' ? 'Active Staff' : 'Staff Directory'}</h2>
-                <p>{activeView === 'active' ? 'Accounts that can currently sign in.' : 'Manage roles and account access.'}</p>
+                <h2>{activeView === 'active' ? t('um.activeStaffHeading') : t('um.directory')}</h2>
+                <p>{activeView === 'active' ? t('um.activeHint') : t('um.directoryHint')}</p>
               </div>
 
               <div className="um2-filter-row">
                 <label className="um2-filter">
-                  <span>Role</span>
+                  <span>{t('um.role')}</span>
                   <select value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)}>
-                    <option value="all">All roles</option>
-                    <option value="staff">Staff</option>
-                    <option value="teamlead">Team Lead</option>
-                    <option value="manager">Manager</option>
+                    <option value="all">{t('um.allRoles')}</option>
+                    <option value="staff">{t('role.staff')}</option>
+                    <option value="teamlead">{t('role.teamlead')}</option>
+                    <option value="manager">{t('role.manager')}</option>
                   </select>
                 </label>
                 <button type="button" className="um2-refresh" onClick={fetchUsers} disabled={loading}>
-                  Refresh
+                  {t('um.refresh')}
                 </button>
               </div>
             </div>
 
             {directoryUsers.length === 0 ? (
               <div className="um2-empty">
-                <strong>No staff found</strong>
-                <span>Try another search or role filter.</span>
+                <strong>{t('um.noStaff')}</strong>
+                <span>{t('um.noStaffHint')}</span>
               </div>
             ) : (
               <div className="um2-table-wrap">
                 <table className="um2-table">
                   <thead>
                     <tr>
-                      <th>Staff member</th>
-                      <th>Role</th>
-                      <th>Status</th>
-                      <th>Joined</th>
-                      <th className="um2-action-column">Access</th>
+                      <th>{t('um.col.staff')}</th>
+                      <th>{t('um.col.role')}</th>
+                      <th>{t('um.col.status')}</th>
+                      <th>{t('um.col.joined')}</th>
+                      <th className="um2-action-column">{t('um.col.access')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -583,21 +576,21 @@ export default function UserManagement() {
                           </td>
                           <td>
                             {isManager ? (
-                              <span className="um2-role manager">Manager</span>
+                              <span className="um2-role manager">{t('role.manager')}</span>
                             ) : isManagerActor ? (
                               <select
                                 className="um2-role-select"
                                 value={normalizeRole(item.role_name)}
                                 onChange={(event) => updateUserRole(item.user_id, event.target.value)}
                                 disabled={isBusy}
-                                aria-label={`Role for ${item.full_name}`}
+                                aria-label={t('um.roleFor', { name: item.full_name })}
                               >
-                                <option value="staff">Staff</option>
-                                <option value="teamlead">Team Lead</option>
+                                <option value="staff">{t('role.staff')}</option>
+                                <option value="teamlead">{t('role.teamlead')}</option>
                               </select>
                             ) : (
                               <span className="um2-role">
-                                {normalizeRole(item.role_name) === 'teamlead' ? 'Team Lead' : 'Staff'}
+                                {roleName(item.role_name)}
                               </span>
                             )}
                           </td>
@@ -612,7 +605,7 @@ export default function UserManagement() {
                           </td>
                           <td className="um2-action-column">
                             {isManager ? (
-                              <span className="um2-protected">Protected</span>
+                              <span className="um2-protected">{t('um.protected')}</span>
                             ) : isManagerActor ? (
                               <button
                                 type="button"
@@ -621,10 +614,10 @@ export default function UserManagement() {
                                 onClick={() => updateUserStatus(item.user_id, item.status)}
                               >
                                 {isBusy
-                                  ? 'Updating...'
+                                  ? t('um.updating')
                                   : item.status === 'active'
-                                    ? 'Deactivate'
-                                    : 'Activate'}
+                                    ? t('um.deactivate')
+                                    : t('um.activate')}
                               </button>
                             ) : (
                               <span className="um2-muted">—</span>
@@ -644,8 +637,8 @@ export default function UserManagement() {
           <section className="um2-section um2-history-section">
             <div className="um2-directory-head">
               <div>
-                <h2>Registration History</h2>
-                <p>Declined and archived applications are kept here for audit reference.</p>
+                <h2>{t('um.history')}</h2>
+                <p>{t('um.historyHint')}</p>
               </div>
               <button
                 type="button"
@@ -653,7 +646,7 @@ export default function UserManagement() {
                 onClick={fetchHistory}
                 disabled={historyLoading}
               >
-                {historyLoading ? 'Refreshing...' : 'Refresh'}
+                {historyLoading ? t('um.refreshing') : t('um.refresh')}
               </button>
             </div>
 
@@ -665,20 +658,20 @@ export default function UserManagement() {
               <div className="um2-loading-grid"><span /><span /><span /></div>
             ) : historyError ? null : filteredHistory.length === 0 ? (
               <div className="um2-empty">
-                <strong>No registration history</strong>
-                <span>Declined applications will appear here.</span>
+                <strong>{t('um.noHistory')}</strong>
+                <span>{t('um.noHistoryHint')}</span>
               </div>
             ) : (
               <div className="um2-table-wrap">
                 <table className="um2-table history">
                   <thead>
                     <tr>
-                      <th>Applicant</th>
-                      <th>Record</th>
-                      <th>Registered</th>
-                      <th>Declined</th>
-                      <th>Reviewed by</th>
-                      <th>Reason</th>
+                      <th>{t('um.col.applicant')}</th>
+                      <th>{t('um.col.record')}</th>
+                      <th>{t('um.col.registered')}</th>
+                      <th>{t('um.col.declined')}</th>
+                      <th>{t('um.col.reviewedBy')}</th>
+                      <th>{t('um.col.reason')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -696,12 +689,12 @@ export default function UserManagement() {
                         <td>
                           <span className={`um2-status ${record.record_type === 'archived' ? 'inactive' : 'declined'}`}>
                             <i aria-hidden="true" />
-                            {record.record_type === 'archived' ? 'Archived' : 'Declined'}
+                            {record.record_type === 'archived' ? t('um.archived') : t('um.declined')}
                           </span>
                         </td>
                         <td><span className="um2-date">{formatRegistrationDate(record.registered_at)}</span></td>
                         <td><span className="um2-date">{formatRegistrationDate(record.declined_at)}</span></td>
-                        <td>{record.declined_by_name || 'Not recorded'}</td>
+                        <td>{record.declined_by_name || t('um.notRecorded')}</td>
                         <td className="um2-reason">{getDecisionReason(record)}</td>
                       </tr>
                     ))}
@@ -717,9 +710,9 @@ export default function UserManagement() {
             <div className="um2-email-card">
               <div className="um2-email-icon" aria-hidden="true">✉</div>
               <div className="um2-email-copy">
-                <span>System Email</span>
-                <h2>Send a test email</h2>
-                <p>Use this only to confirm that the configured email service is working.</p>
+                <span>{t('um.systemEmail')}</span>
+                <h2>{t('um.sendTest')}</h2>
+                <p>{t('um.sendTestHint')}</p>
               </div>
 
               <div className="um2-email-form">
@@ -730,8 +723,8 @@ export default function UserManagement() {
                     setTestRecipient(event.target.value);
                     setEmailTestMessage('');
                   }}
-                  placeholder="Recipient email"
-                  aria-label="Recipient email"
+                  placeholder={t('um.recipient')}
+                  aria-label={t('um.recipient')}
                 />
                 <button
                   type="button"
@@ -739,7 +732,7 @@ export default function UserManagement() {
                   onClick={testSystemEmail}
                   disabled={emailTestLoading || !isApproverActor || !testRecipient.trim()}
                 >
-                  {emailTestLoading ? 'Sending...' : 'Send test'}
+                  {emailTestLoading ? t('um.sending') : t('um.sendBtn')}
                 </button>
               </div>
 
@@ -761,9 +754,9 @@ export default function UserManagement() {
             onClick={(event) => event.stopPropagation()}
           >
             <div className="um2-modal-head">
-              <span className="um2-modal-kicker">Registration Review</span>
-              <h3 id="approve-user-dialog-title">Approve account</h3>
-              <p>Choose the account role before allowing this user to sign in.</p>
+              <span className="um2-modal-kicker">{t('um.modal.kicker')}</span>
+              <h3 id="approve-user-dialog-title">{t('um.modal.title')}</h3>
+              <p>{t('um.modal.hint')}</p>
             </div>
 
             <div className="um2-modal-body">
@@ -776,7 +769,7 @@ export default function UserManagement() {
               </div>
 
               <label className="um2-modal-field">
-                <span>Account role</span>
+                <span>{t('um.modal.role')}</span>
                 <select
                   value={approvalDialog.role}
                   onChange={(event) =>
@@ -784,14 +777,14 @@ export default function UserManagement() {
                   }
                   disabled={actionLoadingId === approvalDialog.userId}
                 >
-                  <option value="staff">Staff</option>
-                  <option value="teamlead">Team Lead</option>
+                  <option value="staff">{t('role.staff')}</option>
+                  <option value="teamlead">{t('role.teamlead')}</option>
                 </select>
               </label>
 
               <div className="um2-modal-note">
-                <strong>After approval</strong>
-                <span>The account becomes active and the user can sign in immediately.</span>
+                <strong>{t('um.modal.after')}</strong>
+                <span>{t('um.modal.afterHint')}</span>
               </div>
             </div>
 
@@ -802,7 +795,7 @@ export default function UserManagement() {
                 onClick={closeApprovalDialog}
                 disabled={actionLoadingId === approvalDialog.userId}
               >
-                Cancel
+                {t('common.cancel')}
               </button>
               <button
                 type="button"
@@ -810,7 +803,7 @@ export default function UserManagement() {
                 onClick={confirmApproveUser}
                 disabled={actionLoadingId === approvalDialog.userId}
               >
-                {actionLoadingId === approvalDialog.userId ? 'Approving...' : 'Approve user'}
+                {actionLoadingId === approvalDialog.userId ? t('um.modal.approving') : t('um.modal.approveUser')}
               </button>
             </div>
           </div>

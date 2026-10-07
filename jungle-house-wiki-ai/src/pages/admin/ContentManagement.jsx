@@ -10,7 +10,8 @@ const CATEGORIES = ['All', 'SOP', 'PRODUCT', 'SALES', 'Training', 'Notice', 'Not
 export default function ContentManagement() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { t } = useLanguage();
+  const { t, tOr } = useLanguage();
+  const catLabel = (category) => tOr(`cat.${category}`, category);
   const currentUserId = user?.user_id || user?.id || null;
 
   const [articleList, setArticleList] = useState([]);
@@ -38,7 +39,7 @@ export default function ContentManagement() {
       setDeletedArticleList(Array.isArray(deletedResponse.data) ? deletedResponse.data : []);
     } catch (error) {
       console.error('Fetch articles error:', error);
-      setMessage(error.response?.data?.message || 'Unable to load articles.');
+      setMessage(error.response?.data?.message || t('cm.err.load'));
     } finally {
       setLoading(false);
     }
@@ -76,33 +77,33 @@ export default function ContentManagement() {
   }, [currentList]);
 
   const deleteArticle = async (articleId) => {
-    if (!window.confirm('Move this article to Retrieve Bin?')) return;
+    if (!window.confirm(t('cm.confirm.bin'))) return;
 
     try {
       setMessage('');
       await api.delete(`/articles/${articleId}`, {
         data: { deleted_by: currentUserId },
       });
-      setMessage('Article moved to Retrieve Bin.');
+      setMessage(t('cm.ok.bin'));
       await fetchArticles();
     } catch (error) {
       console.error('Delete article error:', error);
-      setMessage(error.response?.data?.message || 'Unable to move article.');
+      setMessage(error.response?.data?.message || t('cm.err.bin'));
     }
   };
 
   const restoreArticle = async (articleId) => {
-    if (!window.confirm('Restore this article?')) return;
+    if (!window.confirm(t('cm.confirm.restore'))) return;
 
     try {
       setMessage('');
       await api.put(`/articles/${articleId}/restore`);
-      setMessage('Article restored.');
+      setMessage(t('cm.ok.restore'));
       setSelectedIds((prev) => prev.filter((id) => id !== articleId));
       await fetchArticles();
     } catch (error) {
       console.error('Restore article error:', error);
-      setMessage(error.response?.data?.message || 'Unable to restore article.');
+      setMessage(error.response?.data?.message || t('cm.err.restore'));
     }
   };
 
@@ -131,12 +132,12 @@ export default function ContentManagement() {
   const clearSelection = () => setSelectedIds([]);
 
   const permanentDeleteArticle = async (articleId) => {
-    if (!window.confirm('Permanently delete this article?')) return;
+    if (!window.confirm(t('cm.confirm.perm'))) return;
 
     try {
       setMessage('');
       await api.delete(`/articles/${articleId}/permanent-delete`);
-      setMessage('Article permanently deleted.');
+      setMessage(t('cm.ok.perm'));
       setSelectedIds((prev) => prev.filter((id) => id !== articleId));
       await fetchArticles();
     } catch (error) {
@@ -144,7 +145,7 @@ export default function ContentManagement() {
       setMessage(
         error.response?.data?.error ||
           error.response?.data?.message ||
-          'Unable to delete article.'
+          t('cm.err.perm')
       );
     }
   };
@@ -167,12 +168,12 @@ export default function ContentManagement() {
       setBulkProcessing(true);
       setMessage('');
 
-      const response = await api.post(endpoint, {
+      await api.post(endpoint, {
         article_ids: selectedVisibleIds,
         actor_id: currentUserId,
       });
 
-      setMessage(response.data?.message || successFallback(selectedVisibleIds.length));
+      setMessage(successFallback(selectedVisibleIds.length));
 
       setSelectedIds([]);
       await fetchArticles();
@@ -191,26 +192,25 @@ export default function ContentManagement() {
   const bulkMoveToBin = () =>
     runBulkAction({
       endpoint: '/articles/bulk-bin',
-      confirmText: (count) => `Move ${count} selected article(s) to the Retrieve Bin?`,
-      successFallback: (count) => `${count} article(s) moved to Retrieve Bin.`,
-      errorFallback: 'Unable to move selected articles to Retrieve Bin.',
+      confirmText: (count) => t('cm.bulk.confirmBin', { n: count }),
+      successFallback: (count) => t('cm.bulk.okBin', { n: count }),
+      errorFallback: t('cm.bulk.errBin'),
     });
 
   const bulkRestoreSelected = () =>
     runBulkAction({
       endpoint: '/articles/bulk-restore',
       confirmText: null,
-      successFallback: (count) => `${count} article(s) restored.`,
-      errorFallback: 'Unable to restore selected articles.',
+      successFallback: (count) => t('cm.bulk.okRestore', { n: count }),
+      errorFallback: t('cm.bulk.errRestore'),
     });
 
   const permanentDeleteSelected = () =>
     runBulkAction({
       endpoint: '/articles/bulk-permanent-delete',
-      confirmText: (count) =>
-        `Permanently delete ${count} selected article(s)? This cannot be undone.`,
-      successFallback: (count) => `${count} article(s) deleted.`,
-      errorFallback: 'Unable to delete selected articles.',
+      confirmText: (count) => t('cm.bulk.confirmPerm', { n: count }),
+      successFallback: (count) => t('cm.bulk.okPerm', { n: count }),
+      errorFallback: t('cm.bulk.errPerm'),
     });
 
   const switchTab = (tabName) => {
@@ -247,13 +247,13 @@ export default function ContentManagement() {
         </Link>
       </div>
 
-      <section className="cm-summary-grid" aria-label="Content overview">
+      <section className="cm-summary-grid" aria-label={t('cm.overviewAria')}>
         <button
           type="button"
           className={`cm-summary-card ${activeTab === 'active' ? 'active' : ''}`}
           onClick={() => switchTab('active')}
         >
-          <span>Active Articles</span>
+          <span>{t('cm.activeArticles')}</span>
           <strong>{articleList.length}</strong>
         </button>
 
@@ -262,12 +262,12 @@ export default function ContentManagement() {
           className={`cm-summary-card ${activeTab === 'bin' ? 'active' : ''}`}
           onClick={() => switchTab('bin')}
         >
-          <span>Retrieve Bin</span>
+          <span>{t('cm.retrieveBin')}</span>
           <strong>{deletedArticleList.length}</strong>
         </button>
 
         <div className="cm-summary-card static">
-          <span>Categories</span>
+          <span>{t('cm.categories')}</span>
           <strong>{categoryTotal}</strong>
         </div>
       </section>
@@ -280,7 +280,7 @@ export default function ContentManagement() {
               className={activeTab === 'active' ? 'active' : ''}
               onClick={() => switchTab('active')}
             >
-              Articles
+              {t('cm.articles')}
               <span>{articleList.length}</span>
             </button>
 
@@ -289,7 +289,7 @@ export default function ContentManagement() {
               className={activeTab === 'bin' ? 'active' : ''}
               onClick={() => switchTab('bin')}
             >
-              Retrieve Bin
+              {t('cm.retrieveBin')}
               <span>{deletedArticleList.length}</span>
             </button>
           </div>
@@ -306,11 +306,11 @@ export default function ContentManagement() {
             <select
               value={selectedCategory}
               onChange={(event) => setSelectedCategory(event.target.value)}
-              aria-label="Filter by category"
+              aria-label={t('cm.filterCategory')}
             >
               {CATEGORIES.map((category) => (
                 <option key={category} value={category}>
-                  {category}
+                  {catLabel(category)}
                 </option>
               ))}
             </select>
@@ -325,7 +325,7 @@ export default function ContentManagement() {
               className={selectedCategory === category ? 'active' : ''}
               onClick={() => setSelectedCategory(category)}
             >
-              {category}
+              {catLabel(category)}
               <span>{categoryCounts[category] || 0}</span>
             </button>
           ))}
@@ -334,9 +334,9 @@ export default function ContentManagement() {
         {message ? <div className="cm-feedback">{message}</div> : null}
 
         {filteredArticles.length > 0 && selectedVisibleIds.length > 0 ? (
-          <div className="cm-bin-toolbar" role="toolbar" aria-label="Bulk actions">
+          <div className="cm-bin-toolbar" role="toolbar" aria-label={t('cm.bulkAria')}>
             <span className="cm-selection-count">
-              {selectedVisibleIds.length} selected
+              {t('cm.nSelected', { n: selectedVisibleIds.length })}
             </span>
 
             <button
@@ -345,7 +345,7 @@ export default function ContentManagement() {
               onClick={clearSelection}
               disabled={bulkProcessing}
             >
-              Clear selection
+              {t('cm.clearSelection')}
             </button>
 
             {activeTab === 'active' ? (
@@ -355,7 +355,7 @@ export default function ContentManagement() {
                 onClick={bulkMoveToBin}
                 disabled={bulkProcessing}
               >
-                {bulkProcessing ? 'Moving...' : 'Move Selected to Bin'}
+                {bulkProcessing ? t('cm.moving') : t('cm.moveSelected')}
               </button>
             ) : (
               <>
@@ -365,7 +365,7 @@ export default function ContentManagement() {
                   onClick={bulkRestoreSelected}
                   disabled={bulkProcessing}
                 >
-                  {bulkProcessing ? 'Restoring...' : 'Restore Selected'}
+                  {bulkProcessing ? t('cm.restoring') : t('cm.restoreSelected')}
                 </button>
 
                 <button
@@ -374,7 +374,7 @@ export default function ContentManagement() {
                   onClick={permanentDeleteSelected}
                   disabled={bulkProcessing}
                 >
-                  {bulkProcessing ? 'Deleting...' : 'Delete Selected Permanently'}
+                  {bulkProcessing ? t('cm.deleting') : t('cm.deleteSelected')}
                 </button>
               </>
             )}
@@ -384,14 +384,14 @@ export default function ContentManagement() {
         {loading ? (
           <div className="cm-empty-state">
             <span className="cm-loading-dot" />
-            <strong>Loading articles...</strong>
+            <strong>{t('cm.loading')}</strong>
           </div>
         ) : filteredArticles.length === 0 ? (
           <div className="cm-empty-state">
             <strong>
               {activeTab === 'active'
-                ? 'No articles found'
-                : 'Retrieve Bin is empty'}
+                ? t('cm.noArticles')
+                : t('cm.binEmpty')}
             </strong>
 
             {activeTab === 'active' ? (
@@ -410,14 +410,14 @@ export default function ContentManagement() {
                       type="checkbox"
                       checked={allVisibleSelected}
                       onChange={toggleSelectAllVisible}
-                      aria-label="Select all visible articles"
+                      aria-label={t('cm.selectAll')}
                     />
                   </th>
-                  <th>Article</th>
-                  <th>Category</th>
+                  <th>{t('cm.col.article')}</th>
+                  <th>{t('cm.col.category')}</th>
                   <th>ID</th>
-                  {activeTab === 'bin' ? <th>Deleted</th> : null}
-                  <th className="cm-action-col">Action</th>
+                  {activeTab === 'bin' ? <th>{t('cm.col.deleted')}</th> : null}
+                  <th className="cm-action-col">{t('cm.col.action')}</th>
                 </tr>
               </thead>
 
@@ -436,7 +436,7 @@ export default function ContentManagement() {
                           type="checkbox"
                           checked={selected}
                           onChange={() => toggleSelection(article.article_id)}
-                          aria-label={`Select ${article.title}`}
+                          aria-label={t('cm.select', { title: article.title })}
                         />
                       </td>
 
@@ -444,14 +444,14 @@ export default function ContentManagement() {
                         <div className="cm-article-cell">
                           <strong>{article.title}</strong>
                           <span>
-                            {article.sub_category || 'No sub category'}
+                            {article.sub_category || t('cm.noSubCategory')}
                           </span>
                         </div>
                       </td>
 
                       <td>
                         <span className="cm-category-badge">
-                          {article.category || 'Uncategorized'}
+                          {catLabel(article.category || 'Uncategorized')}
                         </span>
                       </td>
 
@@ -462,7 +462,7 @@ export default function ContentManagement() {
                       {activeTab === 'bin' ? (
                         <td>
                           <span className="cm-date">
-                            {article.deleted_at || 'Not recorded'}
+                            {article.deleted_at || t('cm.notRecorded')}
                           </span>
                         </td>
                       ) : null}
@@ -488,7 +488,7 @@ export default function ContentManagement() {
                                   deleteArticle(article.article_id)
                                 }
                               >
-                                Move to Bin
+                                {t('cm.moveToBin')}
                               </button>
                             </>
                           ) : (
@@ -500,7 +500,7 @@ export default function ContentManagement() {
                                   restoreArticle(article.article_id)
                                 }
                               >
-                                Restore
+                                {t('cm.restore')}
                               </button>
 
                               <button

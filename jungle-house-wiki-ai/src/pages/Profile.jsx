@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
+import { useLanguage } from '../i18n/LanguageContext';
 
 function ProfileIcon({ name, size = 18 }) {
   const common = {
@@ -81,6 +82,7 @@ function ProfileIcon({ name, size = 18 }) {
 
 export default function Profile() {
   const { user, updateUser, refreshUser } = useAuth();
+  const { t, tOr, locale } = useLanguage();
 
   const [fullName, setFullName] = useState(user?.full_name || user?.name || '');
   const [email, setEmail] = useState(user?.email || '');
@@ -117,7 +119,11 @@ export default function Profile() {
   const displayEmail = email || user?.email || '';
   const displayRole = user?.role || '-';
   const displayStatus = user?.status || 'active';
-  const displayCreatedAt = user?.created_at || 'Not available';
+  const displayCreatedAt = user?.created_at || '';
+
+  const roleKey = String(displayRole).toLowerCase().replace(/[\s_-]/g, '');
+  const roleLabel = tOr(`role.${roleKey}`, displayRole);
+  const statusLabel = tOr(`status.${String(displayStatus).toLowerCase()}`, displayStatus);
 
   const userInitial = useMemo(
     () => (displayName || 'U').trim().charAt(0).toUpperCase(),
@@ -151,19 +157,19 @@ export default function Profile() {
     const passed = Object.values(passwordChecks).filter(Boolean).length;
 
     if (!newPassword) {
-      return { percent: 0, label: 'Not entered', className: 'empty' };
+      return { percent: 0, label: t('profile.pw.notEntered'), className: 'empty' };
     }
     if (passed <= 1) {
-      return { percent: 25, label: 'Weak', className: 'weak' };
+      return { percent: 25, label: t('profile.pw.weak'), className: 'weak' };
     }
     if (passed === 2) {
-      return { percent: 50, label: 'Fair', className: 'fair' };
+      return { percent: 50, label: t('profile.pw.fair'), className: 'fair' };
     }
     if (passed === 3) {
-      return { percent: 75, label: 'Good', className: 'good' };
+      return { percent: 75, label: t('profile.pw.good'), className: 'good' };
     }
-    return { percent: 100, label: 'Strong', className: 'strong' };
-  }, [newPassword, passwordChecks]);
+    return { percent: 100, label: t('profile.pw.strong'), className: 'strong' };
+  }, [newPassword, passwordChecks, t]);
 
   useEffect(() => {
     const warnBeforeLeave = (event) => {
@@ -177,12 +183,12 @@ export default function Profile() {
   }, [isEditingProfile, profileChanged]);
 
   const getJoinedDate = (value) => {
-    if (!value || value === 'Not available') return 'Not available';
+    if (!value) return t('profile.notAvailable');
 
     const parsed = new Date(value);
     if (Number.isNaN(parsed.getTime())) return value;
 
-    return parsed.toLocaleDateString(undefined, {
+    return parsed.toLocaleDateString(locale, {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
@@ -190,38 +196,38 @@ export default function Profile() {
   };
 
   const validateProfile = () => {
-    if (!fullName.trim()) return 'Name is required.';
-    if (fullName.trim().length < 3) return 'Name must be at least 3 characters.';
-    if (!email.trim()) return 'Email is required.';
+    if (!fullName.trim()) return t('profile.v.nameReq');
+    if (fullName.trim().length < 3) return t('profile.v.nameShort');
+    if (!email.trim()) return t('profile.v.emailReq');
 
     const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailPattern.test(email.trim())) {
-      return 'Please enter a valid email address.';
+      return t('profile.v.emailBad');
     }
 
     return '';
   };
 
   const validatePassword = () => {
-    if (!currentPassword.trim()) return 'Current password is required.';
-    if (!newPassword.trim()) return 'New password is required.';
+    if (!currentPassword.trim()) return t('profile.v.curReq');
+    if (!newPassword.trim()) return t('profile.v.newReq');
     if (newPassword.length < 8) {
-      return 'New password must be at least 8 characters.';
+      return t('profile.v.newLen');
     }
     if (!/[A-Z]/.test(newPassword)) {
-      return 'New password must include at least one uppercase letter.';
+      return t('profile.v.newUpper');
     }
     if (!/\d/.test(newPassword)) {
-      return 'New password must include at least one number.';
+      return t('profile.v.newNum');
     }
     if (newPassword === currentPassword) {
-      return 'New password must be different from current password.';
+      return t('profile.v.newSame');
     }
     if (!confirmPassword.trim()) {
-      return 'Please confirm your new password.';
+      return t('profile.v.confirmReq');
     }
     if (newPassword !== confirmPassword) {
-      return 'New password and confirm password do not match.';
+      return t('profile.v.mismatch');
     }
 
     return '';
@@ -232,14 +238,14 @@ export default function Profile() {
     setSaveError('');
 
     if (!user?.id) {
-      setSaveError('User information is missing.');
+      setSaveError(t('profile.err.missingUser'));
       return;
     }
 
     if (
       isEditingProfile &&
       profileChanged &&
-      !window.confirm('Discard your unsaved profile changes and refresh?')
+      !window.confirm(t('profile.confirm.discard'))
     ) {
       return;
     }
@@ -251,9 +257,9 @@ export default function Profile() {
       setFullName(refreshedUser?.full_name || refreshedUser?.name || '');
       setEmail(refreshedUser?.email || '');
       setIsEditingProfile(false);
-      setSaveMessage('Profile refreshed successfully.');
+      setSaveMessage(t('profile.ok.refreshed'));
     } catch (error) {
-      setSaveError(error.message || 'Unable to refresh profile.');
+      setSaveError(error.message || t('profile.err.refresh'));
     } finally {
       setIsLoadingProfile(false);
     }
@@ -285,7 +291,7 @@ export default function Profile() {
     }
 
     if (!user?.id) {
-      setSaveError('User information is missing.');
+      setSaveError(t('profile.err.missingUser'));
       return;
     }
 
@@ -301,11 +307,11 @@ export default function Profile() {
       updateUser(updatedUser);
       setFullName(updatedUser.full_name || updatedUser.name || '');
       setEmail(updatedUser.email || '');
-      setSaveMessage(response.data.message || 'Profile updated successfully.');
+      setSaveMessage(t('profile.ok.updated'));
       setIsEditingProfile(false);
     } catch (error) {
       setSaveError(
-        error.response?.data?.message || 'Unable to save profile.'
+        error.response?.data?.message || t('profile.err.save')
       );
     } finally {
       setIsSavingProfile(false);
@@ -342,14 +348,14 @@ export default function Profile() {
     }
 
     if (!user?.id) {
-      setPasswordError('User information is missing.');
+      setPasswordError(t('profile.err.missingUser'));
       return;
     }
 
     setIsSavingPassword(true);
 
     try {
-      const response = await api.put(
+      await api.put(
         `/profile/${user.id}/change-password`,
         {
           current_password: currentPassword,
@@ -360,11 +366,11 @@ export default function Profile() {
 
       handleCancelEditPassword();
       setPasswordMessage(
-        response.data.message || 'Password updated successfully.'
+        t('profile.ok.pwUpdated')
       );
     } catch (error) {
       setPasswordError(
-        error.response?.data?.message || 'Unable to update password.'
+        error.response?.data?.message || t('profile.err.pw')
       );
     } finally {
       setIsSavingPassword(false);
@@ -374,41 +380,41 @@ export default function Profile() {
   const passwordFields = [
     {
       key: 'current',
-      label: 'Current Password',
+      label: t('profile.pw.current'),
       value: currentPassword,
       setter: setCurrentPassword,
       visible: showCurrentPassword,
       setVisible: setShowCurrentPassword,
       autoComplete: 'current-password',
-      placeholder: 'Enter current password',
+      placeholder: t('profile.pw.enterCurrent'),
     },
     {
       key: 'new',
-      label: 'New Password',
+      label: t('profile.pw.new'),
       value: newPassword,
       setter: setNewPassword,
       visible: showNewPassword,
       setVisible: setShowNewPassword,
       autoComplete: 'new-password',
-      placeholder: 'Create a new password',
+      placeholder: t('profile.pw.createNew'),
     },
     {
       key: 'confirm',
-      label: 'Confirm New Password',
+      label: t('profile.pw.confirm'),
       value: confirmPassword,
       setter: setConfirmPassword,
       visible: showConfirmPassword,
       setVisible: setShowConfirmPassword,
       autoComplete: 'new-password',
-      placeholder: 'Re-enter new password',
+      placeholder: t('profile.pw.reenter'),
     },
   ];
 
   return (
     <div className="profile-page">
       <PageHeader
-        title="My Account"
-        subtitle="Manage your employee profile, account details, and sign-in security."
+        title={t('profile.title')}
+        subtitle={t('profile.subtitle')}
       />
 
       <section className="profile-overview-card">
@@ -418,22 +424,22 @@ export default function Profile() {
           </div>
 
           <div className="profile-identity-copy">
-            <span className="profile-kicker">Employee profile</span>
-            <h2>{displayName || 'User'}</h2>
+            <span className="profile-kicker">{t('profile.kicker')}</span>
+            <h2>{displayName || t('profile.user')}</h2>
 
             <div className="profile-email-line">
               <ProfileIcon name="mail" size={15} />
-              <span>{displayEmail || 'No email available'}</span>
+              <span>{displayEmail || t('profile.noEmail')}</span>
             </div>
 
             <div className="profile-badges">
-              <span className="role-pill">{displayRole}</span>
+              <span className="role-pill">{roleLabel}</span>
               <span
                 className={`status-badge ${String(
                   displayStatus
                 ).toLowerCase()}`}
               >
-                {displayStatus}
+                {statusLabel}
               </span>
             </div>
           </div>
@@ -447,7 +453,7 @@ export default function Profile() {
             disabled={isLoadingProfile}
           >
             <ProfileIcon name="refresh" />
-            {isLoadingProfile ? 'Refreshing...' : 'Refresh'}
+            {isLoadingProfile ? t('profile.refreshing') : t('profile.refresh')}
           </button>
 
           <button
@@ -457,7 +463,7 @@ export default function Profile() {
             disabled={isEditingProfile}
           >
             <ProfileIcon name="edit" />
-            Edit Profile
+            {t('profile.editProfile')}
           </button>
         </div>
 
@@ -469,7 +475,7 @@ export default function Profile() {
               <ProfileIcon name="user" />
             </span>
             <div>
-              <small>User ID</small>
+              <small>{t('profile.userId')}</small>
               <strong>{user?.id || '-'}</strong>
             </div>
           </div>
@@ -479,7 +485,7 @@ export default function Profile() {
               <ProfileIcon name="calendar" />
             </span>
             <div>
-              <small>Joined</small>
+              <small>{t('profile.joined')}</small>
               <strong>{getJoinedDate(displayCreatedAt)}</strong>
             </div>
           </div>
@@ -489,8 +495,8 @@ export default function Profile() {
               <ProfileIcon name="shield" />
             </span>
             <div>
-              <small>Role</small>
-              <strong className="capitalize-text">{displayRole}</strong>
+              <small>{t('profile.role')}</small>
+              <strong className="capitalize-text">{roleLabel}</strong>
             </div>
           </div>
 
@@ -499,8 +505,8 @@ export default function Profile() {
               <ProfileIcon name="shield" />
             </span>
             <div>
-              <small>Account Status</small>
-              <strong className="capitalize-text">{displayStatus}</strong>
+              <small>{t('profile.accountStatus')}</small>
+              <strong className="capitalize-text">{statusLabel}</strong>
             </div>
           </div>
         </div>
@@ -513,21 +519,21 @@ export default function Profile() {
               <ProfileIcon name="user" />
             </span>
             <div>
-              <h3>Personal Information</h3>
-              <p>Keep your staff account details accurate and up to date.</p>
+              <h3>{t('profile.personalInfo')}</h3>
+              <p>{t('profile.personalInfoHint')}</p>
             </div>
           </div>
 
           <form onSubmit={handleSaveProfile} className="profile-form">
             <div className="profile-field">
-              <label htmlFor="profile-full-name">Full Name</label>
+              <label htmlFor="profile-full-name">{t('profile.fullName')}</label>
               {isEditingProfile ? (
                 <input
                   id="profile-full-name"
                   type="text"
                   value={fullName}
                   onChange={(event) => setFullName(event.target.value)}
-                  placeholder="Enter your full name"
+                  placeholder={t('profile.enterName')}
                   autoComplete="name"
                 />
               ) : (
@@ -538,14 +544,14 @@ export default function Profile() {
             </div>
 
             <div className="profile-field">
-              <label htmlFor="profile-email">Email Address</label>
+              <label htmlFor="profile-email">{t('profile.email')}</label>
               {isEditingProfile ? (
                 <input
                   id="profile-email"
                   type="email"
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
-                  placeholder="Enter your email"
+                  placeholder={t('profile.enterEmail')}
                   autoComplete="email"
                 />
               ) : (
@@ -557,35 +563,32 @@ export default function Profile() {
 
             <div className="profile-readonly-grid">
               <div className="profile-field">
-                <label>Role</label>
+                <label>{t('profile.role')}</label>
                 <div className="profile-field-value capitalize-text">
-                  {displayRole}
+                  {roleLabel}
                 </div>
-                <small>Assigned by system administrator.</small>
+                <small>{t('profile.roleHint')}</small>
               </div>
 
               <div className="profile-field">
-                <label>Status</label>
+                <label>{t('profile.status')}</label>
                 <div className="profile-field-value capitalize-text">
-                  {displayStatus}
+                  {statusLabel}
                 </div>
-                <small>Controls access to company resources.</small>
+                <small>{t('profile.statusHint')}</small>
               </div>
             </div>
 
             <div className="profile-completeness-card">
               <div className="profile-completeness-head">
-                <span>Profile completeness</span>
+                <span>{t('profile.completeness')}</span>
                 <strong>{profileCompleteness}%</strong>
               </div>
-              <p>
-                Complete details help staff and managers identify your
-                account correctly.
-              </p>
+              <p>{t('profile.completenessHint')}</p>
               <div
                 className="profile-completeness-track"
                 role="progressbar"
-                aria-label="Profile completeness"
+                aria-label={t('profile.completeness')}
                 aria-valuemin="0"
                 aria-valuemax="100"
                 aria-valuenow={profileCompleteness}
@@ -611,7 +614,7 @@ export default function Profile() {
                     className="primary-btn"
                     disabled={isSavingProfile || !profileChanged}
                   >
-                    {isSavingProfile ? 'Saving Changes...' : 'Save Changes'}
+                    {isSavingProfile ? t('profile.savingChanges') : t('profile.saveChanges')}
                   </button>
 
                   <button
@@ -620,12 +623,12 @@ export default function Profile() {
                     onClick={handleCancelEditProfile}
                     disabled={isSavingProfile}
                   >
-                    Cancel
+                    {t('common.cancel')}
                   </button>
 
                   {profileChanged ? (
                     <span className="profile-unsaved-indicator">
-                      Unsaved changes
+                      {t('profile.unsaved')}
                     </span>
                   ) : null}
                 </>
@@ -636,7 +639,7 @@ export default function Profile() {
                   onClick={handleStartEditProfile}
                 >
                   <ProfileIcon name="edit" size={16} />
-                  Update Personal Details
+                  {t('profile.updateDetails')}
                 </button>
               )}
             </div>
@@ -649,10 +652,8 @@ export default function Profile() {
               <ProfileIcon name="lock" />
             </span>
             <div>
-              <h3>Sign-in Security</h3>
-              <p>
-                Change your password with live quality checks before saving.
-              </p>
+              <h3>{t('profile.security')}</h3>
+              <p>{t('profile.securityHint')}</p>
             </div>
           </div>
 
@@ -663,19 +664,15 @@ export default function Profile() {
                   <ProfileIcon name="shield" size={26} />
                 </span>
                 <div>
-                  <span>Password protection</span>
-                  <strong>Password configured</strong>
-                  <p>
-                    Your password can be securely updated through the account API.
-                  </p>
+                  <span>{t('profile.pwProtection')}</span>
+                  <strong>{t('profile.pwConfigured')}</strong>
+                  <p>{t('profile.pwConfiguredHint')}</p>
                 </div>
               </div>
 
               <div className="profile-security-note">
-                <strong>Company account tip</strong>
-                <p>
-                  Use a unique password that you do not reuse for personal services.
-                </p>
+                <strong>{t('profile.tip')}</strong>
+                <p>{t('profile.tipHint')}</p>
               </div>
 
               <div className="profile-feedback" aria-live="polite">
@@ -693,7 +690,7 @@ export default function Profile() {
                 onClick={handleStartEditPassword}
               >
                 <ProfileIcon name="lock" size={16} />
-                Change Password
+                {t('profile.changePassword')}
               </button>
             </>
           ) : (
@@ -725,8 +722,8 @@ export default function Profile() {
                       }
                       aria-label={
                         field.visible
-                          ? `Hide ${field.label.toLowerCase()}`
-                          : `Show ${field.label.toLowerCase()}`
+                          ? t('profile.pw.hide', { label: field.label })
+                          : t('profile.pw.show', { label: field.label })
                       }
                     >
                       <ProfileIcon
@@ -745,8 +742,8 @@ export default function Profile() {
                       }
                     >
                       {newPassword === confirmPassword
-                        ? 'Passwords match'
-                        : 'Passwords do not match yet'}
+                        ? t('profile.pw.match')
+                        : t('profile.pw.noMatch')}
                     </span>
                   ) : null}
                 </div>
@@ -754,7 +751,7 @@ export default function Profile() {
 
               <div className="profile-password-strength">
                 <div className="profile-password-strength-head">
-                  <span>Password strength</span>
+                  <span>{t('profile.pw.strength')}</span>
                   <strong className={passwordStrength.className}>
                     {passwordStrength.label}
                   </strong>
@@ -769,16 +766,16 @@ export default function Profile() {
 
                 <div className="profile-password-checks">
                   <span className={passwordChecks.length ? 'passed' : ''}>
-                    8+ characters
+                    {t('profile.pw.chars')}
                   </span>
                   <span className={passwordChecks.uppercase ? 'passed' : ''}>
-                    Uppercase
+                    {t('profile.pw.upper')}
                   </span>
                   <span className={passwordChecks.lowercase ? 'passed' : ''}>
-                    Lowercase
+                    {t('profile.pw.lower')}
                   </span>
                   <span className={passwordChecks.number ? 'passed' : ''}>
-                    Number
+                    {t('profile.pw.number')}
                   </span>
                 </div>
               </div>
@@ -796,8 +793,8 @@ export default function Profile() {
                   disabled={isSavingPassword}
                 >
                   {isSavingPassword
-                    ? 'Updating Password...'
-                    : 'Update Password'}
+                    ? t('profile.pw.updating')
+                    : t('profile.pw.update')}
                 </button>
 
                 <button
@@ -806,7 +803,7 @@ export default function Profile() {
                   onClick={handleCancelEditPassword}
                   disabled={isSavingPassword}
                 >
-                  Cancel
+                  {t('common.cancel')}
                 </button>
               </div>
             </form>

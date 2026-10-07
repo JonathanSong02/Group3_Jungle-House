@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import PageHeader from '../../components/PageHeader';
 import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
+import { useLanguage } from '../../i18n/LanguageContext';
+import { translateServerMessage } from '../../i18n/serverMessages';
 import './styles/NotionSync.css';
 
 // Notion's redirect_uri has to be the backend's own real, stable public
@@ -24,6 +26,9 @@ const NOTION_OAUTH_ORIGIN = new URL(NOTION_OAUTH_BACKEND_URL).origin;
 
 export default function NotionSync() {
   const { user } = useAuth();
+  const { t, tOr } = useLanguage();
+  // Backend replies are English; translate the known ones before showing them.
+  const tm = (text) => translateServerMessage(t, text);
   const actorId = user?.id || user?.user_id || null;
 
   const [config, setConfig] = useState(null);
@@ -37,8 +42,8 @@ export default function NotionSync() {
     const connected = params.get('connected');
     const error = params.get('error');
 
-    if (connected) return 'Notion connected successfully.';
-    if (error) return `Notion connection failed: ${error.replace(/_/g, ' ')}`;
+    if (connected) return t('ns.connectedOk');
+    if (error) return t('ns.connectFailed', { detail: error.replace(/_/g, ' ') });
     return '';
   });
 
@@ -89,7 +94,7 @@ export default function NotionSync() {
       setConfig(response.data?.config || null);
     } catch (error) {
       console.error('Fetch Notion sync config error:', error);
-      setMessage('Failed to load Notion connection status.');
+      setMessage(t('ns.err.loadStatus'));
     } finally {
       setLoading(false);
     }
@@ -115,7 +120,7 @@ export default function NotionSync() {
     event.preventDefault();
 
     if (!appForm.clientId.trim() || !appForm.clientSecret.trim()) {
-      setAppConfigMessage('Both Client ID and Client Secret are required.');
+      setAppConfigMessage(t('ns.err.bothRequired'));
       return;
     }
 
@@ -129,14 +134,14 @@ export default function NotionSync() {
         clientSecret: appForm.clientSecret.trim(),
       });
 
-      setAppConfigMessage(response.data?.message || 'Notion app credentials saved.');
+      setAppConfigMessage(t('ns.ok.appSaved'));
       setAppConfig(response.data?.appConfig || null);
       // Never keep the raw secret sitting in state longer than needed.
       setAppForm((prev) => ({ ...prev, clientSecret: '' }));
     } catch (error) {
       console.error('Save Notion app config error:', error);
       setAppConfigMessage(
-        error.response?.data?.message || 'Failed to save Notion app credentials.'
+        tm(error.response?.data?.message) || t('ns.err.appSave')
       );
     } finally {
       setSavingAppConfig(false);
@@ -152,13 +157,13 @@ export default function NotionSync() {
         data: { user_id: actorId },
       });
 
-      setAppConfigMessage(response.data?.message || "Reverted to the server's default Notion app.");
+      setAppConfigMessage(t('ns.ok.appReset'));
       setAppConfig(response.data?.appConfig || null);
       setAppForm({ clientId: response.data?.appConfig?.clientId || '', clientSecret: '' });
     } catch (error) {
       console.error('Reset Notion app config error:', error);
       setAppConfigMessage(
-        error.response?.data?.message || 'Failed to reset Notion app credentials.'
+        tm(error.response?.data?.message) || t('ns.err.appReset')
       );
     } finally {
       setResettingAppConfig(false);
@@ -212,13 +217,13 @@ export default function NotionSync() {
       });
 
       setCheckResult(response.data);
-      if (!silent) setMessage(response.data?.message || '');
+      if (!silent) setMessage(tm(response.data?.message) || '');
       await Promise.all([fetchJobs(), fetchPending(), fetchObsolete()]);
     } catch (error) {
       console.error('Check Notion for updates error:', error);
       if (!silent) {
         setMessage(
-          error.response?.data?.message || 'Failed to check Notion for updates.'
+          tm(error.response?.data?.message) || t('ns.err.check')
         );
       }
       if (error.response?.data?.connectionStatus === 'reconnect_required') {
@@ -271,10 +276,10 @@ export default function NotionSync() {
     fetchAppConfig();
 
     if (connected) {
-      setMessage('Notion connected successfully.');
+      setMessage(t('ns.connectedOk'));
       handleCheckForUpdates({ silent: true });
     } else if (error) {
-      setMessage(`Notion connection failed: ${error.replace(/_/g, ' ')}`);
+      setMessage(t('ns.connectFailed', { detail: error.replace(/_/g, ' ') }));
     }
 
     // Primary path: the OAuth callback runs in a popup window (opened by
@@ -288,10 +293,10 @@ export default function NotionSync() {
       if (!event.data || event.data.source !== 'jungle-house-notion-oauth') return;
 
       if (event.data.status === 'connected') {
-        finishConnectAttempt('Notion connected successfully.', { connected: true });
+        finishConnectAttempt(t('ns.connectedOk'), { connected: true });
       } else {
         const detail = event.data.detail || 'connection_failed';
-        finishConnectAttempt(`Notion connection failed: ${detail.replace(/_/g, ' ')}`);
+        finishConnectAttempt(t('ns.connectFailed', { detail: detail.replace(/_/g, ' ') }));
       }
     };
 
@@ -323,7 +328,7 @@ export default function NotionSync() {
       const authorizeUrl = response.data?.authorizeUrl;
 
       if (!authorizeUrl) {
-        throw new Error('No authorization URL returned.');
+        throw new Error(t('ns.err.noAuthUrl'));
       }
 
       if (popup && !popup.closed) {
@@ -346,7 +351,7 @@ export default function NotionSync() {
       if (popup && !popup.closed) popup.close();
       console.error('Start Notion OAuth error:', error);
       setMessage(
-        error.response?.data?.message || 'Failed to start connecting to Notion.'
+        tm(error.response?.data?.message) || t('ns.err.start')
       );
       setConnecting(false);
     }
@@ -355,7 +360,7 @@ export default function NotionSync() {
   const handleDisconnect = async () => {
     if (
       !window.confirm(
-        'Disconnect this Notion workspace?\n\nFuture Notion syncs will stop until the workspace is reconnected. Existing Knowledge Base articles will not be deleted.'
+        t('ns.confirm.disconnect')
       )
     ) {
       return;
@@ -365,18 +370,18 @@ export default function NotionSync() {
       setDisconnecting(true);
       setMessage('');
 
-      const response = await api.post('/notion-sync/disconnect', {
+      await api.post('/notion-sync/disconnect', {
         user_id: actorId,
       });
 
-      setMessage(response.data?.message || 'Notion disconnected.');
+      setMessage(t('ns.ok.disconnected'));
       setConfig(null);
       setCheckResult(null);
       setPending([]);
     } catch (error) {
       console.error('Disconnect Notion error:', error);
       setMessage(
-        error.response?.data?.message || 'Failed to disconnect Notion.'
+        tm(error.response?.data?.message) || t('ns.err.disconnect')
       );
     } finally {
       setDisconnecting(false);
@@ -393,7 +398,7 @@ export default function NotionSync() {
         { user_id: actorId }
       );
 
-      setMessage(response.data?.message || 'Done.');
+      setMessage(tm(response.data?.message) || t('ns.done'));
       setPending((prev) => prev.filter((item) => item.id !== pendingId));
 
       if (expandedPendingId === pendingId) {
@@ -404,8 +409,8 @@ export default function NotionSync() {
     } catch (error) {
       console.error(`Resolve Notion pending update (${action}) error:`, error);
       setMessage(
-        error.response?.data?.message ||
-          'Failed to resolve this update. It may have already been handled.'
+        tm(error.response?.data?.message) ||
+          t('ns.err.resolve')
       );
       fetchPending();
     } finally {
@@ -418,17 +423,17 @@ export default function NotionSync() {
       setSingleActionId(pendingId);
       setMessage('');
 
-      const response = await api.post(`/notion-sync/pending-updates/${pendingId}/trash`, {
+      await api.post(`/notion-sync/pending-updates/${pendingId}/trash`, {
         user_id: actorId,
       });
 
-      setMessage(response.data?.message || 'Moved to Trash.');
+      setMessage(t('ns.ok.trashed'));
       setPending((prev) => prev.filter((item) => item.id !== pendingId));
       setSelectedIds((prev) => prev.filter((id) => id !== pendingId));
       fetchTrashed();
     } catch (error) {
       console.error('Trash Notion pending update error:', error);
-      setMessage(error.response?.data?.message || 'Failed to move this update to Trash.');
+      setMessage(tm(error.response?.data?.message) || t('ns.err.trash'));
     } finally {
       setSingleActionId(null);
     }
@@ -439,17 +444,17 @@ export default function NotionSync() {
       setSingleActionId(pendingId);
       setMessage('');
 
-      const response = await api.post(`/notion-sync/pending-updates/${pendingId}/restore`, {
+      await api.post(`/notion-sync/pending-updates/${pendingId}/restore`, {
         user_id: actorId,
       });
 
-      setMessage(response.data?.message || 'Restored to Pending.');
+      setMessage(t('ns.ok.restored'));
       setTrashed((prev) => prev.filter((item) => item.id !== pendingId));
       setSelectedIds((prev) => prev.filter((id) => id !== pendingId));
       fetchPending();
     } catch (error) {
       console.error('Restore Notion pending update error:', error);
-      setMessage(error.response?.data?.message || 'Failed to restore this update.');
+      setMessage(tm(error.response?.data?.message) || t('ns.err.restore'));
     } finally {
       setSingleActionId(null);
     }
@@ -459,13 +464,7 @@ export default function NotionSync() {
     const item = trashed.find((t) => t.id === pendingId);
     const isNewPage = !item || item.article_id === null || item.article_id === undefined;
 
-    const confirmText = isNewPage
-      ? 'Move this article to Obsolete and permanently delete its stored files?\n\n' +
-        'The stored article content and downloaded images will be permanently removed.\n\n' +
-        'A lightweight Obsolete record will remain so the system can recognise this Notion page during future syncs. ' +
-        'If the Notion page is updated later, the Obsolete section will show that a newer version is available.'
-      : 'Permanently delete this item and its unused local images/files? ' +
-        'This only discards the proposed edit -- the live Knowledge Base article is not affected. This cannot be undone.';
+    const confirmText = isNewPage ? t('ns.confirm.permNew') : t('ns.confirm.permEdit');
 
     if (!window.confirm(confirmText)) {
       return;
@@ -480,9 +479,7 @@ export default function NotionSync() {
       });
 
       const deletedFiles = response.data?.deletedFiles ?? 0;
-      setMessage(
-        `${response.data?.message || 'Permanently deleted.'} ${deletedFiles} unused file(s) removed from storage.`
-      );
+      setMessage(`${t('ns.ok.permDeleted')} ${t('ns.ok.filesRemoved', { n: deletedFiles })}`);
       setTrashed((prev) => prev.filter((item) => item.id !== pendingId));
       setSelectedIds((prev) => prev.filter((id) => id !== pendingId));
       if (response.data?.obsoleteCreated) {
@@ -490,7 +487,7 @@ export default function NotionSync() {
       }
     } catch (error) {
       console.error('Permanent delete Notion pending update error:', error);
-      setMessage(error.response?.data?.message || 'Failed to permanently delete this update.');
+      setMessage(tm(error.response?.data?.message) || t('ns.err.permDelete'));
     } finally {
       setSingleActionId(null);
     }
@@ -501,17 +498,17 @@ export default function NotionSync() {
       setRestoringObsoleteId(obsoleteId);
       setMessage('');
 
-      const response = await api.post(`/notion-sync/obsolete/${obsoleteId}/restore`, {
+      await api.post(`/notion-sync/obsolete/${obsoleteId}/restore`, {
         user_id: actorId,
       });
 
-      setMessage(response.data?.message || 'Fetched the latest Notion version. Review it in Pending.');
+      setMessage(t('ns.ok.obsoleteRestored'));
       setObsolete((prev) => prev.filter((item) => item.id !== obsoleteId));
       if (expandedObsoleteId === obsoleteId) setExpandedObsoleteId(null);
       await fetchPending();
     } catch (error) {
       console.error('Restore Notion obsolete article error:', error);
-      setMessage(error.response?.data?.message || 'Failed to restore this article.');
+      setMessage(tm(error.response?.data?.message) || t('ns.err.restoreArticle'));
       if (error.response?.data?.connectionStatus === 'reconnect_required') {
         fetchConfig();
       }
@@ -555,14 +552,14 @@ export default function NotionSync() {
       setBulkProcessing(true);
       setMessage('');
 
-      const response = await api.post(endpoint, { ids: idsToUse, user_id: actorId });
+      await api.post(endpoint, { ids: idsToUse, user_id: actorId });
 
-      setMessage(response.data?.message || successFallback(idsToUse.length));
+      setMessage(successFallback(idsToUse.length));
       setSelectedIds([]);
       await Promise.all([fetchPending(), fetchTrashed()]);
     } catch (error) {
       console.error(`Bulk action error (${endpoint}):`, error);
-      setMessage(error.response?.data?.message || errorFallback);
+      setMessage(tm(error.response?.data?.message) || errorFallback);
     } finally {
       setBulkProcessing(false);
     }
@@ -572,24 +569,24 @@ export default function NotionSync() {
     runBulkAction({
       endpoint: '/notion-sync/pending-updates/bulk-apply',
       confirmText: null,
-      successFallback: (count) => `${count} item(s) published to the Knowledge Base.`,
-      errorFallback: 'Unable to publish selected items.',
+      successFallback: (count) => t('ns.bulk.okApply', { n: count }),
+      errorFallback: t('ns.bulk.errApply'),
     });
 
   const bulkTrashSelected = () =>
     runBulkAction({
       endpoint: '/notion-sync/pending-updates/bulk-trash',
-      confirmText: (count) => `Move ${count} selected item(s) to Trash?`,
-      successFallback: (count) => `${count} item(s) moved to Trash.`,
-      errorFallback: 'Unable to move selected items to Trash.',
+      confirmText: (count) => t('ns.bulk.confirmTrash', { n: count }),
+      successFallback: (count) => t('ns.bulk.okTrash', { n: count }),
+      errorFallback: t('ns.bulk.errTrash'),
     });
 
   const bulkRestoreSelected = () =>
     runBulkAction({
       endpoint: '/notion-sync/pending-updates/bulk-restore',
       confirmText: null,
-      successFallback: (count) => `${count} item(s) restored.`,
-      errorFallback: 'Unable to restore selected items.',
+      successFallback: (count) => t('ns.bulk.okRestore', { n: count }),
+      errorFallback: t('ns.bulk.errRestore'),
     });
 
   const bulkPermanentDeleteSelected = async () => {
@@ -597,11 +594,7 @@ export default function NotionSync() {
     if (idsToUse.length === 0) return;
 
     if (
-      !window.confirm(
-        `Move ${idsToUse.length} selected item(s) to Obsolete and permanently delete their stored files?\n\n` +
-        'Stored content and downloaded images will be removed. A lightweight Obsolete record is kept for each ' +
-        'new page so future syncs recognise it instead of showing it again. This cannot be undone.'
-      )
+      !window.confirm(t('ns.bulk.confirmPerm', { n: idsToUse.length }))
     ) {
       return;
     }
@@ -618,7 +611,7 @@ export default function NotionSync() {
       const deletedArticles = response.data?.deletedArticles ?? 0;
       const deletedFiles = response.data?.deletedFiles ?? 0;
       const obsoleteCreated = response.data?.obsoleteCreated ?? 0;
-      setMessage(`${deletedArticles} item(s) permanently deleted. ${deletedFiles} unused file(s) removed from storage.`);
+      setMessage(t('ns.bulk.okPerm', { n: deletedArticles, files: deletedFiles }));
       setSelectedIds([]);
       await Promise.all([fetchPending(), fetchTrashed()]);
       if (obsoleteCreated) {
@@ -626,7 +619,7 @@ export default function NotionSync() {
       }
     } catch (error) {
       console.error('Bulk permanent delete error:', error);
-      setMessage(error.response?.data?.message || 'Unable to permanently delete selected items.');
+      setMessage(tm(error.response?.data?.message) || t('ns.bulk.errPerm'));
     } finally {
       setBulkProcessing(false);
     }
@@ -647,7 +640,7 @@ export default function NotionSync() {
       setStorageAudit(response.data?.audit || null);
     } catch (error) {
       console.error('Notion storage audit error:', error);
-      setMessage(error.response?.data?.message || 'Failed to run the storage audit.');
+      setMessage(tm(error.response?.data?.message) || t('ns.err.audit'));
     } finally {
       setRunningAudit(false);
     }
@@ -659,9 +652,10 @@ export default function NotionSync() {
 
     if (
       !window.confirm(
-        `Permanently remove ${orphanCount} unused file(s) from storage (about ${formatBytes(
-          storageAudit?.estimatedReclaimableBytes
-        )})? This action cannot be undone.`
+        t('ns.confirm.clean', {
+          n: orphanCount,
+          size: formatBytes(storageAudit?.estimatedReclaimableBytes),
+        })
       )
     ) {
       return;
@@ -671,12 +665,12 @@ export default function NotionSync() {
       setCleaningStorage(true);
       setMessage('');
 
-      const response = await api.post('/notion-sync/storage-cleanup', { user_id: actorId });
-      setMessage(response.data?.message || 'Storage cleanup completed.');
+      await api.post('/notion-sync/storage-cleanup', { user_id: actorId });
+      setMessage(t('ns.ok.cleaned'));
       setStorageAudit(null);
     } catch (error) {
       console.error('Notion storage cleanup error:', error);
-      setMessage(error.response?.data?.message || 'Failed to run storage cleanup.');
+      setMessage(tm(error.response?.data?.message) || t('ns.err.clean'));
     } finally {
       setCleaningStorage(false);
     }
@@ -686,38 +680,38 @@ export default function NotionSync() {
   const connectionStatus = config?.connectionStatus || (config?.connected ? 'connected' : 'disconnected');
   const needsReconnect = connectionStatus === 'reconnect_required';
   const connectionLabel = needsReconnect
-    ? 'Reconnect required'
+    ? t('ns.conn.reconnect')
     : config?.connected
-    ? 'Connected'
-    : 'Not connected';
+    ? t('ns.conn.connected')
+    : t('ns.conn.notConnected');
 
   return (
     <div className="ns-page">
       <PageHeader
-        title="Notion Sync"
-        subtitle="Connect Notion and review updates before publishing them."
+        title={t('ns.title')}
+        subtitle={t('ns.subtitle')}
       />
 
       {message ? <div className="ns-feedback">{message}</div> : null}
 
       <section className="ns-summary-grid">
         <div className="ns-summary-card status">
-          <span>Connection</span>
+          <span>{t('ns.connection')}</span>
           <strong>{connectionLabel}</strong>
         </div>
 
         <div className="ns-summary-card pending">
-          <span>Pending Review</span>
+          <span>{t('ns.pendingReview')}</span>
           <strong>{pending.length}</strong>
         </div>
 
         <div className="ns-summary-card">
-          <span>Sync Jobs</span>
+          <span>{t('ns.syncJobs')}</span>
           <strong>{jobs.length}</strong>
         </div>
 
         <div className="ns-summary-card">
-          <span>Last Check</span>
+          <span>{t('ns.lastCheck')}</span>
           <strong>{latestJob?.completed_at || latestJob?.started_at || '-'}</strong>
         </div>
       </section>
@@ -725,72 +719,66 @@ export default function NotionSync() {
       <section className="ns-card ns-app-card">
         <div className="ns-section-head">
           <div>
-            <span className="ns-kicker">Integration</span>
-            <h2>Notion App</h2>
+            <span className="ns-kicker">{t('ns.integration')}</span>
+            <h2>{t('ns.app')}</h2>
           </div>
 
           <span className={`ns-status-pill ${appConfig?.configured ? 'connected' : 'idle'}`}>
             <i />
             {!appConfig?.configured
-              ? 'Not configured'
+              ? t('ns.app.notConfigured')
               : appConfig.source === 'database'
-              ? 'Custom app'
-              : 'Server default'}
+              ? t('ns.app.custom')
+              : t('ns.app.default')}
           </span>
         </div>
 
-        <p className="ns-section-copy">
-          Point this Knowledge Base at a specific Notion integration -- use this
-          if a different client wants their own app (their own name/logo on
-          the Notion sign-in screen) instead of the shared default. Switching
-          which Notion <em>workspace</em> is connected does not need this --
-          just Disconnect and Connect Notion again below.
-        </p>
+        <p className="ns-section-copy">{t('ns.app.copy')}</p>
 
         {appConfigMessage ? <div className="ns-feedback">{appConfigMessage}</div> : null}
 
         {appConfig?.configured ? (
           <div className="ns-source-info">
             <div>
-              <span>Client ID</span>
+              <span>{t('ns.clientId')}</span>
               <strong>{appConfig.clientId || '-'}</strong>
             </div>
             <div>
-              <span>Client Secret</span>
+              <span>{t('ns.clientSecret')}</span>
               <strong>
                 {appConfig.source === 'database'
                   ? appConfig.clientSecretHint || '-'
-                  : 'Set on server'}
+                  : t('ns.setOnServer')}
               </strong>
             </div>
             <div>
-              <span>Source</span>
-              <strong>{appConfig.source === 'database' ? 'Saved here' : 'Server default'}</strong>
+              <span>{t('ns.source')}</span>
+              <strong>{appConfig.source === 'database' ? t('ns.savedHere') : t('ns.app.default')}</strong>
             </div>
           </div>
         ) : null}
 
         <form className="ns-form" onSubmit={handleSaveAppConfig}>
           <label className="ns-field">
-            <span>Client ID</span>
+            <span>{t('ns.clientId')}</span>
             <input
               type="text"
               name="clientId"
               value={appForm.clientId}
               onChange={handleAppFormChange}
-              placeholder="Paste the integration's Client ID"
+              placeholder={t('ns.clientIdPh')}
               autoComplete="off"
             />
           </label>
 
           <label className="ns-field">
-            <span>Client Secret</span>
+            <span>{t('ns.clientSecret')}</span>
             <input
               type="password"
               name="clientSecret"
               value={appForm.clientSecret}
               onChange={handleAppFormChange}
-              placeholder="Paste the integration's Client Secret"
+              placeholder={t('ns.clientSecretPh')}
               autoComplete="off"
             />
           </label>
@@ -803,11 +791,11 @@ export default function NotionSync() {
                 onClick={handleResetAppConfig}
                 disabled={resettingAppConfig || savingAppConfig}
               >
-                {resettingAppConfig ? 'Resetting...' : 'Reset to server default'}
+                {resettingAppConfig ? t('ns.resetting') : t('ns.resetDefault')}
               </button>
             ) : null}
             <button type="submit" className="ns-btn primary" disabled={savingAppConfig}>
-              {savingAppConfig ? 'Saving...' : 'Save Notion App'}
+              {savingAppConfig ? t('ns.saving') : t('ns.saveApp')}
             </button>
           </div>
         </form>
@@ -817,8 +805,8 @@ export default function NotionSync() {
         <section className="ns-card ns-source-card">
           <div className="ns-section-head">
             <div>
-              <span className="ns-kicker">Workspace</span>
-              <h2>Notion Connection</h2>
+              <span className="ns-kicker">{t('ns.workspace')}</span>
+              <h2>{t('ns.notionConnection')}</h2>
             </div>
 
             <span className={`ns-status-pill ${needsReconnect ? 'warning' : config?.connected ? 'connected' : 'idle'}`}>
@@ -828,27 +816,27 @@ export default function NotionSync() {
           </div>
 
           {loading ? (
-            <div className="ns-loading">Loading connection...</div>
+            <div className="ns-loading">{t('ns.loadingConn')}</div>
           ) : needsReconnect ? (
             <>
               <p className="ns-section-copy">
-                Your Notion authorization is no longer valid. Please reconnect your workspace.
+                {t('ns.authInvalid')}
               </p>
 
               <div className="ns-source-info">
                 <div>
-                  <span>Workspace</span>
-                  <strong>{config.workspaceName || 'Notion workspace'}</strong>
+                  <span>{t('ns.workspace')}</span>
+                  <strong>{config.workspaceName || t('ns.notionWorkspace')}</strong>
                 </div>
 
                 <div>
-                  <span>Last Sync</span>
+                  <span>{t('ns.lastSync')}</span>
                   <strong>{config.lastSyncAt || '-'}</strong>
                 </div>
 
                 {config.lastError ? (
                   <div>
-                    <span>Last Error</span>
+                    <span>{t('ns.lastError')}</span>
                     <strong>{config.lastError}</strong>
                   </div>
                 ) : null}
@@ -861,7 +849,7 @@ export default function NotionSync() {
                   onClick={handleConnect}
                   disabled={connecting || !appConfig?.configured}
                 >
-                  {connecting ? 'Opening Notion...' : 'Reconnect Notion'}
+                  {connecting ? t('ns.opening') : t('ns.reconnectBtn')}
                 </button>
                 <button
                   type="button"
@@ -869,30 +857,30 @@ export default function NotionSync() {
                   onClick={handleDisconnect}
                   disabled={disconnecting}
                 >
-                  {disconnecting ? 'Disconnecting...' : 'Disconnect'}
+                  {disconnecting ? t('ns.disconnecting') : t('ns.disconnect')}
                 </button>
               </div>
             </>
           ) : config?.connected ? (
             <>
               <p className="ns-section-copy">
-                Notion is connected. You do not need to remain logged in to Notion for future syncs.
+                {t('ns.connectedCopy')}
               </p>
 
               <div className="ns-source-info">
                 <div>
-                  <span>Workspace</span>
-                  <strong>{config.workspaceName || 'Notion workspace'}</strong>
+                  <span>{t('ns.workspace')}</span>
+                  <strong>{config.workspaceName || t('ns.notionWorkspace')}</strong>
                 </div>
 
                 <div>
-                  <span>Connected</span>
+                  <span>{t('ns.connectedAt')}</span>
                   <strong>{config.updatedAt || '-'}</strong>
                 </div>
 
                 <div>
-                  <span>Last Sync</span>
-                  <strong>{config.lastSyncAt || 'Never'}</strong>
+                  <span>{t('ns.lastSync')}</span>
+                  <strong>{config.lastSyncAt || t('ns.never')}</strong>
                 </div>
               </div>
 
@@ -903,7 +891,7 @@ export default function NotionSync() {
                   onClick={handleDisconnect}
                   disabled={disconnecting}
                 >
-                  {disconnecting ? 'Disconnecting...' : 'Disconnect'}
+                  {disconnecting ? t('ns.disconnecting') : t('ns.disconnect')}
                 </button>
               </div>
             </>
@@ -911,12 +899,8 @@ export default function NotionSync() {
             <div className="ns-connect-empty">
               <div className="ns-notion-icon">N</div>
               <div>
-                <strong>No workspace connected</strong>
-                <p>
-                  Connect and authorize your Notion workspace once. After
-                  connection, future syncs do not require you to stay logged
-                  in to Notion.
-                </p>
+                <strong>{t('ns.noWorkspace')}</strong>
+                <p>{t('ns.noWorkspaceCopy')}</p>
               </div>
 
               <button
@@ -925,12 +909,12 @@ export default function NotionSync() {
                 onClick={handleConnect}
                 disabled={connecting || !appConfig?.configured}
               >
-                {connecting ? 'Opening Notion...' : 'Connect Notion'}
+                {connecting ? t('ns.opening') : t('ns.connectBtn')}
               </button>
 
               {!appConfig?.configured ? (
                 <p className="ns-section-copy">
-                  Add a Notion app's Client ID and Client Secret above first.
+                  {t('ns.addAppFirst')}
                 </p>
               ) : null}
             </div>
@@ -941,9 +925,9 @@ export default function NotionSync() {
           <div className="ns-sync-hero">
             <div className="ns-notion-icon">N</div>
             <div>
-              <span className="ns-kicker">Knowledge Sync</span>
-              <h2>Check for Updates</h2>
-              <p>Finds new and edited Notion pages and queues them below for review -- nothing is published automatically.</p>
+              <span className="ns-kicker">{t('ns.knowledgeSync')}</span>
+              <h2>{t('ns.checkUpdates')}</h2>
+              <p>{t('ns.checkCopy')}</p>
             </div>
           </div>
 
@@ -953,52 +937,49 @@ export default function NotionSync() {
             disabled={checking || !config?.connected}
             onClick={() => handleCheckForUpdates()}
           >
-            {checking ? 'Checking Notion...' : 'Check for Updates'}
+            {checking ? t('ns.checking') : t('ns.checkUpdates')}
           </button>
 
           {needsReconnect ? (
             <div className="ns-sync-note">
-              <span>Reconnect Notion above to resume syncing.</span>
+              <span>{t('ns.reconnectNote')}</span>
             </div>
           ) : null}
 
           {checkResult ? (
             <div className="ns-sync-result-grid">
               <div>
-                <span>New</span>
+                <span>{t('ns.result.new')}</span>
                 <strong>{checkResult.new ?? 0}</strong>
               </div>
               <div>
-                <span>Flagged</span>
+                <span>{t('ns.result.flagged')}</span>
                 <strong>{checkResult.flagged ?? 0}</strong>
               </div>
               <div>
-                <span>Unchanged</span>
+                <span>{t('ns.result.unchanged')}</span>
                 <strong>{checkResult.unchanged ?? 0}</strong>
               </div>
               <div className={Number(checkResult.failed) > 0 ? 'failed' : ''}>
-                <span>Failed</span>
+                <span>{t('ns.result.failed')}</span>
                 <strong>{checkResult.failed ?? 0}</strong>
               </div>
               {Number(checkResult.inaccessible) > 0 ? (
                 <div className="failed">
-                  <span>Inaccessible</span>
+                  <span>{t('ns.result.inaccessible')}</span>
                   <strong>{checkResult.inaccessible}</strong>
                 </div>
               ) : null}
             </div>
           ) : (
             <div className="ns-sync-note">
-              <span>Safe to run again — unchanged pages are skipped.</span>
+              <span>{t('ns.safeRerun')}</span>
             </div>
           )}
 
           {checkResult?.inaccessible > 0 ? (
             <div className="ns-sync-note">
-              <span>
-                Some Notion pages are no longer accessible. They may have
-                been removed from the integration's permissions.
-              </span>
+              <span>{t('ns.inaccessibleNote')}</span>
             </div>
           ) : null}
         </section>
@@ -1007,8 +988,8 @@ export default function NotionSync() {
       <section className="ns-card ns-pending-section">
         <div className="ns-section-head">
           <div>
-            <span className="ns-kicker">Review Queue</span>
-            <h2>Pending Updates</h2>
+            <span className="ns-kicker">{t('ns.reviewQueue')}</span>
+            <h2>{t('ns.pendingUpdates')}</h2>
           </div>
         </div>
 
@@ -1018,7 +999,7 @@ export default function NotionSync() {
             className={activeTab === 'pending' ? 'active' : ''}
             onClick={() => switchTab('pending')}
           >
-            Pending
+            {t('ns.tab.pending')}
             <span>{pending.length}</span>
           </button>
           <button
@@ -1026,7 +1007,7 @@ export default function NotionSync() {
             className={activeTab === 'trash' ? 'active' : ''}
             onClick={() => switchTab('trash')}
           >
-            Trash
+            {t('ns.tab.trash')}
             <span>{trashed.length}</span>
           </button>
           <button
@@ -1034,24 +1015,24 @@ export default function NotionSync() {
             className={activeTab === 'obsolete' ? 'active' : ''}
             onClick={() => switchTab('obsolete')}
           >
-            Obsolete
+            {t('ns.tab.obsolete')}
             <span>{obsolete.length}</span>
           </button>
         </div>
 
         <p className="ns-section-copy">
           {activeTab === 'pending'
-            ? 'Every new or changed Notion page waits here first -- nothing reaches the Knowledge Base until you approve it below.'
+            ? t('ns.copy.pending')
             : activeTab === 'trash'
-            ? 'Items here are held temporarily. Restore them back to Pending, or delete them permanently to free up storage.'
-            : 'Pages permanently deleted from the Knowledge Base. Their stored content and images are gone, but this record keeps future syncs from showing them again as new.'}
+            ? t('ns.copy.trash')
+            : t('ns.copy.obsolete')}
         </p>
 
         {activeTab === 'obsolete' ? (
           obsolete.length === 0 ? (
             <div className="ns-empty small">
-              <strong>Nothing Obsolete</strong>
-              <span>Pages you permanently delete from Trash will appear here.</span>
+              <strong>{t('ns.nothingObsolete')}</strong>
+              <span>{t('ns.nothingObsoleteHint')}</span>
             </div>
           ) : (
             <div className="ns-pending-list">
@@ -1065,24 +1046,24 @@ export default function NotionSync() {
                   <article className="ns-pending-card" key={item.id}>
                     <div className="ns-pending-head">
                       <div className="ns-pending-info">
-                        <h3>{item.page_title || 'Untitled'}</h3>
+                        <h3>{item.page_title || t('ns.untitled')}</h3>
                         <p>
                           {isMissing
-                            ? 'Status: Missing from Notion'
-                            : `Deleted: ${item.deleted_at || '-'}`}
+                            ? t('ns.statusMissing')
+                            : t('ns.deletedAt', { when: item.deleted_at || '-' })}
                           {!isMissing && item.latest_notion_edited_time
-                            ? ` · Notion modified: ${item.latest_notion_edited_time}`
+                            ? ` · ${t('ns.notionModified', { when: item.latest_notion_edited_time })}`
                             : ''}
                         </p>
                       </div>
                       <span className={`ns-review-pill ${isUpdated ? 'updated' : ''}`}>
-                        {isMissing ? 'Missing' : isUpdated ? 'Updated in Notion' : 'Obsolete'}
+                        {isMissing ? t('ns.pill.missing') : isUpdated ? t('ns.pill.updated') : t('ns.pill.obsolete')}
                       </span>
                     </div>
 
                     {isMissing ? (
                       <p className="ns-section-copy">
-                        The source Notion page may have been deleted, archived, or permission may have been removed.
+                        {t('ns.missingCopy')}
                       </p>
                     ) : null}
 
@@ -1092,7 +1073,7 @@ export default function NotionSync() {
                         className="ns-btn secondary"
                         onClick={() => setExpandedObsoleteId(isExpanded ? null : item.id)}
                       >
-                        {isExpanded ? 'Hide Details' : 'View Details'}
+                        {isExpanded ? t('ns.hideDetails') : t('ns.viewDetails')}
                       </button>
                       <button
                         type="button"
@@ -1101,40 +1082,40 @@ export default function NotionSync() {
                         onClick={() => handleRestoreObsolete(item.id)}
                       >
                         {isRestoring
-                          ? 'Working...'
-                          : isUpdated ? 'Restore Latest Version' : 'Restore'}
+                          ? t('ns.working')
+                          : isUpdated ? t('ns.restoreLatest') : t('ns.restore')}
                       </button>
                     </div>
 
                     {isExpanded && (
                       <div className="ns-source-info">
                         <div>
-                          <span>Notion Page ID</span>
+                          <span>{t('ns.d.pageId')}</span>
                           <strong>{item.notion_page_id}</strong>
                         </div>
                         <div>
-                          <span>Deleted At</span>
+                          <span>{t('ns.d.deletedAt')}</span>
                           <strong>{item.deleted_at || '-'}</strong>
                         </div>
                         <div>
-                          <span>Last Known Edit (before deletion)</span>
+                          <span>{t('ns.d.lastKnown')}</span>
                           <strong>{item.last_known_notion_edited_time || '-'}</strong>
                         </div>
                         <div>
-                          <span>Latest Notion Edit</span>
+                          <span>{t('ns.d.latest')}</span>
                           <strong>{item.latest_notion_edited_time || '-'}</strong>
                         </div>
                         <div>
-                          <span>Status</span>
-                          <strong>{item.obsolete_status}</strong>
+                          <span>{t('ns.d.status')}</span>
+                          <strong>{tOr(`ns.status.${item.obsolete_status}`, item.obsolete_status)}</strong>
                         </div>
                         <div>
-                          <span>Last Checked</span>
+                          <span>{t('ns.d.lastChecked')}</span>
                           <strong>{item.last_checked_at || '-'}</strong>
                         </div>
                         <div>
-                          <span>Updated After Deletion</span>
-                          <strong>{item.updated_after_obsolete ? 'Yes' : 'No'}</strong>
+                          <span>{t('ns.d.updatedAfter')}</span>
+                          <strong>{item.updated_after_obsolete ? t('ns.yes') : t('ns.no')}</strong>
                         </div>
                       </div>
                     )}
@@ -1146,20 +1127,20 @@ export default function NotionSync() {
         ) : (
           <>
         {activeList.length > 0 ? (
-          <div className="ns-bulk-toolbar" role="toolbar" aria-label="Bulk actions">
+          <div className="ns-bulk-toolbar" role="toolbar" aria-label={t('ns.bulkAria')}>
             <label className="ns-select-all">
               <input
                 type="checkbox"
                 checked={activeList.length > 0 && activeList.every((item) => selectedIds.includes(item.id))}
                 onChange={toggleSelectAllVisible}
               />
-              Select All
+              {t('ns.selectAll')}
             </label>
 
             {selectedIds.filter((id) => activeList.some((item) => item.id === id)).length > 0 ? (
               <>
                 <span className="ns-selection-count">
-                  {selectedIds.filter((id) => activeList.some((item) => item.id === id)).length} selected
+                  {t('ns.nSelected', { n: selectedIds.filter((id) => activeList.some((item) => item.id === id)).length })}
                 </span>
 
                 {activeTab === 'pending' ? (
@@ -1170,7 +1151,7 @@ export default function NotionSync() {
                       onClick={bulkApplySelected}
                       disabled={bulkProcessing}
                     >
-                      {bulkProcessing ? 'Working...' : 'Add to Knowledge Base'}
+                      {bulkProcessing ? t('ns.working') : t('ns.addToKb')}
                     </button>
                     <button
                       type="button"
@@ -1178,7 +1159,7 @@ export default function NotionSync() {
                       onClick={bulkTrashSelected}
                       disabled={bulkProcessing}
                     >
-                      {bulkProcessing ? 'Working...' : 'Move to Trash'}
+                      {bulkProcessing ? t('ns.working') : t('ns.moveToTrash')}
                     </button>
                   </>
                 ) : (
@@ -1189,7 +1170,7 @@ export default function NotionSync() {
                       onClick={bulkRestoreSelected}
                       disabled={bulkProcessing}
                     >
-                      {bulkProcessing ? 'Working...' : 'Restore Selected'}
+                      {bulkProcessing ? t('ns.working') : t('ns.restoreSelected')}
                     </button>
                     <button
                       type="button"
@@ -1197,7 +1178,7 @@ export default function NotionSync() {
                       onClick={bulkPermanentDeleteSelected}
                       disabled={bulkProcessing}
                     >
-                      {bulkProcessing ? 'Working...' : 'Delete Permanently'}
+                      {bulkProcessing ? t('ns.working') : t('ns.deletePerm')}
                     </button>
                   </>
                 )}
@@ -1208,11 +1189,11 @@ export default function NotionSync() {
 
         {activeList.length === 0 ? (
           <div className="ns-empty small">
-            <strong>{activeTab === 'pending' ? 'No pending updates' : 'Trash is empty'}</strong>
+            <strong>{activeTab === 'pending' ? t('ns.noPending') : t('ns.trashEmpty')}</strong>
             <span>
               {activeTab === 'pending'
-                ? 'Your published articles are up to date.'
-                : 'Items moved to Trash will appear here.'}
+                ? t('ns.upToDate')
+                : t('ns.trashHint')}
             </span>
           </div>
         ) : (
@@ -1231,7 +1212,7 @@ export default function NotionSync() {
                         type="checkbox"
                         checked={isSelected}
                         onChange={() => toggleSelection(item.id)}
-                        aria-label={`Select ${item.proposed_title || item.previous_title}`}
+                        aria-label={t('ns.selectItem', { title: item.proposed_title || item.previous_title })}
                       />
                     </label>
 
@@ -1239,14 +1220,14 @@ export default function NotionSync() {
                       <h3>{item.proposed_title || item.previous_title}</h3>
                       <p>
                         {activeTab === 'trash'
-                          ? 'Moved to Trash'
-                          : isNew ? 'Found in Notion' : 'Changed in Notion'}
+                          ? t('ns.movedToTrashLabel')
+                          : isNew ? t('ns.foundInNotion') : t('ns.changedInNotion')}
                         {': '}
                         {(activeTab === 'trash' ? item.trashed_at : item.notion_last_edited_time) || '-'}
                       </p>
                     </div>
                     <span className="ns-review-pill">
-                      {activeTab === 'trash' ? 'Trashed' : (isNew ? 'New' : 'Review')}
+                      {activeTab === 'trash' ? t('ns.pill.trashed') : (isNew ? t('ns.pill.new') : t('ns.pill.review'))}
                     </span>
                   </div>
 
@@ -1256,7 +1237,7 @@ export default function NotionSync() {
                       className="ns-btn secondary"
                       onClick={() => setExpandedPendingId(isExpanded ? null : item.id)}
                     >
-                      {isExpanded ? 'Hide Preview' : (isNew ? 'Preview' : 'Review Changes')}
+                      {isExpanded ? t('ns.hidePreview') : (isNew ? t('ns.preview') : t('ns.reviewChanges'))}
                     </button>
 
                     {activeTab === 'pending' ? (
@@ -1267,7 +1248,7 @@ export default function NotionSync() {
                           disabled={isResolving}
                           onClick={() => handleTrashItem(item.id)}
                         >
-                          {isResolving ? 'Working...' : 'Move to Trash'}
+                          {isResolving ? t('ns.working') : t('ns.moveToTrash')}
                         </button>
                         <button
                           type="button"
@@ -1276,8 +1257,8 @@ export default function NotionSync() {
                           onClick={() => handleResolvePending(item.id, 'apply')}
                         >
                           {isResolving
-                            ? 'Working...'
-                            : (isNew ? 'Add to Knowledge Base' : 'Update to Latest')}
+                            ? t('ns.working')
+                            : (isNew ? t('ns.addToKb') : t('ns.updateLatest'))}
                         </button>
                       </>
                     ) : (
@@ -1288,7 +1269,7 @@ export default function NotionSync() {
                           disabled={isResolving}
                           onClick={() => handleRestoreItem(item.id)}
                         >
-                          {isResolving ? 'Working...' : 'Restore'}
+                          {isResolving ? t('ns.working') : t('ns.restore')}
                         </button>
                         <button
                           type="button"
@@ -1296,7 +1277,7 @@ export default function NotionSync() {
                           disabled={isResolving}
                           onClick={() => handlePermanentDeleteItem(item.id)}
                         >
-                          {isResolving ? 'Working...' : 'Delete Permanently'}
+                          {isResolving ? t('ns.working') : t('ns.deletePerm')}
                         </button>
                       </>
                     )}
@@ -1305,9 +1286,9 @@ export default function NotionSync() {
                   {isExpanded && (
                     <div className="ns-compare-grid">
                       <div className="ns-version-card current">
-                        <div className="ns-version-label">Current</div>
+                        <div className="ns-version-label">{t('ns.current')}</div>
                         {isNew ? (
-                          <p className="ns-section-copy">Not yet in your Knowledge Base.</p>
+                          <p className="ns-section-copy">{t('ns.notYetInKb')}</p>
                         ) : (
                           <div
                             className="article-rich-content"
@@ -1317,7 +1298,7 @@ export default function NotionSync() {
                       </div>
 
                       <div className="ns-version-card proposed">
-                        <div className="ns-version-label">From Notion</div>
+                        <div className="ns-version-label">{t('ns.fromNotion')}</div>
                         <div
                           className="article-rich-content"
                           dangerouslySetInnerHTML={{ __html: item.proposed_content || '' }}
@@ -1337,15 +1318,12 @@ export default function NotionSync() {
       <section className="ns-card ns-storage-card">
         <div className="ns-section-head">
           <div>
-            <span className="ns-kicker">Maintenance</span>
-            <h2>Storage Cleanup</h2>
+            <span className="ns-kicker">{t('ns.maintenance')}</span>
+            <h2>{t('ns.storageCleanup')}</h2>
           </div>
         </div>
 
-        <p className="ns-section-copy">
-          Scans for image/file uploads on the server that no article or pending
-          Notion item references any more. Nothing is deleted until you confirm.
-        </p>
+        <p className="ns-section-copy">{t('ns.storageCopy')}</p>
 
         <div className="ns-actions">
           <button
@@ -1354,7 +1332,7 @@ export default function NotionSync() {
             onClick={handleRunStorageAudit}
             disabled={runningAudit}
           >
-            {runningAudit ? 'Scanning...' : 'Run Storage Audit'}
+            {runningAudit ? t('ns.scanning') : t('ns.runAudit')}
           </button>
 
           {storageAudit && storageAudit.orphanFileCount > 0 ? (
@@ -1364,7 +1342,7 @@ export default function NotionSync() {
               onClick={handleCleanStorage}
               disabled={cleaningStorage}
             >
-              {cleaningStorage ? 'Cleaning...' : 'Clean Unused Files'}
+              {cleaningStorage ? t('ns.cleaning') : t('ns.cleanBtn')}
             </button>
           ) : null}
         </div>
@@ -1372,19 +1350,19 @@ export default function NotionSync() {
         {storageAudit ? (
           <div className="ns-sync-result-grid">
             <div>
-              <span>Upload files</span>
+              <span>{t('ns.audit.total')}</span>
               <strong>{storageAudit.totalFiles}</strong>
             </div>
             <div>
-              <span>Used by articles</span>
+              <span>{t('ns.audit.articles')}</span>
               <strong>{storageAudit.referencedByArticles}</strong>
             </div>
             <div>
-              <span>Used by pending items</span>
+              <span>{t('ns.audit.pending')}</span>
               <strong>{storageAudit.referencedByPendingUpdates}</strong>
             </div>
             <div className={storageAudit.orphanFileCount > 0 ? 'failed' : ''}>
-              <span>Potential orphans</span>
+              <span>{t('ns.audit.orphans')}</span>
               <strong>{storageAudit.orphanFileCount}</strong>
             </div>
           </div>
@@ -1393,7 +1371,7 @@ export default function NotionSync() {
         {storageAudit && storageAudit.orphanFileCount > 0 ? (
           <div className="ns-sync-note">
             <span>
-              Estimated reclaimable space: {formatBytes(storageAudit.estimatedReclaimableBytes)}
+              {t('ns.audit.reclaim', { size: formatBytes(storageAudit.estimatedReclaimableBytes) })}
             </span>
           </div>
         ) : null}
@@ -1402,28 +1380,28 @@ export default function NotionSync() {
       <section className="ns-card ns-history">
         <div className="ns-section-head">
           <div>
-            <span className="ns-kicker">History</span>
-            <h2>Sync History</h2>
+            <span className="ns-kicker">{t('ns.history')}</span>
+            <h2>{t('ns.syncHistory')}</h2>
           </div>
           <span className="ns-count">{jobs.length}</span>
         </div>
 
         {jobs.length === 0 ? (
           <div className="ns-empty small">
-            <strong>No sync history</strong>
-            <span>Run your first Notion update check.</span>
+            <strong>{t('ns.noHistory')}</strong>
+            <span>{t('ns.noHistoryHint')}</span>
           </div>
         ) : (
           <div className="ns-table-wrap">
             <table className="ns-table">
               <thead>
                 <tr>
-                  <th>Date</th>
-                  <th>Status</th>
-                  <th>New</th>
-                  <th>Flagged</th>
-                  <th>Unchanged</th>
-                  <th>Failed</th>
+                  <th>{t('ns.col.date')}</th>
+                  <th>{t('ns.col.status')}</th>
+                  <th>{t('ns.col.new')}</th>
+                  <th>{t('ns.col.flagged')}</th>
+                  <th>{t('ns.col.unchanged')}</th>
+                  <th>{t('ns.col.failed')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -1432,7 +1410,7 @@ export default function NotionSync() {
                     <td>{job.completed_at || job.started_at || '-'}</td>
                     <td>
                       <span className={`ns-job-status ${job.status || 'unknown'}`}>
-                        {job.status}
+                        {tOr(`ns.job.${job.status}`, job.status)}
                       </span>
                     </td>
                     <td>{job.imported_count ?? 0}</td>

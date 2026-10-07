@@ -76,7 +76,10 @@ export function LanguageProvider({ children }) {
     // unknown value should be shown as-is rather than as a raw key.
     const tOr = (key, fallback) => dictionary[key] ?? english[key] ?? fallback;
 
-    return { language, setLanguage, t, tOr };
+    // BCP-47 locale for dates/numbers so dates follow the chosen UI language.
+    const locale = { en: 'en-GB', zh: 'zh-CN', ms: 'ms-MY' }[language] || 'en-GB';
+
+    return { language, locale, setLanguage, t, tOr };
   }, [language, setLanguage]);
 
   return <LanguageContext.Provider value={value}>{children}</LanguageContext.Provider>;
@@ -89,6 +92,7 @@ export function useLanguage() {
   const english = translations[DEFAULT_LANGUAGE];
   return {
     language: DEFAULT_LANGUAGE,
+    locale: 'en-GB',
     setLanguage: () => {},
     t: (key, vars) => interpolate(english[key] ?? String(key), vars),
     tOr: (key, fallback) => english[key] ?? fallback,
