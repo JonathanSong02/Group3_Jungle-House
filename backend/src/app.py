@@ -11,14 +11,13 @@ from pathlib import Path
 import csv
 import json
 import traceback
-import smtplib
+import resend
 import secrets
 import hashlib
 import hmac
 import requests
 import difflib
 
-from email.message import EmailMessage
 
 
 def load_local_env_file():
@@ -1798,13 +1797,11 @@ def allowed_domain_message():
 
 
 def password_recovery_email_is_configured():
-    """Return True only when usable SMTP credentials are configured."""
-    smtp_user = os.getenv("SMTP_USER", "").strip()
-    smtp_password = os.getenv("SMTP_PASSWORD", "").strip()
-    smtp_from = os.getenv("SMTP_FROM_EMAIL", smtp_user).strip()
+    """Return True only when usable Resend credentials are configured."""
+    api_key = os.getenv("RESEND_API_KEY", "").strip()
+    from_email = os.getenv("RESEND_FROM_EMAIL", "").strip()
 
-    values = (smtp_user, smtp_password, smtp_from)
-    if not all(values):
+    if not api_key or not from_email:
         return False
 
     placeholder_markers = (
@@ -1814,26 +1811,31 @@ def password_recovery_email_is_configured():
         "EXAMPLE",
     )
 
-    return not any(
+    if any(
         str(value).upper().startswith(placeholder_markers)
-        for value in values
-    )
+        for value in (api_key, from_email)
+    ):
+        return False
+
+    return api_key.startswith("re_")
 
 
 def send_email_safe(to_email, subject, body):
     """
-    Optional email notification helper.
-    It will not break the system if SMTP is not configured yet.
+    Send transactional email through Resend without exposing the API key.
 
-    Required environment variables when you want real email sending:
-    SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM_EMAIL
+    Required:
+      RESEND_API_KEY
+      RESEND_FROM_EMAIL
+
+    Optional:
+      RESEND_FROM_NAME (defaults to "Jungle House AI Wiki")
     """
     to_email = str(to_email or "").strip()
 
-    # Presentation-only hardcoded email simulation. This deliberately does
-    # not contact Gmail/SMTP. The rest of the application still receives a
-    # successful delivery result so the real registration workflow can be
-    # demonstrated end-to-end.
+    # Keep the existing presentation simulation behaviour for the dedicated
+    # system email-test screen. The forgot-password endpoint already blocks
+    # password recovery when PRESENTATION_DEMO_MODE is enabled.
     if PRESENTATION_DEMO_MODE:
         if not to_email:
             print("DEMO EMAIL SKIPPED: Recipient email is empty.")
@@ -1847,64 +1849,49 @@ def send_email_safe(to_email, subject, body):
         print("=" * 72 + "\n")
         return True
 
-    # Gmail-compatible defaults. For local use, only the sender email and
-    # app password must be placed in backend/src/.env once.
-    smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com").strip()
-    smtp_port = int(os.getenv("SMTP_PORT", "587"))
-    smtp_user = os.getenv("SMTP_USER", "").strip()
-    smtp_password = os.getenv("SMTP_PASSWORD", "").strip()
-    smtp_from = os.getenv("SMTP_FROM_EMAIL", smtp_user).strip()
-    smtp_use_tls = os.getenv("SMTP_USE_TLS", "true").strip().lower() != "false"
-
-    # Google shows App Passwords in grouped blocks. If those spaces were
-    # copied into Railway, Gmail authentication can fail. Normalise only
-    # for Gmail so other SMTP providers keep their password unchanged.
-    if "gmail.com" in smtp_host.lower():
-        smtp_password = "".join(smtp_password.split())
-
     if not to_email:
         print("EMAIL SKIPPED: Recipient email is empty.")
         return False
 
-    if not smtp_user or not smtp_password or not smtp_from:
+    if not password_recovery_email_is_configured():
         print(
-            "EMAIL SKIPPED: Configure SMTP_USER and SMTP_PASSWORD in Railway Variables "
-            "(or backend/src/.env for local development)."
+            "EMAIL SKIPPED: Configure RESEND_API_KEY and RESEND_FROM_EMAIL "
+            "in Railway Variables (or backend/src/.env for local development)."
         )
         return False
+
+    api_key = os.getenv("RESEND_API_KEY", "").strip()
+    from_email = os.getenv("RESEND_FROM_EMAIL", "").strip()
+    from_name = (
+        os.getenv("RESEND_FROM_NAME", "Jungle House AI Wiki").strip()
+        or "Jungle House AI Wiki"
+    )
 
     try:
-        message = EmailMessage()
-        message["From"] = f"Jungle House AI Wiki <{smtp_from}>"
-        message["To"] = to_email
-        message["Subject"] = subject
-        message.set_content(body)
+        resend.api_key = api_key
 
-        with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as server:
-            if smtp_use_tls:
-                server.starttls()
+        result = resend.Emails.send({
+            "from": f"{from_name} <{from_email}>",
+            "to": [to_email],
+            "subject": str(subject or ""),
+            "text": str(body or ""),
+        })
 
-            if smtp_user and smtp_password:
-                server.login(smtp_user, smtp_password)
+        if isinstance(result, dict):
+            message_id = result.get("id")
+        else:
+            message_id = getattr(result, "id", None)
 
-            server.send_message(message)
-
-        print(f"EMAIL SENT: to={to_email} subject={subject!r} via={smtp_host}:{smtp_port}")
+        print(
+            f"EMAIL SENT: to={to_email} subject={subject!r} "
+            f"via=Resend id={message_id or 'unknown'}"
+        )
         return True
 
-    except smtplib.SMTPAuthenticationError as error:
-        print(
-            "SEND EMAIL AUTH ERROR: Gmail rejected SMTP credentials. "
-            "Use the Google App Password (not the normal account password).",
-            error,
-        )
-        return False
     except Exception as error:
-        print("SEND EMAIL SAFE ERROR:", error)
+        # Do not print RESEND_API_KEY.
+        print("SEND EMAIL RESEND ERROR:", error)
         return False
-
-
-
 
 
 def get_public_request_base_url():
@@ -4674,7 +4661,7 @@ def forgot_password():
             raw_token,
         )
 
-        # Keep the public response generic; server logs still show SMTP errors.
+        # Keep the public response generic; server logs still show email-provider errors.
         add_audit_log(
             actor_id=user["user_id"],
             actor_name=user.get("full_name") or "User",
@@ -13763,30 +13750,27 @@ def test_system_email():
                 "presentation_demo_mode": True,
             }), 200
 
-        smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com").strip()
-        smtp_user = os.getenv("SMTP_USER", "").strip()
-        smtp_from = os.getenv("SMTP_FROM_EMAIL", smtp_user).strip()
-        configured = bool(smtp_host and smtp_user and os.getenv("SMTP_PASSWORD", "").strip() and smtp_from)
+        resend_api_key = os.getenv("RESEND_API_KEY", "").strip()
+        resend_from_email = os.getenv("RESEND_FROM_EMAIL", "").strip()
+        configured = password_recovery_email_is_configured()
 
         if not configured:
             return jsonify({
-                "message": "System email is not fully configured in Railway Variables.",
+                "message": "Resend email is not fully configured in Railway Variables.",
                 "configured": False,
-                "smtp_host": smtp_host,
-                "smtp_user_set": bool(smtp_user),
-                "smtp_from_set": bool(smtp_from),
-                "smtp_password_set": bool(os.getenv("SMTP_PASSWORD", "").strip()),
+                "resend_api_key_set": bool(resend_api_key),
+                "resend_from_email_set": bool(resend_from_email),
             }), 503
 
         sent = send_email_safe(
             recipient,
             "Jungle House AI Wiki - System email test",
-            f"Hi {actor.get('full_name') or 'there'},\n\nThis is a production email test from Jungle House AI Wiki.\n\nIf you received this message, Railway SMTP is configured correctly.\n\nJungle House AI Wiki Team\n",
+            f"Hi {actor.get('full_name') or 'there'},\n\nThis is a production email test from Jungle House AI Wiki.\n\nIf you received this message, Resend is configured correctly.\n\nJungle House AI Wiki Team\n",
         )
 
         if not sent:
             return jsonify({
-                "message": "SMTP is configured, but Gmail rejected or failed the send. Check Railway deployment logs for SEND EMAIL AUTH ERROR / SEND EMAIL SAFE ERROR.",
+                "message": "Resend is configured, but the email send failed. Check backend logs for SEND EMAIL RESEND ERROR.",
                 "configured": True,
                 "email_sent": False,
             }), 502
