@@ -1102,7 +1102,6 @@ function buildAiMessage(data) {
       // Yes/No prompt under a related-articles list escalate that question.
       question: data.question || '',
       escalation_offer: Boolean(data.escalation_offer),
-      understood_as: data.understood_as || '',
       confidence,
       confidence_label: confidenceLabel,
       source,
@@ -1150,8 +1149,6 @@ function buildAiMessage(data) {
       fallback,
       fallback_message: fallbackMessage,
       message: backendMessage,
-      understood_as: data.understood_as || '',
-      suggestions: Array.isArray(data.suggestions) ? data.suggestions : [],
       link: data.link || data.article_link || backendContext.link || '',
       article_link: data.article_link || data.link || backendContext.link || '',
       image_files: data.image_files || backendContext.image_files || [],
@@ -1190,8 +1187,6 @@ function buildAiMessage(data) {
     fallback,
     fallback_message: fallbackMessage,
     message: backendMessage,
-    understood_as: data.understood_as || '',
-    suggestions: Array.isArray(data.suggestions) ? data.suggestions : [],
     link: data.link || data.article_link || backendContext.link || '',
     article_link: data.article_link || data.link || backendContext.link || '',
     image_files: data.image_files || backendContext.image_files || [],
@@ -1376,34 +1371,6 @@ function saveHistoryToStorage(storageKeys, history) {
   } catch (error) {
     console.error('Unable to save chat history:', error);
   }
-}
-
-// The current chat, sent with each question so the backend can resolve
-// follow-ups ("how about opening") and questions about the chat itself
-// ("what was my first question"). Plain text only, long answers shortened;
-// the greeting bubble and local status/error bubbles are left out.
-function buildConversationHistory(messages) {
-  const localOnlySources = ['user_stopped_generation', 'frontend_request_error', 'frontend_empty_response'];
-
-  return (messages || [])
-    .filter(
-      (item) =>
-        item &&
-        item.id !== starterMessages[0].id &&
-        (item.sender === 'user' || item.sender === 'ai') &&
-        !localOnlySources.includes(item.source)
-    )
-    .map((item) => ({
-      role: item.sender === 'user' ? 'user' : 'ai',
-      text: String(
-        item.sender === 'user' ? item.text || '' : getReadableAnswer(item) || item.text || ''
-      )
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, 600),
-    }))
-    .filter((item) => item.text);
 }
 
 function getReadableAnswer(message) {
@@ -1965,26 +1932,20 @@ const removeSelectedImage = () => {
     }
   };
 
-  // presetQuestion: a suggestion chip sends its article title as the
-  // question. It goes through the same request flow, but leaves whatever the
-  // staff member has typed or attached in the composer untouched.
-  const handleSend = async (presetQuestion) => {
-    const isPreset = typeof presetQuestion === 'string';
-    const trimmedQuestion = cleanQuestionInput(isPreset ? presetQuestion : question);
-    const attachedImage = isPreset ? null : selectedImage;
-    const attachedImagePreview = isPreset ? '' : selectedImagePreview;
+  const handleSend = async () => {
+    const trimmedQuestion = cleanQuestionInput(question);
 
-    if ((!trimmedQuestion && !attachedImage) || loading) return;
+    if ((!trimmedQuestion && !selectedImage) || loading) return;
 
     const displayQuestion =
-      trimmedQuestion || (isImageUploadFile(attachedImage) ? 'Uploaded an image' : 'Uploaded a file');
+      trimmedQuestion || (isImageUploadFile(selectedImage) ? 'Uploaded an image' : 'Uploaded a file');
 
     const userMessage = {
       id: Date.now(),
       sender: 'user',
       type: 'text',
       text: displayQuestion,
-      image_files: attachedImagePreview ? [attachedImagePreview] : [],
+      image_files: selectedImagePreview ? [selectedImagePreview] : [],
     };
 
     const context = extractLatestSopContext(messages, displayQuestion);
@@ -1996,14 +1957,12 @@ const removeSelectedImage = () => {
     // clearing it right away (not just the text) is what lets the user
     // start typing/attaching their next question while this one is still
     // generating, instead of the composer staying locked until it's done.
-    const imageToSend = attachedImage;
-    const imagePreviewToRevoke = attachedImagePreview;
+    const imageToSend = selectedImage;
+    const imagePreviewToRevoke = selectedImagePreview;
 
-    if (!isPreset) {
-      setQuestion('');
-      setSelectedImage(null);
-      setSelectedImagePreview('');
-    }
+    setQuestion('');
+    setSelectedImage(null);
+    setSelectedImagePreview('');
 
     const requestId =
       (typeof crypto !== 'undefined' && crypto.randomUUID)
@@ -2031,12 +1990,7 @@ const removeSelectedImage = () => {
       } else {
         response = await api.post(
           '/chat',
-          {
-            question: trimmedQuestion,
-            context,
-            request_id: requestId,
-            history: buildConversationHistory(messages),
-          },
+          { question: trimmedQuestion, context, request_id: requestId },
           { signal: controller.signal }
         );
       }
@@ -2183,13 +2137,6 @@ const removeSelectedImage = () => {
       >
         <strong className="ai-chat-sender-label">{message.sender === 'user' ? 'You' : 'AI'}</strong>
         {renderResponseMeta(message, t)}
-
-        {message.sender === 'ai' && message.understood_as ? (
-          <p style={{ margin: '4px 0 8px', fontSize: '12px', color: '#6c757d', fontStyle: 'italic' }}>
-            {t('chat.understoodAs')}: {message.understood_as}
-          </p>
-        ) : null}
-
         {renderKnowledgeLink(message.link || message.article_link)}
 
         {message.sender === 'ai' &&
@@ -2538,38 +2485,6 @@ const removeSelectedImage = () => {
             })}
           </div>
         )}
-
-        {message.sender === 'ai' &&
-        Array.isArray(message.suggestions) &&
-        message.suggestions.length > 0 ? (
-          <div style={{ marginTop: '12px', paddingTop: '10px', borderTop: '1px dashed #dee2e6' }}>
-            <p style={{ margin: '0 0 8px', fontSize: '12px', color: '#6c757d' }}>
-              {t('chat.suggestionsTitle')}
-            </p>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-              {message.suggestions.map((suggestion, suggestionIndex) => (
-                <button
-                  type="button"
-                  key={`${suggestion.article_id || suggestion.title}-${suggestionIndex}`}
-                  disabled={loading}
-                  onClick={() => handleSend(suggestion.title)}
-                  style={{
-                    padding: '6px 12px',
-                    borderRadius: '999px',
-                    border: '1px solid #e8c56b',
-                    backgroundColor: '#fffdf7',
-                    color: '#7a5c00',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                    cursor: loading ? 'not-allowed' : 'pointer',
-                  }}
-                >
-                  {suggestion.title}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
       </div>
     );
   };
