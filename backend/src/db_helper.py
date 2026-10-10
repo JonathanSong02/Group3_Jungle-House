@@ -92,6 +92,7 @@ def is_low_quality_saved_ai_answer(row):
     bad_phrases = [
         "i found a few possible answers",
         "i found more than one possible answer",
+        "which one do you mean",
         "please select one",
         "please choose one",
         "i could not understand",

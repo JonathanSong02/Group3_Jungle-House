@@ -2926,7 +2926,7 @@ def build_step_answer_from_last_topic(question: str, last_answer: dict | None):
             option_title = str(option.get("title") or "").strip()
             if (
                 option_title
-                and float(option.get("confidence", 0.0) or 0.0) >= 1.0
+                and float(option.get("confidence", 0.0) or 0.0) >= CONFIDENCE_DIRECT_ANSWER
                 and option_title not in titles
             ):
                 titles.append(option_title)
@@ -3038,8 +3038,11 @@ def update_ai_fail_count(data: dict | None, question: str, result: dict | None) 
     source = str(result.get("source", "")).strip()
     confidence = float(result.get("confidence", result.get("score", 0.0)) or 0.0)
 
+    # A clarifying list or a "these may help" list is the AI asking a
+    # question back, not a failed answer -- it must not count toward the
+    # repeated-failure escalation.
     if (
-        source in {"broad_topic_clarification", "category_choice"}
+        source in {"broad_topic_clarification", "category_choice", "suggestion_options", "related_knowledge"}
         or source.startswith("generic_")
         or "out_of_bounds" in source
         or source in {"context_step", "context_step_range", "context_show_all", "context_picture", "context_section"}
@@ -3050,7 +3053,7 @@ def update_ai_fail_count(data: dict | None, question: str, result: dict | None) 
     is_failed_answer = (
         source in bad_sources
         or bool(result.get("fallback", False))
-        or confidence < 1.0
+        or confidence < CONFIDENCE_DIRECT_ANSWER
     )
 
     fail_key = get_ai_fail_key(data, question)
@@ -3089,6 +3092,16 @@ def is_escalation_result(result: dict | None) -> bool:
         return True
 
     return "escalate" in reply or "escalate" in answer
+
+
+# At/above DIRECT_ANSWER a Knowledge Base match is answered directly (same
+# boundary as the "medium" label below). Between ESCALATE_OFFER and
+# DIRECT_ANSWER the chat shows the closest articles and asks whether to
+# escalate; below ESCALATE_OFFER it escalates without asking. Options within
+# AMBIGUITY_GAP of the best one count as competing answers.
+CONFIDENCE_DIRECT_ANSWER = 0.72
+CONFIDENCE_ESCALATE_OFFER = 0.40
+CONFIDENCE_AMBIGUITY_GAP = 0.05
 
 
 def get_confidence_label(score: float) -> str:
@@ -3452,9 +3465,12 @@ def is_valid_answer(result):
 
 
 def choose_final_result(model_result, retrieval_result, kb_result=None, image_retrieval_result=None):
+    # Image retrieval, Team Lead answers and the PyTorch model only ever
+    # report an exact match, so they keep the strict gate. Knowledge Base
+    # articles carry a graded score and use CONFIDENCE_DIRECT_ANSWER instead.
     REQUIRED_CONFIDENCE = 1.0
 
-    def is_fully_confident(result):
+    def is_fully_confident(result, required=REQUIRED_CONFIDENCE):
         if not result:
             return False
 
@@ -3463,7 +3479,7 @@ def choose_final_result(model_result, retrieval_result, kb_result=None, image_re
 
         confidence = float(result.get("confidence", result.get("score", 0.0)) or 0.0)
 
-        return confidence >= REQUIRED_CONFIDENCE
+        return confidence >= required
 
     # Allow control messages such as step out of bounds to return.
     # These are not wrong knowledge answers; they guide the staff.
@@ -3490,8 +3506,6 @@ def choose_final_result(model_result, retrieval_result, kb_result=None, image_re
 
         # Priority 1: live Knowledge Base article.
     if is_fully_confident(kb_result):
-        kb_result["score"] = 1.0
-        kb_result["confidence"] = 1.0
         return kb_result
 
     # Priority 2: approved image retrieval.
@@ -3507,13 +3521,19 @@ def choose_final_result(model_result, retrieval_result, kb_result=None, image_re
         retrieval_result["confidence"] = 1.0
         return retrieval_result
 
+    # A partial (below 100%) Knowledge Base match ranks after the exact
+    # matches above, so it can't displace an approved exact answer, and
+    # keeps its real score.
+    if is_fully_confident(kb_result, CONFIDENCE_DIRECT_ANSWER):
+        return kb_result
+
     # Priority 3: PyTorch/training answer only if truly 100%.
     if is_fully_confident(model_result):
         model_result["score"] = 1.0
         model_result["confidence"] = 1.0
         return model_result
 
-    # Anything below 100% must not guess.
+    # No source is confident enough to answer directly.
     return standardize_ai_response({
         "type": "text",
         "category": None,
@@ -3529,7 +3549,7 @@ def choose_final_result(model_result, retrieval_result, kb_result=None, image_re
         "source": "low_confidence_direct_escalation",
         "context": {},
         "fallback": True,
-        "fallback_message": "Confidence is below 100%, so this question was escalated to the Team Lead.",
+        "fallback_message": "No confident match was found, so this question was escalated to the Team Lead.",
         "escalation_ready": True,
         "escalation_required": True,
     })
@@ -3820,33 +3840,39 @@ def calculate_article_match_score(question, article):
     if not q_tokens or not all_tokens:
         return 0.0
 
-    # Exact title match.
-    if question_text == title:
+    # Each rule returns its own strength rather than a flat 1.0, so a one-word
+    # keyword that fits several titles no longer scores the same as an exact
+    # title. Only a full title match is 100%.
+    if question_text == title or q_tokens == title_tokens:
         return 1.0
 
-    # Example: "kiosk opening" matches "JHKC Kiosk Opening".
+    # Example: "kiosk opening" matches "JHKC Kiosk Opening" (0.93), while
+    # "promotion" matches "Daily Bundle Promotion" more loosely (0.86) --
+    # the more of the title the question covers, the higher the score.
     if q_tokens.issubset(title_tokens):
-        return 1.0
+        coverage = len(q_tokens) / max(len(title_tokens), 1)
+        return round(0.80 + 0.19 * coverage, 4)
 
     # Example: "how to open kiosk" matches title/category/subcategory.
     if q_tokens.issubset(meta_tokens):
-        return 1.0
+        return 0.80
 
     title_overlap_count = len(q_tokens & title_tokens)
     title_overlap_ratio = title_overlap_count / max(len(q_tokens), 1)
 
     # Strong title match.
     if len(q_tokens) >= 2 and title_overlap_ratio >= 0.75:
-        return 1.0
+        return 0.78
 
     # Step/detail question can still match article if the main topic is in the title.
     # Example: "step 2 kiosk opening".
     if title_overlap_count >= 2 and q_tokens.issubset(all_tokens):
-        return 1.0
+        return 0.75
 
-    # Anything else is not fully confident.
+    # Anything else stays below CONFIDENCE_DIRECT_ANSWER: it can be offered
+    # as a related article, never answered directly.
     overlap = len(q_tokens & all_tokens) / max(len(q_tokens), 1)
-    weak_score = round(min(overlap, 0.99), 4)
+    weak_score = round(min(overlap, 0.70), 4)
 
     return weak_score
 
@@ -4015,10 +4041,10 @@ def search_knowledge_base_articles(question, limit=1):
     for article in articles:
         score = calculate_article_match_score(question, article)
 
-        # Strict lecturer rule:
-        # Only return Knowledge Base answer when confidence is 100%.
-        if score >= 1.0:
-            scored_results.append(build_article_ai_result(article, question, 1.0))
+        # Keeps the real score (not a flat 1.0) so the caller can tell one
+        # clear answer from several competing ones.
+        if score >= CONFIDENCE_DIRECT_ANSWER:
+            scored_results.append(build_article_ai_result(article, question, score))
 
     scored_results = sorted(scored_results, key=lambda item: item.get("score", 0.0), reverse=True)
 
@@ -4028,14 +4054,14 @@ def search_knowledge_base_articles(question, limit=1):
     return scored_results[:limit]
 
 
-def search_related_knowledge_base_articles(question, limit=3, min_score=0.34):
+def search_related_knowledge_base_articles(question, limit=3, min_score=CONFIDENCE_ESCALATE_OFFER):
     """
     Level-2 retrieval: articles that are topically related but do not clear
-    the strict 100%-confidence bar used by search_knowledge_base_articles().
-    Used to show clickable "related knowledge" cards before escalating,
+    the direct-answer bar used by search_knowledge_base_articles(). Used to
+    show clickable "related knowledge" cards and ask whether to escalate,
     instead of jumping straight from "not confident" to a team lead ticket.
 
-    min_score=0.34 is a tunable heuristic (roughly: at least a third of the
+    min_score is a tunable heuristic (roughly: at least 40% of the
     question's meaningful tokens appear somewhere in the article's
     title/category/subcategory/content) chosen to avoid surfacing dozens of
     low-quality/noisy matches.
@@ -4076,7 +4102,7 @@ def search_related_knowledge_base_articles(question, limit=3, min_score=0.34):
     for article in articles:
         score = calculate_article_match_score(question, article)
 
-        if min_score <= score < 1.0:
+        if min_score <= score < CONFIDENCE_DIRECT_ANSWER:
             scored_results.append(build_article_ai_result(article, question, score))
 
     scored_results = sorted(scored_results, key=lambda item: item.get("score", 0.0), reverse=True)
@@ -4313,32 +4339,76 @@ def process_question(question, context=None, search_question=None):
 
     answer_options = answer_options[:5]
 
-    if (
-        keyword_question
-        and len(answer_options) >= 1
-        and float(answer_options[0].get("confidence", 0.0) or 0.0) >= 1.0
-    ):
+    def option_confidence(item):
+        return float(item.get("confidence", 0.0) or 0.0)
+
+    def competing_options(options):
+        """Options strong enough to answer with, and within the ambiguity gap of the best one."""
+        if not options:
+            return []
+
+        best = max(option_confidence(item) for item in options)
+
+        if best < CONFIDENCE_DIRECT_ANSWER:
+            return []
+
+        return [
+            item for item in options
+            if option_confidence(item) >= best - CONFIDENCE_AMBIGUITY_GAP
+        ]
+
+    # Several answers fit about equally well -> ask which one is meant
+    # instead of guessing. One clear leader falls through to a single direct
+    # answer below.
+    clarify_options = []
+    competing = []
+
+    if keyword_question:
+        competing = competing_options(answer_options)
+        if len(competing) >= 2:
+            clarify_options = answer_options
+    else:
+        kb_candidates = []
+        seen_kb_titles = set()
+        for item in kb_options:
+            for option in build_answer_options(question, None, item):
+                title_key = str(option.get("title", "")).lower().strip()
+                if title_key and title_key not in seen_kb_titles:
+                    seen_kb_titles.add(title_key)
+                    kb_candidates.append(option)
+
+        competing = competing_options(kb_candidates)
+        if len(competing) >= 2:
+            clarify_options = competing[:5]
+
+    if clarify_options:
+        # Confidence that any single option is the one meant: the best
+        # match strength shared across the answers competing with it.
+        best_confidence = max(option_confidence(item) for item in competing)
+        shared_confidence = round(best_confidence / len(competing), 4)
+        clarify_message = f"I found {len(clarify_options)} possible matches. Which one do you mean?"
+
         return standardize_ai_response({
             "question": question,
             "type": "multiple_choice",
             "category": None,
             "title": None,
             "section": None,
-            "reply": "I found a few possible answers. Please select one:",
-            "answer": "I found a few possible answers. Please select one:",
+            "reply": clarify_message,
+            "answer": clarify_message,
             "purpose": None,
             "steps": [],
             "notes": [],
-            "score": answer_options[0].get("confidence", 0.0),
-            "confidence": answer_options[0].get("confidence", 0.0),
-            "confidence_label": get_confidence_label(answer_options[0].get("confidence", 0.0)),
+            "score": shared_confidence,
+            "confidence": shared_confidence,
+            "confidence_label": get_confidence_label(shared_confidence),
             "source": "suggestion_options",
             "context": {},
             "fallback": False,
             "fallback_message": "",
             "escalation_ready": False,
             "escalation_required": False,
-            "options": answer_options,
+            "options": clarify_options,
         }), 200
 
     # Prefer training data / PyTorch model result for normal valid questions.
@@ -7889,7 +7959,7 @@ def build_ai_chat_context(question, limit=5, max_chars=6000, search_question=Non
         overlap_rank = 3 * meta_hits + content_hits
 
         if score > 0 or overlap_rank > 0:
-            scored_articles.append(((1 if score >= 1.0 else 0, overlap_rank, score), article))
+            scored_articles.append(((1 if score >= CONFIDENCE_DIRECT_ANSWER else 0, overlap_rank, score), article))
 
     scored_articles.sort(key=lambda item: item[0], reverse=True)
     top_articles = [article for _, article in scored_articles[:limit]]
@@ -8321,6 +8391,48 @@ def chat():
         q_lower = question.lower()
         chat_request_id = str(data.get("request_id") or "").strip()
 
+        # Staff pressed "No, escalate to a team lead" under a list of
+        # related articles: create the ticket for that original question
+        # straight away, without searching or calling the AI provider again.
+        if data.get("force_escalate") and question:
+            escalation_id = create_escalation(
+                question,
+                {
+                    "answer": "Staff reviewed the suggested Knowledge Base articles and asked for a team lead.",
+                    "confidence": 0.0,
+                    "score": 0.0,
+                    "source": "staff_requested_escalation",
+                },
+                data.get("user_id") or data.get("userId"),
+                None,
+                None
+            )
+
+            clear_ai_fail_count(data, question)
+
+            staff_escalation_reply = (
+                f"I have escalated your question to a team lead: {question}"
+                if escalation_id is not None
+                else "Escalation failed to save. Please try again or contact a team lead directly."
+            )
+
+            return jsonify({
+                "question": question,
+                "type": "text",
+                "reply": staff_escalation_reply,
+                "answer": staff_escalation_reply,
+                "confidence": 0.0,
+                "score": 0.0,
+                "confidence_label": "low",
+                "source": "staff_requested_escalation" if escalation_id is not None else "escalation_save_failed",
+                "fallback": True,
+                "escalation": True,
+                "escalation_ready": True,
+                "escalation_required": True,
+                "escalation_id": escalation_id,
+                "served_by": "escalation_queue",
+            }), 200
+
         # =========================
         # CROSS-LINGUAL RETRIEVAL BRIDGE
         # The Knowledge Base is English-only. For a Chinese/Malay question,
@@ -8695,9 +8807,10 @@ def chat():
         # =========================
         # ✅ STEP 4: ESCALATION LOGIC
         # =========================
-        LOW_CONFIDENCE_THRESHOLD = 1.0
+        LOW_CONFIDENCE_THRESHOLD = CONFIDENCE_DIRECT_ANSWER
 
         clarification_sources = [
+            "suggestion_options",
             "clarification_round_1",
             "unclear_question_clarification",
             "system_problem_clarification",
@@ -8715,6 +8828,7 @@ def chat():
             "low_confidence_or_model_unavailable",
             "invalid_input_first_attempt",
             "staff_not_satisfied_escalated",
+            "staff_requested_escalation",
             "generic_answer_escalated",
             "repeated_invalid_input",
             "repeated_failed_answer",
@@ -8734,7 +8848,7 @@ def chat():
         if (
             is_bare_step_request
             and not str(source).startswith(("context_", "matched_title_"))
-            and float(result.get("confidence", result.get("score", 0)) or 0.0) < 1.0
+            and float(result.get("confidence", result.get("score", 0)) or 0.0) < CONFIDENCE_DIRECT_ANSWER
         ):
             step_result, candidate_titles = build_step_answer_from_last_topic(question, last_answer)
             print(
@@ -8954,6 +9068,9 @@ def chat():
                     "escalation_ready": False,
                     "escalation_required": False,
                     "options": related_options,
+                    # Tells the chat UI to ask "did any of these help?" and
+                    # offer a button that escalates (force_escalate above).
+                    "escalation_offer": True,
                 })
 
                 remember_chat_context(data, result)

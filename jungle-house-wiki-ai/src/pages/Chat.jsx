@@ -1098,6 +1098,10 @@ function buildAiMessage(data) {
       unclear_count: unclearCount,
       escalation_ready: escalationReady,
       escalation_required: escalationReady,
+      // The original question plus "ask before escalating" flag: lets the
+      // Yes/No prompt under a related-articles list escalate that question.
+      question: data.question || '',
+      escalation_offer: Boolean(data.escalation_offer),
       confidence,
       confidence_label: confidenceLabel,
       source,
@@ -1424,7 +1428,8 @@ function isSelectPromptText(value) {
   return (
     text.includes('please select one') ||
     text.includes('i found a few possible answers') ||
-    text.includes('i found more than one possible answer')
+    text.includes('i found more than one possible answer') ||
+    text.includes('which one do you mean')
   );
 }
 
@@ -1435,7 +1440,10 @@ function removeEmptyImageLabels(text) {
     .trim();
 }
 
-function buildSelectedOptionMessage(option, optionIndex = 0) {
+// confirmedByStaff: the option was picked from a "which one do you mean?"
+// list, so there is no ambiguity left -- show it as a 100% answer. An option
+// picked from a related-articles list keeps its own (lower) match score.
+function buildSelectedOptionMessage(option, optionIndex = 0, confirmedByStaff = false) {
   const hasSteps = Array.isArray(option.steps) && option.steps.length > 0;
   const rawAnswer = option.answer || option.reply || '';
   const usefulAnswer = isSelectPromptText(rawAnswer) ? '' : rawAnswer;
@@ -1469,8 +1477,8 @@ function buildSelectedOptionMessage(option, optionIndex = 0) {
     unclear_count: 0,
     escalation_ready: false,
     escalation_required: false,
-    confidence: Number(option.confidence || 0),
-    confidence_label: '',
+    confidence: confirmedByStaff ? 1 : Number(option.confidence || 0),
+    confidence_label: confirmedByStaff ? 'high' : '',
     source: option.source || 'selected_option',
     fallback: false,
     fallback_message: '',
@@ -1861,6 +1869,69 @@ const removeSelectedImage = () => {
     }
   };
 
+  // "Did any of these help?" under a related-articles list. Either answer
+  // retires the prompt on that message; "No" also asks the backend to create
+  // the team-lead ticket for the original question (force_escalate).
+  const handleEscalationOffer = async (offerMessage, shouldEscalate) => {
+    if (loading) return;
+
+    const sessionTitle = offerMessage.question || '';
+    const messagesWithOfferClosed = (activeSession?.messages || messages).map((item) =>
+      item.id === offerMessage.id ? { ...item, escalation_offer: false } : item
+    );
+
+    if (!shouldEscalate) {
+      updateCurrentSessionMessages(messagesWithOfferClosed, sessionTitle);
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const response = await api.post('/chat', {
+        question: offerMessage.question,
+        force_escalate: true,
+      });
+
+      const aiMessage = buildAiMessage(response.data || {});
+
+      updateCurrentSessionMessages([...messagesWithOfferClosed, aiMessage], sessionTitle);
+      addChatHistory(sessionTitle, aiMessage);
+    } catch (error) {
+      console.error('Escalation request failed:', error);
+
+      const failureText =
+        error?.response?.data?.message || t('chat.escalationOfferFailed');
+
+      // Leaves the prompt open (original messages, not the closed copy) so
+      // the staff member can press the button again.
+      updateCurrentSessionMessages(
+        [
+          ...(activeSession?.messages || messages),
+          {
+            id: Date.now() + 1,
+            sender: 'ai',
+            type: 'text',
+            text: failureText,
+            context: { unclear_count: 0 },
+            unclear_count: 0,
+            escalation_ready: false,
+            escalation_required: false,
+            confidence: 0,
+            confidence_label: 'low',
+            source: 'frontend_request_error',
+            fallback: true,
+            fallback_message: failureText,
+            message: failureText,
+          },
+        ],
+        sessionTitle
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSend = async () => {
     const trimmedQuestion = cleanQuestionInput(question);
 
@@ -2120,7 +2191,11 @@ const removeSelectedImage = () => {
             type="button"
             key={`${option.source || 'option'}-${optionIndex}`}
         onClick={() => {
-          const selectedMessage = buildSelectedOptionMessage(option, optionIndex);
+          const selectedMessage = buildSelectedOptionMessage(
+            option,
+            optionIndex,
+            message.source === 'suggestion_options'
+          );
 
           updateCurrentSessionMessages(
             [...(activeSession?.messages || messages), selectedMessage],
@@ -2196,6 +2271,54 @@ const removeSelectedImage = () => {
         );
       })}
     </div>
+
+    {message.escalation_offer && message.question ? (
+      <div
+        style={{
+          marginTop: '14px',
+          padding: '12px 14px',
+          borderRadius: '14px',
+          backgroundColor: '#f8f9fa',
+          border: '1px solid #dee2e6',
+        }}
+      >
+        <p style={{ margin: '0 0 10px', fontWeight: 600 }}>{t('chat.escalationOfferQuestion')}</p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+          <button
+            type="button"
+            disabled={loading}
+            onClick={() => handleEscalationOffer(message, false)}
+            style={{
+              padding: '8px 14px',
+              borderRadius: '999px',
+              border: '1px solid #cfe0cb',
+              backgroundColor: '#edf5eb',
+              color: '#2f6b3a',
+              fontWeight: 600,
+              cursor: loading ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {t('chat.escalationOfferYes')}
+          </button>
+          <button
+            type="button"
+            disabled={loading}
+            onClick={() => handleEscalationOffer(message, true)}
+            style={{
+              padding: '8px 14px',
+              borderRadius: '999px',
+              border: '1px solid #ffb3b3',
+              backgroundColor: '#fff5f5',
+              color: '#b00020',
+              fontWeight: 600,
+              cursor: loading ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {t('chat.escalationOfferNo')}
+          </button>
+        </div>
+      </div>
+    ) : null}
   </div>
 ) : message.type === 'text' ? (
           <div style={{ marginTop: '8px' }}>
