@@ -22,3 +22,123 @@
 .auth-email-status { padding:12px 14px; border-radius:12px; background:#faf6ed; margin-bottom:16px; }
 .auth-link-button { display:block; text-align:center; text-decoration:none; }
 @media (max-width:520px) { .auth-password-checks { grid-template-columns:1fr; } }
+
+/* =========================================================
+   RESET PASSWORD — INVALID / EXPIRED STATE
+   ========================================================= */
+
+.reset-expired-state {
+  display: grid;
+  gap: 18px;
+}
+
+.reset-status-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 18px;
+  border-radius: 18px;
+}
+
+.reset-status-error {
+  background: #fff4f2;
+  border: 1px solid #efc1ba;
+}
+
+.reset-status-icon {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #bb4b42;
+  color: #ffffff;
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.reset-status-content {
+  min-width: 0;
+}
+
+.reset-status-content strong {
+  display: block;
+  margin-bottom: 5px;
+  color: #9f352d;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.reset-status-content p {
+  margin: 0;
+  color: #76524f;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.reset-help-text {
+  margin: 0 2px;
+  color: #69736c;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.reset-action-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.reset-primary-action {
+  width: 100%;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  text-decoration: none;
+}
+
+.reset-secondary-action {
+  width: 100%;
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 16px;
+  border: 1px solid #d7e0d7;
+  border-radius: 14px;
+  background: #ffffff;
+  color: #395646;
+  font-weight: 700;
+  text-decoration: none;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    transform 0.16s ease;
+}
+
+.reset-secondary-action:hover {
+  background: #f5f8f5;
+  border-color: #bfd0c1;
+  transform: translateY(-1px);
+}
+
+@media (max-width: 520px) {
+  .reset-status-card {
+    padding: 15px;
+    border-radius: 15px;
+  }
+
+  .reset-status-icon {
+    width: 32px;
+    height: 32px;
+    flex-basis: 32px;
+  }
+
+  .reset-primary-action,
+  .reset-secondary-action {
+    min-height: 48px;
+  }
+}
+

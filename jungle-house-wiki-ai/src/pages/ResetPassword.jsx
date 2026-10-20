@@ -161,17 +161,43 @@ export default function ResetPassword() {
             </button>
           </form>
         ) : (
-          <>
-            {error ? <p className="error-text">{error}</p> : null}
-            <Link to="/forgot-password" className="primary-btn auth-link-button">
-              Request New Reset Link
-            </Link>
-          </>
+          <div className="reset-expired-state">
+            <div className="reset-status-card reset-status-error">
+              <div className="reset-status-icon" aria-hidden="true">!</div>
+
+              <div className="reset-status-content">
+                <strong>Link invalid or expired</strong>
+                <p>
+                  {error ||
+                    'This password reset link may have expired, already been used, or is no longer valid.'}
+                </p>
+              </div>
+            </div>
+
+            <p className="reset-help-text">
+              Request a fresh password reset link and we’ll send a new one to your account email.
+            </p>
+
+            <div className="reset-action-stack">
+              <Link
+                to="/forgot-password"
+                className="primary-btn auth-link-button reset-primary-action"
+              >
+                Request New Reset Link
+              </Link>
+
+              <Link to="/login" className="reset-secondary-action">
+                Back to Sign In
+              </Link>
+            </div>
+          </div>
         )}
 
-        <div className="auth-footer-row top-gap">
-          <Link to="/login" className="text-link">Back to Sign In</Link>
-        </div>
+        {validating || success || tokenValid ? (
+          <div className="auth-footer-row top-gap">
+            <Link to="/login" className="text-link">Back to Sign In</Link>
+          </div>
+        ) : null}
       </div>
     </div>
   );
