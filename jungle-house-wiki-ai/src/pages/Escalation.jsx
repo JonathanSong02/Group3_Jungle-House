@@ -234,6 +234,7 @@ export default function Escalation() {
 
       const formData = new FormData();
       formData.append('manual_answer', manualAnswer.trim());
+      formData.append('expected_message_id', items.find((item) => item.escalation_id === id)?.chat_context?.latest_message_id || '');
       formData.append('handled_by', currentUserId || '');
 
       if (selectedImage) {
@@ -633,6 +634,22 @@ export default function Escalation() {
                       Asked by {item.asked_by_name || 'Unknown Staff'}
                     </p>
                     <h3>{item.question}</h3>
+                    {item.chat_context && <details>
+                      <summary>Current question and related chat messages</summary>
+                      <p><strong>Employee's latest words:</strong> {item.chat_context.original_question}</p>
+                      <p><strong>Full current question:</strong> {item.chat_context.resolved_question}</p>
+                      <p><strong>Reason:</strong> {item.chat_context.reason}</p>
+                      <p><strong>Message ID:</strong> {item.chat_context.latest_message_id}</p>
+                      <h4>Related messages from this issue</h4>
+                      {(item.chat_context.transcript || []).map((turn) => <div key={turn.message_id}>
+                        <p><strong>Staff:</strong> {turn.question}</p>
+                        {turn.answer && <p><strong>AI:</strong> {turn.answer}</p>}
+                        <small>{turn.message_id}</small>
+                      </div>)}
+                      {!!item.chat_context.background?.length && <details><summary>Earlier background only</summary>
+                        {item.chat_context.background.map((turn) => <p key={turn.message_id}>{turn.question}</p>)}
+                      </details>}
+                    </details>}
                   </div>
                 </div>
 

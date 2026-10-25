@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import api from '../services/api';
 import { useLanguage } from '../i18n/LanguageContext';
+import { useAuth } from '../context/AuthContext';
 import './FloatingAIChat.css';
 
 // Backend answers sometimes embed raw "Image: /static/..." path lines as
@@ -126,7 +127,7 @@ function clampPosition(position, width, height) {
   };
 }
 
-export default function FloatingAIChat() {
+function FloatingChatContent({ ownerKey }) {
   const { t } = useLanguage();
   const location = useLocation();
 
@@ -142,6 +143,46 @@ export default function FloatingAIChat() {
   const messagesEndRef = useRef(null);
   const containerRef = useRef(null);
   const dragStateRef = useRef({ dragging: false, startX: 0, startY: 0, originRight: 24, originBottom: 24, moved: false });
+  const chatRef = useRef(null);
+  const parentRef = useRef(null);
+  const readyRef = useRef(false);
+  const retryRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    let disposed = false;
+    const load = async () => {
+      try {
+        let id = localStorage.getItem(ownerKey);
+        if (!id) {
+          id = crypto.randomUUID();
+          await api.post('/chat/sessions', { chat_id: id });
+          localStorage.setItem(ownerKey, id);
+        }
+        let detail;
+        try { detail = (await api.get(`/chat/sessions/${id}`)).data; }
+        catch (failure) {
+          if (failure?.response?.status !== 404) throw failure;
+          id = crypto.randomUUID();
+          await api.post('/chat/sessions', { chat_id: id });
+          localStorage.setItem(ownerKey, id);
+          detail = (await api.get(`/chat/sessions/${id}`)).data;
+        }
+        if (disposed) return;
+        chatRef.current = id;
+        parentRef.current = detail.latest_message_id;
+        readyRef.current = true;
+        setMessages(detail.turns.flatMap((turn) => [
+          { id: turn.message_id, sender: 'user', text: turn.question },
+          ...(turn.response ? [{ id: `${turn.message_id}:answer`, sender: 'ai', text: buildFloatingChatText(turn.response) }] : []),
+        ]));
+      } catch (failure) {
+        if (!disposed) setError(failure?.response?.data?.message || 'Unable to load saved chat.');
+      }
+    };
+    load();
+    return () => { disposed = true; readyRef.current = false; };
+  }, [open, ownerKey, location.pathname]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -260,7 +301,7 @@ export default function FloatingAIChat() {
 
     const trimmedQuestion = question.trim();
 
-    if (!trimmedQuestion || loading) return;
+    if (!trimmedQuestion || loading || !readyRef.current) return;
 
     const userMessage = {
       id: Date.now(),
@@ -276,12 +317,17 @@ export default function FloatingAIChat() {
     try {
       // The Flask endpoint derives the user ID from the verified session.
       // Do not send a component-controlled user_id in the request payload.
-      const response = await api.post('/chat', {
+      const requestId = retryRef.current?.question === trimmedQuestion ? retryRef.current.id : crypto.randomUUID();
+      retryRef.current = { question: trimmedQuestion, id: requestId };
+      const response = await api.post(`/chat/sessions/${chatRef.current}/messages`, {
         question: trimmedQuestion,
-        context: {},
+        request_id: requestId,
+        parent_message_id: parentRef.current,
       });
 
       const data = response.data || {};
+      parentRef.current = data.message_id;
+      retryRef.current = null;
       const options = Array.isArray(data.options) ? data.options : [];
 
       // The backend wraps every short "keyword" question in a "please
@@ -438,4 +484,12 @@ export default function FloatingAIChat() {
       </button>
     </div>
   );
+}
+
+export default function FloatingAIChat() {
+  const { user } = useAuth();
+  const owner = user?.id ?? user?.user_id;
+  if (owner == null || user?.status !== 'active') return null;
+  const key = `jh_floating_chat_${owner}`;
+  return <FloatingChatContent key={key} ownerKey={key} />;
 }

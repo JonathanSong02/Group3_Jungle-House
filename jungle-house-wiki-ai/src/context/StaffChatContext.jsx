@@ -14,7 +14,7 @@ function readChatIndex(user) {
       updated_at: item.updated_at || '',
     })) : [];
     const activeSessionId = localStorage.getItem(`jh_active_chat_session_${owner}`);
-    return { sessions, activeSessionId: activeSessionId ? Number(activeSessionId) : sessions[0]?.id || null };
+    return { sessions, activeSessionId: activeSessionId || sessions[0]?.id || null };
   } catch {
     return { sessions: [], activeSessionId: null };
   }

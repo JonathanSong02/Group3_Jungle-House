@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api, { API_BASE_URL } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
 import { useStaffChat } from '../context/StaffChatContext';
+import { hydrateChat, mergeBoundReply, reconcileHydration } from '../services/chatSessions';
 import '../styles/Chat.css';
 
 
@@ -1283,7 +1284,7 @@ function createNewSession() {
   const now = new Date().toLocaleString();
 
   return {
-    id: Date.now(),
+    id: crypto.randomUUID(),
     title: 'New Chat',
     messages: starterMessages,
     created_at: now,
@@ -1324,7 +1325,7 @@ function getActiveSessionIdFromStorage(storageKeys, sessions) {
     const savedId = localStorage.getItem(storageKeys.active);
 
     if (savedId && sessions.some((session) => String(session.id) === String(savedId))) {
-      return Number(savedId);
+      return String(savedId);
     }
 
     return sessions[0]?.id || null;
@@ -1515,6 +1516,8 @@ function ChatContent({ storageKeys }) {
   const [historySearch, setHistorySearch] = useState('');
   const [question, setQuestion] = useState('');
   const [loading, setLoading] = useState(false);
+  const [serverReady, setServerReady] = useState(false);
+  const [syncError, setSyncError] = useState('');
   const [previewImage, setPreviewImage] = useState(null);
   const [selectedImage, setSelectedImage] = useState(null);
   const [selectedImagePreview, setSelectedImagePreview] = useState('');
@@ -1527,6 +1530,46 @@ function ChatContent({ storageKeys }) {
   // not something that should ever trigger its own re-render.
   const abortControllerRef = useRef(null);
   const currentRequestIdRef = useRef(null);
+  const currentRequestChatRef = useRef(null);
+  const pendingRequestsRef = useRef(new Map());
+
+  useEffect(() => {
+    let disposed = false;
+    const sync = async () => {
+      try {
+        let index = (await api.get('/chat/sessions')).data;
+        // One-time migration of this signed-in owner's old browser history.
+        const migrationKey = `${storageKeys.sessions}:database-migrated`;
+        if (!localStorage.getItem(migrationKey)) {
+          const existing = new Set(index.map((item) => String(item.id)));
+          for (const local of getChatSessionsFromStorage(storageKeys)) {
+            if (existing.has(String(local.id))) continue;
+            await api.post('/chat/sessions', { chat_id: String(local.id) });
+            await api.post(`/chat/sessions/${local.id}/import`, { title: local.title, messages: local.messages });
+          }
+          localStorage.setItem(migrationKey, '1');
+          index = (await api.get('/chat/sessions')).data;
+        }
+        if (!index.length) {
+          const empty = createNewSession();
+          await api.post('/chat/sessions', { chat_id: empty.id });
+          index = [{ id: empty.id }];
+        }
+        const sessions = await Promise.all(index.map(async (item) => ({ ...item,
+          ...hydrateChat((await api.get(`/chat/sessions/${item.id}`)).data, buildAiMessage, starterMessages) })));
+        if (disposed) return;
+        const saved = localStorage.getItem(storageKeys.active);
+        setChatSessions(sessions);
+        setActiveSessionId(sessions.some((s) => s.id === saved) ? saved : sessions[0].id);
+        saveChatSessionsToStorage(storageKeys, sessions);
+        setServerReady(true);
+      } catch (error) {
+        if (!disposed) setSyncError(error?.response?.data?.message || 'Unable to load saved chats. Refresh to retry.');
+      }
+    };
+    sync();
+    return () => { disposed = true; };
+  }, [storageKeys]);
   const [confirmModal, setConfirmModal] = useState({
     open: false,
     type: '',
@@ -1625,21 +1668,30 @@ function ChatContent({ storageKeys }) {
     });
   };
 
-  const handleSelectSession = (sessionId) => {
+  const handleSelectSession = async (sessionId) => {
     setActiveSessionId(sessionId);
     saveActiveSessionId(storageKeys, sessionId);
     setActiveTab('ask');
     setMobileChatMenuOpen(false);
+    try {
+      const detail = (await api.get(`/chat/sessions/${sessionId}`)).data;
+      const hydrated = hydrateChat(detail, buildAiMessage, starterMessages);
+      setChatSessions((prev) => prev.map((s) => String(s.id) === String(sessionId) ? reconcileHydration(s, hydrated) : s));
+    } catch (error) { setSyncError(error?.response?.data?.message || 'Unable to reload this chat.'); }
   };
 
-  const handleNewChat = () => {
+  const handleNewChat = async () => {
+    if (!serverReady) return;
     const newSession = createNewSession();
-    const updatedSessions = [newSession, ...chatSessions];
-
-    setChatSessions(updatedSessions);
+    try { await api.post('/chat/sessions', { chat_id: newSession.id }); }
+    catch (error) { setSyncError(error?.response?.data?.message || 'Unable to create chat.'); return; }
+    setChatSessions((previous) => {
+      const updatedSessions = [newSession, ...previous];
+      saveChatSessionsToStorage(storageKeys, updatedSessions);
+      return updatedSessions;
+    });
     setActiveSessionId(newSession.id);
 
-    saveChatSessionsToStorage(storageKeys, updatedSessions);
     saveActiveSessionId(storageKeys, newSession.id);
 
     setQuestion('');
@@ -1647,8 +1699,7 @@ function ChatContent({ storageKeys }) {
     setMobileChatMenuOpen(false);
   };
 
-  // Keep Chat.jsx as the single owner of conversations; the staff sidebar only
-  // receives the lightweight index and issues commands. No new chat API exists.
+  // Sidebar receives only this authenticated owner's lightweight chat index.
   useEffect(() => {
     if (staffMode) publishStaffChat(chatSessions, activeSessionId);
   }, [staffMode, publishStaffChat, chatSessions, activeSessionId]);
@@ -1664,7 +1715,7 @@ function ChatContent({ storageKeys }) {
       else { setActiveTab('ask'); setQuestion(''); }
     } else if (command.type === 'select') {
       if (chatSessions.some((session) => String(session.id) === String(command.sessionId))) {
-        handleSelectSession(Number(command.sessionId));
+        handleSelectSession(String(command.sessionId));
       }
     } else if (command.type === 'delete') {
       const target = chatSessions.find((session) => String(session.id) === String(command.sessionId));
@@ -1725,7 +1776,9 @@ function ChatContent({ storageKeys }) {
     });
   };
 
-  const deleteSessionById = (sessionId) => {
+  const deleteSessionById = async (sessionId) => {
+    try { await api.delete(`/chat/sessions/${sessionId}`); }
+    catch (error) { setSyncError(error?.response?.data?.message || 'Unable to delete chat.'); return; }
     const remainingSessions = chatSessions.filter((session) => session.id !== sessionId);
 
     if (remainingSessions.length === 0) {
@@ -1756,7 +1809,8 @@ function ChatContent({ storageKeys }) {
     }
 
     if (confirmModal.type === 'clear-current-chat') {
-      updateCurrentSessionMessages(starterMessages);
+      // Keep the old transcript immutable; a cleared conversation gets a new ID.
+      handleNewChat();
     }
 
     if (confirmModal.type === 'clear-history') {
@@ -1863,7 +1917,7 @@ const removeSelectedImage = () => {
 
     const requestId = currentRequestIdRef.current;
     if (requestId) {
-      api.post('/chat/cancel', { request_id: requestId }).catch((error) => {
+      api.post(`/chat/sessions/${currentRequestChatRef.current}/cancel`, { request_id: requestId }).catch((error) => {
         console.error('Cancel chat request error:', error);
       });
     }
@@ -1888,9 +1942,12 @@ const removeSelectedImage = () => {
     setLoading(true);
 
     try {
-      const response = await api.post('/chat', {
+      const response = await api.post(`/chat/sessions/${activeSessionId}/messages`, {
         question: offerMessage.question,
         force_escalate: true,
+        target_message_id: offerMessage.server_message_id,
+        parent_message_id: activeSession?.latest_message_id,
+        request_id: `escalate-${offerMessage.server_message_id}`,
       });
 
       const aiMessage = buildAiMessage(response.data || {});
@@ -1935,21 +1992,27 @@ const removeSelectedImage = () => {
   const handleSend = async () => {
     const trimmedQuestion = cleanQuestionInput(question);
 
-    if ((!trimmedQuestion && !selectedImage) || loading) return;
+    if ((!trimmedQuestion && !selectedImage) || loading || !serverReady) return;
 
     const displayQuestion =
       trimmedQuestion || (isImageUploadFile(selectedImage) ? 'Uploaded an image' : 'Uploaded a file');
 
+    // Reuse the ID after a transport error: server-side retries are idempotent.
+    const retryKey = `${activeSessionId}:${trimmedQuestion}:${selectedImage?.name || ''}`;
+    const requestId = pendingRequestsRef.current.get(retryKey) || crypto.randomUUID();
+    pendingRequestsRef.current.set(retryKey, requestId);
     const userMessage = {
       id: Date.now(),
       sender: 'user',
       type: 'text',
       text: displayQuestion,
+      request_id: requestId,
       image_files: selectedImagePreview ? [selectedImagePreview] : [],
     };
 
     const context = extractLatestSopContext(messages, displayQuestion);
-    const messagesAfterUserQuestion = [...messages, userMessage];
+    const messagesAfterUserQuestion = [...messages.filter((message) =>
+      message.request_id !== requestId && message.reply_to_request_id !== requestId), userMessage];
 
     updateCurrentSessionMessages(messagesAfterUserQuestion, displayQuestion);
 
@@ -1964,19 +2027,17 @@ const removeSelectedImage = () => {
     setSelectedImage(null);
     setSelectedImagePreview('');
 
-    const requestId =
-      (typeof crypto !== 'undefined' && crypto.randomUUID)
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-
     const controller = new AbortController();
     abortControllerRef.current = controller;
     currentRequestIdRef.current = requestId;
+    currentRequestChatRef.current = activeSessionId;
 
     setLoading(true);
 
     try {
       let response;
+      await api.post('/chat/sessions', { chat_id: String(activeSessionId) });
+      const endpoint = `/chat/sessions/${activeSessionId}/messages`;
 
       if (imageToSend) {
         const formData = new FormData();
@@ -1984,13 +2045,14 @@ const removeSelectedImage = () => {
         formData.append('context', JSON.stringify(context));
         formData.append('attachment', imageToSend);
         formData.append('request_id', requestId);
+        formData.append('parent_message_id', activeSession?.latest_message_id || '');
         // Do not set multipart Content-Type by hand: the browser must supply
         // the boundary. The shared client adds credentials and X-CSRF-Token.
-        response = await api.post('/chat', formData, { signal: controller.signal });
+        response = await api.post(endpoint, formData, { signal: controller.signal });
       } else {
         response = await api.post(
-          '/chat',
-          { question: trimmedQuestion, context, request_id: requestId },
+          endpoint,
+          { question: trimmedQuestion, request_id: requestId, parent_message_id: activeSession?.latest_message_id || null },
           { signal: controller.signal }
         );
       }
@@ -2015,13 +2077,12 @@ const removeSelectedImage = () => {
         ? { ...userMessage, image_files: [permanentImageUrl] }
         : userMessage;
 
-      const finalMessagesAfterUserQuestion = permanentImageUrl
-        ? [...messages, finalUserMessage]
-        : messagesAfterUserQuestion;
-
-      const messagesAfterAiResponse = [...finalMessagesAfterUserQuestion, aiMessage];
-
-      updateCurrentSessionMessages(messagesAfterAiResponse, displayQuestion);
+      setChatSessions((prev) => {
+        const next = mergeBoundReply(prev, activeSessionId, requestId, finalUserMessage, aiMessage, data.message_id);
+        saveChatSessionsToStorage(storageKeys, next);
+        return next;
+      });
+      pendingRequestsRef.current.delete(retryKey);
       addChatHistory(displayQuestion, aiMessage);
 
       if (imagePreviewToRevoke) {
@@ -2048,6 +2109,7 @@ const removeSelectedImage = () => {
           confidence: 0,
           confidence_label: 'low',
           source: 'user_stopped_generation',
+          reply_to_request_id: requestId,
           fallback: false,
           fallback_message: '',
           message: 'Generation stopped.',
@@ -2092,6 +2154,7 @@ const removeSelectedImage = () => {
           confidence: 0,
           confidence_label: 'low',
           source: 'frontend_request_error',
+          reply_to_request_id: requestId,
           fallback: true,
           fallback_message: requestMessage,
           message: requestMessage,
@@ -2137,6 +2200,11 @@ const removeSelectedImage = () => {
       >
         <strong className="ai-chat-sender-label">{message.sender === 'user' ? 'You' : 'AI'}</strong>
         {renderResponseMeta(message, t)}
+        {message.pending_request && <button type="button" className="secondary-btn" disabled={loading}
+          onClick={() => {
+            pendingRequestsRef.current.set(`${activeSessionId}:${message.retry_question}:`, message.pending_request);
+            setQuestion(message.retry_question);
+          }}>Retry saved message</button>}
         {renderKnowledgeLink(message.link || message.article_link)}
 
         {message.sender === 'ai' &&
@@ -2763,7 +2831,7 @@ const removeSelectedImage = () => {
               <button
                 className="primary-btn ai-chat-send-btn"
                 onClick={handleSend}
-                disabled={!question.trim() && !selectedImage}
+                disabled={!serverReady || (!question.trim() && !selectedImage)}
               >
                 {t('chat.send')}
               </button>
@@ -2855,7 +2923,7 @@ const removeSelectedImage = () => {
                   title={t('chat.sendMessage')}
                   aria-label={t('chat.sendMessage')}
                   onClick={handleSend}
-                  disabled={!question.trim() && !selectedImage}
+                  disabled={!serverReady || (!question.trim() && !selectedImage)}
                 >
                   ↑
                 </button>
@@ -3074,12 +3142,14 @@ const removeSelectedImage = () => {
 
   return staffMode ? (
     <div className="staff-chat-page">
+      {(!serverReady || syncError) && <p role="status">{syncError || 'Loading saved chats…'}</p>}
       {activeTab === 'ask' ? renderStaffAskQuestion() : <div className="staff-history-wrap"><div className="staff-history-top"><button type="button" onClick={() => handleTabChange('ask')}>{t('chat.backToChat')}</button><h1>{t('chat.historyTab')}</h1></div>{renderChatHistory()}</div>}
       {previewImage && <div className="staff-image-overlay" role="dialog" aria-modal="true" aria-label={t('chat.previewImage')} onClick={() => setPreviewImage(null)}><button type="button" onClick={() => setPreviewImage(null)} aria-label={t('chat.closePreview')}>×</button><img src={previewImage} alt="Attachment preview" onClick={(event) => event.stopPropagation()}/></div>}
       {renderConfirmModal()}
     </div>
   ) : (
     <div className="ai-chat-page">
+      {(!serverReady || syncError) && <p role="status">{syncError || 'Loading saved chats…'}</p>}
       <div className="ai-chat-top-row">
         <div className="ai-chat-page-heading">
           <span className="ai-chat-page-kicker">{t('chat.kicker')}</span>
@@ -3183,7 +3253,7 @@ const removeSelectedImage = () => {
 // and keeps one user's UI history out of another user's screen.
 export default function Chat() {
   const { user } = useAuth();
-  const storageKeys = getChatStorageKeys(user);
+  const storageKeys = useMemo(() => getChatStorageKeys(user), [user]);
   if (!storageKeys) return null;
   return <ChatContent key={storageKeys.sessions} storageKeys={storageKeys} />;
 }
