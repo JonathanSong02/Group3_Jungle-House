@@ -170,7 +170,7 @@ def update_active_provider_test_status(cursor, success):
 # feature (quiz generation, chat, future tools) can use generate_ai_reply()
 # without caring which provider is actually configured.
 # =========================
-def _call_gemini(prompt, model_name, api_key, timeout, max_output_tokens=None):
+def _call_gemini(prompt, model_name, api_key, timeout):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
 
     # Newer Gemini API keys must be sent as the x-goog-api-key header --
@@ -183,8 +183,7 @@ def _call_gemini(prompt, model_name, api_key, timeout, max_output_tokens=None):
             "x-goog-api-key": api_key,
             "Content-Type": "application/json",
         },
-        json={"contents": [{"parts": [{"text": prompt}]}],
-              **({"generationConfig": {"maxOutputTokens": max_output_tokens}} if max_output_tokens else {})},
+        json={"contents": [{"parts": [{"text": prompt}]}]},
         timeout=timeout,
     )
     response.raise_for_status()
@@ -247,14 +246,13 @@ def _call_gemini_vision(prompt, image_path, model_name, api_key, timeout):
     return data["candidates"][0]["content"]["parts"][0]["text"]
 
 
-def _call_openai_compatible(prompt, model_name, api_key, timeout, base_url, max_output_tokens=None):
+def _call_openai_compatible(prompt, model_name, api_key, timeout, base_url):
     response = requests.post(
         base_url,
         headers={"Authorization": f"Bearer {api_key}"},
         json={
             "model": model_name,
             "messages": [{"role": "user", "content": prompt}],
-            **({"max_completion_tokens" if 'api.openai.com' in base_url else "max_tokens": max_output_tokens} if max_output_tokens else {}),
         },
         timeout=timeout,
     )
@@ -264,7 +262,7 @@ def _call_openai_compatible(prompt, model_name, api_key, timeout, base_url, max_
     return data["choices"][0]["message"]["content"]
 
 
-def _call_anthropic(prompt, model_name, api_key, timeout, max_output_tokens=None):
+def _call_anthropic(prompt, model_name, api_key, timeout):
     response = requests.post(
         "https://api.anthropic.com/v1/messages",
         headers={
@@ -274,7 +272,7 @@ def _call_anthropic(prompt, model_name, api_key, timeout, max_output_tokens=None
         },
         json={
             "model": model_name,
-            "max_tokens": max_output_tokens or 200,
+            "max_tokens": 200,
             "messages": [{"role": "user", "content": prompt}],
         },
         timeout=timeout,
@@ -288,7 +286,7 @@ def _call_anthropic(prompt, model_name, api_key, timeout, max_output_tokens=None
 TRANSIENT_HTTP_STATUS = {429, 500, 502, 503, 504}
 
 
-def call_ai_provider(prompt, provider, model_name, api_key, timeout=90, max_output_tokens=None):
+def call_ai_provider(prompt, provider, model_name, api_key, timeout=90):
     # Providers (especially preview models) briefly return 503/429 under
     # load. These fail fast, so retry a couple of times instead of dropping
     # the staff member's question. Timeouts are NOT retried, so a slow
@@ -297,7 +295,7 @@ def call_ai_provider(prompt, provider, model_name, api_key, timeout=90, max_outp
 
     for attempt in range(max_retries + 1):
         try:
-            return _call_ai_provider_once(prompt, provider, model_name, api_key, timeout, max_output_tokens)
+            return _call_ai_provider_once(prompt, provider, model_name, api_key, timeout)
         except requests.HTTPError as error:
             status = getattr(error.response, "status_code", None)
 
@@ -308,28 +306,26 @@ def call_ai_provider(prompt, provider, model_name, api_key, timeout=90, max_outp
             time.sleep(1.5 * (attempt + 1))
 
 
-def _call_ai_provider_once(prompt, provider, model_name, api_key, timeout=90, max_output_tokens=None):
+def _call_ai_provider_once(prompt, provider, model_name, api_key, timeout=90):
     provider = str(provider or "").strip().lower()
 
     if provider == "gemini":
-        return _call_gemini(prompt, model_name, api_key, timeout, max_output_tokens)
+        return _call_gemini(prompt, model_name, api_key, timeout)
 
     if provider == "openai":
         return _call_openai_compatible(
             prompt, model_name, api_key, timeout,
             base_url="https://api.openai.com/v1/chat/completions",
-            max_output_tokens=max_output_tokens,
         )
 
     if provider == "deepseek":
         return _call_openai_compatible(
             prompt, model_name, api_key, timeout,
             base_url="https://api.deepseek.com/chat/completions",
-            max_output_tokens=max_output_tokens,
         )
 
     if provider == "anthropic":
-        return _call_anthropic(prompt, model_name, api_key, timeout, max_output_tokens)
+        return _call_anthropic(prompt, model_name, api_key, timeout)
 
     raise ValueError(f"Unsupported AI provider: {provider}")
 
@@ -422,47 +418,3 @@ def generate_ai_reply(prompt, timeout=90):
     print(f"AI PROVIDER: using provider='{provider}' model='{model_name}'")
 
     return call_ai_provider(prompt, provider, model_name, api_key, timeout=timeout)
-
-
-def chat_generator():
-    """Snapshot active model and its operator-verified context ceiling.
-
-    No guessed context windows for arbitrary model names. Each deployed model
-    needs CHAT_CONTEXT_<PROVIDER>_<MODEL> set to its documented context limit.
-    A smaller working envelope bounds cost while originals stay in SQL.
-    """
-    import re
-    from chat_memory import ChatError, units
-
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-    try:
-        config = get_active_ai_provider_config(cursor)
-        if not config:
-            raise ChatError("Ask a manager to configure an AI provider first.", 503, "AI_NOT_CONFIGURED")
-        provider, model = config['provider'], config['model_name']
-        api_key = decrypt_api_key(config['encrypted_api_key'])
-    finally:
-        cursor.close()
-        conn.close()
-    suffix = re.sub(r'[^A-Z0-9]+', '_', f'{provider}_{model}'.upper()).strip('_')
-    variable = 'CHAT_CONTEXT_' + suffix
-    try:
-        context_limit = int(os.environ[variable])
-        output_limit = int(os.getenv('CHAT_OUTPUT_TOKENS', '1024'))
-        envelope = int(os.getenv('CHAT_WORKING_TOKENS', '16384'))
-        if context_limit < 4096 or not 512 <= output_limit <= 4096 or envelope < 4096:
-            raise ValueError('Invalid token limits')
-    except (KeyError, ValueError) as error:
-        raise ChatError(f'Configure the documented model context limit in {variable} in backend/src/.env.',
-                        503, 'CHAT_CONTEXT_NOT_CONFIGURED') from error
-    limit = min(context_limit, envelope)
-
-    def generate(prompt):
-        if units(prompt) + output_limit + 256 > limit:
-            raise RuntimeError('Chat prompt exceeds the reserved context budget.')
-        try:
-            return call_ai_provider(prompt, provider, model, api_key, timeout=25, max_output_tokens=output_limit)
-        except (requests.RequestException, ValueError, KeyError, IndexError) as error:
-            raise RuntimeError('AI provider unavailable or returned an invalid response.') from error
-    return generate, limit, output_limit

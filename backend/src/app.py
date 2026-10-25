@@ -10608,15 +10608,6 @@ def get_escalations():
         """, (1 if show_deleted else 0,))
 
         escalations = cursor.fetchall()
-        cursor.close()
-        cursor = None
-        conn.close()
-        conn = None
-        # Additive migration supplies message-bound context; legacy tickets
-        # continue to render with their existing question.
-        details = persistent_chat_store.escalation_details([e['escalation_id'] for e in escalations])
-        for escalation in escalations:
-            escalation['chat_context'] = details.get(escalation['escalation_id'])
         return jsonify(escalations), 200
 
     except Exception as error:
@@ -10644,7 +10635,6 @@ def submit_escalation_answer(escalation_id):
 
         if request.content_type and request.content_type.startswith('multipart/form-data'):
             manual_answer = str(request.form.get('manual_answer', '')).strip()
-            expected_message_id = request.form.get('expected_message_id')
             handled_by = request.form.get('handled_by') or request.form.get('user_id') or request.form.get('userId')
 
             image_file = request.files.get('image') or request.files.get('attachment')
@@ -10667,7 +10657,6 @@ def submit_escalation_answer(escalation_id):
         else:
             data = request.get_json(silent=True) or {}
             manual_answer = str(data.get('manual_answer', '')).strip()
-            expected_message_id = data.get('expected_message_id')
             handled_by = data.get('handled_by') or data.get('user_id') or data.get('userId')
 
         if not manual_answer:
@@ -10684,20 +10673,13 @@ def submit_escalation_answer(escalation_id):
             FROM escalation
             WHERE escalation_id = %s
               AND COALESCE(is_deleted, 0) = 0
-            LIMIT 1 FOR UPDATE
+            LIMIT 1
         """, (escalation_id,))
         escalation = cursor.fetchone()
 
         if not escalation:
             conn.rollback()
             return jsonify({'message': 'Escalation not found.'}), 404
-
-        cursor.execute('SELECT latest_message_id FROM chat_escalation_context WHERE escalation_id=%s FOR UPDATE',
-                       (escalation_id,))
-        chat_binding = cursor.fetchone()
-        if chat_binding and expected_message_id != chat_binding['latest_message_id']:
-            conn.rollback()
-            return jsonify(code='ESCALATION_STALE', message='The employee updated this question. Reload and review the latest messages before answering.'), 409
 
         final_image_url = answer_image_url or escalation.get('image_url')
         final_image_type = answer_image_type or escalation.get('image_type')
@@ -14469,10 +14451,6 @@ def prevent_private_static_caching(response):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.vary.add("Cookie")
     return response
-
-import sys
-from chat_routes import register_chat_routes
-persistent_chat_store = register_chat_routes(app, sys.modules[__name__])
 
 # =========================
 # RUN APP
