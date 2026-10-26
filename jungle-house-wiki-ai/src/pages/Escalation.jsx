@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import StatusBadge from '../components/StatusBadge';
+import EscalationContext from '../components/EscalationContext';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
@@ -685,6 +686,7 @@ export default function Escalation() {
                 </div>
               </div>
 
+              <EscalationContext context={item.conversation_context} />
               {item.image_url ? (
                 <div className="card-like top-gap-sm">
                   <p className="eyebrow">Uploaded Attachment</p>

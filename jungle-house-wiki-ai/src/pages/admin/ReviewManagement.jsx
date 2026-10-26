@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import PageHeader from '../../components/PageHeader';
+import EscalationContext from '../../components/EscalationContext';
 import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../i18n/LanguageContext';
@@ -343,6 +344,8 @@ export default function ReviewManagement() {
                     <p>{item.answer || t('rev.noAnswer')}</p>
                   </div>
 
+                  <EscalationContext context={item.conversation_context} />
+
                   <div className="rm2-card-footer">
                     <div className="rm2-submitter">
                       <span className="rm2-avatar" aria-hidden="true">
@@ -483,6 +486,7 @@ export default function ReviewManagement() {
                                 </div>
                               </div>
 
+                              <EscalationContext context={item.conversation_context} />
                               {item.reviewer_comment ? (
                                 <div className="rm2-existing-comment">
                                   <span className="rm2-detail-label">{t('rev.comment')}</span>
