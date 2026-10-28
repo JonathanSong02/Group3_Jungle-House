@@ -1,4 +1,5 @@
 import os
+import json
 import mysql.connector
 
 
@@ -409,7 +410,7 @@ def search_image_retrieval(question, limit=1):
 # ESCALATION HELPERS
 # =========================
 
-def has_recent_similar_escalation(question, image_url=None, minutes=15):
+def has_recent_similar_escalation(question, image_url=None, minutes=15, asked_by=None, conversation_context=None):
     """
     Avoid creating duplicate escalation tickets when the same staff member
     submits the same question/image again within a short window (double
@@ -424,14 +425,24 @@ def has_recent_similar_escalation(question, image_url=None, minutes=15):
 
         clean_q = normalize_text(question)
 
-        cursor.execute("""
-            SELECT escalation_id, question, image_url, created_at
-            FROM escalation
-            WHERE status = 'pending'
-              AND created_at >= (NOW() - INTERVAL %s MINUTE)
-            ORDER BY created_at DESC
+        context_join = ""
+        context_filter = ""
+        params = [minutes, asked_by]
+        if conversation_context:
+            context_join = "JOIN escalation_context ec ON ec.escalation_id = e.escalation_id"
+            context_filter = "AND ec.conversation_id = %s AND ec.issue_id = %s"
+            params.extend([conversation_context["conversation_id"], conversation_context["issue_id"]])
+        cursor.execute(f"""
+            SELECT e.escalation_id, e.question, e.image_url, e.created_at
+            FROM escalation e {context_join}
+            WHERE e.status = 'pending'
+              AND COALESCE(e.is_deleted, 0) = 0
+              AND e.created_at >= (NOW() - INTERVAL %s MINUTE)
+              AND e.asked_by = %s
+              {context_filter}
+            ORDER BY e.created_at DESC
             LIMIT 50
-        """, (minutes,))
+        """, tuple(params))
 
         for row in cursor.fetchall() or []:
             same_question = normalize_text(row.get("question")) == clean_q
@@ -453,8 +464,91 @@ def has_recent_similar_escalation(question, image_url=None, minutes=15):
             conn.close()
 
 
-def create_escalation(question, ai_result, asked_by=None, image_url=None, image_type=None):
-    existing_escalation_id = has_recent_similar_escalation(question, image_url)
+def _close_context_resources(*resources):
+    for resource in resources:
+        if resource:
+            try:
+                resource.close()
+            except Exception:
+                pass
+
+
+def save_escalation_context(escalation_id, asked_by, context, diagnostic=None):
+    """Optional sidecar snapshot; never modifies the question/AI answer fields.
+
+    Requires the manually reviewed SQL migration. Failure must not prevent
+    saving the original escalation, and is reported to the caller.
+    """
+    conn = cursor = None
+    if diagnostic is not None:
+        diagnostic["code"] = "storage_unavailable"
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT asked_by FROM escalation WHERE escalation_id = %s", (escalation_id,))
+        owner = cursor.fetchone()
+        if not owner or owner["asked_by"] != asked_by:
+            if diagnostic is not None:
+                diagnostic["code"] = "owner_mismatch"
+            return False
+        cursor.execute("SELECT conversation_id, issue_id FROM escalation_context WHERE escalation_id = %s", (escalation_id,))
+        existing = cursor.fetchone()
+        if existing:
+            # Retain the original snapshot on retries; never replace another issue.
+            matches = existing["conversation_id"] == context["conversation_id"] and existing["issue_id"] == context["issue_id"]
+            if diagnostic is not None:
+                diagnostic["code"] = "saved" if matches else "issue_mismatch"
+            return matches
+        cursor.execute("""
+            INSERT INTO escalation_context (escalation_id, conversation_id, issue_id, context_json)
+            VALUES (%s, %s, %s, %s)
+        """, (escalation_id, context["conversation_id"], context["issue_id"], json.dumps(context, ensure_ascii=False)))
+        conn.commit()
+        if diagnostic is not None:
+            diagnostic["code"] = "saved"
+        return True
+    except Exception as error:
+        if diagnostic is not None:
+            diagnostic["code"] = {1146: "schema_missing", 1142: "storage_permission_denied"}.get(getattr(error, "errno", None), "storage_unavailable")
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False
+    finally:
+        _close_context_resources(cursor, conn)
+
+
+def load_escalation_contexts(escalation_ids):
+    ids = list(dict.fromkeys(int(value) for value in escalation_ids if value is not None))
+    if not ids:
+        return {}
+    conn = cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        # Chunk large management lists without exceeding parameter limits.
+        contexts = {}
+        for offset in range(0, len(ids), 200):
+            batch = ids[offset:offset + 200]
+            placeholders = ','.join(['%s'] * len(batch))
+            cursor.execute(f"SELECT escalation_id, context_json FROM escalation_context WHERE escalation_id IN ({placeholders})", tuple(batch))
+            for row in cursor.fetchall() or []:
+                value = json.loads(row["context_json"])
+                if isinstance(value, dict):
+                    contexts[row["escalation_id"]] = value
+        return contexts
+    except Exception:
+        # Existing tickets/reviews remain available before the optional migration.
+        return {}
+    finally:
+        _close_context_resources(cursor, conn)
+
+
+def create_escalation(question, ai_result, asked_by=None, image_url=None, image_type=None, conversation_context=None):
+    existing_escalation_id = has_recent_similar_escalation(
+        question, image_url, asked_by=asked_by, conversation_context=conversation_context)
 
     if existing_escalation_id:
         return existing_escalation_id

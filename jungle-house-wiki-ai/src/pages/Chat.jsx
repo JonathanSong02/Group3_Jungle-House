@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
 import { useStaffChat } from '../context/StaffChatContext';
 import '../styles/Chat.css';
+import { buildIssueContext, getClarificationToken } from '../utils/chatIssueContext';
 
 
 const starterMessages = [
@@ -18,6 +19,12 @@ const starterMessages = [
     },
   },
 ];
+
+const CONTEXT_SAVE_WARNINGS = {
+  en: 'The ticket was saved, but its discussion context could not be saved. Please include the relevant discussion when contacting your team lead.',
+  zh: '问题已升级，但相关讨论未能保存。联系 Team Lead 时，请一并提供相关讨论。',
+  ms: 'Tiket telah disimpan, tetapi konteks perbincangan tidak dapat disimpan. Sertakan perbincangan berkaitan apabila menghubungi ketua pasukan.',
+};
 
 // Production serves private files through the same-origin Vercel /static proxy.
 // Local development serves them from the local Flask host selected by api.js.
@@ -1036,8 +1043,19 @@ function renderResponseMeta(message, t) {
 }
 
 function buildAiMessage(data) {
+  const messageMetadata = {
+    created_at: new Date().toISOString(),
+    escalation_context_saved: data?.escalation_context_saved,
+    escalation_context_warning: data?.escalation_context_warning || '',
+    escalation_context_status: data?.escalation_context_status || '',
+    clarification_token: data?.clarification_token || '',
+    clarification_issue_id: data?.clarification_issue_id || '',
+    clarification_requested: Boolean(data?.clarification_requested),
+    question: data?.question || '',
+  };
   if (!data) {
     return {
+      ...messageMetadata,
       id: Date.now() + 1,
       sender: 'ai',
       type: 'text',
@@ -1079,6 +1097,7 @@ function buildAiMessage(data) {
 
   if (isMultipleChoiceResponse) {
     return {
+      ...messageMetadata,
       id: Date.now() + 1,
       sender: 'ai',
       type: 'multiple_choice',
@@ -1127,6 +1146,7 @@ function buildAiMessage(data) {
         : null;
 
     return {
+      ...messageMetadata,
       id: Date.now() + 1,
       sender: 'ai',
       type: 'sop',
@@ -1161,6 +1181,7 @@ function buildAiMessage(data) {
   }
 
   return {
+    ...messageMetadata,
     id: Date.now() + 1,
     sender: 'ai',
     type: 'text',
@@ -1277,6 +1298,88 @@ function extractLatestSopContext(messages, question) {
     unclear_count: 0,
     last_step_number: null,
   };
+}
+
+// Request context is a bounded selection, never a replacement for saved messages.
+function buildConversationHistory(messages, question) {
+  const maxMessages = 16;
+  const maxMessageChars = 1000;
+  const maxTotalChars = 12000;
+  const plainText = (value) => {
+    if (typeof value !== 'string') return '';
+    const doc = new DOMParser().parseFromString(value, 'text/html');
+    doc.querySelectorAll('script, style, iframe, img, svg').forEach((node) => node.remove());
+    return (doc.body.textContent || '')
+      .replace(/(?:data:|blob:|https?:\/\/|\/static\/)[^\s]+/gi, ' ')
+      .replace(/\s+/g, ' ').trim().slice(0, maxMessageChars);
+  };
+  const tokens = (value) => {
+    const text = value.toLowerCase();
+    const words = text.match(/[a-z0-9]+/g) || [];
+    const stop = new Set(['the', 'and', 'its', 'this', 'that', 'what', 'how', 'about', 'for', 'with', 'you', 'dia', 'itu', 'kalau']);
+    const result = new Set(words.filter((word) => word.length > 2 && !stop.has(word)));
+    for (const run of text.match(/[\u3400-\u9fff]+/g) || []) {
+      for (let i = 0; i < run.length - 1; i += 1) result.add(run.slice(i, i + 2));
+    }
+    return result;
+  };
+  const turns = [];
+  let turn = null;
+  for (const message of messages) {
+    if (message.sender === 'user') {
+      turn = { messages: [], invalid: false };
+      turns.push(turn);
+    }
+    if (!turn) continue; // Includes the initial welcome message.
+    const excluded = message.loading || message.error || /^frontend_/.test(message.source || '') ||
+      ['user_stopped_generation', 'escalation_save_failed'].includes(message.source) ||
+      message.image_files?.length || message.image_url || message.attachment_url ||
+      !['text', 'sop'].includes(message.type);
+    if (excluded) {
+      turn.invalid = true;
+      continue;
+    }
+    if (!['user', 'ai'].includes(message.sender)) continue;
+    const content = plainText(message.sender === 'user' ? message.text : getReadableAnswer(message));
+    if (content) turn.messages.push({ role: message.sender === 'user' ? 'user' : 'assistant', content });
+  }
+  const usable = turns.filter((item) => !item.invalid && item.messages[0]?.role === 'user');
+  const recentStart = Math.max(0, usable.length - 4);
+  const questionTokens = tokens(question);
+  const anchors = new Set(questionTokens);
+  usable.slice(-2).forEach((item) => tokens(item.messages[0].content).forEach((word) => anchors.add(word)));
+  const ranked = usable.slice(0, recentStart).map((item, index) => ({
+    index,
+    score: [...tokens(item.messages.map((message) => message.content).join(' '))]
+      .reduce((score, word) => score + (questionTokens.has(word) ? 4 : anchors.has(word) ? 1 : 0), 0),
+  })).filter((item) => item.score > 0).sort((a, b) => b.score - a.score || b.index - a.index);
+  const older = new Set();
+  for (const { index } of ranked) {
+    if (older.size >= 4) break;
+    older.add(index);
+    // Keep a nearby correction with the discussion it amends, within the same budget.
+    for (let offset = 1; offset <= 2 && older.size < 4; offset += 1) {
+      const next = usable[index + offset];
+      if (index + offset < recentStart && next && /\b(correction|actually|i mean|maksud|sebenarnya)\b|更正|纠正|其實|其实|我是说/i.test(next.messages[0].content)) {
+        older.add(index + offset);
+      }
+    }
+  }
+  const selected = [...older, ...usable.slice(recentStart).map((_, index) => recentStart + index)];
+  const kept = new Set();
+  let count = 0;
+  let size = 0;
+  // Reserve space for recent turns first. Add/drop whole turns, preserving pairing.
+  for (const index of selected.sort((a, b) => b - a)) {
+    const items = usable[index].messages;
+    const chars = items.reduce((sum, item) => sum + item.content.length, 0);
+    if (count + items.length <= maxMessages && size + chars <= maxTotalChars) {
+      kept.add(index);
+      count += items.length;
+      size += chars;
+    }
+  }
+  return [...kept].sort((a, b) => a - b).flatMap((index) => usable[index].messages);
 }
 
 function createNewSession() {
@@ -1496,7 +1599,7 @@ function ChatContent({ storageKeys }) {
   const staffMode = Boolean(staffChat);
   const publishStaffChat = staffChat?.publish;
   const { user } = useAuth();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const firstName = String(user?.full_name || user?.name || 'there').trim().split(/\s+/)[0];
   const staffInputRef = useRef(null);
   const [activeTab, setActiveTab] = useState('ask');
@@ -1578,12 +1681,12 @@ function ChatContent({ storageKeys }) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading, activeSessionId]);
 
-  const updateCurrentSessionMessages = (nextMessages, titleQuestion = '') => {
+  const updateCurrentSessionMessages = (nextMessages, titleQuestion = '', sessionId = activeSessionId) => {
     const now = new Date().toLocaleString();
 
     setChatSessions((prev) => {
       const updatedSessions = prev.map((session) => {
-        if (session.id !== activeSessionId) {
+        if (session.id !== sessionId) {
           return session;
         }
 
@@ -1875,9 +1978,10 @@ const removeSelectedImage = () => {
   const handleEscalationOffer = async (offerMessage, shouldEscalate) => {
     if (loading) return;
 
+    const initiatingSessionId = activeSessionId;
     const sessionTitle = offerMessage.question || '';
     const messagesWithOfferClosed = (activeSession?.messages || messages).map((item) =>
-      item.id === offerMessage.id ? { ...item, escalation_offer: false } : item
+      item.id === offerMessage.id ? { ...item, escalation_offer: false, clarification_requested: false } : item
     );
 
     if (!shouldEscalate) {
@@ -1891,11 +1995,13 @@ const removeSelectedImage = () => {
       const response = await api.post('/chat', {
         question: offerMessage.question,
         force_escalate: true,
+        chat_session_id: `main-${initiatingSessionId}`,
+        escalation_context: buildIssueContext(messages, offerMessage.question, `main-${initiatingSessionId}`, offerMessage.id),
       });
 
       const aiMessage = buildAiMessage(response.data || {});
 
-      updateCurrentSessionMessages([...messagesWithOfferClosed, aiMessage], sessionTitle);
+      updateCurrentSessionMessages([...messagesWithOfferClosed, aiMessage], sessionTitle, initiatingSessionId);
       addChatHistory(sessionTitle, aiMessage);
     } catch (error) {
       console.error('Escalation request failed:', error);
@@ -1925,7 +2031,8 @@ const removeSelectedImage = () => {
             message: failureText,
           },
         ],
-        sessionTitle
+        sessionTitle,
+        initiatingSessionId
       );
     } finally {
       setLoading(false);
@@ -1937,11 +2044,18 @@ const removeSelectedImage = () => {
 
     if ((!trimmedQuestion && !selectedImage) || loading) return;
 
+    const initiatingSessionId = activeSessionId;
+    const initiatingMessages = [...messages];
+    const historyForRequest = selectedImage ? null : buildConversationHistory(initiatingMessages, trimmedQuestion);
+
     const displayQuestion =
       trimmedQuestion || (isImageUploadFile(selectedImage) ? 'Uploaded an image' : 'Uploaded a file');
+    const saveResponseMessages = (nextMessages) =>
+      updateCurrentSessionMessages(nextMessages, displayQuestion, initiatingSessionId);
 
     const userMessage = {
       id: Date.now(),
+      created_at: new Date().toISOString(),
       sender: 'user',
       type: 'text',
       text: displayQuestion,
@@ -1950,6 +2064,7 @@ const removeSelectedImage = () => {
 
     const context = extractLatestSopContext(messages, displayQuestion);
     const messagesAfterUserQuestion = [...messages, userMessage];
+    const issueContextForRequest = buildIssueContext(messagesAfterUserQuestion, displayQuestion, `main-${initiatingSessionId}`);
 
     updateCurrentSessionMessages(messagesAfterUserQuestion, displayQuestion);
 
@@ -1984,13 +2099,16 @@ const removeSelectedImage = () => {
         formData.append('context', JSON.stringify(context));
         formData.append('attachment', imageToSend);
         formData.append('request_id', requestId);
+        formData.append('chat_session_id', `main-${initiatingSessionId}`);
+        formData.append('escalation_context', JSON.stringify(issueContextForRequest));
+        formData.append('clarification_token', getClarificationToken(initiatingMessages, issueContextForRequest));
         // Do not set multipart Content-Type by hand: the browser must supply
         // the boundary. The shared client adds credentials and X-CSRF-Token.
         response = await api.post('/chat', formData, { signal: controller.signal });
       } else {
         response = await api.post(
           '/chat',
-          { question: trimmedQuestion, context, request_id: requestId },
+          { question: trimmedQuestion, context, request_id: requestId, history: historyForRequest, chat_session_id: `main-${initiatingSessionId}`, escalation_context: issueContextForRequest, clarification_token: getClarificationToken(initiatingMessages, issueContextForRequest) },
           { signal: controller.signal }
         );
       }
@@ -2021,7 +2139,7 @@ const removeSelectedImage = () => {
 
       const messagesAfterAiResponse = [...finalMessagesAfterUserQuestion, aiMessage];
 
-      updateCurrentSessionMessages(messagesAfterAiResponse, displayQuestion);
+      saveResponseMessages(messagesAfterAiResponse);
       addChatHistory(displayQuestion, aiMessage);
 
       if (imagePreviewToRevoke) {
@@ -2055,7 +2173,7 @@ const removeSelectedImage = () => {
 
         const messagesAfterStop = [...messagesAfterUserQuestion, stoppedMessage];
 
-        updateCurrentSessionMessages(messagesAfterStop, displayQuestion);
+        saveResponseMessages(messagesAfterStop);
         addChatHistory(displayQuestion, stoppedMessage);
 
         // Deliberately NOT revoking imagePreviewToRevoke here: the request
@@ -2099,7 +2217,7 @@ const removeSelectedImage = () => {
 
         const messagesAfterError = [...messagesAfterUserQuestion, errorMessage];
 
-        updateCurrentSessionMessages(messagesAfterError, displayQuestion);
+        saveResponseMessages(messagesAfterError);
         addChatHistory(displayQuestion, errorMessage);
       }
     } finally {
@@ -2136,7 +2254,10 @@ const removeSelectedImage = () => {
         className={`message-bubble ${message.sender === 'user' ? 'user' : 'ai'}`}
       >
         <strong className="ai-chat-sender-label">{message.sender === 'user' ? 'You' : 'AI'}</strong>
-        {renderResponseMeta(message, t)}
+        {message.clarification_requested ? null : renderResponseMeta(message, t)}
+        {message.escalation_context_warning ? (
+          <p role="status" className="muted small">{CONTEXT_SAVE_WARNINGS[language] || CONTEXT_SAVE_WARNINGS.en}</p>
+        ) : null}
         {renderKnowledgeLink(message.link || message.article_link)}
 
         {message.sender === 'ai' &&
@@ -2330,6 +2451,12 @@ const removeSelectedImage = () => {
             >
               {renderRichKnowledgeContent(message.text, message.link || message.article_link)}
             </p>
+
+            {message.clarification_requested && message.question ? (
+              <button type="button" className="secondary-btn" disabled={loading} onClick={() => handleEscalationOffer(message, true)}>
+                {{ en: 'Ask a team lead instead', zh: '直接请 Team Lead 协助', ms: 'Minta bantuan ketua pasukan' }[language] || 'Ask a team lead instead'}
+              </button>
+            ) : null}
 
             {message.answer && message.answer !== message.text ? (
               <div

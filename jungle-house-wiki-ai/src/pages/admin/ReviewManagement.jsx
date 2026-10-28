@@ -1,5 +1,8 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import PageHeader from '../../components/PageHeader';
+import EscalationContext from '../../components/EscalationContext';
+import StandardQuestionField from '../../components/StandardQuestionField';
+import { QUESTION_LABELS } from '../../utils/standardQuestionLabels';
 import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../i18n/LanguageContext';
@@ -11,12 +14,15 @@ const REVIEWS_PER_PAGE = 10;
 
 export default function ReviewManagement() {
   const { user } = useAuth();
-  const { t, tOr, locale } = useLanguage();
+  const { t, tOr, locale, language } = useLanguage();
 
   const [activeTab, setActiveTab] = useState('pending');
   const [reviews, setReviews] = useState([]);
   const [searchText, setSearchText] = useState('');
   const [reviewerComment, setReviewerComment] = useState({});
+  const [standardQuestions, setStandardQuestions] = useState({});
+  const [questionConfirmed, setQuestionConfirmed] = useState({});
+  const questionLabels = QUESTION_LABELS[language] || QUESTION_LABELS.en;
   const [expandedReviewId, setExpandedReviewId] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -32,7 +38,10 @@ export default function ReviewManagement() {
       setSuccess('');
 
       const response = await api.get('/reviews');
-      setReviews(Array.isArray(response.data) ? response.data : []);
+      const rows = Array.isArray(response.data) ? response.data : [];
+      setReviews(rows);
+      setStandardQuestions(Object.fromEntries(rows.map((item) => [item.review_id, item.question || ''])));
+      setQuestionConfirmed({});
     } catch (err) {
       console.error('REVIEW MANAGEMENT ERROR:', err);
       setError(err.response?.data?.message || t('rev.err.load'));
@@ -68,6 +77,7 @@ export default function ReviewManagement() {
 
         return [
           item.question,
+          item.original_question,
           item.answer,
           item.submitted_by_name,
           item.reviewer_comment,
@@ -118,6 +128,10 @@ export default function ReviewManagement() {
 
 
   const handleReviewAction = async (reviewId, action) => {
+    if (['approve', 'publish'].includes(action) && (!standardQuestions[reviewId]?.trim() || !questionConfirmed[reviewId])) {
+      setError(questionLabels.required);
+      return;
+    }
     try {
       setActionLoadingId(reviewId);
       setError('');
@@ -126,6 +140,7 @@ export default function ReviewManagement() {
       const payload = {
         reviewed_by: user?.id || user?.user_id || null,
         reviewer_comment: reviewerComment[reviewId] || '',
+        ...(['approve', 'publish'].includes(action) ? { standard_question: standardQuestions[reviewId].trim(), standard_question_confirmed: true } : {}),
       };
 
       await api.put(`/reviews/${reviewId}/${action}`, payload);
@@ -335,13 +350,21 @@ export default function ReviewManagement() {
 
                   <div className="rm2-card-question">
                     <span>{t('rev.question')}</span>
-                    <h3>{item.question}</h3>
+                    <h3>{standardQuestions[item.review_id] || item.question}</h3>
+                    <p className="muted small">{questionLabels.original}: {item.original_question || item.question}</p>
                   </div>
 
                   <div className="rm2-card-answer">
                     <span>{t('rev.staffAnswer')}</span>
                     <p>{item.answer || t('rev.noAnswer')}</p>
                   </div>
+
+                  {['pending', 'approved'].includes(item.status) ? <StandardQuestionField
+                    value={standardQuestions[item.review_id] || ''} confirmed={questionConfirmed[item.review_id]}
+                    onChange={(value) => { setStandardQuestions((prev) => ({ ...prev, [item.review_id]: value })); setQuestionConfirmed((prev) => ({ ...prev, [item.review_id]: false })); }}
+                    onConfirm={(value) => setQuestionConfirmed((prev) => ({ ...prev, [item.review_id]: value }))}
+                  /> : null}
+                  <EscalationContext context={item.conversation_context} />
 
                   <div className="rm2-card-footer">
                     <div className="rm2-submitter">
@@ -475,7 +498,8 @@ export default function ReviewManagement() {
                               <div className="rm2-detail-grid">
                                 <div>
                                   <span className="rm2-detail-label">{t('rev.question')}</span>
-                                  <p>{item.question}</p>
+                                  <p>{standardQuestions[item.review_id] || item.question}</p>
+                                  <p className="muted small">{questionLabels.original}: {item.original_question || item.question}</p>
                                 </div>
                                 <div>
                                   <span className="rm2-detail-label">{t('rev.answer')}</span>
@@ -483,6 +507,12 @@ export default function ReviewManagement() {
                                 </div>
                               </div>
 
+                              {['pending', 'approved'].includes(item.status) ? <StandardQuestionField
+                                value={standardQuestions[item.review_id] || ''} confirmed={questionConfirmed[item.review_id]}
+                                onChange={(value) => { setStandardQuestions((prev) => ({ ...prev, [item.review_id]: value })); setQuestionConfirmed((prev) => ({ ...prev, [item.review_id]: false })); }}
+                                onConfirm={(value) => setQuestionConfirmed((prev) => ({ ...prev, [item.review_id]: value }))}
+                              /> : null}
+                              <EscalationContext context={item.conversation_context} />
                               {item.reviewer_comment ? (
                                 <div className="rm2-existing-comment">
                                   <span className="rm2-detail-label">{t('rev.comment')}</span>

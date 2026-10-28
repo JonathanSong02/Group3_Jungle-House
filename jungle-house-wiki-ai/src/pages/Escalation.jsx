@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import StatusBadge from '../components/StatusBadge';
+import EscalationContext from '../components/EscalationContext';
+import StandardQuestionField from '../components/StandardQuestionField';
+import { QUESTION_LABELS } from '../utils/standardQuestionLabels';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
@@ -104,12 +107,15 @@ function AttachmentPreview({ url, type, label = 'Uploaded attachment' }) {
 const API_BASE_URL = 'https://group3jungle-house-production.up.railway.app';
 
 export default function Escalation() {
-  const { t, tOr } = useLanguage();
+  const { t, tOr, language } = useLanguage();
   const { user } = useAuth();
 
   const [items, setItems] = useState([]);
   const [trashItems, setTrashItems] = useState([]);
   const [answers, setAnswers] = useState({});
+  const [standardQuestions, setStandardQuestions] = useState({});
+  const [questionConfirmed, setQuestionConfirmed] = useState({});
+  const questionLabels = QUESTION_LABELS[language] || QUESTION_LABELS.en;
   const [answerImages, setAnswerImages] = useState({});
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
@@ -173,6 +179,8 @@ export default function Escalation() {
       });
 
       setAnswers(answerMap);
+      setStandardQuestions(Object.fromEntries(activeData.map((item) => [item.escalation_id, item.standard_question || item.question || ''])));
+      setQuestionConfirmed({});
     } catch (error) {
       console.error('Fetch escalations error:', error);
       setMessage('Failed to load escalations.');
@@ -223,6 +231,10 @@ export default function Escalation() {
   const submitAnswer = async (id) => {
     const manualAnswer = answers[id];
     const selectedImage = answerImages[id];
+    if (!standardQuestions[id]?.trim() || !questionConfirmed[id]) {
+      setMessage(questionLabels.required);
+      return;
+    }
 
     if (!manualAnswer || !manualAnswer.trim()) {
       setMessage('Please write a manual answer before submitting.');
@@ -234,6 +246,8 @@ export default function Escalation() {
 
       const formData = new FormData();
       formData.append('manual_answer', manualAnswer.trim());
+      formData.append('standard_question', standardQuestions[id].trim());
+      formData.append('standard_question_confirmed', 'true');
       formData.append('handled_by', currentUserId || '');
 
       if (selectedImage) {
@@ -424,12 +438,18 @@ export default function Escalation() {
   };
 
   const approveEscalationAnswer = async (id) => {
+    if (!standardQuestions[id]?.trim() || !questionConfirmed[id]) {
+      setMessage(questionLabels.required);
+      return;
+    }
     try {
       setMessage('');
       setReviewActionLoading((prev) => ({ ...prev, [id]: 'approve' }));
 
       await api.put(`/escalations/${id}/approve`, {
         reviewed_by: currentUserId,
+        standard_question: standardQuestions[id].trim(),
+        standard_question_confirmed: true,
       });
 
       setMessage('Escalation answer approved successfully.');
@@ -632,7 +652,8 @@ export default function Escalation() {
                     <p className="muted small">
                       Asked by {item.asked_by_name || 'Unknown Staff'}
                     </p>
-                    <h3>{item.question}</h3>
+                    <h3>{standardQuestions[item.escalation_id] || item.standard_question || item.question}</h3>
+                    <p className="muted small">{questionLabels.original}: {item.question}</p>
                   </div>
                 </div>
 
@@ -685,6 +706,12 @@ export default function Escalation() {
                 </div>
               </div>
 
+              {(activeTab === 'pending' || (activeTab === 'resolved' && isAdminUser && (!item.review_status || item.review_status === 'pending'))) ? <StandardQuestionField
+                value={standardQuestions[item.escalation_id] || ''} confirmed={questionConfirmed[item.escalation_id]}
+                onChange={(value) => { setStandardQuestions((prev) => ({ ...prev, [item.escalation_id]: value })); setQuestionConfirmed((prev) => ({ ...prev, [item.escalation_id]: false })); }}
+                onConfirm={(value) => setQuestionConfirmed((prev) => ({ ...prev, [item.escalation_id]: value }))}
+              /> : null}
+              <EscalationContext context={item.conversation_context} />
               {item.image_url ? (
                 <div className="card-like top-gap-sm">
                   <p className="eyebrow">Uploaded Attachment</p>
