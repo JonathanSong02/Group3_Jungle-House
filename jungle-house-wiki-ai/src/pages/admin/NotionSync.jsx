@@ -65,6 +65,9 @@ export default function NotionSync() {
   const [runningAudit, setRunningAudit] = useState(false);
   const [cleaningStorage, setCleaningStorage] = useState(false);
 
+  const [autoCategorizing, setAutoCategorizing] = useState(false);
+  const [autoCategorizeResult, setAutoCategorizeResult] = useState(null);
+
   // Obsolete: Notion pages permanently deleted from stored content, kept as
   // a lightweight record so a future sync recognises them instead of
   // re-staging them as brand-new Pending items. Deliberately not folded
@@ -675,6 +678,26 @@ export default function NotionSync() {
       setCleaningStorage(false);
     }
   };
+
+  // Only articles still in the "Notion" category are touched by the
+  // backend, so pressing this again simply continues with what is left.
+  const handleAutoCategorize = async () => {
+    try {
+      setAutoCategorizing(true);
+      setMessage('');
+
+      const response = await api.post('/notion-sync/auto-categorize', { user_id: actorId });
+      setAutoCategorizeResult(response.data || null);
+    } catch (error) {
+      console.error('Notion auto-categorize error:', error);
+      setMessage(tm(error.response?.data?.message) || t('ns.autoCat.err'));
+    } finally {
+      setAutoCategorizing(false);
+    }
+  };
+
+  const autoCategorizeRows = autoCategorizeResult?.results || [];
+  const autoCategorizeHitTimeLimit = autoCategorizeRows.some((row) => row.method === 'time_limit');
 
   const latestJob = jobs[0] || null;
   const connectionStatus = config?.connectionStatus || (config?.connected ? 'connected' : 'disconnected');
@@ -1313,6 +1336,81 @@ export default function NotionSync() {
         )}
           </>
         )}
+      </section>
+
+      {/* Reuses the storage card's styling so both maintenance cards match. */}
+      <section className="ns-card ns-storage-card ns-auto-category-card">
+        <div className="ns-section-head">
+          <div>
+            <span className="ns-kicker">{t('ns.autoCat.kicker')}</span>
+            <h2>{t('ns.autoCat.title')}</h2>
+          </div>
+        </div>
+
+        <p className="ns-section-copy">{t('ns.autoCat.copy')}</p>
+
+        <div className="ns-actions">
+          <button
+            type="button"
+            className="ns-btn primary"
+            onClick={handleAutoCategorize}
+            disabled={autoCategorizing}
+          >
+            {autoCategorizing ? t('ns.autoCat.running') : t('ns.autoCat.run')}
+          </button>
+        </div>
+
+        {autoCategorizeResult ? (
+          autoCategorizeRows.length === 0 ? (
+            <div className="ns-sync-note">
+              <span>{t('ns.autoCat.none')}</span>
+            </div>
+          ) : (
+            <>
+              <div className="ns-sync-result-grid">
+                <div>
+                  <span>{t('ns.autoCat.categorized')}</span>
+                  <strong>{autoCategorizeResult.categorizedCount ?? 0}</strong>
+                </div>
+                <div className={Number(autoCategorizeResult.leftCount) > 0 ? 'failed' : ''}>
+                  <span>{t('ns.autoCat.left')}</span>
+                  <strong>{autoCategorizeResult.leftCount ?? 0}</strong>
+                </div>
+              </div>
+
+              {autoCategorizeHitTimeLimit ? (
+                <div className="ns-sync-note">
+                  <span>{t('ns.autoCat.timeLimit')}</span>
+                </div>
+              ) : null}
+
+              <div className="ns-table-wrap">
+                <table className="ns-table">
+                  <thead>
+                    <tr>
+                      <th>{t('ns.autoCat.col.article')}</th>
+                      <th>{t('ns.autoCat.col.result')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {autoCategorizeRows.map((row) => (
+                      <tr key={row.articleId}>
+                        <td>{row.title || `#${row.articleId}`}</td>
+                        <td>
+                          {row.category
+                            ? tOr(`cat.${row.category}`, row.category)
+                            : row.method === 'time_limit'
+                            ? t('ns.autoCat.notReached')
+                            : t('ns.autoCat.stayed')}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )
+        ) : null}
       </section>
 
       <section className="ns-card ns-storage-card">

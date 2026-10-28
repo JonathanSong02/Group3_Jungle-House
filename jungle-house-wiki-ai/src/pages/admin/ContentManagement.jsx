@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
+import SourceBadge from '../../components/SourceBadge';
 import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../i18n/LanguageContext';
@@ -452,7 +453,8 @@ export default function ContentManagement() {
                       <td>
                         <span className="cm-category-badge">
                           {catLabel(article.category || 'Uncategorized')}
-                        </span>
+                        </span>{' '}
+                        <SourceBadge article={article} className="cm-category-badge" />
                       </td>
 
                       <td>

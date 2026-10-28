@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import PageHeader from "../components/PageHeader";
+import SourceBadge from "../components/SourceBadge";
 import api, { API_BASE_URL } from "../services/api";
 import "../styles/ArticleDetail.css";
 
@@ -637,6 +638,13 @@ export default function ArticleDetail() {
           article.sub_category
             ? `${article.category} > ${article.sub_category}`
             : `Category: ${article.category}`
+        }
+        actions={
+          // Same rule as SourceBadge, checked here so PageHeader doesn't
+          // render an empty actions box for every other article.
+          article.source_type === "notion" && article.category !== "Notion" ? (
+            <SourceBadge article={article} className="status-badge success" />
+          ) : null
         }
       />
 

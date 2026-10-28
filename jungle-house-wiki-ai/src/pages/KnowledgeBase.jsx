@@ -1,6 +1,7 @@
 import { useMemo, useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
+import SourceBadge from '../components/SourceBadge';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
@@ -127,6 +128,7 @@ function StaffKnowledgeView({
         <div className="kb-article-top">
           <span className="kb-mini-icon" aria-hidden="true">{info.icon}</span>
           <span className="kb-article-category">{info.label}</span>
+          <SourceBadge article={article} className="kb-article-category" />
         </div>
         <h3>{article.title || t('kb.untitled')}</h3>
         {!isShortcut && <p className="muted">{preview}</p>}
@@ -581,6 +583,10 @@ export default function KnowledgeBase() {
                               <span className="kb-article-category">
                                 {articleInfo.label}
                               </span>
+                              <SourceBadge
+                                article={article}
+                                className="kb-article-category"
+                              />
                             </div>
 
                             <h3>{article.title}</h3>

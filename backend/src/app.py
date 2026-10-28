@@ -6870,6 +6870,314 @@ def get_notion_pending_updates():
             conn.close()
 
 
+# =========================
+# NOTION ARTICLE AUTO-CATEGORIZE
+# notion_sync_service.apply_pending_update still publishes every brand-new
+# Notion page with category 'Notion' -- unchanged. AFTER that transaction
+# has committed, the helpers below move each new article into one of the
+# normal Knowledge Base categories: the configured AI provider first,
+# simple keyword rules if the AI is not configured / fails / is unsure.
+# An article neither can place stays 'Notion', which managers and team
+# leads treat as "still to be categorized" (they can fix any category by
+# hand from Content Management -> Edit).
+#
+# Only rows that are STILL category 'Notion' and source_type 'notion' are
+# ever updated, so a category someone already changed by hand is never
+# overwritten, and a later re-sync of the same page (which only updates
+# title/content) never re-categorizes it. sub_category is never touched.
+# Any failure here is logged and swallowed: it must never turn a
+# successful Apply into an error.
+# =========================
+import html as notion_category_html
+
+NOTION_UNCATEGORIZED = "Notion"
+NOTION_AUTO_CATEGORIES = ["SOP", "PRODUCT", "SALES", "Training", "Notice"]
+NOTION_AUTO_CATEGORY_AI_TIMEOUT_SECONDS = 10
+# Total time one request may spend categorizing. Apply/Bulk Apply use the
+# shorter budget so publishing stays quick; the manual button gets more.
+# Both (plus one in-flight AI call) stay under the frontend's 60s axios
+# timeout (services/api.js) -- whatever is not reached in time simply
+# stays 'Notion' and the next button press continues with it.
+NOTION_AUTO_CATEGORY_APPLY_BUDGET_SECONDS = 20
+NOTION_AUTO_CATEGORY_BUTTON_BUDGET_SECONDS = 40
+
+# Keyword fallback. Training is listed first because onboarding checklists
+# ("new bee 1st day check list") are made of steps too but belong in
+# Training, not SOP.
+NOTION_CATEGORY_KEYWORDS = {
+    "Training": [
+        "training", "onboarding", "new bee", "wanna bee", "newbie",
+        "new staff", "first day", "1st day", "2nd day", "3rd day",
+        "orientation", "induction",
+    ],
+    "SOP": [
+        "sop", "opening", "closing", "stocktake", "stock take",
+        "settlement", "procedure", "standard operating", "setup",
+        "set up", "shift handover",
+    ],
+    "PRODUCT": [
+        "product", "ingredient", "ingredients", "benefit", "benefits",
+        "price", "pricing", "flavour", "flavor", "royal jelly",
+        "propolis", "pollen", "nutrition", "dosage", "serving",
+    ],
+    "SALES": [
+        "sales", "promotion", "promo", "discount", "incentive",
+        "commission", "sales target", "upsell", "upselling", "selling",
+        "voucher", "bundle",
+    ],
+    "Notice": [
+        "notice", "announcement", "reminder", "penalty", "rule", "rules",
+        "policy", "public holiday", "holiday", "attendance", "warning",
+        "do not", "prohibited", "uniform",
+    ],
+}
+
+
+def notion_article_plain_text(raw_content, limit=3000):
+    text = re.sub(r"<[^>]+>", " ", str(raw_content or ""))
+    text = notion_category_html.unescape(text)
+    return " ".join(text.split())[:limit]
+
+
+def match_notion_category_by_keywords(title, plain_content):
+    """
+    Title hits count 3x a content hit. A single title keyword is enough;
+    content alone needs 3 distinct keywords. The best category must also
+    clearly beat the runner-up, otherwise None (= stays 'Notion').
+    """
+    title_text = str(title or "").lower()
+    content_text = str(plain_content or "").lower()
+    scores = {}
+
+    for category, keywords in NOTION_CATEGORY_KEYWORDS.items():
+        score = 0
+        for keyword in keywords:
+            pattern = r"(?<![a-z0-9])" + re.escape(keyword) + r"(?![a-z0-9])"
+            if re.search(pattern, title_text):
+                score += 3
+            elif re.search(pattern, content_text):
+                score += 1
+        scores[category] = score
+
+    ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+    best_category, best_score = ranked[0]
+    runner_up_score = ranked[1][1] if len(ranked) > 1 else 0
+
+    if best_score >= 3 and best_score > runner_up_score:
+        return best_category
+
+    return None
+
+
+def classify_notion_category_with_ai(title, plain_content):
+    if not AI_PROVIDER_SERVICE_AVAILABLE or not ai_provider_service:
+        return None
+
+    prompt = (
+        "You sort internal knowledge base articles for a honey retail "
+        "company's staff into exactly ONE category.\n"
+        "Categories:\n"
+        "- SOP: step-by-step operating procedures such as store/kiosk "
+        "opening, closing, stocktake, settlement.\n"
+        "- PRODUCT: product introductions, benefits, ingredients, prices.\n"
+        "- SALES: selling techniques, promotions, incentives, sales reports.\n"
+        "- Training: new staff training and onboarding checklists (even if "
+        "they contain steps).\n"
+        "- Notice: announcements, rules, penalties, public holidays.\n"
+        "Reply with ONLY one word: SOP, PRODUCT, SALES, Training, Notice, "
+        "or UNSURE if none clearly fits. No explanation.\n\n"
+        f"Title: {title}\n"
+        f"Content: {plain_content}"
+    )
+
+    try:
+        raw_reply = ai_provider_service.generate_ai_reply(
+            prompt, timeout=NOTION_AUTO_CATEGORY_AI_TIMEOUT_SECONDS
+        )
+    except ai_provider_service.AIProviderNotConfiguredError:
+        return None
+    except Exception as error:
+        print("NOTION AUTO-CATEGORIZE AI ERROR:", error)
+        return None
+
+    reply_words = re.findall(r"[a-z]+", str(raw_reply or "").lower())
+    found = [
+        category for category in NOTION_AUTO_CATEGORIES
+        if category.lower() in reply_words
+    ]
+
+    # Exactly one category named -- anything else (UNSURE, two names,
+    # rambling) is treated as "AI could not decide".
+    return found[0] if len(found) == 1 else None
+
+
+def auto_categorize_notion_articles(article_ids=None, time_budget_seconds=NOTION_AUTO_CATEGORY_APPLY_BUDGET_SECONDS):
+    """
+    article_ids=None means every non-deleted Notion article that is still
+    category 'Notion' (the manual button). Returns a per-article list:
+    {articleId, title, category (None if it stayed 'Notion'), method}.
+    """
+    if article_ids is not None:
+        article_ids = [int(item) for item in article_ids if item]
+        if not article_ids:
+            return []
+
+    started_at = time.time()
+    results = []
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        query = """
+            SELECT article_id, title, content
+            FROM wiki_article
+            WHERE category = %s
+            AND source_type = 'notion'
+            AND is_deleted = FALSE
+        """
+        params = [NOTION_UNCATEGORIZED]
+
+        if article_ids is not None:
+            query += " AND article_id IN (" + ", ".join(["%s"] * len(article_ids)) + ")"
+            params.extend(article_ids)
+
+        query += " ORDER BY article_id ASC"
+
+        cursor.execute(query, tuple(params))
+        articles = cursor.fetchall()
+    except Exception as error:
+        print("NOTION AUTO-CATEGORIZE LOAD ERROR:", error)
+        articles = []
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+    for article in articles:
+        article_id = article.get("article_id")
+        title = article.get("title") or ""
+
+        if time.time() - started_at >= time_budget_seconds:
+            results.append({"articleId": article_id, "title": title, "category": None, "method": "time_limit"})
+            continue
+
+        plain_content = notion_article_plain_text(article.get("content"))
+
+        # The AI call runs with no DB connection open (same reason as
+        # generate_ai_reply itself: a long-idle connection can go stale).
+        category = classify_notion_category_with_ai(title, plain_content)
+        method = "ai"
+
+        if not category:
+            category = match_notion_category_by_keywords(title, plain_content)
+            method = "keywords"
+
+        if not category:
+            results.append({"articleId": article_id, "title": title, "category": None, "method": "unsure"})
+            continue
+
+        conn = None
+        cursor = None
+
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE wiki_article
+                SET category = %s
+                WHERE article_id = %s
+                AND category = %s
+                AND source_type = 'notion'
+            """, (category, article_id, NOTION_UNCATEGORIZED))
+            updated = cursor.rowcount > 0
+            conn.commit()
+        except Exception as error:
+            if conn:
+                conn.rollback()
+            print("NOTION AUTO-CATEGORIZE UPDATE ERROR:", error)
+            updated = False
+        finally:
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
+
+        if updated:
+            results.append({"articleId": article_id, "title": title, "category": category, "method": method})
+        else:
+            # Someone changed the category by hand while the AI was
+            # thinking -- their choice wins, nothing to report as moved.
+            results.append({"articleId": article_id, "title": title, "category": None, "method": "skipped"})
+
+    return results
+
+
+def auto_categorize_notion_articles_after_apply(article_ids):
+    try:
+        results = auto_categorize_notion_articles(article_ids)
+    except Exception as error:
+        print("NOTION AUTO-CATEGORIZE AFTER APPLY ERROR:", error)
+        return
+
+    moved = [item for item in results if item.get("category")]
+    if moved:
+        print(
+            "NOTION AUTO-CATEGORIZE AFTER APPLY: "
+            + ", ".join(f"#{item['articleId']}->{item['category']}" for item in moved)
+        )
+
+
+@app.route("/api/notion-sync/auto-categorize", methods=["POST"])
+def auto_categorize_notion_articles_route():
+    data = request.get_json(silent=True) or {}
+    actor_id = data.get("user_id")
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        if not is_ai_settings_manager(cursor, actor_id):
+            return jsonify({"success": False, "message": "Only managers can auto-categorize Notion articles."}), 403
+    except Exception as error:
+        print("NOTION AUTO-CATEGORIZE PERMISSION ERROR:", error)
+        return jsonify({"success": False, "message": "Failed to auto-categorize Notion articles."}), 500
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+    results = auto_categorize_notion_articles(
+        None, time_budget_seconds=NOTION_AUTO_CATEGORY_BUTTON_BUDGET_SECONDS
+    )
+
+    categorized_count = sum(1 for item in results if item.get("category"))
+    left_count = len(results) - categorized_count
+
+    add_audit_log(
+        actor_id=actor_id,
+        action="Auto-categorized Notion articles",
+        module="Notion Sync",
+        description=f"{categorized_count} Notion article(s) categorized, {left_count} left as Notion."
+    )
+
+    return jsonify({
+        "success": True,
+        "message": f"{categorized_count} article(s) categorized, {left_count} left as Notion.",
+        "categorizedCount": categorized_count,
+        "leftCount": left_count,
+        "results": results,
+    }), 200
+
+
 @app.route("/api/notion-sync/pending-updates/<int:pending_id>/apply", methods=["POST"])
 def apply_notion_pending_update(pending_id):
     if not NOTION_SYNC_SERVICE_AVAILABLE:
@@ -6892,6 +7200,11 @@ def apply_notion_pending_update(pending_id):
             conn.rollback()
             return jsonify({"success": False, "message": "Only managers can approve Notion updates."}), 403
 
+        # Read before applying: only a brand-new page (no article yet) is
+        # auto-categorized afterwards; a re-sync keeps its current category.
+        pending_before = notion_sync_service.get_pending_update(cursor, pending_id) or {}
+        is_new_article = pending_before.get("article_id") is None
+
         applied = notion_sync_service.apply_pending_update(cursor, pending_id, actor_id)
 
         if not applied:
@@ -6906,6 +7219,9 @@ def apply_notion_pending_update(pending_id):
             module="Notion Sync",
             description=f"Applied pending Notion update #{pending_id}."
         )
+
+        if is_new_article:
+            auto_categorize_notion_articles_after_apply([applied])
 
         return jsonify({"success": True, "message": "Published to the Knowledge Base.", "articleId": applied}), 200
 
@@ -7268,9 +7584,17 @@ def bulk_apply_notion_pending_updates():
 
         applied_count = 0
         failed_ids = []
+        new_article_ids = []
         for pending_id in pending_ids:
-            if notion_sync_service.apply_pending_update(cursor, pending_id, actor_id):
+            pending_before = notion_sync_service.get_pending_update(cursor, pending_id) or {}
+            is_new_article = pending_before.get("article_id") is None
+
+            applied_article_id = notion_sync_service.apply_pending_update(cursor, pending_id, actor_id)
+
+            if applied_article_id:
                 applied_count += 1
+                if is_new_article:
+                    new_article_ids.append(applied_article_id)
             else:
                 failed_ids.append(pending_id)
 
@@ -7282,6 +7606,8 @@ def bulk_apply_notion_pending_updates():
             module="Notion Sync",
             description=f"{applied_count} pending Notion update(s) published to the Knowledge Base."
         )
+
+        auto_categorize_notion_articles_after_apply(new_article_ids)
 
         return jsonify({
             "success": True,
@@ -9144,6 +9470,36 @@ def chat():
         }), 500
 
 
+# wiki_article.source_type is only added the first time Notion sync runs
+# (notion_sync_service.ensure_notion_columns_on_wiki_article). The article
+# reads below return it so the frontend can show a "Notion" label, but on
+# a database that never used Notion it falls back to NULL instead of
+# breaking the Knowledge Base. Once seen, the column cannot disappear, so
+# the positive answer is cached.
+_WIKI_ARTICLE_HAS_SOURCE_TYPE = False
+
+
+def wiki_article_source_type_select(cursor):
+    global _WIKI_ARTICLE_HAS_SOURCE_TYPE
+
+    if not _WIKI_ARTICLE_HAS_SOURCE_TYPE:
+        try:
+            cursor.execute("""
+                SELECT COUNT(*) AS c
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'wiki_article'
+                  AND COLUMN_NAME = 'source_type'
+            """)
+            row = cursor.fetchone() or {}
+            count = row.get("c", 0) if isinstance(row, dict) else row[0]
+            _WIKI_ARTICLE_HAS_SOURCE_TYPE = count > 0
+        except Exception as error:
+            print("SOURCE_TYPE COLUMN CHECK ERROR:", error)
+
+    return "source_type" if _WIKI_ARTICLE_HAS_SOURCE_TYPE else "NULL AS source_type"
+
+
 # =========================
 # KNOWLEDGE BASE ROUTES
 # Active Articles / Retrieve Bin
@@ -9171,8 +9527,10 @@ def get_articles():
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
 
-        cursor.execute("""
-            SELECT 
+        source_type_select = wiki_article_source_type_select(cursor)
+
+        cursor.execute(f"""
+            SELECT
                 article_id,
                 title,
                 content,
@@ -9184,7 +9542,8 @@ def get_articles():
                 image_files,
                 is_deleted,
                 deleted_at,
-                deleted_by
+                deleted_by,
+                {source_type_select}
             FROM wiki_article
             WHERE is_deleted = %s
             ORDER BY article_id DESC
@@ -9345,17 +9704,20 @@ def get_article_detail(article_id):
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
 
-        cursor.execute("""
-            SELECT 
-                article_id, 
-                title, 
-                content, 
-                category, 
-                sub_category, 
+        source_type_select = wiki_article_source_type_select(cursor)
+
+        cursor.execute(f"""
+            SELECT
+                article_id,
+                title,
+                content,
+                category,
+                sub_category,
                 link,
                 attachment_url,
                 attachment_type,
-                image_files
+                image_files,
+                {source_type_select}
             FROM wiki_article
             WHERE article_id = %s
             AND is_deleted = FALSE

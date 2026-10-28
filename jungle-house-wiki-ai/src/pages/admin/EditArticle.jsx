@@ -4,7 +4,9 @@ import { useNavigate, useParams } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
 import api from '../../services/api';
 
-const categories = ['SOP', 'PRODUCT', 'SALES', 'Training', 'Notice'];
+// 'Notion' = synced from Notion but not categorized yet; listed so such an
+// article shows its real category here instead of appearing as 'SOP'.
+const categories = ['SOP', 'PRODUCT', 'SALES', 'Training', 'Notice', 'Notion'];
 const acceptedFileTypes =
   'image/png,image/jpeg,image/jpg,image/gif,image/webp,image/bmp,image/svg+xml,.pdf,.doc,.docx';
 const API_BASE_URL = 'https://group3jungle-house-production.up.railway.app';
