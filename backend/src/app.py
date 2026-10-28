@@ -7169,8 +7169,9 @@ def get_notion_pending_updates():
 # notion_sync_service.apply_pending_update still publishes every brand-new
 # Notion page with category 'Notion' -- unchanged. AFTER that transaction
 # has committed, the helpers below move each new article into one of the
-# normal Knowledge Base categories: the configured AI provider first,
-# simple keyword rules if the AI is not configured / fails / is unsure.
+# normal Knowledge Base categories: simple keyword rules first (instant),
+# then the configured AI provider, in batches, for whatever keywords could
+# not place.
 # An article neither can place stays 'Notion', which managers and team
 # leads treat as "still to be categorized" (they can fix any category by
 # hand from Content Management -> Edit).
@@ -7186,16 +7187,20 @@ import html as notion_category_html
 
 NOTION_UNCATEGORIZED = "Notion"
 NOTION_AUTO_CATEGORIES = ["SOP", "PRODUCT", "SALES", "Training", "Notice"]
-NOTION_AUTO_CATEGORY_AI_TIMEOUT_SECONDS = 10
-# Total time one request may spend categorizing. Apply/Bulk Apply use the
-# shorter budget so publishing stays quick; the manual button gets more.
-# Both (plus one in-flight AI call) stay under the frontend's 60s axios
-# timeout (services/api.js) -- whatever is not reached in time simply
-# stays 'Notion' and the next button press continues with it.
+# Keyword rules run first for every article (instant). Only the articles
+# they cannot place go to the AI, several per call, each shortened.
+NOTION_AUTO_CATEGORY_AI_BATCH_SIZE = 20
+NOTION_AUTO_CATEGORY_AI_CONTENT_CHARS = 500
+NOTION_AUTO_CATEGORY_AI_TIMEOUT_SECONDS = 15
+# Total time one request may spend categorizing. A new AI batch is only
+# started if it can finish (timeout included) inside the budget, so both
+# stay under the frontend's 60s axios timeout (services/api.js) --
+# whatever is not reached in time simply stays 'Notion' and the next
+# button press continues with it.
 NOTION_AUTO_CATEGORY_APPLY_BUDGET_SECONDS = 20
-NOTION_AUTO_CATEGORY_BUTTON_BUDGET_SECONDS = 40
+NOTION_AUTO_CATEGORY_BUTTON_BUDGET_SECONDS = 45
 
-# Keyword fallback. Training is listed first because onboarding checklists
+# Keyword rules. Training is listed first because onboarding checklists
 # ("new bee 1st day check list") are made of steps too but belong in
 # Training, not SOP.
 NOTION_CATEGORY_KEYWORDS = {
@@ -7263,13 +7268,28 @@ def match_notion_category_by_keywords(title, plain_content):
     return None
 
 
-def classify_notion_category_with_ai(title, plain_content):
+class NotionCategoryAIUnavailable(Exception):
+    pass
+
+
+def classify_notion_categories_with_ai(articles):
+    """
+    articles: [{"title", "plain_content"}, ...] (one batch). Returns a list
+    of the same length with a category or None per article. Raises
+    NotionCategoryAIUnavailable when no AI provider is configured, so the
+    caller can stop sending more batches.
+    """
     if not AI_PROVIDER_SERVICE_AVAILABLE or not ai_provider_service:
-        return None
+        raise NotionCategoryAIUnavailable()
+
+    article_lines = []
+    for number, article in enumerate(articles, start=1):
+        snippet = str(article.get("plain_content") or "")[:NOTION_AUTO_CATEGORY_AI_CONTENT_CHARS]
+        article_lines.append(f"[{number}] Title: {article.get('title') or ''}\nContent: {snippet}")
 
     prompt = (
         "You sort internal knowledge base articles for a honey retail "
-        "company's staff into exactly ONE category.\n"
+        "company's staff. Give each article exactly ONE category.\n"
         "Categories:\n"
         "- SOP: step-by-step operating procedures such as store/kiosk "
         "opening, closing, stocktake, settlement.\n"
@@ -7278,10 +7298,10 @@ def classify_notion_category_with_ai(title, plain_content):
         "- Training: new staff training and onboarding checklists (even if "
         "they contain steps).\n"
         "- Notice: announcements, rules, penalties, public holidays.\n"
-        "Reply with ONLY one word: SOP, PRODUCT, SALES, Training, Notice, "
-        "or UNSURE if none clearly fits. No explanation.\n\n"
-        f"Title: {title}\n"
-        f"Content: {plain_content}"
+        "Use UNSURE if none clearly fits.\n"
+        "Reply with ONLY one line per article in the form `number: CATEGORY`, "
+        "for example `1: SOP`. No explanation.\n\n"
+        + "\n\n".join(article_lines)
     )
 
     try:
@@ -7289,20 +7309,70 @@ def classify_notion_category_with_ai(title, plain_content):
             prompt, timeout=NOTION_AUTO_CATEGORY_AI_TIMEOUT_SECONDS
         )
     except ai_provider_service.AIProviderNotConfiguredError:
-        return None
+        raise NotionCategoryAIUnavailable()
     except Exception as error:
         print("NOTION AUTO-CATEGORIZE AI ERROR:", error)
-        return None
+        return [None] * len(articles)
 
-    reply_words = re.findall(r"[a-z]+", str(raw_reply or "").lower())
-    found = [
-        category for category in NOTION_AUTO_CATEGORIES
-        if category.lower() in reply_words
-    ]
+    categories_by_word = {category.lower(): category for category in NOTION_AUTO_CATEGORIES}
+    answers = [None] * len(articles)
 
-    # Exactly one category named -- anything else (UNSURE, two names,
-    # rambling) is treated as "AI could not decide".
-    return found[0] if len(found) == 1 else None
+    for line in str(raw_reply or "").splitlines():
+        match = re.match(r"^\W*(\d+)\W+([A-Za-z]+)", line.strip())
+        if not match:
+            continue
+
+        index = int(match.group(1)) - 1
+        # Anything that is not exactly one known category (UNSURE, a typo,
+        # an out-of-range number) is treated as "AI could not decide".
+        if 0 <= index < len(articles):
+            answers[index] = categories_by_word.get(match.group(2).lower())
+
+    return answers
+
+
+def save_notion_article_categories(category_by_article_id):
+    """
+    Writes {article_id: category} in one connection. Each row is only
+    updated if it is STILL 'Notion', so a category someone changed by hand
+    in the meantime wins. Returns the set of article ids actually updated.
+    """
+    updated_ids = set()
+    if not category_by_article_id:
+        return updated_ids
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        for article_id, category in category_by_article_id.items():
+            cursor.execute("""
+                UPDATE wiki_article
+                SET category = %s
+                WHERE article_id = %s
+                AND category = %s
+                AND source_type = 'notion'
+            """, (category, article_id, NOTION_UNCATEGORIZED))
+
+            if cursor.rowcount > 0:
+                updated_ids.add(article_id)
+
+        conn.commit()
+    except Exception as error:
+        if conn:
+            conn.rollback()
+        print("NOTION AUTO-CATEGORIZE UPDATE ERROR:", error)
+        updated_ids = set()
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+    return updated_ids
 
 
 def auto_categorize_notion_articles(article_ids=None, time_budget_seconds=NOTION_AUTO_CATEGORY_APPLY_BUDGET_SECONDS):
@@ -7352,61 +7422,86 @@ def auto_categorize_notion_articles(article_ids=None, time_budget_seconds=NOTION
         if conn:
             conn.close()
 
+    # decisions: article_id -> (category or None, method)
+    decisions = {}
+    keyword_categories = {}
+    needs_ai = []
+
+    # Pass 1 -- keyword rules, instant, for every article.
     for article in articles:
         article_id = article.get("article_id")
-        title = article.get("title") or ""
-
-        if time.time() - started_at >= time_budget_seconds:
-            results.append({"articleId": article_id, "title": title, "category": None, "method": "time_limit"})
-            continue
-
         plain_content = notion_article_plain_text(article.get("content"))
+        category = match_notion_category_by_keywords(article.get("title"), plain_content)
 
-        # The AI call runs with no DB connection open (same reason as
-        # generate_ai_reply itself: a long-idle connection can go stale).
-        category = classify_notion_category_with_ai(title, plain_content)
-        method = "ai"
+        if category:
+            keyword_categories[article_id] = category
+        else:
+            needs_ai.append({
+                "article_id": article_id,
+                "title": article.get("title") or "",
+                "plain_content": plain_content,
+            })
 
-        if not category:
-            category = match_notion_category_by_keywords(title, plain_content)
-            method = "keywords"
+    updated_ids = save_notion_article_categories(keyword_categories)
+    for article_id, category in keyword_categories.items():
+        decisions[article_id] = (category, "keywords") if article_id in updated_ids else (None, "skipped")
 
-        if not category:
-            results.append({"articleId": article_id, "title": title, "category": None, "method": "unsure"})
+    # Pass 2 -- AI in batches for whatever keywords could not place. The AI
+    # calls run with no DB connection open (same reason as
+    # generate_ai_reply itself: a long-idle connection can go stale).
+    ai_available = True
+
+    for start in range(0, len(needs_ai), NOTION_AUTO_CATEGORY_AI_BATCH_SIZE):
+        batch = needs_ai[start:start + NOTION_AUTO_CATEGORY_AI_BATCH_SIZE]
+        elapsed = time.time() - started_at
+
+        if not ai_available:
+            for item in batch:
+                decisions[item["article_id"]] = (None, "unsure")
             continue
 
-        conn = None
-        cursor = None
+        if elapsed + NOTION_AUTO_CATEGORY_AI_TIMEOUT_SECONDS > time_budget_seconds:
+            for item in batch:
+                decisions[item["article_id"]] = (None, "time_limit")
+            continue
 
         try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute("""
-                UPDATE wiki_article
-                SET category = %s
-                WHERE article_id = %s
-                AND category = %s
-                AND source_type = 'notion'
-            """, (category, article_id, NOTION_UNCATEGORIZED))
-            updated = cursor.rowcount > 0
-            conn.commit()
-        except Exception as error:
-            if conn:
-                conn.rollback()
-            print("NOTION AUTO-CATEGORIZE UPDATE ERROR:", error)
-            updated = False
-        finally:
-            if cursor:
-                cursor.close()
-            if conn:
-                conn.close()
+            answers = classify_notion_categories_with_ai(batch)
+        except NotionCategoryAIUnavailable:
+            ai_available = False
+            for item in batch:
+                decisions[item["article_id"]] = (None, "unsure")
+            continue
 
-        if updated:
-            results.append({"articleId": article_id, "title": title, "category": category, "method": method})
-        else:
-            # Someone changed the category by hand while the AI was
-            # thinking -- their choice wins, nothing to report as moved.
-            results.append({"articleId": article_id, "title": title, "category": None, "method": "skipped"})
+        ai_categories = {
+            item["article_id"]: answer
+            for item, answer in zip(batch, answers)
+            if answer
+        }
+        updated_ids = save_notion_article_categories(ai_categories)
+
+        for item in batch:
+            article_id = item["article_id"]
+            category = ai_categories.get(article_id)
+
+            if not category:
+                decisions[article_id] = (None, "unsure")
+            elif article_id in updated_ids:
+                decisions[article_id] = (category, "ai")
+            else:
+                # Someone changed the category by hand while the AI was
+                # thinking -- their choice wins, nothing to report as moved.
+                decisions[article_id] = (None, "skipped")
+
+    for article in articles:
+        article_id = article.get("article_id")
+        category, method = decisions.get(article_id, (None, "unsure"))
+        results.append({
+            "articleId": article_id,
+            "title": article.get("title") or "",
+            "category": category,
+            "method": method,
+        })
 
     return results
 
