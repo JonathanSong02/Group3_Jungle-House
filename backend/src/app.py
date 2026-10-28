@@ -15,6 +15,7 @@ import resend
 import secrets
 import hashlib
 import hmac
+import base64
 import requests
 import difflib
 
@@ -572,6 +573,7 @@ def attach_escalation_context_status(response):
         payload = response.get_json(silent=True)
         if isinstance(payload, dict):
             payload["escalation_context_saved"] = status
+            payload["escalation_context_status"] = getattr(g, "chat_escalation_context_status", "saved" if status else "storage_unavailable")
             if not status:
                 payload["escalation_context_warning"] = (
                     "The ticket was saved, but its discussion context could not be saved. "
@@ -2607,10 +2609,14 @@ def create_chat_escalation(question, ai_result, data, image_url=None, image_type
     kwargs = {"conversation_context": context} if context else {}
     escalation_id = create_escalation(question, ai_result, data.get("user_id"), image_url, image_type, **kwargs)
     if escalation_id is not None and data.get("escalation_context") is not None:
+        diagnostic = {"code": "invalid_context" if not context else "storage_unavailable"}
         try:
-            g.chat_escalation_context_saved = bool(context and save_escalation_context(escalation_id, data.get("user_id"), context))
+            g.chat_escalation_context_saved = bool(context and save_escalation_context(escalation_id, data.get("user_id"), context, diagnostic=diagnostic))
         except Exception:
             g.chat_escalation_context_saved = False
+        if g.chat_escalation_context_saved:
+            diagnostic["code"] = "saved"
+        g.chat_escalation_context_status = diagnostic["code"]
     return escalation_id
 
 
@@ -3072,6 +3078,46 @@ DATA:
 
 def get_last_answer_key(data: dict | None = None) -> str:
     return f"{get_chat_memory_key(data)}:last_answer"
+
+
+def is_explicit_answer_rejection(question):
+    return bool(re.search(
+        r"not what i (?:want|mean)|not this\b|wrong answer|this is wrong|none of these"
+        r"|^(?:(?:this|that|your answer) is )?not correct[.!?\s]*$"
+        r"|不是我要|^(?:不对|不對|答错|答錯)[。！!？?\s]*$|(?:回答|答案).*(?:不对|不對|错|錯)"
+        r"|bukan jawapan|jawapan.*(?:salah|bukan)|^tak betul[.!?\s]*$",
+        str(question or ""), re.I))
+
+
+def make_clarification_token(data, issue_id, original_question):
+    # Signed flow state survives worker changes/reloads. It is not a trusted
+    # transcript or policy, and is bound to the authenticated user/session/issue.
+    payload = {"user": str(data.get("user_id")), "chat": get_chat_session_id(data),
+               "issue": issue_id, "question": clean_question(original_question), "at": int(time.time())}
+    encoded = base64.urlsafe_b64encode(json.dumps(payload, ensure_ascii=False).encode()).decode().rstrip("=")
+    secret = app.secret_key if isinstance(app.secret_key, bytes) else str(app.secret_key).encode()
+    signature = hmac.new(secret, encoded.encode(), hashlib.sha256).hexdigest()
+    return encoded + "." + signature
+
+
+def read_clarification_token(token, data, issue_id):
+    if not isinstance(token, str) or len(token) > 4000:
+        return None
+    try:
+        encoded, signature = token.rsplit(".", 1)
+        secret = app.secret_key if isinstance(app.secret_key, bytes) else str(app.secret_key).encode()
+        expected = hmac.new(secret, encoded.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, signature):
+            return None
+        value = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
+        if (not isinstance(value, dict) or value.get("user") != str(data.get("user_id"))
+                or value.get("chat") != get_chat_session_id(data) or value.get("issue") != issue_id
+                or type(value.get("at")) is not int or not -30 <= time.time() - value["at"] <= 1800
+                or not isinstance(value.get("question"), str)):
+            return None
+        return value
+    except (ValueError, TypeError, UnicodeError):
+        return None
 
 
 def is_staff_not_satisfied(text: str) -> bool:
@@ -8517,6 +8563,7 @@ def chat():
             data["user_id"] = current_auth_user_id()
             data["request_id"] = request.form.get("request_id", "")
             data["chat_session_id"] = request.form.get("chat_session_id", "")
+            data["clarification_token"] = request.form.get("clarification_token", "")
             data["original_staff_question"] = clean_question(question)
             try:
                 data["escalation_context"] = json.loads(request.form.get("escalation_context", "null"))
@@ -8918,10 +8965,46 @@ def chat():
         # record. Otherwise a brand-new question that happens to contain one
         # of those phrases (e.g. "...but i dont know what to do next") would
         # be misread as dissatisfaction and never reach KB search at all.
-        if is_staff_not_satisfied(question) and last_answer:
+        main_rejection = bool(get_chat_session_id(data) and is_explicit_answer_rejection(question))
+        if main_rejection or (not get_chat_session_id(data) and is_staff_not_satisfied(question) and last_answer):
+
+            last_answer = last_answer or {}
 
             previous_question = clean_question(last_answer.get("question") or question)
             old_result = last_answer.get("result") or {}
+
+            if main_rejection:
+                if chat_request_id and is_chat_request_cancelled(chat_request_id):
+                    return jsonify({"cancelled": True, "reply": "Generation stopped.", "answer": "Generation stopped.",
+                                    "source": "user_stopped_generation", "fallback": False,
+                                    "escalation_ready": False, "escalation_required": False}), 200
+                issue_context = validate_escalation_context(data.get("escalation_context"), data, question, "answer_rejected")
+                issue_id = issue_context["issue_id"] if issue_context else "unassigned"
+                if issue_context:
+                    issue_questions = [item["content"] for item in issue_context["messages"] if item["role"] == "user" and item["content"] != question]
+                    # A stale server last-answer record must not pick an unrelated
+                    # older topic. Client excerpts remain explicitly unverified.
+                    if previous_question not in issue_questions:
+                        previous_question = clean_question(issue_questions[0] if issue_questions else question)
+                        old_result = {}
+                clarified = read_clarification_token(
+                    data.get("clarification_token") or last_answer.get("clarification_token"), data, issue_id)
+                if not clarified:
+                    replies = {
+                        "en": "I may have misunderstood. Which question or answer are you referring to? Tell me what happened, what you expected, and the information or next step you still need. You can also ask a team lead directly.",
+                        "zh": "我可能理解错了。你指的是哪个问题或回答？请说明实际情况、你的预期，以及你还需要什么信息或下一步指引。你也可以直接请 Team Lead 协助。",
+                        "ms": "Saya mungkin tersalah faham. Soalan atau jawapan yang mana anda maksudkan? Jelaskan apa yang berlaku, jangkaan anda dan maklumat atau langkah seterusnya yang diperlukan. Anda juga boleh meminta bantuan ketua pasukan terus.",
+                    }
+                    token = make_clarification_token(data, issue_id, previous_question)
+                    AI_LAST_ANSWER_MEMORY[get_last_answer_key(data)] = {
+                        "question": previous_question, "result": old_result, "clarification_token": token}
+                    result = {"question": previous_question, "type": "text", "reply": replies.get(detected_language, replies["en"]),
+                              "answer": replies.get(detected_language, replies["en"]), "source": "answer_clarification_requested",
+                              "clarification_requested": True, "clarification_token": token, "clarification_issue_id": issue_id,
+                              "confidence": 0.0, "fallback": False, "escalation_ready": False, "escalation_required": False}
+                    log_request(question, result={**result, "question": question}, user_id=data.get("user_id"))
+                    return jsonify(result), 200
+                previous_question = clean_question(clarified["question"])
 
             wrong_answer_text = (
                 old_result.get("title")
@@ -10581,6 +10664,26 @@ def permanent_delete_article(article_id):
 # ESCALATION ROUTES
 # =========================
 
+def validate_standard_question(data):
+    """A human confirms the standalone FAQ question; never replace staff wording.
+
+    The existing review_queue.question is the reviewed question. The original
+    escalation.question and conversation snapshot remain untouched.
+    """
+    confirmed = data.get("standard_question_confirmed")
+    if not (confirmed is True or confirmed == "true"):
+        return None, "Confirm that the standard question is understandable without chat history and matches the answer."
+    value = data.get("standard_question")
+    if not isinstance(value, str):
+        return None, "A clear standard question is required."
+    question = " ".join(value.split())
+    if not 4 <= len(question) <= 255 or not re.search(r"[A-Za-z\u3400-\u9fff]", question) or re.search(r"<[^>]*>|[\x00-\x1f]|https?://", question, re.I):
+        return None, "Write a plain-text standard question between 4 and 255 characters."
+    if re.search(r"^(?:i mean\b|not this\b|not what i\b|based on (?:my|the)\b|as above\b|what about (?:it|that)\b|我是说|我是說|不是我要|那它|maksud saya\b|bukan ini\b)", question, re.I) or re.fullmatch(r"(?:how much|what now|what should i do|多少钱|多少錢|怎么办|怎麼辦|berapa)[?？.!。\s]*", question, re.I):
+        return None, "Rewrite the question with its subject and situation; do not use a conversational fragment."
+    return question, None
+
+
 def _safe_int_value(value):
     if value is None:
         return None
@@ -10877,6 +10980,7 @@ def get_escalations():
                 u.full_name AS asked_by_name,
                 deleted_user.full_name AS deleted_by_name,
                 latest_review.review_id,
+                latest_review.question AS standard_question,
                 latest_review.status AS review_status,
                 latest_review.reviewer_comment,
                 latest_review.reviewed_at,
@@ -10928,14 +11032,12 @@ def submit_escalation_answer(escalation_id):
 
         if request.content_type and request.content_type.startswith('multipart/form-data'):
             manual_answer = str(request.form.get('manual_answer', '')).strip()
+            standard_question, title_error = validate_standard_question(request.form)
+            if title_error:
+                return jsonify({'message': title_error}), 400
             handled_by = request.form.get('handled_by') or request.form.get('user_id') or request.form.get('userId')
 
             image_file = request.files.get('image') or request.files.get('attachment')
-
-            print("CONTENT TYPE:", request.content_type)
-            print("FORM DATA:", request.form)
-            print("FILES:", request.files)
-            print("IMAGE FILE:", image_file)
 
             if image_file and image_file.filename:
                 answer_image_url, answer_image_type = save_chat_image(image_file)
@@ -10950,6 +11052,9 @@ def submit_escalation_answer(escalation_id):
         else:
             data = request.get_json(silent=True) or {}
             manual_answer = str(data.get('manual_answer', '')).strip()
+            standard_question, title_error = validate_standard_question(data)
+            if title_error:
+                return jsonify({'message': title_error}), 400
             handled_by = data.get('handled_by') or data.get('user_id') or data.get('userId')
 
         if not manual_answer:
@@ -10997,7 +11102,7 @@ def submit_escalation_answer(escalation_id):
         ))
 
         cursor.execute("""
-            SELECT review_id
+            SELECT review_id, question
             FROM review_queue
             WHERE escalation_id = %s
             ORDER BY review_id DESC
@@ -11019,7 +11124,7 @@ def submit_escalation_answer(escalation_id):
                     published_at = NULL
                 WHERE review_id = %s
             """, (
-                question,
+                standard_question,
                 manual_answer,
                 handled_by,
                 review['review_id']
@@ -11031,15 +11136,15 @@ def submit_escalation_answer(escalation_id):
                 VALUES (%s, %s, %s, %s, 'pending', NOW())
             """, (
                 escalation_id,
-                question,
+                standard_question,
                 manual_answer,
                 handled_by
             ))
 
         cursor.execute("""
             DELETE FROM qa_knowledge
-            WHERE question = %s
-        """, (question,))
+            WHERE question IN (%s, %s, %s)
+        """, (question, standard_question, (review or {}).get('question') or question))
 
         cursor.execute("""
             DELETE FROM image_retrieval
@@ -11085,6 +11190,9 @@ def approve_escalation_answer(escalation_id):
     data = request.get_json(silent=True) or {}
     reviewed_by = current_auth_user_id()
     reviewer_comment = str(data.get('reviewer_comment', '')).strip()
+    standard_question, title_error = validate_standard_question(data)
+    if title_error:
+        return jsonify({'message': title_error}), 400
 
     conn = None
     cursor = None
@@ -11107,7 +11215,7 @@ def approve_escalation_answer(escalation_id):
             conn.rollback()
             return jsonify({'message': 'Escalation not found.'}), 404
 
-        question = escalation.get('question') or ''
+        question = standard_question
         manual_answer = str(escalation.get('manual_answer') or '').strip()
 
         if not manual_answer:
@@ -11118,7 +11226,7 @@ def approve_escalation_answer(escalation_id):
             reviewed_by = _safe_int_value(escalation.get('handled_by')) or _safe_int_value(escalation.get('asked_by'))
 
         cursor.execute("""
-            SELECT review_id
+            SELECT review_id, question
             FROM review_queue
             WHERE escalation_id = %s
             ORDER BY review_id DESC
@@ -11157,6 +11265,10 @@ def approve_escalation_answer(escalation_id):
                 reviewed_by,
                 reviewer_comment
             ))
+
+        # Retire ambiguous/previous keys when a reviewer standardises the question.
+        cursor.execute("DELETE FROM qa_knowledge WHERE question IN (%s, %s) AND question <> %s",
+                       (escalation.get('question') or '', (review or {}).get('question') or '', question))
 
         _save_approved_escalation_to_qa_knowledge(
             cursor,
@@ -11707,6 +11819,7 @@ def get_reviews():
                 rq.review_id,
                 rq.escalation_id,
                 rq.question,
+                e.question AS original_question,
                 rq.answer,
                 rq.submitted_by,
                 rq.reviewed_by,
@@ -11718,6 +11831,7 @@ def get_reviews():
                 submitter.full_name AS submitted_by_name,
                 reviewer.full_name AS reviewed_by_name
             FROM review_queue rq
+            LEFT JOIN escalation e ON rq.escalation_id = e.escalation_id
             LEFT JOIN users submitter ON rq.submitted_by = submitter.user_id
             LEFT JOIN users reviewer ON rq.reviewed_by = reviewer.user_id
         """
@@ -11762,6 +11876,9 @@ def approve_review(review_id):
 
     reviewed_by = current_auth_user_id()
     reviewer_comment = data.get("reviewer_comment", "").strip()
+    standard_question, title_error = validate_standard_question(data)
+    if title_error:
+        return jsonify({"message": title_error}), 400
 
     conn = None
     cursor = None
@@ -11774,12 +11891,13 @@ def approve_review(review_id):
             UPDATE review_queue
             SET
                 status = 'approved',
+                question = %s,
                 reviewed_by = %s,
                 reviewer_comment = %s,
                 reviewed_at = NOW()
             WHERE review_id = %s
               AND status = 'pending'
-        """, (reviewed_by, reviewer_comment, review_id))
+        """, (standard_question, reviewed_by, reviewer_comment, review_id))
 
         conn.commit()
 
@@ -11880,6 +11998,9 @@ def reject_review(review_id):
 def publish_review(review_id):
     data = request.get_json() or {}
     reviewed_by = current_auth_user_id()
+    standard_question, title_error = validate_standard_question(data)
+    if title_error:
+        return jsonify({"message": title_error}), 400
 
     conn = None
     cursor = None
@@ -11913,7 +12034,7 @@ def publish_review(review_id):
             (title, content, category, sub_category, link)
             VALUES (%s, %s, %s, %s, %s)
         """, (
-            review["question"][:255],
+            standard_question,
             review["answer"],
             "FAQ",
             "Manager Approved Answer",
@@ -11924,14 +12045,18 @@ def publish_review(review_id):
             UPDATE review_queue
             SET
                 status = 'published',
+                question = %s,
                 published_at = NOW()
             WHERE review_id = %s
-        """, (review_id,))
+        """, (standard_question, review_id))
+
+        if standard_question != review["question"]:
+            cursor.execute("DELETE FROM qa_knowledge WHERE question = %s", (review["question"],))
 
         conn.commit()
 
         save_qa_to_db(
-            review["question"],
+            standard_question,
             {
                 "answer": review["answer"],
                 "confidence": 1.0,

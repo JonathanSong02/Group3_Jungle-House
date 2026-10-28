@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildIssueContext } from './chatIssueContext.js';
+import { buildIssueContext, getClarificationToken } from './chatIssueContext.js';
 
 const user = (id, value, extra = {}) => ({ id, sender: 'user', type: 'text', text: value, ...extra });
 const ai = (id, value, extra = {}) => ({ id, sender: 'ai', type: 'text', text: value, ...extra });
@@ -82,6 +82,8 @@ test('bounds excerpts and reports omissions without changing saved messages', ()
   assert(result.messages.every((item) => item.content.length <= 2000 && item.truncated));
   assert(result.messages.reduce((sum, item) => sum + item.content.length, 0) <= 40000);
   assert(result.omitted_messages > 0);
+  assert.equal(result.messages[0].id, '0');
+  assert.equal(result.messages.at(-1).id, '59');
   assert.equal(JSON.stringify(messages), before);
 });
 
@@ -93,4 +95,17 @@ test('no transcript is invented for an empty session or missing trigger', () => 
 test('loading, failed responses and stopped output are excluded', () => {
   const result = build([user(1, 'iPad'), ai(2, 'error', { source: 'frontend_request_error' }), ai(3, 'stopped', { source: 'user_stopped_generation' })], 'iPad');
   assert.deepEqual(result.messages.map((item) => item.id), ['1']);
+});
+
+test('a rejection follows the immediately preceding issue rather than an older answer', () => {
+  const result = build([user(1, 'Ice delivery payment how much?'), ai(2, 'Ice answer'),
+    user(3, 'Daily Jungle Heart information'), ai(4, 'Daily information'), user(5, 'I think this is not what I want')], 'I think this is not what I want');
+  assert.deepEqual(result.messages.map((item) => item.id), ['3', '4', '5']);
+});
+
+test('clarification state is sent only for the same issue, including after another answer', () => {
+  const messages = [ai(1, 'Please clarify', { clarification_token: 'test-flow-state', clarification_issue_id: 'ice' }), ai(2, 'Another answer')];
+  assert.equal(getClarificationToken(messages, { issue_id: 'ice' }), 'test-flow-state');
+  assert.equal(getClarificationToken(messages, { issue_id: 'daily' }), '');
+  assert.equal(getClarificationToken(messages, null), '');
 });

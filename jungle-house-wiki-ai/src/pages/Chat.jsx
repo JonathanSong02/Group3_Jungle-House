@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
 import { useStaffChat } from '../context/StaffChatContext';
 import '../styles/Chat.css';
-import { buildIssueContext } from '../utils/chatIssueContext';
+import { buildIssueContext, getClarificationToken } from '../utils/chatIssueContext';
 
 
 const starterMessages = [
@@ -1047,6 +1047,11 @@ function buildAiMessage(data) {
     created_at: new Date().toISOString(),
     escalation_context_saved: data?.escalation_context_saved,
     escalation_context_warning: data?.escalation_context_warning || '',
+    escalation_context_status: data?.escalation_context_status || '',
+    clarification_token: data?.clarification_token || '',
+    clarification_issue_id: data?.clarification_issue_id || '',
+    clarification_requested: Boolean(data?.clarification_requested),
+    question: data?.question || '',
   };
   if (!data) {
     return {
@@ -1976,7 +1981,7 @@ const removeSelectedImage = () => {
     const initiatingSessionId = activeSessionId;
     const sessionTitle = offerMessage.question || '';
     const messagesWithOfferClosed = (activeSession?.messages || messages).map((item) =>
-      item.id === offerMessage.id ? { ...item, escalation_offer: false } : item
+      item.id === offerMessage.id ? { ...item, escalation_offer: false, clarification_requested: false } : item
     );
 
     if (!shouldEscalate) {
@@ -2096,13 +2101,14 @@ const removeSelectedImage = () => {
         formData.append('request_id', requestId);
         formData.append('chat_session_id', `main-${initiatingSessionId}`);
         formData.append('escalation_context', JSON.stringify(issueContextForRequest));
+        formData.append('clarification_token', getClarificationToken(initiatingMessages, issueContextForRequest));
         // Do not set multipart Content-Type by hand: the browser must supply
         // the boundary. The shared client adds credentials and X-CSRF-Token.
         response = await api.post('/chat', formData, { signal: controller.signal });
       } else {
         response = await api.post(
           '/chat',
-          { question: trimmedQuestion, context, request_id: requestId, history: historyForRequest, chat_session_id: `main-${initiatingSessionId}`, escalation_context: issueContextForRequest },
+          { question: trimmedQuestion, context, request_id: requestId, history: historyForRequest, chat_session_id: `main-${initiatingSessionId}`, escalation_context: issueContextForRequest, clarification_token: getClarificationToken(initiatingMessages, issueContextForRequest) },
           { signal: controller.signal }
         );
       }
@@ -2248,7 +2254,7 @@ const removeSelectedImage = () => {
         className={`message-bubble ${message.sender === 'user' ? 'user' : 'ai'}`}
       >
         <strong className="ai-chat-sender-label">{message.sender === 'user' ? 'You' : 'AI'}</strong>
-        {renderResponseMeta(message, t)}
+        {message.clarification_requested ? null : renderResponseMeta(message, t)}
         {message.escalation_context_warning ? (
           <p role="status" className="muted small">{CONTEXT_SAVE_WARNINGS[language] || CONTEXT_SAVE_WARNINGS.en}</p>
         ) : null}
@@ -2445,6 +2451,12 @@ const removeSelectedImage = () => {
             >
               {renderRichKnowledgeContent(message.text, message.link || message.article_link)}
             </p>
+
+            {message.clarification_requested && message.question ? (
+              <button type="button" className="secondary-btn" disabled={loading} onClick={() => handleEscalationOffer(message, true)}>
+                {{ en: 'Ask a team lead instead', zh: '直接请 Team Lead 协助', ms: 'Minta bantuan ketua pasukan' }[language] || 'Ask a team lead instead'}
+              </button>
+            ) : null}
 
             {message.answer && message.answer !== message.text ? (
               <div

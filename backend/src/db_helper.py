@@ -473,32 +473,43 @@ def _close_context_resources(*resources):
                 pass
 
 
-def save_escalation_context(escalation_id, asked_by, context):
+def save_escalation_context(escalation_id, asked_by, context, diagnostic=None):
     """Optional sidecar snapshot; never modifies the question/AI answer fields.
 
     Requires the manually reviewed SQL migration. Failure must not prevent
     saving the original escalation, and is reported to the caller.
     """
     conn = cursor = None
+    if diagnostic is not None:
+        diagnostic["code"] = "storage_unavailable"
     try:
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
         cursor.execute("SELECT asked_by FROM escalation WHERE escalation_id = %s", (escalation_id,))
         owner = cursor.fetchone()
         if not owner or owner["asked_by"] != asked_by:
+            if diagnostic is not None:
+                diagnostic["code"] = "owner_mismatch"
             return False
         cursor.execute("SELECT conversation_id, issue_id FROM escalation_context WHERE escalation_id = %s", (escalation_id,))
         existing = cursor.fetchone()
         if existing:
             # Retain the original snapshot on retries; never replace another issue.
-            return existing["conversation_id"] == context["conversation_id"] and existing["issue_id"] == context["issue_id"]
+            matches = existing["conversation_id"] == context["conversation_id"] and existing["issue_id"] == context["issue_id"]
+            if diagnostic is not None:
+                diagnostic["code"] = "saved" if matches else "issue_mismatch"
+            return matches
         cursor.execute("""
             INSERT INTO escalation_context (escalation_id, conversation_id, issue_id, context_json)
             VALUES (%s, %s, %s, %s)
         """, (escalation_id, context["conversation_id"], context["issue_id"], json.dumps(context, ensure_ascii=False)))
         conn.commit()
+        if diagnostic is not None:
+            diagnostic["code"] = "saved"
         return True
-    except Exception:
+    except Exception as error:
+        if diagnostic is not None:
+            diagnostic["code"] = {1146: "schema_missing", 1142: "storage_permission_denied"}.get(getattr(error, "errno", None), "storage_unavailable")
         if conn:
             try:
                 conn.rollback()

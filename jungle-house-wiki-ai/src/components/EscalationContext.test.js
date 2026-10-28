@@ -5,7 +5,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 test('discussion component renders three languages, escapes excerpts and filters links', async () => {
-  const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: 'custom' });
+  const server = await createServer({ server: { middlewareMode: true, hmr: false, ws: false }, appType: 'custom' });
   try {
     const { default: EscalationContext } = await server.ssrLoadModule('/src/components/EscalationContext.jsx');
     const { LanguageProvider } = await server.ssrLoadModule('/src/i18n/LanguageContext.jsx');
@@ -20,7 +20,23 @@ test('discussion component renders three languages, escapes excerpts and filters
       assert(!html.includes('https://example.invalid/unsafe'));
       assert(html.includes('/static/uploads/chat/123_ipad.png'));
     }
-    assert.equal(renderToStaticMarkup(React.createElement(EscalationContext, { context: null })), '');
+    assert(renderToStaticMarkup(React.createElement(EscalationContext, { context: null })).includes('No discussion snapshot'));
+    globalThis.window = { localStorage: { getItem: () => 'en' } };
+    const detailed = { ...context, messages: [
+      { role: 'user', content: 'Original ice payment question' }, { role: 'assistant', content: 'First answer' },
+      { role: 'user', content: 'Intermediate situation' }, { role: 'assistant', content: 'Intermediate explanation' },
+      { role: 'user', content: 'I mean receiving two packs of ice' }, { role: 'assistant', content: 'Answer about two packs' },
+      { role: 'user', content: 'Not what I want' }, { role: 'assistant', content: 'Please explain your situation' },
+      { role: 'user', content: 'Still need help' },
+    ] };
+    const html = renderToStaticMarkup(React.createElement(LanguageProvider, null, React.createElement(EscalationContext, { context: detailed })));
+    const preview = html.split('<details>')[0];
+    assert(preview.includes('Original ice payment question'));
+    assert(preview.includes('I mean receiving two packs of ice'));
+    assert(preview.includes('Answer about two packs'));
+    assert(!preview.includes('Intermediate situation'));
+    assert(html.includes('Intermediate situation'));
+    assert(html.includes('View saved relevant messages'));
   } finally {
     await server.close();
     delete globalThis.window;

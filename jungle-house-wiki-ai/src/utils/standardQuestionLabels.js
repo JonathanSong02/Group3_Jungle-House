@@ -1,0 +1,5 @@
+export const QUESTION_LABELS = {
+  en: { title: 'Standard question / article title', hint: 'Write the subject and situation so this question makes sense without the chat. Do not guess missing details.', confirm: 'I confirm this question is clear without chat history and matches the answer.', required: 'Write and confirm a clear standard question before answering, approving or publishing.', original: 'Original staff wording' },
+  zh: { title: '标准问题／文章标题', hint: '写清楚对象和场景，让人不看聊天也能理解；不确定的信息请先向员工确认。', confirm: '我确认：不看聊天也能理解此问题，并且答案与它对应。', required: '请先填写并确认清楚的标准问题，再提交答案、批准或发布。', original: '员工原话' },
+  ms: { title: 'Soalan standard / tajuk artikel', hint: 'Nyatakan subjek dan situasi supaya soalan jelas tanpa sejarah sembang. Sahkan butiran yang tidak pasti dengan kakitangan.', confirm: 'Saya mengesahkan soalan ini jelas tanpa sejarah sembang dan sepadan dengan jawapan.', required: 'Tulis dan sahkan soalan standard yang jelas sebelum menjawab, meluluskan atau menerbitkan.', original: 'Soalan asal kakitangan' },
+};

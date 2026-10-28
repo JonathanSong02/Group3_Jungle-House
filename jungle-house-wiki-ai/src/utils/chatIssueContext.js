@@ -41,6 +41,15 @@ function inheritsTopic(value) {
   return /^(?:its\b|it\b|and\s+(?:its|benefits)\b|(?:how|what) about (?:it|opening|closing)[?.!\s]*$|correction\b|actually\b|i mean\b|not this\b|next\b|step\s*\d|khasiat dia|kalau buka kedai[?.!\s]*$|maksud saya|sebenarnya)|那[它牠]|^那(?:开店|開店)[呢吗嗎？?\s]*$|^(?:更正|纠正|糾正|其实|其實|我是说|我是說)/i.test(value);
 }
 
+function rejectsAnswer(value) {
+  return /not what i (?:want|mean)|not this\b|wrong answer|this is wrong|none of these|^(?:(?:this|that|your answer) is )?not correct[.!?\s]*$|不是我要|^(?:不对|不對|答错|答錯)[。！!？?\s]*$|(?:回答|答案).*(?:不对|不對|错|錯)|bukan jawapan|jawapan.*(?:salah|bukan)|^tak betul[.!?\s]*$/i.test(value);
+}
+
+export function getClarificationToken(messages, issueContext) {
+  if (!issueContext) return '';
+  return messages.findLast((message) => message.clarification_token && message.clarification_issue_id === issueContext.issue_id)?.clarification_token || '';
+}
+
 export function buildIssueContext(messages, triggerQuestion, conversationId, offerId = null) {
   const turns = [];
   for (const message of messages) {
@@ -61,7 +70,9 @@ export function buildIssueContext(messages, triggerQuestion, conversationId, off
     let chosen = null;
     let best = 0;
     let tied = false;
-    for (const cluster of clusters) {
+    const rejection = rejectsAnswer(String(turn.user.text || ''));
+    if (rejection) chosen = turns[turns.indexOf(turn) - 1]?.cluster;
+    for (const cluster of rejection ? [] : clusters) {
       const score = [...userTokens].reduce((sum, word) => sum + (cluster.userTokens.has(word) ? 3 : cluster.allTokens.has(word) ? 1 : 0), 0);
       if (score > best) { best = score; chosen = cluster; tied = false; }
       else if (score > 0 && score === best) tied = true;
@@ -89,14 +100,17 @@ export function buildIssueContext(messages, triggerQuestion, conversationId, off
   if (!target) target = turns.findLast((turn) => text(turn.user.text) === text(triggerQuestion));
   if (!target?.cluster) return null;
   const selected = target.cluster.turns.flatMap((turn) => turn.messages);
-  const kept = [];
+  const indices = new Set();
   let chars = 0;
-  for (const message of selected.slice().reverse()) {
-    if (kept.length >= 40 || chars + message.content.length > 40000) continue;
-    kept.push(message);
-    chars += message.content.length;
+  // Preserve the beginning as well as the latest clarification. A short
+  // preview must not lose the staff's original question on a long issue.
+  const priority = [...selected.slice(0, 2).map((_, index) => index), ...selected.map((_, index) => index).reverse()];
+  for (const index of priority) {
+    if (indices.has(index) || indices.size >= 40 || chars + selected[index].content.length > 40000) continue;
+    indices.add(index);
+    chars += selected[index].content.length;
   }
-  kept.reverse();
+  const kept = [...indices].sort((a, b) => a - b).map((index) => selected[index]);
   const first = target.cluster.turns[0].messages.find((item) => item.role === 'user')?.content || '';
   const correction = target.cluster.turns.findLast((turn) => /^(?:correction\b|actually\b|i mean\b|maksud saya|sebenarnya|更正|纠正|糾正|其实|其實|我是说|我是說)/i.test(turn.user.text))?.user.text;
   const description = [...new Set([first, correction, text(triggerQuestion)].filter(Boolean))].map((item) => text(item).slice(0, 320)).join('\n');

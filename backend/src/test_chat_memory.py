@@ -3,10 +3,10 @@ starting Notion sync, or contacting a database/provider. Not Flask E2E tests.
 Run: python -m unittest discover -s backend/src -p test_chat_memory.py
 """
 
-import ast, json, re, types, unittest
+import ast, json, re, types, unittest, base64, hashlib, hmac, time
 from pathlib import Path
 from datetime import datetime, timezone
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 source = Path(__file__).with_name("app.py").read_text(encoding="utf-8")
 compile(source, "app.py", "exec")
@@ -14,10 +14,12 @@ tree = ast.parse(source)
 names = {"clean_question", "is_nonsense", "normalize_context", "get_chat_memory_key",
          "prepare_chat_context", "remember_chat_context", "get_last_answer_key", "get_chat_session_id",
          "get_ai_fail_key", "is_staff_not_satisfied", "validate_conversation_history",
-         "needs_conversation_context", "resolve_conversation_search_query"}
+         "needs_conversation_context", "resolve_conversation_search_query", "is_explicit_answer_rejection",
+         "make_clarification_token", "read_clarification_token"}
 env = {"re": re, "json": json, "CJK_CHAR_RE": re.compile(r"[\u3400-\u9fff]"),
        "datetime": datetime, "timezone": timezone, "request": types.SimpleNamespace(remote_addr="local", is_json=True),
-       "AI_CHAT_MEMORY": {}}
+       "AI_CHAT_MEMORY": {}, "base64": base64, "hashlib": hashlib, "hmac": hmac, "time": time,
+       "app": types.SimpleNamespace(secret_key="isolated-test-only")}
 nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
 for n in tree.body:
     if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id in {"_MALAY_GREETINGS", "_PINYIN_GREETINGS"} for t in n.targets):
@@ -457,6 +459,73 @@ class ChatRouteTests(unittest.TestCase):
         for call in env["create_escalation"].call_args_list:
             self.assertNotEqual(call.args[0],"old floating question")
 
+    def rejection_context(self):
+        self.payload.update(question="I think this is not what I want", chat_session_id="main-a", escalation_context={
+            "conversation_id":"main-a", "issue_id":"1", "description":"Ice delivery payment",
+            "messages":[{"role":"user","content":"Ice delivery payment how much?","timestamp":None,"attachments":[]},
+                        {"role":"assistant","content":"A prior answer","timestamp":None,"attachments":[]},
+                        {"role":"user","content":"I think this is not what I want","timestamp":None,"attachments":[]}]})
+        env["AI_LAST_ANSWER_MEMORY"]["user:7:chat:main-a:last_answer"]={"question":"Ice delivery payment how much?","result":{"answer":"A prior answer"}}
+
+    def test_route_first_main_rejection_asks_once_without_escalation_or_provider(self):
+        self.rejection_context()
+        result=self.call()
+        self.assertTrue(result["clarification_requested"])
+        self.assertFalse(result["escalation_required"])
+        env["create_escalation"].assert_not_called()
+        self.provider._call_ai_provider_once.assert_not_called()
+        self.provider.generate_ai_reply.assert_not_called()
+        self.assertEqual(env["log_request"].call_args.kwargs["result"]["question"],self.payload["question"])
+
+    def test_route_cancelled_rejection_does_not_ask_or_escalate(self):
+        self.rejection_context()
+        env["is_chat_request_cancelled"].return_value=True
+        result=self.call()
+        self.assertTrue(result["cancelled"])
+        self.assertFalse(result.get("clarification_requested",False))
+        env["create_escalation"].assert_not_called()
+
+    def test_route_second_rejection_escalates_with_signed_state_on_another_worker(self):
+        self.rejection_context()
+        first=self.call()
+        self.payload.update(question="not this", clarification_token=first["clarification_token"])
+        env["AI_LAST_ANSWER_MEMORY"].clear()
+        result=self.call()
+        self.assertTrue(result["escalation_required"])
+        self.assertEqual(env["create_escalation"].call_args.args[0],"Ice delivery payment how much?")
+
+    def test_route_clarified_reply_can_receive_an_answer(self):
+        self.rejection_context()
+        first=self.call()
+        self.payload.update(question="I need the payment amount for ice delivery", clarification_token=first["clarification_token"], history=None)
+        result=self.call()
+        self.assertEqual(result["source"],"ai_provider_answer")
+        env["create_escalation"].assert_not_called()
+
+    def test_route_direct_escalation_button_does_not_ask_again(self):
+        self.rejection_context()
+        first=self.call()
+        self.payload.update(force_escalate=True, question=first["question"])
+        result=self.call()
+        self.assertEqual(result["source"],"staff_requested_escalation")
+        env["create_escalation"].assert_called_once()
+
+    def test_route_rejection_does_not_use_stale_unrelated_server_answer(self):
+        self.rejection_context()
+        self.payload["escalation_context"]["messages"][0]["content"]="Daily Jungle Heart information"
+        result=self.call()
+        self.assertEqual(result["question"],"Daily Jungle Heart information")
+        env["create_escalation"].assert_not_called()
+
+    def test_route_uncertainty_inside_a_question_is_not_a_rejection(self):
+        self.payload.update(question="I do not know how much ice costs",chat_session_id="main-a")
+        result=self.call()
+        self.assertNotEqual(result.get("source"),"answer_clarification_requested")
+
+    def test_business_condition_is_not_mistaken_for_answer_rejection(self):
+        for question in ["The ice temperature is not correct", "冰箱温度不对", "suhu peti ais tak betul"]:
+            self.assertFalse(env["is_explicit_answer_rejection"](question))
+
 
 
 class SessionAndEscalationContextTests(unittest.TestCase):
@@ -533,7 +602,7 @@ class SessionAndEscalationContextTests(unittest.TestCase):
         self.assertEqual(args.args[:3],("ticket question",result,7))
         context=args.kwargs["conversation_context"]
         self.assertEqual(context["trigger_question"],"The iPad cabinet is locked")
-        env["save_escalation_context"].assert_called_once_with(123,7,context)
+        self.assertEqual(env["save_escalation_context"].call_args.args,(123,7,context))
         self.assertTrue(env["g"].chat_escalation_context_saved)
     def test_context_store_failure_keeps_ticket_and_warns(self):
         env["save_escalation_context"].side_effect=RuntimeError("mock missing table")
@@ -562,6 +631,21 @@ class SessionAndEscalationContextTests(unittest.TestCase):
         self.assertEqual(saved["answer"],"original answer")
         self.assertFalse(saved["escalation_context_saved"])
         self.assertIn("discussion context",saved["escalation_context_warning"])
+
+    def test_clarification_token_is_bound_to_user_chat_and_issue(self):
+        token=env["make_clarification_token"](self.data,"1","Original question")
+        self.assertIsNotNone(env["read_clarification_token"](token,self.data,"1"))
+        for field,value in [("user_id",8),("chat_session_id","main-b")]:
+            other={**self.data,field:value}
+            self.assertIsNone(env["read_clarification_token"](token,other,"1"))
+        self.assertIsNone(env["read_clarification_token"](token,self.data,"another-issue"))
+
+    def test_clarification_token_tampering_and_expiry_are_rejected(self):
+        with patch.object(time,"time",return_value=1000):
+            token=env["make_clarification_token"](self.data,"1","Original question")
+        self.assertIsNone(env["read_clarification_token"](token+"bad",self.data,"1"))
+        with patch.object(time,"time",return_value=2801):
+            self.assertIsNone(env["read_clarification_token"](token,self.data,"1"))
 
 db_source=Path(__file__).with_name("db_helper.py").read_text(encoding="utf-8")
 compile(db_source,"db_helper.py","exec")
@@ -600,6 +684,14 @@ class EscalationContextStorageTests(unittest.TestCase):
         self.cursor.execute.side_effect=RuntimeError("mock missing table")
         self.assertFalse(db_env["save_escalation_context"](123,7,self.context))
         self.assertEqual(db_env["load_escalation_contexts"]([123]),{})
+
+    def test_missing_table_diagnostic_has_no_connection_details(self):
+        error=RuntimeError("details must not be exposed")
+        error.errno=1146
+        self.cursor.execute.side_effect=error
+        diagnostic={}
+        self.assertFalse(db_env["save_escalation_context"](123,7,self.context,diagnostic))
+        self.assertEqual(diagnostic,{"code":"schema_missing"})
     def test_list_loads_json_contexts(self):
         self.cursor.fetchall.return_value=[{"escalation_id":123,"context_json":json.dumps(self.context)}]
         self.assertEqual(db_env["load_escalation_contexts"]([123]),{123:self.context})
@@ -614,6 +706,101 @@ class EscalationContextStorageTests(unittest.TestCase):
         self.cursor.fetchall.return_value=[]
         self.conn.close.side_effect=RuntimeError("mock")
         self.assertEqual(db_env["load_escalation_contexts"]([123]),{})
+
+
+title_functions=[]
+for name in ["validate_standard_question", "submit_escalation_answer", "approve_escalation_answer", "approve_review", "publish_review"]:
+    node=copy.deepcopy(next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name==name))
+    node.decorator_list=[]
+    title_functions.append(node)
+exec(compile(ast.Module(body=title_functions,type_ignores=[]),"actual_title_workflow.py","exec"),env)
+
+
+class StandardQuestionWorkflowTests(unittest.TestCase):
+    def setUp(self):
+        self.title="How much should staff pay when receiving two packs of ice?"
+        self.raw="i mean ice receiving for two packs how much?"
+        self.answer="A separately reviewed answer."
+        self.payload={"standard_question":self.title,"standard_question_confirmed":True,"manual_answer":self.answer}
+        env["request"]=types.SimpleNamespace(content_type="application/json",get_json=lambda **kwargs:self.payload,files={},form={})
+        self.cursor=Mock()
+        self.cursor.rowcount=1
+        self.conn=Mock()
+        self.conn.cursor.return_value=self.cursor
+        env["get_db_connection"]=Mock(return_value=self.conn)
+        env["current_auth_user_id"]=Mock(return_value=7)
+        env["add_audit_log"]=Mock()
+        env["save_qa_to_db"]=Mock()
+        env["_save_approved_escalation_to_qa_knowledge"]=Mock()
+        env["_save_approved_escalation_to_image_retrieval"]=Mock()
+    def test_standard_question_requires_explicit_confirmation(self):
+        for confirmation in [False,None,1,"false"]:
+            question,error=env["validate_standard_question"]({"standard_question":self.title,"standard_question_confirmed":confirmation})
+            self.assertIsNone(question)
+            self.assertIsNotNone(error)
+    def test_fragment_or_vague_title_is_rejected_even_if_confirmed(self):
+        for title in ["i mean ice receiving for two packs how much?","how much?","not this","我是说两个冰块","maksud saya dua pek ais","?????","x"*256,"<b>Ice payment</b>"]:
+            question,error=env["validate_standard_question"]({"standard_question":title,"standard_question_confirmed":True})
+            self.assertIsNone(question,title)
+            self.assertIsNotNone(error)
+    def test_complete_titles_in_three_languages_are_accepted(self):
+        for title in [self.title,"收到两包冰时，员工应支付多少费用？","Berapakah bayaran apabila menerima dua pek ais?"]:
+            question,error=env["validate_standard_question"]({"standard_question":title,"standard_question_confirmed":True})
+            self.assertEqual(question,title)
+            self.assertIsNone(error)
+    def test_missing_title_blocks_all_write_paths_before_database_access(self):
+        self.payload={"manual_answer":self.answer}
+        for name in ["submit_escalation_answer","approve_escalation_answer","approve_review","publish_review"]:
+            response,status=env[name](1)
+            self.assertEqual(status,400,name)
+        env["get_db_connection"].assert_not_called()
+    def test_team_lead_saves_reviewed_question_but_keeps_raw_escalation(self):
+        escalation={"escalation_id":1,"question":self.raw,"image_url":None,"image_type":None}
+        self.cursor.fetchone.side_effect=[escalation,None]
+        response,status=env["submit_escalation_answer"](1)
+        self.assertEqual(status,200,response)
+        writes=[call.args for call in self.cursor.execute.call_args_list]
+        review_insert=next((sql,params) for sql,params in writes if "INSERT INTO review_queue" in sql)
+        self.assertEqual(review_insert[1],(1,self.title,self.answer,7))
+        ticket_update=next(sql for sql,params in writes if "UPDATE escalation" in sql)
+        self.assertNotIn("question =",ticket_update)
+        self.assertEqual(escalation["question"],self.raw)
+        env["save_qa_to_db"].assert_not_called()
+    def test_multipart_answer_accepts_string_confirmation(self):
+        env["request"].content_type="multipart/form-data"
+        env["request"].form={**self.payload,"standard_question_confirmed":"true"}
+        self.cursor.fetchone.side_effect=[{"question":self.raw},None]
+        response,status=env["submit_escalation_answer"](1)
+        self.assertEqual(status,200,response)
+    def test_approval_uses_standard_question_for_trusted_knowledge(self):
+        escalation={"question":self.raw,"manual_answer":self.answer,"asked_by":1,"handled_by":2,"image_url":None,"image_type":None}
+        self.cursor.fetchone.side_effect=[escalation,{"review_id":5,"question":self.raw}]
+        response,status=env["approve_escalation_answer"](1)
+        self.assertEqual(status,200,response)
+        self.assertEqual(env["_save_approved_escalation_to_qa_knowledge"].call_args.args[1:3],(self.title,self.answer))
+        self.assertEqual(escalation["question"],self.raw)
+    def test_review_approval_persists_confirmed_question(self):
+        response,status=env["approve_review"](5)
+        self.assertEqual(status,200,response)
+        sql,params=self.cursor.execute.call_args.args
+        self.assertIn("question = %s",sql)
+        self.assertEqual(params,(self.title,7,"",5))
+    def test_article_contains_only_standard_title_and_approved_answer(self):
+        review={"review_id":5,"question":self.raw,"answer":self.answer,"status":"approved"}
+        self.cursor.fetchone.return_value=review
+        response,status=env["publish_review"](5)
+        self.assertEqual(status,200,response)
+        writes=[call.args for call in self.cursor.execute.call_args_list]
+        article=next((sql,params) for sql,params in writes if "INSERT INTO wiki_article" in sql)
+        self.assertEqual(article[1][:2],(self.title,self.answer))
+        self.assertFalse(any("escalation_context" in sql for sql,params in writes))
+        self.assertEqual(env["save_qa_to_db"].call_args.args[0],self.title)
+        self.assertEqual(env["save_qa_to_db"].call_args.args[1]["answer"],self.answer)
+    def test_unapproved_review_cannot_be_published_with_a_clear_title(self):
+        self.cursor.fetchone.return_value={"review_id":5,"question":self.title,"answer":self.answer,"status":"pending"}
+        response,status=env["publish_review"](5)
+        self.assertEqual(status,400)
+        self.assertFalse(any("INSERT INTO wiki_article" in call.args[0] for call in self.cursor.execute.call_args_list))
 
 
 if __name__ == "__main__":
