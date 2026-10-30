@@ -6,18 +6,60 @@ import api, { API_BASE_URL } from "../services/api";
 import "../styles/ArticleDetail.css";
 
 // Article JSON uses the same cookie-aware API client as login and Knowledge Base.
-// Static uploads are served outside /api. Set VITE_STATIC_BASE_URL when their
-// origin differs from the API origin (e.g. localhost /static files).
-const STATIC_ASSET_BASE_URL = String(
-  import.meta.env.VITE_STATIC_BASE_URL ||
-  import.meta.env.VITE_BACKEND_PUBLIC_URL ||
-  (API_BASE_URL.startsWith("http")
-    ? API_BASE_URL.replace(/\/api\/?$/, "")
-    : (typeof window !== "undefined" &&
-        ["localhost", "127.0.0.1"].includes(window.location.hostname)
-        ? "http://127.0.0.1:5000"
-        : "https://group3jungle-house-production.up.railway.app"))
-).replace(/\/+$/, "");
+// Production serves private static uploads through the same-origin Vercel /static
+// proxy. Local development serves them from the local Flask host selected by api.js.
+const STATIC_ASSET_BASE_URL = API_BASE_URL.startsWith("http")
+  ? API_BASE_URL.replace(/\/api\/?$/, "").replace(/\/+$/, "")
+  : "";
+
+const INTERNAL_STATIC_HOSTS = new Set([
+  "group3jungle-house-production.up.railway.app",
+  "ai-powered-wiki-training-assistant.vercel.app",
+  "jhgroup3.com",
+  "www.jhgroup3.com",
+]);
+
+function rewriteInternalStaticUrl(value) {
+  const url = String(value || "").trim();
+  if (!url) return "";
+
+  if (/^https?:\/\//i.test(url)) {
+    try {
+      const parsed = new URL(url);
+      const currentOrigin =
+        typeof window !== "undefined" ? window.location.origin : "";
+
+      if (
+        parsed.pathname.startsWith("/static/") &&
+        (INTERNAL_STATIC_HOSTS.has(parsed.hostname.toLowerCase()) ||
+          parsed.origin === currentOrigin)
+      ) {
+        return `${STATIC_ASSET_BASE_URL}${parsed.pathname}${parsed.search}${parsed.hash}`;
+      }
+    } catch {
+      // Leave malformed/external URLs unchanged.
+    }
+
+    return url;
+  }
+
+  if (url.startsWith("/static/")) {
+    return `${STATIC_ASSET_BASE_URL}${url}`;
+  }
+
+  if (url.startsWith("static/")) {
+    return `${STATIC_ASSET_BASE_URL}/${url}`;
+  }
+
+  if (
+    /^\/?uploads\/(?:articles|chat)\//i.test(url) ||
+    /^\/?sop_images\//i.test(url)
+  ) {
+    return `${STATIC_ASSET_BASE_URL}/static/${url.replace(/^\/+/, "")}`;
+  }
+
+  return url;
+}
 
 export default function ArticleDetail() {
   const { id } = useParams();
@@ -33,10 +75,17 @@ export default function ArticleDetail() {
     if (!url) return "";
 
     const path = String(url).trim();
-    if (/^(https?:|blob:|data:)/i.test(path)) return path;
 
-    // API downloads use the configured API client route; ordinary upload
-    // files use the static origin rather than the /api proxy.
+    if (/^(blob:|data:)/i.test(path)) return path;
+
+    // Rewrite only Jungle House static files. External links keep their
+    // original destination.
+    const rewrittenStaticUrl = rewriteInternalStaticUrl(path);
+    if (rewrittenStaticUrl !== path) return rewrittenStaticUrl;
+
+    if (/^https?:\/\//i.test(path)) return path;
+
+    // API downloads use the same cookie-aware origin selected by api.js.
     if (path.startsWith("/api/")) {
       const apiOrigin = API_BASE_URL.replace(/\/api\/?$/, "");
       return `${apiOrigin}${path}`;
@@ -45,6 +94,7 @@ export default function ArticleDetail() {
       const apiOrigin = API_BASE_URL.replace(/\/api\/?$/, "");
       return `${apiOrigin}/${path}`;
     }
+
     return `${STATIC_ASSET_BASE_URL}/${path.replace(/^\/+/, "")}`;
   }
 
@@ -150,8 +200,9 @@ export default function ArticleDetail() {
       // saved before that change still have the real URL on href, so fall
       // back to it for those.
       const rawHref = anchor.getAttribute("href") || "";
-      const url = anchor.dataset.fileUrl || (rawHref !== "#" ? rawHref : "");
-      const name = anchor.dataset.fileName || url.split("/").pop() || "Attached file";
+      const rawUrl = anchor.dataset.fileUrl || (rawHref !== "#" ? rawHref : "");
+      const url = getFileUrl(rawUrl);
+      const name = anchor.dataset.fileName || rawUrl.split("/").pop() || "Attached file";
       const lowerUrl = url.toLowerCase();
       const isImage = /\.(png|jpe?g|gif|webp)$/.test(lowerUrl);
       const isPdf = lowerUrl.endsWith(".pdf");
@@ -468,6 +519,48 @@ export default function ArticleDetail() {
           element.removeAttribute(attribute.name);
         }
       });
+    });
+
+    // Rich-text/Notion HTML can contain old absolute Railway static URLs.
+    // Rewrite only Jungle House-owned static files through the current origin.
+    wrapper.querySelectorAll("img[src], source[src], a[href]").forEach((element) => {
+      const attribute = element.tagName.toLowerCase() === "a" ? "href" : "src";
+      const original = element.getAttribute(attribute);
+      const rewritten = rewriteInternalStaticUrl(original);
+
+      if (rewritten && rewritten !== original) {
+        element.setAttribute(attribute, rewritten);
+      }
+    });
+
+    wrapper.querySelectorAll("[data-file-url]").forEach((element) => {
+      const original = element.getAttribute("data-file-url");
+      const rewritten = rewriteInternalStaticUrl(original);
+
+      if (rewritten && rewritten !== original) {
+        element.setAttribute("data-file-url", rewritten);
+      }
+    });
+
+    wrapper.querySelectorAll("img[srcset], source[srcset]").forEach((element) => {
+      const original = element.getAttribute("srcset");
+      if (!original || original.includes("data:") || !original.includes("static/")) return;
+
+      const rewritten = original
+        .split(",")
+        .map((candidate) => {
+          const item = candidate.trim();
+          const boundary = item.search(/\s/);
+
+          return boundary < 0
+            ? rewriteInternalStaticUrl(item)
+            : `${rewriteInternalStaticUrl(item.slice(0, boundary))}${item.slice(boundary)}`;
+        })
+        .join(", ");
+
+      if (rewritten !== original) {
+        element.setAttribute("srcset", rewritten);
+      }
     });
 
     wrapper.querySelectorAll("table").forEach((table) => {
