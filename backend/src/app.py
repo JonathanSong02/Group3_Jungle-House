@@ -1646,6 +1646,7 @@ _MANAGER_ENDPOINTS = {
     "get_ai_settings", "save_ai_settings", "test_ai_settings",
     "get_notion_sync_config", "save_notion_sync_config", "test_notion_sync",
     "run_notion_sync", "get_notion_sync_jobs",
+    "chat_test",
     "update_admin_user_role", "update_admin_user_status", "test_db",
     "debug_chat_uploads", "debug_sop_images", "debug_static_files", "debug_uploads",
 }
