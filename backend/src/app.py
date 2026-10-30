@@ -1659,7 +1659,6 @@ _PUBLIC_STATIC_PREFIXES = (
     "/static/sop_images/",
     "/static/product_images/",
     "/static/notice_images/",
-    "/static/uploads/articles/",
 )
 
 
@@ -1678,9 +1677,8 @@ def require_authenticated_api():
         if not filename or any(segment in {".", ".."} for segment in filename.split("/")):
             return jsonify({"message": "File not found."}), 404
 
-    # Knowledge Base reference assets and article-upload files are intentionally
-    # public so article <img> tags can load reliably without depending on a
-    # Flask session cookie. Chat uploads remain private.
+    # Bundled Knowledge Base reference assets are public. User-uploaded article
+    # and chat files remain private and require the authenticated session cookie.
     if path.startswith(_PUBLIC_STATIC_PREFIXES):
         return None
 
