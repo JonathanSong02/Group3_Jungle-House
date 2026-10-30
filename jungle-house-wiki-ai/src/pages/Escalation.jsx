@@ -4,65 +4,22 @@ import StatusBadge from '../components/StatusBadge';
 import EscalationContext from '../components/EscalationContext';
 import StandardQuestionField from '../components/StandardQuestionField';
 import { QUESTION_LABELS } from '../utils/standardQuestionLabels';
-import api, { API_BASE_URL } from '../services/api';
+import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
 
-// Production serves private files through the same-origin Vercel /static proxy.
-// Local development serves them from the local Flask host selected by api.js.
-const STATIC_ASSET_BASE_URL = API_BASE_URL.startsWith('http')
-  ? API_BASE_URL.replace(/\/api\/?$/, '').replace(/\/+$/, '')
-  : '';
-
-const INTERNAL_STATIC_HOSTS = new Set([
-  'group3jungle-house-production.up.railway.app',
-  'ai-powered-wiki-training-assistant.vercel.app',
-  'jhgroup3.com',
-  'www.jhgroup3.com',
-]);
-
-function buildImageUrl(value) {
-  const url = String(value || '').trim();
+function buildImageUrl(url) {
   if (!url) return '';
 
-  // Old records may contain an absolute Railway/Vercel URL. Rewrite only our
-  // own /static files so the browser uses the current authenticated origin.
-  if (/^https?:\/\//i.test(url)) {
-    try {
-      const parsed = new URL(url);
-      const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
-
-      if (
-        parsed.pathname.startsWith('/static/') &&
-        (INTERNAL_STATIC_HOSTS.has(parsed.hostname.toLowerCase()) ||
-          parsed.origin === currentOrigin)
-      ) {
-        return `${STATIC_ASSET_BASE_URL}${parsed.pathname}${parsed.search}${parsed.hash}`;
-      }
-    } catch {
-      // Leave an unrecognised external URL unchanged.
-    }
-
+  if (url.startsWith('http')) {
     return url;
   }
 
-  if (url.startsWith('/static/')) {
-    return `${STATIC_ASSET_BASE_URL}${url}`;
-  }
-
-  if (url.startsWith('static/')) {
-    return `${STATIC_ASSET_BASE_URL}/${url}`;
-  }
-
-  if (/^\/?uploads\/(?:articles|chat)\//i.test(url) || /^\/?sop_images\//i.test(url)) {
-    return `${STATIC_ASSET_BASE_URL}/static/${url.replace(/^\/+/, '')}`;
-  }
-
   if (url.startsWith('/')) {
-    return `${STATIC_ASSET_BASE_URL}${url}`;
+    return `${API_BASE_URL}${url}`;
   }
 
-  return `${STATIC_ASSET_BASE_URL}/${url}`;
+  return `${API_BASE_URL}/${url}`;
 }
 
 function isImageAttachment(type, url = '') {
@@ -147,6 +104,7 @@ function AttachmentPreview({ url, type, label = 'Uploaded attachment' }) {
   );
 }
 
+const API_BASE_URL = 'https://group3jungle-house-production.up.railway.app';
 
 export default function Escalation() {
   const { t, tOr, language } = useLanguage();
