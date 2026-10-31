@@ -1644,8 +1644,35 @@ _APPROVER_ENDPOINTS = {
 }
 _MANAGER_ENDPOINTS = {
     "get_ai_settings", "save_ai_settings", "test_ai_settings",
-    "get_notion_sync_config", "save_notion_sync_config", "test_notion_sync",
-    "run_notion_sync", "get_notion_sync_jobs",
+
+    # Notion Sync admin workspace. The OAuth callback is intentionally not
+    # listed here because Notion redirects the browser to it directly; it is
+    # protected separately by its signed one-time OAuth state.
+    "get_notion_sync_config",
+    "get_notion_oauth_app_config",
+    "save_notion_oauth_app_config",
+    "reset_notion_oauth_app_config",
+    "start_notion_oauth",
+    "disconnect_notion_sync",
+    "check_notion_sync",
+    "get_notion_pending_updates",
+    "auto_categorize_notion_articles_route",
+    "apply_notion_pending_update",
+    "dismiss_notion_pending_update",
+    "trash_notion_pending_update",
+    "restore_notion_pending_update",
+    "permanently_delete_notion_pending_update",
+    "bulk_apply_notion_pending_updates",
+    "bulk_trash_notion_pending_updates",
+    "bulk_restore_notion_pending_updates",
+    "bulk_permanently_delete_notion_pending_updates",
+    "get_notion_obsolete_articles",
+    "get_notion_obsolete_article_detail",
+    "restore_notion_obsolete_article",
+    "get_notion_sync_jobs",
+    "get_notion_storage_audit",
+    "run_notion_storage_cleanup",
+
     "chat_test",
     "update_admin_user_role", "update_admin_user_status", "test_db",
     "debug_chat_uploads", "debug_sop_images", "debug_static_files", "debug_uploads",
@@ -6712,7 +6739,7 @@ def save_notion_oauth_app_config():
         return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
 
     data = request.get_json(silent=True) or {}
-    actor_id = data.get("user_id")
+    actor_id = current_auth_user_id()
     client_id = str(data.get("clientId", "")).strip()
     client_secret = str(data.get("clientSecret", "")).strip()
 
@@ -6771,7 +6798,7 @@ def reset_notion_oauth_app_config():
         return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
 
     data = request.get_json(silent=True) or {}
-    actor_id = data.get("user_id")
+    actor_id = current_auth_user_id()
 
     conn = None
     cursor = None
@@ -6821,7 +6848,7 @@ def start_notion_oauth():
         return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
 
     data = request.get_json(silent=True) or {}
-    actor_id = data.get("user_id")
+    actor_id = current_auth_user_id()
 
     conn = None
     cursor = None
@@ -6988,7 +7015,7 @@ def disconnect_notion_sync():
         return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
 
     data = request.get_json(silent=True) or {}
-    actor_id = data.get("user_id")
+    actor_id = current_auth_user_id()
 
     conn = None
     cursor = None
@@ -7036,7 +7063,7 @@ def check_notion_sync():
         return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
 
     data = request.get_json(silent=True) or {}
-    actor_id = data.get("user_id")
+    actor_id = current_auth_user_id()
 
     conn = None
     cursor = None
@@ -7541,7 +7568,7 @@ def auto_categorize_notion_articles_after_apply(article_ids):
 @app.route("/api/notion-sync/auto-categorize", methods=["POST"])
 def auto_categorize_notion_articles_route():
     data = request.get_json(silent=True) or {}
-    actor_id = data.get("user_id")
+    actor_id = current_auth_user_id()
 
     conn = None
     cursor = None
@@ -7590,7 +7617,7 @@ def apply_notion_pending_update(pending_id):
         return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
 
     data = request.get_json(silent=True) or {}
-    actor_id = data.get("user_id")
+    actor_id = current_auth_user_id()
 
     conn = None
     cursor = None
@@ -7651,7 +7678,7 @@ def dismiss_notion_pending_update(pending_id):
         return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
 
     data = request.get_json(silent=True) or {}
-    actor_id = data.get("user_id")
+    actor_id = current_auth_user_id()
 
     conn = None
     cursor = None
@@ -7704,7 +7731,7 @@ def trash_notion_pending_update(pending_id):
         return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
 
     data = request.get_json(silent=True) or {}
-    actor_id = data.get("user_id")
+    actor_id = current_auth_user_id()
 
     conn = None
     cursor = None
@@ -7758,7 +7785,7 @@ def restore_notion_pending_update(pending_id):
         return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
 
     data = request.get_json(silent=True) or {}
-    actor_id = data.get("user_id")
+    actor_id = current_auth_user_id()
 
     conn = None
     cursor = None
@@ -7896,7 +7923,7 @@ def permanently_delete_notion_pending_update(pending_id):
         return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
 
     data = request.get_json(silent=True) or {}
-    actor_id = data.get("user_id")
+    actor_id = current_auth_user_id()
 
     conn = None
     cursor = None
@@ -7968,7 +7995,7 @@ def bulk_apply_notion_pending_updates():
         return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
 
     data = request.get_json(silent=True) or {}
-    actor_id = data.get("user_id")
+    actor_id = current_auth_user_id()
     pending_ids = _clean_pending_id_list(data.get("ids"))
 
     if not pending_ids:
@@ -8042,7 +8069,7 @@ def bulk_trash_notion_pending_updates():
         return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
 
     data = request.get_json(silent=True) or {}
-    actor_id = data.get("user_id")
+    actor_id = current_auth_user_id()
     pending_ids = _clean_pending_id_list(data.get("ids"))
 
     if not pending_ids:
@@ -8098,7 +8125,7 @@ def bulk_restore_notion_pending_updates():
         return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
 
     data = request.get_json(silent=True) or {}
-    actor_id = data.get("user_id")
+    actor_id = current_auth_user_id()
     pending_ids = _clean_pending_id_list(data.get("ids"))
 
     if not pending_ids:
@@ -8154,7 +8181,7 @@ def bulk_permanently_delete_notion_pending_updates():
         return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
 
     data = request.get_json(silent=True) or {}
-    actor_id = data.get("user_id")
+    actor_id = current_auth_user_id()
     pending_ids = _clean_pending_id_list(data.get("ids"))
 
     if not pending_ids:
@@ -8277,7 +8304,7 @@ def restore_notion_obsolete_article(obsolete_id):
         return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
 
     data = request.get_json(silent=True) or {}
-    actor_id = data.get("user_id")
+    actor_id = current_auth_user_id()
 
     conn = None
     cursor = None
@@ -8506,7 +8533,7 @@ def run_notion_storage_cleanup():
         return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
 
     data = request.get_json(silent=True) or {}
-    actor_id = data.get("user_id") or current_auth_user_id()
+    actor_id = current_auth_user_id()
 
     conn = None
     cursor = None
