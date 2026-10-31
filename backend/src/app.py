@@ -1529,6 +1529,173 @@ def record_login_history(cursor, user_id=None, email=None, full_name=None, statu
         print("LOGIN HISTORY INSERT FAILED:", error)
 
 
+
+# =========================
+# LOGIN RATE LIMITING
+# =========================
+# Five invalid credential attempts for the same email + IP within ten
+# minutes trigger a fifteen-minute login block. The state is stored in
+# MySQL instead of process memory, so Railway restarts/workers do not
+# silently reset the protection. The key is SHA-256(email + IP); the
+# limiter table does not store the raw email address or IP address.
+LOGIN_RATE_LIMIT_MAX_FAILURES = 5
+LOGIN_RATE_LIMIT_WINDOW_MINUTES = 10
+LOGIN_RATE_LIMIT_BLOCK_MINUTES = 15
+_LOGIN_RATE_LIMIT_TABLE_READY = False
+
+
+def ensure_login_rate_limit_table(cursor):
+    global _LOGIN_RATE_LIMIT_TABLE_READY
+
+    if _LOGIN_RATE_LIMIT_TABLE_READY:
+        return
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS login_rate_limit (
+            rate_key CHAR(64) PRIMARY KEY,
+            failed_attempts INT NOT NULL DEFAULT 0,
+            window_started_at DATETIME NULL,
+            blocked_until DATETIME NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_login_rate_limit_blocked_until (blocked_until)
+        )
+    """)
+    _LOGIN_RATE_LIMIT_TABLE_READY = True
+
+
+def get_login_rate_limit_key(email):
+    normalized_email = str(email or "").strip().lower()
+    remote_ip = str(request.remote_addr or "unknown").strip()[:64]
+    raw_key = f"{normalized_email}|{remote_ip}"
+    return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
+
+
+def get_login_rate_limit_status(cursor, email):
+    """Return (blocked, retry_after_seconds) for this email + request IP."""
+    try:
+        ensure_login_rate_limit_table(cursor)
+        rate_key = get_login_rate_limit_key(email)
+
+        cursor.execute("""
+            SELECT failed_attempts, window_started_at, blocked_until
+            FROM login_rate_limit
+            WHERE rate_key = %s
+            LIMIT 1
+        """, (rate_key,))
+        row = cursor.fetchone()
+
+        if not row:
+            return False, 0
+
+        blocked_until = row.get("blocked_until")
+        now = datetime.now()
+
+        if blocked_until and blocked_until > now:
+            retry_after = max(1, int((blocked_until - now).total_seconds()))
+            return True, retry_after
+
+        # Expired block/state can be discarded. A future invalid attempt
+        # starts a fresh ten-minute window.
+        if blocked_until and blocked_until <= now:
+            cursor.execute("DELETE FROM login_rate_limit WHERE rate_key = %s", (rate_key,))
+
+        return False, 0
+
+    except Exception as error:
+        # Authentication should remain available if only the limiter table has
+        # a temporary problem. Keep the diagnostic server-side.
+        print("LOGIN RATE LIMIT CHECK ERROR:", error)
+        return False, 0
+
+
+def register_login_rate_limit_failure(cursor, email):
+    """Record one invalid credential attempt and return block status."""
+    ensure_login_rate_limit_table(cursor)
+
+    rate_key = get_login_rate_limit_key(email)
+    now = datetime.now()
+
+    # Ensure the row exists before taking a row lock. This also handles two
+    # workers seeing a new email/IP pair at nearly the same time.
+    cursor.execute("""
+        INSERT INTO login_rate_limit
+            (rate_key, failed_attempts, window_started_at, blocked_until)
+        VALUES (%s, 0, NULL, NULL)
+        ON DUPLICATE KEY UPDATE rate_key = VALUES(rate_key)
+    """, (rate_key,))
+
+    cursor.execute("""
+        SELECT failed_attempts, window_started_at, blocked_until
+        FROM login_rate_limit
+        WHERE rate_key = %s
+        FOR UPDATE
+    """, (rate_key,))
+    row = cursor.fetchone() or {}
+
+    blocked_until = row.get("blocked_until")
+    if blocked_until and blocked_until > now:
+        retry_after = max(1, int((blocked_until - now).total_seconds()))
+        return True, retry_after
+
+    window_started_at = row.get("window_started_at")
+    failed_attempts = int(row.get("failed_attempts") or 0)
+
+    if (
+        not window_started_at
+        or now - window_started_at > timedelta(minutes=LOGIN_RATE_LIMIT_WINDOW_MINUTES)
+    ):
+        window_started_at = now
+        failed_attempts = 1
+    else:
+        failed_attempts += 1
+
+    new_blocked_until = None
+    if failed_attempts >= LOGIN_RATE_LIMIT_MAX_FAILURES:
+        new_blocked_until = now + timedelta(minutes=LOGIN_RATE_LIMIT_BLOCK_MINUTES)
+
+    cursor.execute("""
+        UPDATE login_rate_limit
+        SET failed_attempts = %s,
+            window_started_at = %s,
+            blocked_until = %s
+        WHERE rate_key = %s
+    """, (
+        failed_attempts,
+        window_started_at,
+        new_blocked_until,
+        rate_key,
+    ))
+
+    if new_blocked_until:
+        return True, LOGIN_RATE_LIMIT_BLOCK_MINUTES * 60
+
+    return False, 0
+
+
+def clear_login_rate_limit(cursor, email):
+    """Clear the limiter after the submitted password is proven correct."""
+    try:
+        ensure_login_rate_limit_table(cursor)
+        cursor.execute(
+            "DELETE FROM login_rate_limit WHERE rate_key = %s",
+            (get_login_rate_limit_key(email),)
+        )
+    except Exception as error:
+        print("LOGIN RATE LIMIT CLEAR ERROR:", error)
+
+
+def login_rate_limited_response(retry_after_seconds):
+    retry_after = max(1, int(retry_after_seconds or (LOGIN_RATE_LIMIT_BLOCK_MINUTES * 60)))
+    response = jsonify({
+        "code": "LOGIN_RATE_LIMITED",
+        "message": "Too many failed login attempts. Please try again later."
+    })
+    response.headers["Retry-After"] = str(retry_after)
+    response.headers["Cache-Control"] = "no-store"
+    return response, 429
+
+
 def add_audit_log(actor_id=None, actor_name="System", action="", module="", description=""):
     """
     Save important system actions for Security / Monitoring audit log.
@@ -5282,13 +5449,24 @@ def login():
     data = request.get_json(silent=True) or {}
     email = str(data.get("email") or "").strip().lower()
     password = str(data.get("password") or "")
+
     if not email or not password:
         return jsonify({"message": "Email and password are required."}), 400
+
     conn = None
     cursor = None
+
     try:
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
+
+        # Check the server-side limiter BEFORE password verification. The same
+        # response is used whether the email exists or not.
+        blocked, retry_after = get_login_rate_limit_status(cursor, email)
+        if blocked:
+            conn.commit()
+            return login_rate_limited_response(retry_after)
+
         cursor.execute("""
             SELECT u.user_id, u.full_name, u.email, u.password_hash,
                    u.status, u.created_at, r.role_name
@@ -5296,50 +5474,111 @@ def login():
             WHERE LOWER(u.email) = %s LIMIT 1
         """, (email,))
         user = cursor.fetchone()
+
         if not user:
-            record_login_history(cursor, email=email, full_name="Unknown", status="failed")
+            record_login_history(
+                cursor,
+                email=email,
+                full_name="Unknown",
+                status="failed"
+            )
+            blocked, retry_after = register_login_rate_limit_failure(cursor, email)
             conn.commit()
+
+            if blocked:
+                return login_rate_limited_response(retry_after)
+
             return jsonify({"message": "Invalid email or password."}), 401
+
         stored = str(user.get("password_hash") or "")
         try:
             password_ok = check_password_hash(stored, password)
         except Exception:
             password_ok = False
+
         if not password_ok and hmac.compare_digest(stored, password):
             stored = generate_password_hash(password)  # Upgrade legacy plaintext on login.
-            cursor.execute("UPDATE users SET password_hash = %s WHERE user_id = %s", (stored, user["user_id"]))
+            cursor.execute(
+                "UPDATE users SET password_hash = %s WHERE user_id = %s",
+                (stored, user["user_id"])
+            )
             password_ok = True
+
         if not password_ok:
-            record_login_history(cursor, user["user_id"], user["email"], user["full_name"], "failed")
+            record_login_history(
+                cursor,
+                user["user_id"],
+                user["email"],
+                user["full_name"],
+                "failed"
+            )
+            blocked, retry_after = register_login_rate_limit_failure(cursor, email)
             conn.commit()
+
+            if blocked:
+                return login_rate_limited_response(retry_after)
+
             return jsonify({"message": "Invalid email or password."}), 401
+
+        # The password is correct. Do not let pending/inactive accounts build
+        # up a brute-force counter simply by repeatedly trying their real
+        # password. Their login_history entry remains available to Security
+        # Monitoring exactly as before.
+        clear_login_rate_limit(cursor, email)
+
         status = str(user.get("status") or "").lower()
         if status != "active":
-            record_login_history(cursor, user["user_id"], user["email"], user["full_name"], "failed")
+            record_login_history(
+                cursor,
+                user["user_id"],
+                user["email"],
+                user["full_name"],
+                "failed"
+            )
             conn.commit()
+
             code = "ACCOUNT_PENDING_APPROVAL" if status == "pending" else "ACCOUNT_INACTIVE"
-            message = ("Your registration is awaiting Manager / Team Leader approval. Please allow up to 24 hours."
-                       if status == "pending" else "This account is not active. Please contact your Manager or Team Leader.")
-            return jsonify({"code": code, "account_status": status, "message": message}), 403
-        record_login_history(cursor, user["user_id"], user["email"], user["full_name"], "success")
+            message = (
+                "Your registration is awaiting Manager / Team Leader approval. Please allow up to 24 hours."
+                if status == "pending"
+                else "This account is not active. Please contact your Manager or Team Leader."
+            )
+            return jsonify({
+                "code": code,
+                "account_status": status,
+                "message": message
+            }), 403
+
+        record_login_history(
+            cursor,
+            user["user_id"],
+            user["email"],
+            user["full_name"],
+            "success"
+        )
         conn.commit()
+
         session.clear()  # Rotate the session on login; prevent session fixation.
         session.permanent = True
         session["user_id"] = int(user["user_id"])
         session["password_fingerprint"] = password_session_fingerprint(stored)
         session["csrf_token"] = secrets.token_urlsafe(32)
+
         payload = get_user_profile_payload(user)
         response = jsonify({
-            "message": "Login successful.", "user": payload,
+            "message": "Login successful.",
+            "user": payload,
             "csrf_token": session["csrf_token"],
         })
         response.headers["Cache-Control"] = "no-store"
         return response, 200
+
     except Exception:
         if conn:
             conn.rollback()
         print("LOGIN ERROR: Sign-in transaction failed.")
         return jsonify({"message": "Unable to sign in right now."}), 500
+
     finally:
         if cursor:
             cursor.close()
