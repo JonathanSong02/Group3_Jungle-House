@@ -42,7 +42,16 @@ function inheritsTopic(value) {
 }
 
 function rejectsAnswer(value) {
-  return /not what i (?:want|mean)|not this\b|wrong answer|this is wrong|none of these|^(?:(?:this|that|your answer) is )?not correct[.!?\s]*$|不是我要|^(?:不对|不對|答错|答錯)[。！!？?\s]*$|(?:回答|答案).*(?:不对|不對|错|錯)|bukan jawapan|jawapan.*(?:salah|bukan)|^tak betul[.!?\s]*$/i.test(value);
+  return /not what i (?:want|mean)|\bnot (?:the |an? )?(?:answer|response) (?:that )?i (?:need|want|expected)\b|not this\b|wrong answer|this is wrong|none of these|^(?:(?:this|that|your answer) is )?not correct[.!?\s]*$|不是我要|^(?:不对|不對|答错|答錯)[。！!？?\s]*$|(?:回答|答案).*(?:不对|不對|错|錯)|bukan jawapan|jawapan.*(?:salah|bukan)|^tak betul[.!?\s]*$/i.test(value);
+}
+
+// Resolve only inside this issue's excerpts, never another Chat or an AI title.
+export function getEscalationQuestion(context, fallback) {
+  if (!context || !Array.isArray(context.messages)) return fallback;
+  const questions = context.messages.filter((item) => item.role === 'user'
+    && typeof item.content === 'string' && text(item.content) && !rejectsAnswer(item.content));
+  const selected = questions.findLast((item) => text(item.content).slice(0, 500) === context.issue_question);
+  return text((selected || questions.at(-1))?.content).slice(0, 500) || fallback;
 }
 
 export function getClarificationToken(messages, issueContext) {
@@ -114,7 +123,11 @@ export function buildIssueContext(messages, triggerQuestion, conversationId, off
   const first = target.cluster.turns[0].messages.find((item) => item.role === 'user')?.content || '';
   const correction = target.cluster.turns.findLast((turn) => /^(?:correction\b|actually\b|i mean\b|maksud saya|sebenarnya|更正|纠正|糾正|其实|其實|我是说|我是說)/i.test(turn.user.text))?.user.text;
   const description = [...new Set([first, correction, text(triggerQuestion)].filter(Boolean))].map((item) => text(item).slice(0, 320)).join('\n');
+  const targetIndex = target.cluster.turns.indexOf(target);
+  const issueQuestion = target.cluster.turns.slice(0, targetIndex + 1)
+    .findLast((turn) => text(turn.user.text) && !rejectsAnswer(turn.user.text))?.user.text;
   return { version: 1, conversation_id: conversationId, issue_id: target.cluster.id,
+    issue_question: text(issueQuestion).slice(0, 500),
     description: description || text(triggerQuestion).slice(0, 500),
     messages: kept, omitted_messages: selected.length - kept.length };
 }

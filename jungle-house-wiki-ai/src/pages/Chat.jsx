@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
 import { useStaffChat } from '../context/StaffChatContext';
 import '../styles/Chat.css';
-import { buildIssueContext, getClarificationToken } from '../utils/chatIssueContext';
+import { buildIssueContext, getClarificationToken, getEscalationQuestion } from '../utils/chatIssueContext';
 import { escalationMetadata, normalizeEscalationResponse, escalationErrorInfo } from '../utils/escalationResponse';
 
 
@@ -1988,11 +1988,12 @@ const removeSelectedImage = () => {
     setLoading(true);
 
     try {
+      const issueContext = buildIssueContext(messages, offerMessage.question, `main-${initiatingSessionId}`, offerMessage.id);
       const response = await api.post('/chat', {
-        question: offerMessage.question,
+        question: getEscalationQuestion(issueContext, offerMessage.question),
         force_escalate: true,
         chat_session_id: `main-${initiatingSessionId}`,
-        escalation_context: buildIssueContext(messages, offerMessage.question, `main-${initiatingSessionId}`, offerMessage.id),
+        escalation_context: issueContext,
       });
 
       const aiMessage = buildAiMessage(response.data || {}, t);

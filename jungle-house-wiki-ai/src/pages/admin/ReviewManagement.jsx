@@ -21,7 +21,6 @@ export default function ReviewManagement() {
   const [searchText, setSearchText] = useState('');
   const [reviewerComment, setReviewerComment] = useState({});
   const [standardQuestions, setStandardQuestions] = useState({});
-  const [questionConfirmed, setQuestionConfirmed] = useState({});
   const questionLabels = QUESTION_LABELS[language] || QUESTION_LABELS.en;
   const [expandedReviewId, setExpandedReviewId] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -41,7 +40,6 @@ export default function ReviewManagement() {
       const rows = Array.isArray(response.data) ? response.data : [];
       setReviews(rows);
       setStandardQuestions(Object.fromEntries(rows.map((item) => [item.review_id, item.question || ''])));
-      setQuestionConfirmed({});
     } catch (err) {
       console.error('REVIEW MANAGEMENT ERROR:', err);
       setError(err.response?.data?.message || t('rev.err.load'));
@@ -128,7 +126,7 @@ export default function ReviewManagement() {
 
 
   const handleReviewAction = async (reviewId, action) => {
-    if (['approve', 'publish'].includes(action) && (!standardQuestions[reviewId]?.trim() || !questionConfirmed[reviewId])) {
+    if (['approve', 'publish'].includes(action) && !standardQuestions[reviewId]?.trim()) {
       setError(questionLabels.required);
       return;
     }
@@ -360,9 +358,8 @@ export default function ReviewManagement() {
                   </div>
 
                   {['pending', 'approved'].includes(item.status) ? <StandardQuestionField
-                    value={standardQuestions[item.review_id] || ''} confirmed={questionConfirmed[item.review_id]}
-                    onChange={(value) => { setStandardQuestions((prev) => ({ ...prev, [item.review_id]: value })); setQuestionConfirmed((prev) => ({ ...prev, [item.review_id]: false })); }}
-                    onConfirm={(value) => setQuestionConfirmed((prev) => ({ ...prev, [item.review_id]: value }))}
+                    value={standardQuestions[item.review_id] || ''}
+                    onChange={(value) => setStandardQuestions((prev) => ({ ...prev, [item.review_id]: value }))}
                   /> : null}
                   <EscalationContext context={item.conversation_context} availability={item.context_availability} loadStatus={item.context_load_status} />
 
@@ -508,9 +505,8 @@ export default function ReviewManagement() {
                               </div>
 
                               {['pending', 'approved'].includes(item.status) ? <StandardQuestionField
-                                value={standardQuestions[item.review_id] || ''} confirmed={questionConfirmed[item.review_id]}
-                                onChange={(value) => { setStandardQuestions((prev) => ({ ...prev, [item.review_id]: value })); setQuestionConfirmed((prev) => ({ ...prev, [item.review_id]: false })); }}
-                                onConfirm={(value) => setQuestionConfirmed((prev) => ({ ...prev, [item.review_id]: value }))}
+                                value={standardQuestions[item.review_id] || ''}
+                                onChange={(value) => setStandardQuestions((prev) => ({ ...prev, [item.review_id]: value }))}
                               /> : null}
                               <EscalationContext context={item.conversation_context} availability={item.context_availability} loadStatus={item.context_load_status} />
                               {item.reviewer_comment ? (

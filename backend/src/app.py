@@ -2799,7 +2799,11 @@ def validate_escalation_context(value, data, trigger_question, reason, image_url
     if image_url and re.fullmatch(r"/static/uploads/chat/[A-Za-z0-9_.-]+", image_url):
         users[-1]["attachments"] = list(dict.fromkeys(users[-1]["attachments"] + [image_url]))[:4]
     omitted = value.get("omitted_messages", 0)
+    issue_question = clean_question(value.get("issue_question"))
+    if issue_question not in [clean_question(item["content"]) for item in users]:
+        issue_question = ""
     return {"version": 1, "provenance": "client_supplied_unverified", "conversation_id": session_id,
+            "issue_question": issue_question,
             "issue_id": issue_id, "description": description, "trigger_question": trigger_question,
             "reason": str(reason or "unresolved")[:100], "messages": clean_messages,
             "omitted_messages": min(max(omitted, 0), 100000) if type(omitted) is int else 0,
@@ -3291,10 +3295,26 @@ def get_last_answer_key(data: dict | None = None) -> str:
 def is_explicit_answer_rejection(question):
     return bool(re.search(
         r"not what i (?:want|mean)|not this\b|wrong answer|this is wrong|none of these"
+        r"|\bnot (?:the |an? )?(?:answer|response) (?:that )?i (?:need|want|expected)\b"
         r"|^(?:(?:this|that|your answer) is )?not correct[.!?\s]*$"
         r"|不是我要|^(?:不对|不對|答错|答錯)[。！!？?\s]*$|(?:回答|答案).*(?:不对|不對|错|錯)"
         r"|bukan jawapan|jawapan.*(?:salah|bukan)|^tak betul[.!?\s]*$",
         str(question or ""), re.I))
+
+
+def get_escalation_issue_question(context, fallback):
+    """Use only user wording from this validated issue; never an assistant title.
+
+    Rejection messages describe dissatisfaction, not the question needing help.
+    Missing excerpts cannot be reconstructed from a generic status message.
+    """
+    if not context:
+        return clean_question(fallback)
+    questions = [clean_question(item.get("content")) for item in context.get("messages", [])
+                 if item.get("role") == "user" and clean_question(item.get("content"))
+                 and not is_explicit_answer_rejection(item.get("content"))]
+    selected = context.get("issue_question")
+    return selected if selected in questions else (questions[-1] if questions else clean_question(fallback))
 
 
 def make_clarification_token(data, issue_id, original_question):
@@ -9422,6 +9442,9 @@ def chat():
         # related articles: create the ticket for that original question
         # straight away, without searching or calling the AI provider again.
         if data.get("force_escalate") and question:
+            if is_explicit_answer_rejection(question):
+                issue_context = validate_escalation_context(data.get("escalation_context"), data, question, "staff_requested_escalation")
+                question = get_escalation_issue_question(issue_context, question)
             escalation_id = create_chat_escalation(
                 question,
                 {
@@ -9711,14 +9734,16 @@ def chat():
                 issue_context = validate_escalation_context(data.get("escalation_context"), data, question, "answer_rejected")
                 issue_id = issue_context["issue_id"] if issue_context else "unassigned"
                 if issue_context:
-                    issue_questions = [item["content"] for item in issue_context["messages"] if item["role"] == "user" and item["content"] != question]
+                    issue_question = get_escalation_issue_question(issue_context, question)
                     # A stale server last-answer record must not pick an unrelated
                     # older topic. Client excerpts remain explicitly unverified.
-                    if previous_question not in issue_questions:
-                        previous_question = clean_question(issue_questions[0] if issue_questions else question)
+                    if previous_question != issue_question:
+                        previous_question = issue_question
                         old_result = {}
                 clarified = read_clarification_token(
                     data.get("clarification_token") or last_answer.get("clarification_token"), data, issue_id)
+                if clarified and is_explicit_answer_rejection(clarified["question"]):
+                    clarified = None  # Do not reuse a stale token for a rejected-answer phrase.
                 if not clarified:
                     replies = {
                         "en": "I may have misunderstood. Which question or answer are you referring to? Tell me what happened, what you expected, and the information or next step you still need. You can also ask a team lead directly.",

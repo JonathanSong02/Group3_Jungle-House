@@ -157,7 +157,6 @@ export default function Escalation() {
   const [trashItems, setTrashItems] = useState([]);
   const [answers, setAnswers] = useState({});
   const [standardQuestions, setStandardQuestions] = useState({});
-  const [questionConfirmed, setQuestionConfirmed] = useState({});
   const questionLabels = QUESTION_LABELS[language] || QUESTION_LABELS.en;
   const [answerImages, setAnswerImages] = useState({});
   const [loading, setLoading] = useState(true);
@@ -223,7 +222,6 @@ export default function Escalation() {
 
       setAnswers(answerMap);
       setStandardQuestions(Object.fromEntries(activeData.map((item) => [item.escalation_id, item.standard_question || item.question || ''])));
-      setQuestionConfirmed({});
     } catch (error) {
       console.error('Fetch escalations error:', error);
       setMessage('Failed to load escalations.');
@@ -274,7 +272,7 @@ export default function Escalation() {
   const submitAnswer = async (id) => {
     const manualAnswer = answers[id];
     const selectedImage = answerImages[id];
-    if (!standardQuestions[id]?.trim() || !questionConfirmed[id]) {
+    if (!standardQuestions[id]?.trim()) {
       setMessage(questionLabels.required);
       return;
     }
@@ -481,7 +479,7 @@ export default function Escalation() {
   };
 
   const approveEscalationAnswer = async (id) => {
-    if (!standardQuestions[id]?.trim() || !questionConfirmed[id]) {
+    if (!standardQuestions[id]?.trim()) {
       setMessage(questionLabels.required);
       return;
     }
@@ -750,9 +748,8 @@ export default function Escalation() {
               </div>
 
               {(activeTab === 'pending' || (activeTab === 'resolved' && isAdminUser && (!item.review_status || item.review_status === 'pending'))) ? <StandardQuestionField
-                value={standardQuestions[item.escalation_id] || ''} confirmed={questionConfirmed[item.escalation_id]}
-                onChange={(value) => { setStandardQuestions((prev) => ({ ...prev, [item.escalation_id]: value })); setQuestionConfirmed((prev) => ({ ...prev, [item.escalation_id]: false })); }}
-                onConfirm={(value) => setQuestionConfirmed((prev) => ({ ...prev, [item.escalation_id]: value }))}
+                value={standardQuestions[item.escalation_id] || ''}
+                onChange={(value) => setStandardQuestions((prev) => ({ ...prev, [item.escalation_id]: value }))}
               /> : null}
               <EscalationEvidence ticket={item} />
               <EscalationContext context={item.conversation_context} availability={item.context_availability} loadStatus={item.context_load_status} showReason={false} />

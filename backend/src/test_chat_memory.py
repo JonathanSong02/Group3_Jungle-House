@@ -15,7 +15,7 @@ names = {"clean_question", "is_nonsense", "normalize_context", "get_chat_memory_
          "prepare_chat_context", "remember_chat_context", "get_last_answer_key", "get_chat_session_id",
          "get_ai_fail_key", "is_staff_not_satisfied", "validate_conversation_history",
          "needs_conversation_context", "resolve_conversation_search_query", "is_explicit_answer_rejection",
-         "make_clarification_token", "read_clarification_token"}
+         "make_clarification_token", "read_clarification_token", "get_escalation_issue_question"}
 env = {"re": re, "json": json, "CJK_CHAR_RE": re.compile(r"[\u3400-\u9fff]"),
        "datetime": datetime, "timezone": timezone, "request": types.SimpleNamespace(remote_addr="local", is_json=True),
        "AI_CHAT_MEMORY": {}, "base64": base64, "hashlib": hashlib, "hmac": hmac, "time": time,
@@ -532,6 +532,43 @@ class ChatRouteTests(unittest.TestCase):
     def test_business_condition_is_not_mistaken_for_answer_rejection(self):
         for question in ["The ice temperature is not correct", "冰箱温度不对", "suhu peti ais tak betul"]:
             self.assertFalse(env["is_explicit_answer_rejection"](question))
+
+    def cabinet_rejection_context(self):
+        self.payload.update(question="This is not the answer I need", chat_session_id="main-a", history=None,
+            escalation_context={"conversation_id": "main-a", "issue_id": "1", "description": "Cabinet locked",
+                "issue_question": "How if the cabinet is locked?", "messages": [
+                    {"role": "user", "content": "Where should I keep tablet when closing?"},
+                    {"role": "assistant", "content": "Keep tablets in cabinet F3."},
+                    {"role": "user", "content": "How if the cabinet is locked?"},
+                    {"role": "assistant", "content": "Use the keys."},
+                    {"role": "user", "content": "This is not the answer I need"}]})
+        env["AI_LAST_ANSWER_MEMORY"]["user:7:chat:main-a:last_answer"] = {
+            "question": "This is not the answer I need", "result": {"answer": "An unrelated decline"}}
+
+    def test_cabinet_rejection_is_clarified_for_real_followup_not_declined(self):
+        self.cabinet_rejection_context()
+        result = self.call()
+        self.assertEqual(result["question"], "How if the cabinet is locked?")
+        self.assertEqual(result["source"], "answer_clarification_requested")
+        env["create_escalation"].assert_not_called()
+        self.provider.generate_ai_reply.assert_not_called()
+
+    def test_force_with_old_rejection_question_recovers_cabinet_from_issue(self):
+        self.cabinet_rejection_context()
+        self.payload["force_escalate"] = True
+        result = self.call()
+        self.assertEqual(result["question"], "How if the cabinet is locked?")
+        self.assertEqual(env["create_escalation"].call_args.args[0], "How if the cabinet is locked?")
+        self.assertEqual(env["save_escalation_context"].call_args.args[2]["trigger_question"], "This is not the answer I need")
+
+    def test_second_rejection_retains_cabinet_question_across_worker_state_loss(self):
+        self.cabinet_rejection_context()
+        first = self.call()
+        self.payload.update(question="This is not what I meant", clarification_token=first["clarification_token"])
+        env["AI_LAST_ANSWER_MEMORY"].clear()
+        result = self.call()
+        self.assertEqual(result["question"], "How if the cabinet is locked?")
+        self.assertEqual(env["create_escalation"].call_args.args[0], "How if the cabinet is locked?")
 
 
 

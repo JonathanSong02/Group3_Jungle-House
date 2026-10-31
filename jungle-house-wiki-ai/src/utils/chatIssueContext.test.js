@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildIssueContext, getClarificationToken } from './chatIssueContext.js';
+import { buildIssueContext, getClarificationToken, getEscalationQuestion } from './chatIssueContext.js';
 
 const user = (id, value, extra = {}) => ({ id, sender: 'user', type: 'text', text: value, ...extra });
 const ai = (id, value, extra = {}) => ({ id, sender: 'ai', type: 'text', text: value, ...extra });
@@ -108,4 +108,31 @@ test('clarification state is sent only for the same issue, including after anoth
   assert.equal(getClarificationToken(messages, { issue_id: 'ice' }), 'test-flow-state');
   assert.equal(getClarificationToken(messages, { issue_id: 'daily' }), '');
   assert.equal(getClarificationToken(messages, null), '');
+});
+
+test('cabinet complaint escalates the cabinet question, not either rejection message', () => {
+  const messages = [
+    user(1, 'Where should i keep tablet when closing?'), ai(2, 'Keep and charge the tablets in cabinet F3.'),
+    user(3, 'How if the cabinet is locked?'), ai(4, 'Put the keys back after use.'),
+    user(5, 'This is not the answer i need'), ai(6, 'Please ask a work-related question.', { source: 'ai_provider_decline' }),
+    user(7, 'This is not what i meant'), ai(8, 'Please clarify.', { source: 'answer_clarification_requested' }),
+  ];
+  const snapshot = build(messages, messages[4].text, 8);
+  assert.deepEqual(snapshot.messages.map((message) => message.id), messages.map((message) => String(message.id)));
+  assert.equal(snapshot.issue_question, messages[2].text);
+  assert.equal(getEscalationQuestion(snapshot, messages[4].text), messages[2].text);
+  assert.equal(getEscalationQuestion({ ...snapshot, issue_question: 'Invented question' }, messages[4].text), messages[2].text);
+});
+
+test('a clicked old offer keeps its own question even when the same issue has a later follow-up', () => {
+  const messages = [user(1, 'iPad cabinet locked'), ai(2, 'Need a team lead?'), user(3, 'iPad charger missing'), ai(4, 'Charger reply')];
+  const snapshot = build(messages, messages[0].text, 2);
+  assert.equal(getEscalationQuestion(snapshot, messages[0].text), messages[0].text);
+});
+
+test('rejection-only chat does not invent an issue or borrow another chat', () => {
+  assert.equal(getEscalationQuestion(null, 'Original question'), 'Original question');
+  const snapshot = build([user(1, 'This is not the answer I need')], 'This is not the answer I need');
+  assert.equal(snapshot.issue_question, '');
+  assert.equal(getEscalationQuestion(snapshot, 'Unknown issue'), 'Unknown issue');
 });
