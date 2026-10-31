@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import StatusBadge from '../components/StatusBadge';
 import EscalationContext from '../components/EscalationContext';
+import EscalationEvidence from '../components/EscalationEvidence';
 import StandardQuestionField from '../components/StandardQuestionField';
 import { QUESTION_LABELS } from '../utils/standardQuestionLabels';
 import api, { API_BASE_URL } from '../services/api';
@@ -695,7 +696,7 @@ export default function Escalation() {
                       Asked by {item.asked_by_name || 'Unknown Staff'}
                     </p>
                     <h3>{standardQuestions[item.escalation_id] || item.standard_question || item.question}</h3>
-                    <p className="muted small">{questionLabels.original}: {item.question}</p>
+                    <p className="muted small" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{t('esc.evidence.original')}: {item.question}</p>
                   </div>
                 </div>
 
@@ -753,7 +754,8 @@ export default function Escalation() {
                 onChange={(value) => { setStandardQuestions((prev) => ({ ...prev, [item.escalation_id]: value })); setQuestionConfirmed((prev) => ({ ...prev, [item.escalation_id]: false })); }}
                 onConfirm={(value) => setQuestionConfirmed((prev) => ({ ...prev, [item.escalation_id]: value }))}
               /> : null}
-              <EscalationContext context={item.conversation_context} />
+              <EscalationEvidence ticket={item} />
+              <EscalationContext context={item.conversation_context} availability={item.context_availability} loadStatus={item.context_load_status} showReason={false} />
               {item.image_url ? (
                 <div className="card-like top-gap-sm">
                   <p className="eyebrow">Uploaded Attachment</p>
@@ -770,13 +772,13 @@ export default function Escalation() {
                 </div>
               ) : null}
 
-              <div className="card-like top-gap-sm">
-                <p className="eyebrow">AI Answer</p>
-                <p>{item.ai_answer || 'No AI answer recorded.'}</p>
-                <p className="muted small">
-                  Score: {item.ai_score || 0} | Source: {item.ai_source || 'unknown'}
-                </p>
-              </div>
+              <section className="card-like top-gap-sm" style={{ overflowWrap: 'anywhere' }}>
+                <p className="eyebrow">{t('esc.evidence.resolution')}</p>
+                <p style={{ whiteSpace: 'pre-wrap' }}>{item.manual_answer || t('esc.evidence.noResolution')}</p>
+                <p className="muted small">{t('esc.evidence.ticketStatus')}: <StatusBadge status={item.status} /></p>
+                <p className="muted small">{t('esc.evidence.reviewStatus')}: {tOr(`esc.status.${item.review_status || 'pending'}`, item.review_status || 'pending')}</p>
+                <p className="muted small">{t('esc.evidence.deliveryUnknown')}</p>
+              </section>
 
               {activeTab === 'pending' ? (
                 <>
@@ -883,15 +885,6 @@ export default function Escalation() {
                 </>
               ) : (
                 <>
-                  <div className="card-like top-gap-sm">
-                    <p className="eyebrow">Manual Answer</p>
-                    <p>{item.manual_answer || 'No manual answer recorded.'}</p>
-                  </div>
-
-                  <p className="muted small top-gap">
-                    {t('esc.adminReview')}: {tOr(`esc.status.${item.review_status || 'pending'}`, item.review_status || 'pending')}
-                  </p>
-
                   {item.image_url ? (
                     <div className="card-like top-gap-sm">
                       <p className="eyebrow">Related Attachment</p>

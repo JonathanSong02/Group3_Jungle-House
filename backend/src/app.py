@@ -568,13 +568,25 @@ def attach_uploaded_chat_image_url(response):
 
 @app.after_request
 def attach_escalation_context_status(response):
+    # Some early chat branches used to claim success even when INSERT failed.
+    # Only normalize an explicit failed ticket result, never a normal chat reply.
+    if response.is_json:
+        payload = response.get_json(silent=True)
+        if (isinstance(payload, dict) and "escalation_id" in payload and payload["escalation_id"] is None
+                and (payload.get("escalation") or payload.get("escalation_ready") or payload.get("escalation_required"))):
+            message = "The escalation ticket could not be saved. Please retry or contact a team lead."
+            payload.update({"reply": message, "answer": message, "message": message,
+                            "fallback_message": message, "source": "escalation_save_failed",
+                            "escalation": False, "escalation_ready": False, "escalation_required": False})
+            response.set_data(json.dumps(payload))
+            return response  # No claim that a snapshot was saved for a nonexistent ticket.
     status = getattr(g, "chat_escalation_context_saved", None)
     if status is not None and response.is_json:
         payload = response.get_json(silent=True)
         if isinstance(payload, dict):
             payload["escalation_context_saved"] = status
             payload["escalation_context_status"] = getattr(g, "chat_escalation_context_status", "saved" if status else "storage_unavailable")
-            if not status:
+            if not status and payload["escalation_context_status"] != "not_provided":
                 payload["escalation_context_warning"] = (
                     "The ticket was saved, but its discussion context could not be saved. "
                     "Please include the relevant discussion when contacting your team lead."
@@ -2801,7 +2813,10 @@ def create_chat_escalation(question, ai_result, data, image_url=None, image_type
         ai_result.get("source") if isinstance(ai_result, dict) else "unresolved", image_url)
     kwargs = {"conversation_context": context} if context else {}
     escalation_id = create_escalation(question, ai_result, data.get("user_id"), image_url, image_type, **kwargs)
-    if escalation_id is not None and data.get("escalation_context") is not None:
+    if escalation_id is not None and data.get("escalation_context") is None:
+        g.chat_escalation_context_saved = False
+        g.chat_escalation_context_status = "not_provided"
+    elif escalation_id is not None:
         diagnostic = {"code": "invalid_context" if not context else "storage_unavailable"}
         try:
             g.chat_escalation_context_saved = bool(context and save_escalation_context(escalation_id, data.get("user_id"), context, diagnostic=diagnostic))
@@ -9410,7 +9425,7 @@ def chat():
             escalation_id = create_chat_escalation(
                 question,
                 {
-                    "answer": "Staff reviewed the suggested Knowledge Base articles and asked for a team lead.",
+                    "answer": "Staff requested human assistance from a team lead.",
                     "confidence": 0.0,
                     "score": 0.0,
                     "source": "staff_requested_escalation",
@@ -10203,7 +10218,7 @@ def chat():
     except Exception as error:
         traceback.print_exc()
 
-        question = clean_question(data.get("question", ""))
+        question = clean_question(data.get("original_staff_question") or data.get("question", ""))
 
         log_request(
             question,
@@ -11753,9 +11768,11 @@ def get_escalations():
         """, (1 if show_deleted else 0,))
 
         escalations = cursor.fetchall()
-        contexts = load_escalation_contexts([item["escalation_id"] for item in escalations])
+        context_diagnostic = {}
+        contexts = load_escalation_contexts([item["escalation_id"] for item in escalations], diagnostic=context_diagnostic)
         for item in escalations:
             item["conversation_context"] = contexts.get(item["escalation_id"])
+            item.update(context_diagnostic.get(item["escalation_id"], {}))
         return jsonify(escalations), 200
 
     except Exception as error:
@@ -12597,10 +12614,12 @@ def get_reviews():
 
         cursor.execute(base_query, tuple(params))
         reviews = cursor.fetchall()
-        contexts = load_escalation_contexts([item["escalation_id"] for item in reviews])
+        context_diagnostic = {}
+        contexts = load_escalation_contexts([item["escalation_id"] for item in reviews], diagnostic=context_diagnostic)
 
         for review in reviews:
             review["conversation_context"] = contexts.get(review["escalation_id"])
+            review.update(context_diagnostic.get(review["escalation_id"], {}))
             review["created_at"] = format_datetime_value(review.get("created_at"))
             review["reviewed_at"] = format_datetime_value(review.get("reviewed_at"))
             review["published_at"] = format_datetime_value(review.get("published_at"))

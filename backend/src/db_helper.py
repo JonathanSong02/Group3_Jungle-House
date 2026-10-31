@@ -520,28 +520,52 @@ def save_escalation_context(escalation_id, asked_by, context, diagnostic=None):
         _close_context_resources(cursor, conn)
 
 
-def load_escalation_contexts(escalation_ids):
+def load_escalation_contexts(escalation_ids, diagnostic=None):
+    """Keep the legacy ID->context result; optionally report safe per-ticket read states.
+
+    No schema changes or raw database errors are exposed. A failed batch must
+    not erase successfully read discussions, nor claim their rows never existed.
+    """
     ids = list(dict.fromkeys(int(value) for value in escalation_ids if value is not None))
+    if diagnostic is not None:
+        diagnostic.update({value: {"context_availability": "unavailable", "context_load_status": "read_failed"} for value in ids})
     if not ids:
         return {}
     conn = cursor = None
+    contexts = {}
     try:
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
         # Chunk large management lists without exceeding parameter limits.
-        contexts = {}
         for offset in range(0, len(ids), 200):
             batch = ids[offset:offset + 200]
             placeholders = ','.join(['%s'] * len(batch))
-            cursor.execute(f"SELECT escalation_id, context_json FROM escalation_context WHERE escalation_id IN ({placeholders})", tuple(batch))
-            for row in cursor.fetchall() or []:
-                value = json.loads(row["context_json"])
+            try:
+                cursor.execute(f"SELECT escalation_id, context_json FROM escalation_context WHERE escalation_id IN ({placeholders})", tuple(batch))
+                rows = cursor.fetchall() or []
+            except Exception:
+                continue  # This batch remains unavailable, not missing.
+            if diagnostic is not None:
+                diagnostic.update({value: {"context_availability": "missing", "context_load_status": "not_found"} for value in batch})
+            for row in rows:
+                ticket_id = row["escalation_id"]
+                try:
+                    value = json.loads(row["context_json"])
+                except (ValueError, TypeError, UnicodeError):
+                    value = None
                 if isinstance(value, dict):
-                    contexts[row["escalation_id"]] = value
+                    contexts[ticket_id] = value  # Preserve old clients' response shape.
+                readable = (isinstance(value, dict) and value.get("provenance") == "client_supplied_unverified"
+                            and isinstance(value.get("messages"), list) and bool(value["messages"])
+                            and all(isinstance(message, dict) and message.get("role") in ("user", "assistant")
+                                    and isinstance(message.get("content"), str) for message in value["messages"]))
+                if diagnostic is not None:
+                    diagnostic[ticket_id] = {"context_availability": "available" if readable else "unavailable",
+                                             "context_load_status": "loaded" if readable else "invalid_data"}
         return contexts
     except Exception:
         # Existing tickets/reviews remain available before the optional migration.
-        return {}
+        return contexts
     finally:
         _close_context_resources(cursor, conn)
 

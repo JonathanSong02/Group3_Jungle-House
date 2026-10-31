@@ -452,6 +452,13 @@ class ChatRouteTests(unittest.TestCase):
         self.assertEqual(args[2]["provenance"],"client_supplied_unverified")
         self.assertEqual(env["create_escalation"].call_args.args[0],"And its benefits?")
 
+    def test_force_escalation_reason_does_not_claim_staff_reviewed_articles(self):
+        self.payload.update(force_escalate=True)
+        self.call()
+        saved_result = env["create_escalation"].call_args.args[1]
+        self.assertEqual(saved_result["source"], "staff_requested_escalation")
+        self.assertEqual(saved_result["answer"], "Staff requested human assistance from a team lead.")
+
     def test_route_new_main_session_does_not_read_legacy_previous_answer(self):
         self.payload.update(question="not this", chat_session_id="main-new")
         env["AI_LAST_ANSWER_MEMORY"]["user:7:last_answer"]={"question":"old floating question","result":{}}
@@ -619,7 +626,34 @@ class SessionAndEscalationContextTests(unittest.TestCase):
         self.data.pop("escalation_context")
         env["create_chat_escalation"]("q",{},self.data)
         self.assertEqual(env["create_escalation"].call_args.kwargs,{})
-        self.assertFalse(hasattr(env["g"],"chat_escalation_context_saved"))
+        self.assertFalse(env["g"].chat_escalation_context_saved)
+        self.assertEqual(env["g"].chat_escalation_context_status,"not_provided")
+
+    def test_null_context_reports_not_provided_without_storage_write(self):
+        self.data["escalation_context"] = None
+        env["create_chat_escalation"]("q", {}, self.data)
+        env["save_escalation_context"].assert_not_called()
+        self.assertEqual(env["g"].chat_escalation_context_status, "not_provided")
+
+    def test_not_provided_does_not_claim_storage_failure(self):
+        env["g"].chat_escalation_context_saved = False
+        env["g"].chat_escalation_context_status = "not_provided"
+        payload = {"escalation_id": 123}
+        response = types.SimpleNamespace(is_json=True, get_json=lambda **kwargs: payload, set_data=Mock())
+        env["attach_escalation_context_status"](response)
+        saved = json.loads(response.set_data.call_args.args[0])
+        self.assertEqual(saved["escalation_context_status"], "not_provided")
+        self.assertNotIn("escalation_context_warning", saved)
+
+    def test_failed_ticket_is_not_reported_as_created(self):
+        payload = {"escalation_id": None, "escalation": True, "reply": "Already escalated"}
+        response = types.SimpleNamespace(is_json=True, get_json=lambda **kwargs: payload, set_data=Mock())
+        env["attach_escalation_context_status"](response)
+        saved = json.loads(response.set_data.call_args.args[0])
+        self.assertEqual(saved["source"], "escalation_save_failed")
+        self.assertFalse(saved["escalation"])
+        self.assertFalse(saved["escalation_required"])
+        self.assertNotIn("escalation_context_warning", saved)
 
     def test_context_failure_response_warns_without_hiding_ticket(self):
         env["g"].chat_escalation_context_saved=False
@@ -706,6 +740,41 @@ class EscalationContextStorageTests(unittest.TestCase):
         self.cursor.fetchall.return_value=[]
         self.conn.close.side_effect=RuntimeError("mock")
         self.assertEqual(db_env["load_escalation_contexts"]([123]),{})
+
+    def test_read_failure_is_not_missing_and_never_exposes_database_details(self):
+        self.cursor.execute.side_effect = RuntimeError("private SQL or connection details")
+        diagnostic = {}
+        self.assertEqual(db_env["load_escalation_contexts"]([123], diagnostic), {})
+        self.assertEqual(diagnostic[123], {"context_availability": "unavailable", "context_load_status": "read_failed"})
+        self.assertNotIn("private", json.dumps(diagnostic))
+
+    def test_missing_row_is_only_reported_after_successful_select(self):
+        self.cursor.fetchall.return_value = []
+        diagnostic = {}
+        self.assertEqual(db_env["load_escalation_contexts"]([123], diagnostic), {})
+        self.assertEqual(diagnostic[123], {"context_availability": "missing", "context_load_status": "not_found"})
+
+    def test_corrupt_json_does_not_hide_other_tickets(self):
+        valid = {"provenance": "client_supplied_unverified", "messages": [{"role": "assistant", "content": "Synthetic reply"}]}
+        self.cursor.fetchall.return_value = [
+            {"escalation_id": 123, "context_json": "not json"},
+            {"escalation_id": 124, "context_json": json.dumps(valid)},
+            {"escalation_id": 125, "context_json": "[]"},
+        ]
+        diagnostic = {}
+        result = db_env["load_escalation_contexts"]([123, 124, 125], diagnostic)
+        self.assertEqual(result, {124: valid})
+        self.assertEqual(diagnostic[123]["context_load_status"], "invalid_data")
+        self.assertEqual(diagnostic[124]["context_availability"], "available")
+        self.assertEqual(diagnostic[125]["context_load_status"], "invalid_data")
+
+    def test_failed_later_batch_keeps_loaded_context(self):
+        self.cursor.fetchall.side_effect = [[{"escalation_id": 1, "context_json": json.dumps(self.context)}], RuntimeError("mock")]
+        diagnostic = {}
+        result = db_env["load_escalation_contexts"](list(range(1, 202)), diagnostic)
+        self.assertEqual(result[1], self.context)
+        self.assertEqual(diagnostic[201]["context_load_status"], "read_failed")
+        self.assertEqual(diagnostic[2]["context_load_status"], "not_found")
 
 
 title_functions=[]
@@ -801,6 +870,58 @@ class StandardQuestionWorkflowTests(unittest.TestCase):
         response,status=env["publish_review"](5)
         self.assertEqual(status,400)
         self.assertFalse(any("INSERT INTO wiki_article" in call.args[0] for call in self.cursor.execute.call_args_list))
+
+
+class EscalationReadAndPermissionTests(unittest.TestCase):
+    """Actual handlers/guard with synthetic dependencies, never import the app."""
+    def setUp(self):
+        names = {"get_escalations", "get_reviews", "require_authenticated_api"}
+        nodes = []
+        constants = {"_APPROVER_ENDPOINTS", "_MANAGER_ENDPOINTS", "_AUTH_PUBLIC", "_LEGACY_REGISTRATION_ENDPOINTS",
+                     "_SELF_PROFILE_ENDPOINTS", "_SELF_MESSAGE_ENDPOINTS", "_PUBLIC_STATIC_PREFIXES", "APPROVER_ROLES"}
+        for item in tree.body:
+            if isinstance(item, ast.FunctionDef) and item.name in names:
+                node = copy.deepcopy(item)
+                node.decorator_list = []
+                nodes.append(node)
+            elif isinstance(item, ast.Assign) and any(isinstance(target, ast.Name) and target.id in constants for target in item.targets):
+                nodes.append(item)
+        self.cursor = Mock()
+        self.conn = Mock()
+        self.conn.cursor.return_value = self.cursor
+        self.scope = {"hmac": hmac, "jsonify": lambda value: value, "get_db_connection": Mock(return_value=self.conn),
+                      "password_session_fingerprint": lambda value: "synthetic-fingerprint",
+                      "session": {"user_id": 7, "password_fingerprint": "synthetic-fingerprint", "csrf_token": "synthetic-csrf"},
+                      "g": types.SimpleNamespace(), "format_datetime_value": lambda value: value}
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), "isolated_escalation_reads.py", "exec"), self.scope)
+
+    def test_both_management_lists_propagate_optional_read_status(self):
+        for name in ["get_escalations", "get_reviews"]:
+            with self.subTest(name=name):
+                self.scope["request"] = types.SimpleNamespace(args={})
+                self.cursor.fetchall.return_value = [{"escalation_id": 123}]
+                def load(ids, diagnostic=None):
+                    self.assertEqual(ids, [123])
+                    diagnostic[123] = {"context_availability": "unavailable", "context_load_status": "read_failed"}
+                    return {}
+                self.scope["load_escalation_contexts"] = load
+                rows, status = self.scope[name]()
+                self.assertEqual(status, 200)
+                self.assertIsNone(rows[0]["conversation_context"])
+                self.assertEqual(rows[0]["context_load_status"], "read_failed")
+
+    def test_management_roles_and_staff_denial_are_unchanged(self):
+        for role in ["staff", "teamlead", "manager", "admin"]:
+            for endpoint in ["get_escalations", "submit_escalation_answer", "approve_review", "publish_review", "edit_article"]:
+                with self.subTest(role=role, endpoint=endpoint):
+                    self.cursor.fetchone.return_value = {"user_id": 7, "status": "active", "role_name": role, "password_hash": "synthetic"}
+                    self.scope["request"] = types.SimpleNamespace(method="PUT", path="/api/escalations/123/answer", endpoint=endpoint,
+                        view_args={}, headers={"X-CSRF-Token": "synthetic-csrf"})
+                    result = self.scope["require_authenticated_api"]()
+                    if role == "staff":
+                        self.assertEqual(result[1], 403)
+                    else:
+                        self.assertIsNone(result)
 
 
 if __name__ == "__main__":

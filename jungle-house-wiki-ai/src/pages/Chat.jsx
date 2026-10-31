@@ -6,6 +6,7 @@ import { useLanguage } from '../i18n/LanguageContext';
 import { useStaffChat } from '../context/StaffChatContext';
 import '../styles/Chat.css';
 import { buildIssueContext, getClarificationToken } from '../utils/chatIssueContext';
+import { escalationMetadata, normalizeEscalationResponse, escalationErrorInfo } from '../utils/escalationResponse';
 
 
 const starterMessages = [
@@ -19,12 +20,6 @@ const starterMessages = [
     },
   },
 ];
-
-const CONTEXT_SAVE_WARNINGS = {
-  en: 'The ticket was saved, but its discussion context could not be saved. Please include the relevant discussion when contacting your team lead.',
-  zh: '问题已升级，但相关讨论未能保存。联系 Team Lead 时，请一并提供相关讨论。',
-  ms: 'Tiket telah disimpan, tetapi konteks perbincangan tidak dapat disimpan. Sertakan perbincangan berkaitan apabila menghubungi ketua pasukan.',
-};
 
 // Production serves private files through the same-origin Vercel /static proxy.
 // Local development serves them from the local Flask host selected by api.js.
@@ -1042,12 +1037,11 @@ function renderResponseMeta(message, t) {
   );
 }
 
-function buildAiMessage(data) {
+function buildAiMessage(data, t) {
+  data = normalizeEscalationResponse(data, t);
   const messageMetadata = {
+    ...escalationMetadata(data),
     created_at: new Date().toISOString(),
-    escalation_context_saved: data?.escalation_context_saved,
-    escalation_context_warning: data?.escalation_context_warning || '',
-    escalation_context_status: data?.escalation_context_status || '',
     clarification_token: data?.clarification_token || '',
     clarification_issue_id: data?.clarification_issue_id || '',
     clarification_requested: Boolean(data?.clarification_requested),
@@ -1718,6 +1712,8 @@ function ChatContent({ storageKeys }) {
       confidence_label: aiMessage.confidence_label || '',
       fallback: Boolean(aiMessage.fallback),
       escalation_required: Boolean(aiMessage.escalation_ready || aiMessage.escalation_required),
+      ...escalationMetadata(aiMessage),
+      escalation_request_failed: Boolean(aiMessage.escalation_request_failed),
       created_at: new Date().toLocaleString(),
     };
 
@@ -1999,15 +1995,15 @@ const removeSelectedImage = () => {
         escalation_context: buildIssueContext(messages, offerMessage.question, `main-${initiatingSessionId}`, offerMessage.id),
       });
 
-      const aiMessage = buildAiMessage(response.data || {});
+      const aiMessage = buildAiMessage(response.data || {}, t);
 
       updateCurrentSessionMessages([...messagesWithOfferClosed, aiMessage], sessionTitle, initiatingSessionId);
       addChatHistory(sessionTitle, aiMessage);
     } catch (error) {
       console.error('Escalation request failed:', error);
 
-      const failureText =
-        error?.response?.data?.message || t('chat.escalationOfferFailed');
+      const ticketError = escalationErrorInfo(error, t);
+      const failureText = ticketError?.text || t('chat.escalationOfferFailed');
 
       // Leaves the prompt open (original messages, not the closed copy) so
       // the staff member can press the button again.
@@ -2015,6 +2011,7 @@ const removeSelectedImage = () => {
         [
           ...(activeSession?.messages || messages),
           {
+            ...ticketError,
             id: Date.now() + 1,
             sender: 'ai',
             type: 'text',
@@ -2119,7 +2116,7 @@ const removeSelectedImage = () => {
         ? { answer: response.data, type: 'text' }
         : (response.data || {});
 
-      const aiMessage = buildAiMessage(data);
+      const aiMessage = buildAiMessage(data, t);
 
       // The bubble we just saved above is still pointing at a blob: URL,
       // which only exists in this browser tab and gets revoked below --
@@ -2185,7 +2182,8 @@ const removeSelectedImage = () => {
         console.error('Chat request failed:', error);
 
         const errorCode = error?.response?.data?.code;
-        const requestMessage =
+        const ticketError = escalationErrorInfo(error, t);
+        const requestMessage = ticketError?.text || (
           error?.response?.status === 401 ||
           errorCode === 'SESSION_EXPIRED' ||
           errorCode === 'ACCOUNT_INACTIVE'
@@ -2194,9 +2192,10 @@ const removeSelectedImage = () => {
               ? 'Security verification failed. Refresh the page and try again.'
               : error?.response?.data?.message ||
                 error?.message ||
-                'Failed to connect to backend. Please check whether Flask is running.';
+                'Failed to connect to backend. Please check whether Flask is running.');
 
         const errorMessage = {
+          ...ticketError,
           id: Date.now() + 1,
           sender: 'ai',
           type: 'text',
@@ -2256,8 +2255,9 @@ const removeSelectedImage = () => {
         <strong className="ai-chat-sender-label">{message.sender === 'user' ? 'You' : 'AI'}</strong>
         {message.clarification_requested ? null : renderResponseMeta(message, t)}
         {message.escalation_context_warning ? (
-          <p role="status" className="muted small">{CONTEXT_SAVE_WARNINGS[language] || CONTEXT_SAVE_WARNINGS.en}</p>
+          <p role="status" className="muted small">{t('chat.contextSaveFailed')}</p>
         ) : null}
+        {message.escalation_context_status === 'not_provided' ? <p role="status" className="muted small">{t('chat.contextNotProvided')}</p> : null}
         {renderKnowledgeLink(message.link || message.article_link)}
 
         {message.sender === 'ai' &&

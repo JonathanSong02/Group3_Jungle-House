@@ -20,7 +20,7 @@ test('discussion component renders three languages, escapes excerpts and filters
       assert(!html.includes('https://example.invalid/unsafe'));
       assert(html.includes('/static/uploads/chat/123_ipad.png'));
     }
-    assert(renderToStaticMarkup(React.createElement(EscalationContext, { context: null })).includes('No discussion snapshot'));
+    assert(renderToStaticMarkup(React.createElement(EscalationContext, { context: null })).includes('No saved discussion'));
     globalThis.window = { localStorage: { getItem: () => 'en' } };
     const detailed = { ...context, messages: [
       { role: 'user', content: 'Original ice payment question' }, { role: 'assistant', content: 'First answer' },
@@ -37,6 +37,16 @@ test('discussion component renders three languages, escapes excerpts and filters
     assert(!preview.includes('Intermediate situation'));
     assert(html.includes('Intermediate situation'));
     assert(html.includes('View saved relevant messages'));
+    for (const [props, expected] of [
+      [{ context: null, availability: 'missing', loadStatus: 'not_found' }, 'do not establish why'],
+      [{ context: null, availability: 'unavailable', loadStatus: 'read_failed' }, 'may still exist'],
+      [{ context: null, availability: 'unavailable', loadStatus: 'invalid_data' }, 'cannot be displayed reliably'],
+      [{ context: { provenance: 'client_supplied_unverified', messages: [null] } }, 'cannot be displayed reliably'],
+    ]) {
+      const stateHtml = renderToStaticMarkup(React.createElement(EscalationContext, props));
+      assert(stateHtml.includes(expected));
+      if (props.loadStatus === 'read_failed') assert(!stateHtml.includes('No saved discussion'));
+    }
   } finally {
     await server.close();
     delete globalThis.window;

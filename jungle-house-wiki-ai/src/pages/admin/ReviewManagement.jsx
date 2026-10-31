@@ -364,7 +364,7 @@ export default function ReviewManagement() {
                     onChange={(value) => { setStandardQuestions((prev) => ({ ...prev, [item.review_id]: value })); setQuestionConfirmed((prev) => ({ ...prev, [item.review_id]: false })); }}
                     onConfirm={(value) => setQuestionConfirmed((prev) => ({ ...prev, [item.review_id]: value }))}
                   /> : null}
-                  <EscalationContext context={item.conversation_context} />
+                  <EscalationContext context={item.conversation_context} availability={item.context_availability} loadStatus={item.context_load_status} />
 
                   <div className="rm2-card-footer">
                     <div className="rm2-submitter">
@@ -512,7 +512,7 @@ export default function ReviewManagement() {
                                 onChange={(value) => { setStandardQuestions((prev) => ({ ...prev, [item.review_id]: value })); setQuestionConfirmed((prev) => ({ ...prev, [item.review_id]: false })); }}
                                 onConfirm={(value) => setQuestionConfirmed((prev) => ({ ...prev, [item.review_id]: value }))}
                               /> : null}
-                              <EscalationContext context={item.conversation_context} />
+                              <EscalationContext context={item.conversation_context} availability={item.context_availability} loadStatus={item.context_load_status} />
                               {item.reviewer_comment ? (
                                 <div className="rm2-existing-comment">
                                   <span className="rm2-detail-label">{t('rev.comment')}</span>
