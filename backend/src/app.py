@@ -4772,10 +4772,10 @@ def home():
     return jsonify({
         "message": "Jungle House AI backend is running",
         "model_available": MODEL_AVAILABLE,
-        "model_load_error": MODEL_LOAD_ERROR,
+        "model_load_error": None if MODEL_AVAILABLE else "Model unavailable.",
         "engine_available": MODEL_AVAILABLE,
-        "engine_import_error": MODEL_LOAD_ERROR,
-        "model_error": PREDICT_MODEL_ERROR,
+        "engine_import_error": None if MODEL_AVAILABLE else "Model unavailable.",
+        "model_error": None if MODEL_AVAILABLE else "Model unavailable.",
     })
 
 
@@ -4785,12 +4785,14 @@ def health():
     return jsonify({
         "status": "ok",
         "model_available": MODEL_AVAILABLE,
-        "model_load_error": MODEL_LOAD_ERROR,
+        "model_load_error": None if MODEL_AVAILABLE else "Model unavailable.",
         "engine_available": MODEL_AVAILABLE,
-        "engine_import_error": MODEL_LOAD_ERROR,
-        "model_error": PREDICT_MODEL_ERROR,
+        "engine_import_error": None if MODEL_AVAILABLE else "Model unavailable.",
+        "model_error": None if MODEL_AVAILABLE else "Model unavailable.",
         "ai_provider_service_available": AI_PROVIDER_SERVICE_AVAILABLE,
-        "ai_provider_service_load_error": AI_PROVIDER_SERVICE_LOAD_ERROR,
+        "ai_provider_service_load_error": (
+            None if AI_PROVIDER_SERVICE_AVAILABLE else "AI provider service unavailable."
+        ),
     })
 
 
@@ -4809,7 +4811,7 @@ def test_db():
         }), 200
     except Exception as e:
         print("TEST DB ERROR:", e)
-        return jsonify({"message": f"Database connection failed: {str(e)}"}), 500
+        return jsonify({"message": "Database connection failed. Please try again."}), 500
     finally:
         if cursor:
             cursor.close()
@@ -5392,11 +5394,11 @@ def get_profile(user_id):
 
     except mysql.connector.Error as err:
         print("GET PROFILE MYSQL ERROR:", err)
-        return jsonify({"message": f"Database error: {str(err)}"}), 500
+        return jsonify({"message": "A database error occurred. Please try again."}), 500
 
     except Exception as e:
         print("GET PROFILE GENERAL ERROR:", e)
-        return jsonify({"message": f"Server error: {str(e)}"}), 500
+        return jsonify({"message": "A server error occurred. Please try again."}), 500
 
     finally:
         if cursor:
@@ -5485,13 +5487,13 @@ def update_profile(user_id):
         print("UPDATE PROFILE MYSQL ERROR:", err)
         if conn:
             conn.rollback()
-        return jsonify({"message": f"Database error: {str(err)}"}), 500
+        return jsonify({"message": "A database error occurred. Please try again."}), 500
 
     except Exception as e:
         print("UPDATE PROFILE GENERAL ERROR:", e)
         if conn:
             conn.rollback()
-        return jsonify({"message": f"Server error: {str(e)}"}), 500
+        return jsonify({"message": "A server error occurred. Please try again."}), 500
 
     finally:
         if cursor:
@@ -5571,13 +5573,13 @@ def change_password(user_id):
         print("CHANGE PASSWORD MYSQL ERROR:", err)
         if conn:
             conn.rollback()
-        return jsonify({"message": f"Database error: {str(err)}"}), 500
+        return jsonify({"message": "A database error occurred. Please try again."}), 500
 
     except Exception as e:
         print("CHANGE PASSWORD GENERAL ERROR:", e)
         if conn:
             conn.rollback()
-        return jsonify({"message": f"Server error: {str(e)}"}), 500
+        return jsonify({"message": "A server error occurred. Please try again."}), 500
 
     finally:
         if cursor:
@@ -5622,11 +5624,11 @@ def get_login_history():
 
     except mysql.connector.Error as err:
         print("MYSQL ERROR /api/security/login-history:", err)
-        return jsonify({"message": f"Database error: {str(err)}"}), 500
+        return jsonify({"message": "A database error occurred. Please try again."}), 500
 
     except Exception as e:
         print("GENERAL ERROR /api/security/login-history:", e)
-        return jsonify({"message": f"Server error: {str(e)}"}), 500
+        return jsonify({"message": "A server error occurred. Please try again."}), 500
 
     finally:
         if cursor:
@@ -5665,11 +5667,11 @@ def get_audit_logs():
 
     except mysql.connector.Error as err:
         print("MYSQL ERROR /api/security/audit-logs:", err)
-        return jsonify({"message": f"Database error: {str(err)}"}), 500
+        return jsonify({"message": "A database error occurred. Please try again."}), 500
 
     except Exception as e:
         print("GENERAL ERROR /api/security/audit-logs:", e)
-        return jsonify({"message": f"Server error: {str(e)}"}), 500
+        return jsonify({"message": "A server error occurred. Please try again."}), 500
 
     finally:
         if cursor:
@@ -5859,13 +5861,13 @@ def get_notifications(user_id):
     except mysql.connector.Error as err:
         print("MYSQL ERROR /api/notifications:", err)
         return jsonify({
-            "message": f"Database error: {str(err)}"
+            "message": "A database error occurred. Please try again."
         }), 500
 
     except Exception as e:
         print("GENERAL ERROR /api/notifications:", e)
         return jsonify({
-            "message": f"Server error: {str(e)}"
+            "message": "A server error occurred. Please try again."
         }), 500
 
     finally:
@@ -6117,7 +6119,7 @@ def chat_test():
                 "escalation_required": True,
                 "status_code": 500,
                 "result_status": "Error",
-                "remarks": str(error),
+                "remarks": "Internal test error. See server logs for diagnostic details.",
             })
 
     ensure_log_files()
@@ -6325,7 +6327,7 @@ def get_analytics():
         print("ANALYTICS MYSQL ERROR:", e)
         return jsonify({
             "message": "Failed to load analytics from MySQL.",
-            "error": str(e)
+            "error": "Internal server error."
         }), 500
 
     finally:
@@ -9973,7 +9975,7 @@ def chat():
         escalation_id = create_chat_escalation(
             question,
             {
-                "answer": str(error),
+                "answer": "An internal system error occurred while generating the answer.",
                 "confidence": 0.0,
                 "source": "system_error"
             },
@@ -10076,11 +10078,11 @@ def get_articles():
 
     except mysql.connector.Error as err:
         print("MYSQL ERROR /api/articles:", err)
-        return jsonify({"message": f"Database error: {str(err)}"}), 500
+        return jsonify({"message": "A database error occurred. Please try again."}), 500
 
     except Exception as e:
         print("GENERAL ERROR /api/articles:", e)
-        return jsonify({"message": f"Server error: {str(e)}"}), 500
+        return jsonify({"message": "A server error occurred. Please try again."}), 500
 
     finally:
         if cursor:
@@ -10163,7 +10165,7 @@ def add_article():
         print("ADD ARTICLE ERROR:", error)
         return jsonify({
             "message": "Failed to save article.",
-            "error": str(error)
+            "error": "Internal server error."
         }), 500
 
     finally:
@@ -10256,7 +10258,7 @@ def get_article_detail(article_id):
         print('MYSQL ERROR /api/articles/<id> GET:', error)
         return jsonify({
             'message': 'Failed to load article.',
-            'error': str(error)
+            'error': 'Internal server error.'
         }), 500
 
     finally:
@@ -10449,7 +10451,7 @@ def edit_article(article_id):
 
         return jsonify({
             'message': 'Failed to update article.',
-            'error': str(error)
+            'error': 'Internal server error.'
         }), 500
 
     finally:
@@ -10507,7 +10509,7 @@ def delete_article(article_id):
 
         return jsonify({
             'message': 'Failed to move article to Retrieve Bin.',
-            'error': str(error)
+            'error': 'Internal server error.'
         }), 500
 
     finally:
@@ -10595,7 +10597,7 @@ def bulk_bin_articles():
 
         return jsonify({
             "message": "Failed to move selected articles to Retrieve Bin.",
-            "error": str(error)
+            "error": "Internal server error."
         }), 500
 
     finally:
@@ -10650,7 +10652,7 @@ def restore_article(article_id):
 
         return jsonify({
             'message': 'Failed to restore article.',
-            'error': str(error)
+            'error': 'Internal server error.'
         }), 500
 
     finally:
@@ -10718,7 +10720,7 @@ def bulk_restore_articles():
 
         return jsonify({
             "message": "Failed to restore selected articles.",
-            "error": str(error)
+            "error": "Internal server error."
         }), 500
 
     finally:
@@ -10950,7 +10952,7 @@ def cleanup_unused_uploads():
 
     except Exception as error:
         print("CLEANUP UNUSED UPLOADS ERROR:", error)
-        return jsonify({"message": "Failed to clean up uploads.", "error": str(error)}), 500
+        return jsonify({"message": "Failed to clean up uploads.", "error": "Internal server error."}), 500
 
     finally:
         if cursor:
@@ -11063,7 +11065,7 @@ def bulk_permanent_delete_articles():
 
         return jsonify({
             "message": "Failed to permanently delete selected articles.",
-            "error": str(err)
+            "error": "Internal server error."
         }), 500
 
     except Exception as error:
@@ -11074,7 +11076,7 @@ def bulk_permanent_delete_articles():
 
         return jsonify({
             "message": "Failed to permanently delete selected articles.",
-            "error": str(error)
+            "error": "Internal server error."
         }), 500
 
     finally:
@@ -11148,7 +11150,7 @@ def permanent_delete_article(article_id):
         print('MYSQL ERROR /api/articles PERMANENT DELETE:', err)
 
         return jsonify({
-            'message': f'Database error: {str(err)}'
+            'message': 'A database error occurred. Please try again.'
         }), 500
 
     except Exception as error:
@@ -11159,7 +11161,7 @@ def permanent_delete_article(article_id):
 
         return jsonify({
             'message': 'Failed to permanently delete article.',
-            'error': str(error)
+            'error': 'Internal server error.'
         }), 500
 
     finally:
@@ -11521,7 +11523,7 @@ def get_escalations():
         print('MYSQL ERROR /api/escalations GET:', error)
         return jsonify({
             'message': 'Failed to load escalations.',
-            'error': str(error)
+            'error': 'Internal server error.'
         }), 500
 
     finally:
@@ -11685,7 +11687,7 @@ def submit_escalation_answer(escalation_id):
         print("SUBMIT ESCALATION ANSWER ERROR:", error)
         return jsonify({
             'message': 'Failed to submit manual answer.',
-            'error': str(error)
+            'error': 'Internal server error.'
         }), 500
 
     finally:
@@ -11824,7 +11826,7 @@ def approve_escalation_answer(escalation_id):
         print('MYSQL ERROR /api/escalations APPROVE:', error)
         return jsonify({
             'message': 'Failed to approve escalation answer.',
-            'error': str(error)
+            'error': 'Internal server error.'
         }), 500
 
     finally:
@@ -11948,7 +11950,7 @@ def reject_escalation_answer(escalation_id):
         print('MYSQL ERROR /api/escalations REJECT:', error)
         return jsonify({
             'message': 'Failed to reject escalation answer.',
-            'error': str(error)
+            'error': 'Internal server error.'
         }), 500
 
     finally:
@@ -12024,7 +12026,7 @@ def bulk_delete_escalations():
 
         return jsonify({
             "message": "Failed to move selected escalations to Trash Bin.",
-            "error": str(error)
+            "error": "Internal server error."
         }), 500
 
     finally:
@@ -12117,7 +12119,7 @@ def bulk_permanent_delete_escalations():
 
         return jsonify({
             "message": "Failed to permanently delete selected escalations.",
-            "error": str(error)
+            "error": "Internal server error."
         }), 500
 
     finally:
@@ -12178,7 +12180,7 @@ def delete_escalation(escalation_id):
 
         return jsonify({
             'message': 'Failed to move escalation to Trash Bin.',
-            'error': str(error)
+            'error': 'Internal server error.'
         }), 500
 
     finally:
@@ -12236,7 +12238,7 @@ def restore_escalation(escalation_id):
 
         return jsonify({
             'message': 'Failed to restore escalation.',
-            'error': str(error)
+            'error': 'Internal server error.'
         }), 500
 
     finally:
@@ -12300,7 +12302,7 @@ def permanent_delete_escalation(escalation_id):
 
         return jsonify({
             'message': 'Failed to permanently delete escalation.',
-            'error': str(error)
+            'error': 'Internal server error.'
         }), 500
 
     finally:
@@ -12370,7 +12372,7 @@ def get_reviews():
         print("MYSQL ERROR /api/reviews GET:", error)
         return jsonify({
             "message": "Failed to load review queue.",
-            "error": str(error)
+            "error": "Internal server error."
         }), 500
 
     finally:
@@ -12434,7 +12436,7 @@ def approve_review(review_id):
 
         return jsonify({
             "message": "Failed to approve answer.",
-            "error": str(error)
+            "error": "Internal server error."
         }), 500
 
     finally:
@@ -12494,7 +12496,7 @@ def reject_review(review_id):
 
         return jsonify({
             "message": "Failed to reject answer.",
-            "error": str(error)
+            "error": "Internal server error."
         }), 500
 
     finally:
@@ -12592,7 +12594,7 @@ def publish_review(review_id):
 
         return jsonify({
             "message": "Failed to publish approved answer.",
-            "error": str(error)
+            "error": "Internal server error."
         }), 500
 
     finally:
@@ -12934,7 +12936,7 @@ def get_quizzes():
 
     except Exception as e:
         print("GET QUIZZES ERROR:", e)
-        return jsonify({"message": str(e)}), 500
+        return jsonify({"message": "Failed to load quizzes. Please try again."}), 500
 
     finally:
         if cursor:
@@ -13001,7 +13003,7 @@ def get_quiz_questions(quiz_id):
 
     except Exception as e:
         print("GET QUIZ QUESTIONS ERROR:", e)
-        return jsonify({"message": str(e)}), 500
+        return jsonify({"message": "Failed to load quiz questions. Please try again."}), 500
 
     finally:
         if cursor:
@@ -13193,7 +13195,7 @@ def get_admin_quizzes():
         print("MYSQL ERROR /api/admin/quizzes GET:", error)
         return jsonify({
             "message": "Failed to load admin quizzes.",
-            "error": str(error)
+            "error": "Internal server error."
         }), 500
 
     finally:
@@ -13314,7 +13316,7 @@ def create_admin_quiz():
 
         return jsonify({
             "message": "Failed to create quiz.",
-            "error": str(error)
+            "error": "Internal server error."
         }), 500
 
     finally:
@@ -13397,7 +13399,7 @@ def update_admin_quiz(quiz_id):
 
         return jsonify({
             "message": "Failed to update quiz.",
-            "error": str(error)
+            "error": "Internal server error."
         }), 500
 
     finally:
@@ -13436,7 +13438,7 @@ def delete_admin_quiz(quiz_id):
 
         return jsonify({
             "message": "Failed to delete quiz.",
-            "error": str(error)
+            "error": "Internal server error."
         }), 500
 
     finally:
@@ -13482,7 +13484,7 @@ def get_admin_quiz_questions(quiz_id):
 
         return jsonify({
             "message": "Failed to load quiz questions.",
-            "error": str(error)
+            "error": "Internal server error."
         }), 500
 
     finally:
@@ -13579,7 +13581,7 @@ def create_quiz_question(quiz_id):
 
         return jsonify({
             "message": "Failed to add question.",
-            "error": str(error)
+            "error": "Internal server error."
         }), 500
 
     finally:
@@ -13662,7 +13664,7 @@ def update_admin_quiz_question(question_id):
 
         return jsonify({
             "message": "Failed to update question.",
-            "error": str(error)
+            "error": "Internal server error."
         }), 500
 
     finally:
@@ -13701,7 +13703,7 @@ def delete_admin_quiz_question(question_id):
 
         return jsonify({
             "message": "Failed to delete question.",
-            "error": str(error)
+            "error": "Internal server error."
         }), 500
 
     finally:
@@ -14409,7 +14411,7 @@ def update_admin_user_role(user_id):
 
         return jsonify({
             "message": "Failed to update user role.",
-            "error": str(error)
+            "error": "Internal server error."
         }), 500
 
     finally:
@@ -14501,7 +14503,7 @@ def update_admin_user_status(user_id):
 
         return jsonify({
             "message": "Failed to update user status.",
-            "error": str(error)
+            "error": "Internal server error."
         }), 500
 
     finally:
@@ -14830,7 +14832,7 @@ def test_system_email():
 
     except Exception as error:
         print("SYSTEM EMAIL TEST ERROR:", error)
-        return jsonify({"message": "System email test failed.", "error": str(error)}), 500
+        return jsonify({"message": "System email test failed.", "error": "Internal server error."}), 500
     finally:
         if cursor:
             cursor.close()
@@ -14872,7 +14874,7 @@ def get_message_users():
         print("MYSQL ERROR /api/messages/users:", error)
         return jsonify({
             "message": "Failed to load message users.",
-            "error": str(error)
+            "error": "Internal server error."
         }), 500
 
     finally:
@@ -14932,7 +14934,7 @@ def send_message():
         print("MYSQL ERROR /api/messages/send:", error)
         return jsonify({
             "message": "Failed to send message.",
-            "error": str(error)
+            "error": "Internal server error."
         }), 500
 
     finally:
@@ -15023,7 +15025,7 @@ def get_message_threads(user_id):
         print("MYSQL ERROR /api/messages/threads:", error)
         return jsonify({
             "message": "Failed to load message threads.",
-            "error": str(error)
+            "error": "Internal server error."
         }), 500
 
     finally:
@@ -15089,7 +15091,7 @@ def get_thread_messages(thread_id, user_id):
         print("MYSQL ERROR /api/messages/thread:", error)
         return jsonify({
             "message": "Failed to load conversation.",
-            "error": str(error)
+            "error": "Internal server error."
         }), 500
 
     finally:
@@ -15165,7 +15167,7 @@ def reply_message():
         print("MYSQL ERROR /api/messages/reply:", error)
         return jsonify({
             "message": "Failed to send reply.",
-            "error": str(error)
+            "error": "Internal server error."
         }), 500
 
     finally:
@@ -15355,7 +15357,7 @@ def delete_message_from_view(message_id):
         print("MYSQL ERROR /api/messages/delete:", error)
         return jsonify({
             "message": "Failed to delete message.",
-            "error": str(error)
+            "error": "Internal server error."
         }), 500
 
     finally:
