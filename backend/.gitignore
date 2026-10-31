@@ -4,3 +4,6 @@ __pycache__/
 .env
 .env.*
 !.env.example
+
+# Plan / undo files written by tools/notion_pending_cleanup.py (contain page titles and ids)
+tools/cleanup_output/
