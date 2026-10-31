@@ -62,6 +62,15 @@ const EXACT = {
   "AI provider connected successfully.": 'srv.e58',
   "AI provider rejected the request: rate limit or quota exceeded (HTTP 429).": 'srv.e59',
   "AI provider connection failed. Please check your API key.": 'srv.e60',
+  "Another sync is already running.": 'srv.e61',
+  "Notion connection failed. Check the integration permission.": 'srv.e62',
+  "Could not reach Notion. Please try again.": 'srv.e63',
+  "The database is unavailable right now. Please try again.": 'srv.e64',
+  "Notion sync failed unexpectedly. Please try again.": 'srv.e65',
+  "This page could not be read.": 'srv.e66',
+  "Notion did not respond in time.": 'srv.e67',
+  "The database could not save this page.": 'srv.e68',
+  "Notion is limiting requests right now (HTTP 429). Try again in a minute.": 'srv.e69',
 };
 
 const PATTERNS = [
@@ -74,6 +83,7 @@ const PATTERNS = [
   [/^User status updated to (.*)\.$/, 'srv.p6', (m) => ({ a: m[1] })],
   [/^AI provider rejected the API key \(HTTP (\d+)\)\. Please check the key is correct and active\.$/, 'srv.p7', (m) => ({ a: m[1] })],
   [/^AI provider returned an error \(HTTP (\d+)\)\.$/, 'srv.p8', (m) => ({ a: m[1] })],
+  [/^Notion returned an error \(HTTP (\d+)\)\.$/, 'srv.p9', (m) => ({ a: m[1] })],
 ];
 
 export function translateServerMessage(t, message) {

@@ -3,6 +3,7 @@ import re
 import json
 import time
 import hashlib
+import threading
 import mysql.connector
 import requests
 from flask import request as flask_request
@@ -108,6 +109,74 @@ def _column_exists(cursor, table_name, column_name):
     return count > 0
 
 
+# Flipped once wiki_article.notion_page_id is known to carry a UNIQUE index, so
+# the check in _ensure_notion_page_id_unique_index (run at the start of every
+# Notion request) costs nothing afterwards.
+_NOTION_PAGE_ID_INDEX_READY = False
+_NOTION_PAGE_ID_INDEX_WARNED = False
+
+
+def _ensure_notion_page_id_unique_index(cursor):
+    """
+    The unique index is what makes "two articles for one Notion page"
+    impossible at the database level, but it used to be created only
+    together with the column -- a database where the column already existed
+    (added by hand, or left by an earlier failed ALTER) never got it. Adds it
+    when it is missing, but ONLY if no two articles already share a Notion
+    page id: the ALTER would fail on them, and existing duplicates are listed
+    by backend/tools/notion_duplicate_report.py and cleaned up by a person,
+    never deleted here.
+    """
+    global _NOTION_PAGE_ID_INDEX_READY, _NOTION_PAGE_ID_INDEX_WARNED
+
+    if _NOTION_PAGE_ID_INDEX_READY:
+        return
+
+    # This runs at the start of nearly every Notion request, so a failure
+    # here (e.g. the database user may not ALTER) must not break them all --
+    # the sync's own duplicate guards do not depend on the index.
+    try:
+        cursor.execute("""
+            SELECT COUNT(*) AS c
+            FROM INFORMATION_SCHEMA.STATISTICS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'wiki_article'
+              AND COLUMN_NAME = 'notion_page_id'
+              AND NON_UNIQUE = 0
+        """)
+        row = cursor.fetchone()
+        if (row["c"] if isinstance(row, dict) else row[0]) > 0:
+            _NOTION_PAGE_ID_INDEX_READY = True
+            return
+
+        cursor.execute("""
+            SELECT notion_page_id
+            FROM wiki_article
+            WHERE notion_page_id IS NOT NULL
+            GROUP BY notion_page_id
+            HAVING COUNT(*) > 1
+            LIMIT 1
+        """)
+        if cursor.fetchone():
+            if not _NOTION_PAGE_ID_INDEX_WARNED:
+                _NOTION_PAGE_ID_INDEX_WARNED = True
+                print(
+                    "NOTION: several articles share one notion_page_id, so the unique index was "
+                    "NOT added. Run backend/tools/notion_duplicate_report.py and clean them up first."
+                )
+            return
+
+        cursor.execute("""
+            ALTER TABLE wiki_article
+            ADD UNIQUE INDEX idx_wiki_article_notion_page_id (notion_page_id)
+        """)
+        _NOTION_PAGE_ID_INDEX_READY = True
+    except Exception as error:
+        if not _NOTION_PAGE_ID_INDEX_WARNED:
+            _NOTION_PAGE_ID_INDEX_WARNED = True
+            print("NOTION: could not verify/add the unique index on wiki_article.notion_page_id:", error)
+
+
 def ensure_notion_columns_on_wiki_article(cursor):
     if not _column_exists(cursor, "wiki_article", "source_type"):
         cursor.execute("""
@@ -127,6 +196,8 @@ def ensure_notion_columns_on_wiki_article(cursor):
             ALTER TABLE wiki_article
             ADD COLUMN notion_last_edited_time DATETIME NULL
         """)
+
+    _ensure_notion_page_id_unique_index(cursor)
 
 
 def _ensure_utf8mb4_table(cursor, table_name):
@@ -1072,7 +1143,197 @@ def _normalize_notion_edited_time(last_edited_time):
     return re.sub(r"\.\d+", "", last_edited_time).replace("T", " ").replace("Z", "")
 
 
-def check_for_notion_updates(token, actor_id, upload_folder):
+# One "Check for Updates" at a time. Gunicorn serves requests on several
+# threads AND app.py's background loop calls check_for_notion_updates on its
+# own daemon thread, so a manual click can land in the middle of an automatic
+# run (or two managers can click together). Both runs would read "not staged
+# yet" for the page that is currently in flight and each stage it -- the same
+# Notion page twice in the review queue. The thread lock covers this process;
+# the named MySQL lock covers a second process (e.g. the old and new
+# container that briefly overlap during a redeploy).
+_CHECK_RUN_LOCK = threading.Lock()
+_DB_CHECK_LOCK_NAME = "jungle_house_notion_check"
+ALREADY_RUNNING_MESSAGE = "Another sync is already running."
+MAX_REPORTED_FAILED_PAGES = 25
+
+
+class NotionCheckAlreadyRunning(Exception):
+    pass
+
+
+def _acquire_db_check_lock(cursor):
+    """
+    True: this connection now holds the lock. False: another connection does.
+    None: couldn't tell (GET_LOCK unavailable) -- the in-process lock still
+    applies, so don't block syncing over it.
+    """
+    try:
+        cursor.execute("SELECT GET_LOCK(%s, 0) AS acquired", (_DB_CHECK_LOCK_NAME,))
+        row = cursor.fetchone()
+        acquired = row["acquired"] if isinstance(row, dict) else row[0]
+    except Exception as error:
+        print("NOTION CHECK LOCK UNAVAILABLE:", error)
+        return None
+
+    if acquired == 1:
+        return True
+    if acquired == 0:
+        return False
+    return None
+
+
+def _release_db_check_lock(cursor):
+    try:
+        cursor.execute("SELECT RELEASE_LOCK(%s) AS released", (_DB_CHECK_LOCK_NAME,))
+        cursor.fetchone()
+    except Exception:
+        # The lock is released when the connection closes anyway.
+        pass
+
+
+def _check_result(status, error_message=None):
+    return {
+        "status": status,
+        "new": 0,
+        "flagged": 0,
+        "refreshed": 0,
+        "unchanged": 0,
+        "failed": 0,
+        "inaccessible": 0,
+        "inaccessiblePages": [],
+        "failedItems": [],
+        "obsoleteChecked": 0,
+        "obsoleteUpdated": 0,
+        "obsoleteMissing": 0,
+        "errorMessage": error_message,
+        "flaggedItems": [],
+    }
+
+
+def _http_status(error):
+    response = getattr(error, "response", None)
+    return getattr(response, "status_code", None)
+
+
+def _safe_page_failure_reason(error):
+    """A short reason that is safe to show: never a URL, token, SQL or stack trace."""
+    if isinstance(error, requests.HTTPError):
+        code = _http_status(error)
+        if code == 429:
+            return "Notion is limiting requests right now (HTTP 429). Try again in a minute."
+        if code:
+            return f"Notion returned an error (HTTP {code})."
+    if isinstance(error, (requests.Timeout, requests.ConnectionError)):
+        return "Notion did not respond in time."
+    if isinstance(error, mysql.connector.Error):
+        return "The database could not save this page."
+    return "This page could not be read."
+
+
+def _safe_run_error_message(error):
+    if isinstance(error, requests.HTTPError):
+        code = _http_status(error)
+        if code == 429:
+            return "Notion is limiting requests right now (HTTP 429). Try again in a minute."
+        if code in (401, 403, None):
+            return "Notion connection failed. Check the integration permission."
+        return f"Notion returned an error (HTTP {code})."
+    if isinstance(error, (requests.Timeout, requests.ConnectionError)):
+        return "Could not reach Notion. Please try again."
+    if isinstance(error, mysql.connector.Error):
+        return "The database is unavailable right now. Please try again."
+    return "Notion sync failed unexpectedly. Please try again."
+
+
+def _safe_page_title(page):
+    try:
+        return extract_notion_page_title(page)
+    except Exception:
+        return "Untitled"
+
+
+def _stage_pending_item(cursor, page_id, article_id, title, content_html,
+                        previous_title, previous_content, edited_time_mysql):
+    """
+    Queues a Notion page for review -- ONE open (status 'pending') item per
+    page. If the page already has one (it was edited again before anyone
+    reviewed it) that same item is refreshed in place instead of stacking a
+    second, near-identical item that would later try to create or overwrite
+    the same article again. Matches on the article when there is one, else
+    on the "new page" kind (article_id IS NULL).
+
+    Returns (pending_id, replaced_row). replaced_row is None for a freshly
+    inserted item; for a refreshed one it is the row's old content, so the
+    caller can release image files nothing references any more once the
+    refresh is committed.
+    """
+    if article_id is None:
+        cursor.execute("""
+            SELECT id, proposed_content, previous_content
+            FROM notion_pending_updates
+            WHERE article_id IS NULL AND notion_page_id = %s AND status = 'pending'
+            ORDER BY id DESC
+            LIMIT 1
+            FOR UPDATE
+        """, (page_id,))
+    else:
+        cursor.execute("""
+            SELECT id, proposed_content, previous_content
+            FROM notion_pending_updates
+            WHERE article_id = %s AND notion_page_id = %s AND status = 'pending'
+            ORDER BY id DESC
+            LIMIT 1
+            FOR UPDATE
+        """, (article_id, page_id))
+    open_item = cursor.fetchone()
+
+    if open_item:
+        cursor.execute("""
+            UPDATE notion_pending_updates
+            SET proposed_title = %s, proposed_content = %s,
+                previous_title = %s, previous_content = %s,
+                notion_last_edited_time = %s, detected_at = NOW()
+            WHERE id = %s AND status = 'pending'
+        """, (
+            title, content_html, previous_title, previous_content,
+            edited_time_mysql, open_item["id"],
+        ))
+        return open_item["id"], open_item
+
+    cursor.execute("""
+        INSERT INTO notion_pending_updates
+        (article_id, notion_page_id, proposed_title, proposed_content,
+         previous_title, previous_content, notion_last_edited_time, status)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
+    """, (
+        article_id, page_id, title, content_html,
+        previous_title, previous_content, edited_time_mysql,
+    ))
+    return cursor.lastrowid, None
+
+
+def check_for_notion_updates(token, actor_id, upload_folder, release_unused_uploads=None):
+    """
+    Runs one "Check for Updates" -- see _run_check_for_notion_updates for what
+    it does per page. Only one run is allowed at a time: if another is
+    already in progress (here, or in another process via a MySQL lock) this
+    returns immediately with status "already_running" and changes nothing.
+
+    release_unused_uploads(row, cursor), if given, is called after a queued
+    item was refreshed in place, with that item's replaced content, so the
+    caller (app.py owns the upload-folder helpers) can delete image files
+    nothing references any more instead of letting them pile up.
+    """
+    if not _CHECK_RUN_LOCK.acquire(blocking=False):
+        return _check_result("already_running", ALREADY_RUNNING_MESSAGE)
+
+    try:
+        return _run_check_for_notion_updates(token, actor_id, upload_folder, release_unused_uploads)
+    finally:
+        _CHECK_RUN_LOCK.release()
+
+
+def _run_check_for_notion_updates(token, actor_id, upload_folder, release_unused_uploads):
     """
     Discovers everything currently shared with the connected integration
     (discover_notion_content) and, per page:
@@ -1106,9 +1367,13 @@ def check_for_notion_updates(token, actor_id, upload_folder):
     obsolete_checked_count = 0
     obsolete_updated_count = 0
     obsolete_missing_count = 0
+    refreshed_count = 0
+    failed_items = []
     error_message = None
     flagged_items = []
     auth_failed = False
+    db_lock_held = False
+    status = "failed"
 
     try:
         conn = get_db_connection()
@@ -1116,11 +1381,17 @@ def check_for_notion_updates(token, actor_id, upload_folder):
 
         ensure_notion_sync_tables(cursor)
 
+        lock_state = _acquire_db_check_lock(cursor)
+        if lock_state is False:
+            raise NotionCheckAlreadyRunning()
+        db_lock_held = lock_state is True
+
         pages = discover_notion_content(token)
 
         for page in pages:
             page_id = page.get("id")
             last_edited_time = page.get("last_edited_time")
+            page_title = _safe_page_title(page)
 
             try:
                 cursor.execute("""
@@ -1160,32 +1431,31 @@ def check_for_notion_updates(token, actor_id, upload_folder):
                         unchanged_count += 1
                         continue
 
-                    title = extract_notion_page_title(page)
+                    title = page_title
                     blocks = fetch_notion_block_children(token, page_id)
                     content_html = notion_blocks_to_html(token, blocks, upload_folder)
 
                     if not content_html.strip():
                         content_html = "<p>(No readable content found in this Notion page.)</p>"
 
-                    cursor.execute("""
-                        INSERT INTO notion_pending_updates
-                        (article_id, notion_page_id, proposed_title, proposed_content,
-                         previous_title, previous_content, notion_last_edited_time, status)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
-                    """, (
-                        existing["article_id"], page_id, title, content_html,
-                        existing.get("title"), existing.get("content"),
-                        edited_time_mysql,
-                    ))
-                    pending_id = cursor.lastrowid
+                    # If this page already has an open review item (edited
+                    # again before anyone reviewed it), refresh that one
+                    # instead of queueing a second -- see _stage_pending_item.
+                    pending_id, replaced_row = _stage_pending_item(
+                        cursor, page_id, existing["article_id"], title, content_html,
+                        existing.get("title"), existing.get("content"), edited_time_mysql,
+                    )
 
-                    flagged_count += 1
-                    flagged_items.append({
-                        "kind": "update",
-                        "article_id": existing["article_id"],
-                        "title": title,
-                        "pending_id": pending_id,
-                    })
+                    if replaced_row is None:
+                        flagged_count += 1
+                        flagged_items.append({
+                            "kind": "update",
+                            "article_id": existing["article_id"],
+                            "title": title,
+                            "pending_id": pending_id,
+                        })
+                    else:
+                        refreshed_count += 1
                 else:
                     # Before treating this as a brand-new page, check
                     # whether it was previously permanently deleted -- if
@@ -1216,30 +1486,39 @@ def check_for_notion_updates(token, actor_id, upload_folder):
                         unchanged_count += 1
                         continue
 
-                    title = extract_notion_page_title(page)
+                    title = page_title
                     blocks = fetch_notion_block_children(token, page_id)
                     content_html = notion_blocks_to_html(token, blocks, upload_folder)
 
                     if not content_html.strip():
                         content_html = "<p>(No readable content found in this Notion page.)</p>"
 
-                    cursor.execute("""
-                        INSERT INTO notion_pending_updates
-                        (article_id, notion_page_id, proposed_title, proposed_content,
-                         previous_title, previous_content, notion_last_edited_time, status)
-                        VALUES (NULL, %s, %s, %s, NULL, NULL, %s, 'pending')
-                    """, (page_id, title, content_html, edited_time_mysql))
-                    pending_id = cursor.lastrowid
+                    pending_id, replaced_row = _stage_pending_item(
+                        cursor, page_id, None, title, content_html,
+                        None, None, edited_time_mysql,
+                    )
 
-                    new_count += 1
-                    flagged_items.append({
-                        "kind": "new",
-                        "article_id": None,
-                        "title": title,
-                        "pending_id": pending_id,
-                    })
+                    if replaced_row is None:
+                        new_count += 1
+                        flagged_items.append({
+                            "kind": "new",
+                            "article_id": None,
+                            "title": title,
+                            "pending_id": pending_id,
+                        })
+                    else:
+                        refreshed_count += 1
 
                 conn.commit()
+
+                # Only after the refresh is committed can "is any file still
+                # referenced?" give the right answer. Never let cleanup turn a
+                # page that was saved fine into a failed one.
+                if replaced_row is not None and release_unused_uploads:
+                    try:
+                        release_unused_uploads(replaced_row, cursor)
+                    except Exception as cleanup_error:
+                        print("NOTION UPLOAD CLEANUP ERROR:", page_id, cleanup_error)
             except NotionAuthError:
                 # The whole token is dead, not just this page -- stop
                 # iterating (every remaining page would fail the same way)
@@ -1260,11 +1539,21 @@ def check_for_notion_updates(token, actor_id, upload_folder):
                     inaccessible_pages.append(page_id)
                 else:
                     failed_count += 1
+                    failed_items.append({
+                        "pageId": page_id,
+                        "title": page_title,
+                        "reason": _safe_page_failure_reason(http_error),
+                    })
                 print("NOTION PAGE CHECK ERROR:", page_id, http_error)
                 continue
             except Exception as page_error:
                 conn.rollback()
                 failed_count += 1
+                failed_items.append({
+                    "pageId": page_id,
+                    "title": page_title,
+                    "reason": _safe_page_failure_reason(page_error),
+                })
                 print("NOTION PAGE CHECK ERROR:", page_id, page_error)
                 continue
 
@@ -1299,6 +1588,10 @@ def check_for_notion_updates(token, actor_id, upload_folder):
                 print("NOTION OBSOLETE VERIFY ERROR:", obsolete_row["notion_page_id"], verify_error)
 
         status = "completed"
+    except NotionCheckAlreadyRunning:
+        # Another process holds the MySQL lock. Nothing was read or written.
+        status = "already_running"
+        error_message = ALREADY_RUNNING_MESSAGE
     except NotionAuthError as auth_error:
         if conn:
             conn.rollback()
@@ -1310,10 +1603,15 @@ def check_for_notion_updates(token, actor_id, upload_folder):
         if conn:
             conn.rollback()
         status = "failed"
-        error_message = str(error)
+        # The raw error can carry request URLs or database details -- log it
+        # here, but only ever hand the caller a safe, readable message.
+        error_message = _safe_run_error_message(error)
         print("NOTION CHECK ERROR:", error)
     finally:
         if cursor:
+            if db_lock_held:
+                _release_db_check_lock(cursor)
+
             try:
                 if auth_failed:
                     mark_notion_connection_status(cursor, "reconnect_required", error_message)
@@ -1323,15 +1621,20 @@ def check_for_notion_updates(token, actor_id, upload_folder):
             except Exception:
                 pass
 
-            try:
-                cursor.execute("""
-                    INSERT INTO notion_sync_jobs
-                    (status, imported_count, updated_count, skipped_count, failed_count, error_message, completed_at, created_by)
-                    VALUES (%s, %s, %s, %s, %s, %s, NOW(), %s)
-                """, (status, new_count, flagged_count, unchanged_count, failed_count, error_message, actor_id))
-                conn.commit()
-            except Exception:
-                pass
+            # A refused run did nothing, so it is not a sync job to list.
+            if status != "already_running":
+                try:
+                    cursor.execute("""
+                        INSERT INTO notion_sync_jobs
+                        (status, imported_count, updated_count, skipped_count, failed_count, error_message, completed_at, created_by)
+                        VALUES (%s, %s, %s, %s, %s, %s, NOW(), %s)
+                    """, (
+                        status, new_count, flagged_count + refreshed_count, unchanged_count,
+                        failed_count, error_message, actor_id,
+                    ))
+                    conn.commit()
+                except Exception:
+                    pass
 
             cursor.close()
         if conn:
@@ -1341,10 +1644,12 @@ def check_for_notion_updates(token, actor_id, upload_folder):
         "status": status,
         "new": new_count,
         "flagged": flagged_count,
+        "refreshed": refreshed_count,
         "unchanged": unchanged_count,
         "failed": failed_count,
         "inaccessible": inaccessible_count,
         "inaccessiblePages": inaccessible_pages,
+        "failedItems": failed_items[:MAX_REPORTED_FAILED_PAGES],
         "obsoleteChecked": obsolete_checked_count,
         "obsoleteUpdated": obsolete_updated_count,
         "obsoleteMissing": obsolete_missing_count,
@@ -1370,10 +1675,12 @@ def list_pending_updates(cursor, status="pending"):
     return cursor.fetchall() or []
 
 
-def get_pending_update(cursor, pending_id):
-    cursor.execute("""
-        SELECT * FROM notion_pending_updates WHERE id = %s LIMIT 1
-    """, (pending_id,))
+def get_pending_update(cursor, pending_id, for_update=False):
+    cursor.execute(
+        "SELECT * FROM notion_pending_updates WHERE id = %s LIMIT 1"
+        + (" FOR UPDATE" if for_update else ""),
+        (pending_id,),
+    )
     return cursor.fetchone()
 
 
@@ -1410,39 +1717,113 @@ def delete_pending_update_row(cursor, pending_id):
     return cursor.rowcount > 0
 
 
+def _find_article_for_pending(cursor, pending):
+    """
+    The article a pending item belongs to, found by its Notion page id (the
+    stable identity) -- even for a "new page" item (article_id NULL), because
+    another item for the same page may already have been approved. Falls back
+    to the item's own article_id for an older article that was never given a
+    notion_page_id. Row-locked so two approvals can't interleave on it.
+    """
+    cursor.execute("""
+        SELECT article_id, title, content, notion_last_edited_time
+        FROM wiki_article
+        WHERE notion_page_id = %s
+        LIMIT 1
+        FOR UPDATE
+    """, (pending["notion_page_id"],))
+    live = cursor.fetchone()
+
+    if live is None and pending.get("article_id") is not None:
+        cursor.execute("""
+            SELECT article_id, title, content, notion_last_edited_time
+            FROM wiki_article
+            WHERE article_id = %s
+            LIMIT 1
+            FOR UPDATE
+        """, (pending["article_id"],))
+        live = cursor.fetchone()
+
+    return live
+
+
 def apply_pending_update(cursor, pending_id, actor_id):
     """
     Returns the resulting article_id on success (the existing one for an
     edit, or the newly-created one for a "new" entry), or None if the
     update was already resolved by someone else.
+
+    One Notion page is only ever one article. Whatever the item's kind, the
+    article is looked up by Notion page id first and an existing one is
+    updated, never inserted a second time -- so an extra queued item for a
+    page that is already published (an old duplicate, a restored Obsolete
+    page, a double click) cannot create a duplicate. An item that is not
+    newer than what the article already has is just marked resolved, so a
+    stale item can't roll the article back and local edits aren't replaced
+    by an equal-or-older Notion version.
+
+    When the Notion version does replace the article, the version it
+    replaces is saved on the item (previous_title/previous_content) -- the
+    app has no other article version history.
     """
-    pending = get_pending_update(cursor, pending_id)
+    # Lock the item so a double click, or two managers approving the same
+    # item together, can't both run.
+    pending = get_pending_update(cursor, pending_id, for_update=True)
 
     if not pending or pending.get("status") != "pending":
         return None
 
-    if pending.get("article_id") is None:
-        # Brand-new page approved for the first time -- create it now,
-        # same shape as the old direct-import insert used to.
-        cursor.execute("""
-            INSERT INTO wiki_article
-            (title, content, category, sub_category, link, is_deleted, source_type, notion_page_id, notion_last_edited_time)
-            VALUES (%s, %s, %s, %s, %s, FALSE, 'notion', %s, %s)
-        """, (
-            pending["proposed_title"], pending["proposed_content"], "Notion", "", "",
-            pending["notion_page_id"], pending["notion_last_edited_time"],
-        ))
-        article_id = cursor.lastrowid
-    else:
+    live = _find_article_for_pending(cursor, pending)
+    article_id = None
+
+    if live is None and pending.get("article_id") is None:
+        # Brand-new page approved for the first time -- the one place a
+        # Notion article is created.
+        try:
+            cursor.execute("""
+                INSERT INTO wiki_article
+                (title, content, category, sub_category, link, is_deleted, source_type, notion_page_id, notion_last_edited_time)
+                VALUES (%s, %s, %s, %s, %s, FALSE, 'notion', %s, %s)
+            """, (
+                pending["proposed_title"], pending["proposed_content"], "Notion", "", "",
+                pending["notion_page_id"], pending["notion_last_edited_time"],
+            ))
+            article_id = cursor.lastrowid
+        except mysql.connector.IntegrityError as error:
+            # 1062 = duplicate entry: a concurrent approval created the
+            # article between our lookup and insert. Treat it as the
+            # "already exists" case below instead of failing.
+            if getattr(error, "errno", None) != 1062:
+                raise
+            live = _find_article_for_pending(cursor, pending)
+            if live is None:
+                raise
+
+    if live is not None:
+        article_id = live["article_id"]
+        live_time = live.get("notion_last_edited_time")
+        pending_time = pending.get("notion_last_edited_time")
+
+        if not (live_time and pending_time and live_time >= pending_time):
+            cursor.execute("""
+                UPDATE notion_pending_updates
+                SET previous_title = %s, previous_content = %s
+                WHERE id = %s
+            """, (live.get("title"), live.get("content"), pending_id))
+
+            cursor.execute("""
+                UPDATE wiki_article
+                SET title = %s, content = %s, notion_last_edited_time = %s,
+                    notion_page_id = COALESCE(notion_page_id, %s)
+                WHERE article_id = %s
+            """, (
+                pending["proposed_title"], pending["proposed_content"],
+                pending["notion_last_edited_time"], pending["notion_page_id"], article_id,
+            ))
+    elif article_id is None:
+        # The linked article no longer exists (permanently deleted after this
+        # change was queued) -- there is nothing to update; just resolve it.
         article_id = pending["article_id"]
-        cursor.execute("""
-            UPDATE wiki_article
-            SET title = %s, content = %s, notion_last_edited_time = %s
-            WHERE article_id = %s
-        """, (
-            pending["proposed_title"], pending["proposed_content"],
-            pending["notion_last_edited_time"], article_id,
-        ))
 
     cursor.execute("""
         UPDATE notion_pending_updates

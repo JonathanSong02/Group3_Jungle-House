@@ -80,6 +80,9 @@ export default function NotionSync() {
 
   const oauthPopupRef = useRef(null);
   const oauthPopupPollRef = useRef(null);
+  // setChecking() only takes effect on the next render, so two clicks in the
+  // same tick could both start a check. The ref flips immediately.
+  const checkingRef = useRef(false);
 
   // Lets a manager point this deployment at a different Notion public
   // integration (its own Client ID/Secret) -- e.g. a new client wants their
@@ -210,6 +213,9 @@ export default function NotionSync() {
   };
 
   const handleCheckForUpdates = async ({ silent } = {}) => {
+    if (checkingRef.current) return;
+    checkingRef.current = true;
+
     try {
       setChecking(true);
       if (!silent) setMessage('');
@@ -235,7 +241,14 @@ export default function NotionSync() {
         // error text while still looking "connected".
         fetchConfig();
       }
+      if (error.response?.data?.alreadyRunning) {
+        // Another check (automatic or by another manager) is in progress --
+        // show what it has queued so far instead of leaving the lists stale.
+        fetchJobs();
+        fetchPending();
+      }
     } finally {
+      checkingRef.current = false;
       setChecking(false);
     }
   };
@@ -958,6 +971,7 @@ export default function NotionSync() {
             className="ns-sync-btn"
             type="button"
             disabled={checking || !config?.connected}
+            aria-busy={checking}
             onClick={() => handleCheckForUpdates()}
           >
             {checking ? t('ns.checking') : t('ns.checkUpdates')}
@@ -977,7 +991,8 @@ export default function NotionSync() {
               </div>
               <div>
                 <span>{t('ns.result.flagged')}</span>
-                <strong>{checkResult.flagged ?? 0}</strong>
+                {/* Includes changes refreshed in place because the page was edited again before review. */}
+                <strong>{(checkResult.flagged ?? 0) + (checkResult.refreshed ?? 0)}</strong>
               </div>
               <div>
                 <span>{t('ns.result.unchanged')}</span>
@@ -999,6 +1014,20 @@ export default function NotionSync() {
               <span>{t('ns.safeRerun')}</span>
             </div>
           )}
+
+          {Array.isArray(checkResult?.failedItems) && checkResult.failedItems.length > 0 ? (
+            <div className="ns-failed-list" role="alert">
+              <strong>{t('ns.failedHeading', { n: checkResult.failed ?? checkResult.failedItems.length })}</strong>
+              <ul>
+                {checkResult.failedItems.map((item, index) => (
+                  <li key={`${item.pageId || 'page'}-${index}`}>
+                    <span className="ns-failed-title">{item.title || t('ns.untitled')}</span>
+                    <span className="ns-failed-reason">{tm(item.reason)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
 
           {checkResult?.inaccessible > 0 ? (
             <div className="ns-sync-note">

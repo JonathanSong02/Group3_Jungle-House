@@ -1287,3 +1287,86 @@
     grid-template-columns:1fr;
   }
 }
+
+/* ==========================================================================
+   DUPLICATE-SAFE CHECK — result summary additions
+   Failed pages from the last check (title + a safe, readable reason), a busy
+   spinner on the check button, and wrapping so longer labels such as
+   "Skipped (unchanged)" never overflow a small screen.
+   ========================================================================== */
+
+.ns-sync-result-grid span,
+.ns-sync-result-grid strong{
+  overflow-wrap:anywhere;
+}
+
+.ns-sync-btn[aria-busy="true"]::before{
+  content:"";
+  display:inline-block;
+  width:12px;
+  height:12px;
+  margin-right:8px;
+  border:2px solid rgba(255,255,255,.4);
+  border-top-color:#fff;
+  border-radius:50%;
+  vertical-align:-2px;
+  animation:ns-spin .8s linear infinite;
+}
+
+@keyframes ns-spin{
+  to{transform:rotate(360deg)}
+}
+
+@media (prefers-reduced-motion:reduce){
+  .ns-sync-btn[aria-busy="true"]::before{animation:none}
+}
+
+.ns-failed-list{
+  margin-top:14px;
+  padding:12px 14px;
+  background:rgba(168,78,69,.07);
+  border:1px solid rgba(168,78,69,.28);
+  border-radius:12px;
+  color:var(--ns-ink);
+}
+
+.ns-failed-list>strong{
+  display:block;
+  color:var(--ns-red);
+  font-size:12px;
+  font-weight:850;
+  overflow-wrap:anywhere;
+}
+
+.ns-failed-list ul{
+  display:grid;
+  gap:8px;
+  margin:9px 0 0;
+  padding:0;
+  list-style:none;
+}
+
+.ns-failed-list li{
+  display:grid;
+  gap:2px;
+  min-width:0;
+  padding-top:8px;
+  border-top:1px solid rgba(168,78,69,.18);
+}
+
+.ns-failed-list li:first-child{
+  padding-top:0;
+  border-top:0;
+}
+
+.ns-failed-title{
+  font-size:12px;
+  font-weight:800;
+  overflow-wrap:anywhere;
+}
+
+.ns-failed-reason{
+  color:var(--ns-muted);
+  font-size:11px;
+  overflow-wrap:anywhere;
+}

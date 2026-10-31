@@ -7074,12 +7074,30 @@ def check_notion_sync():
         if conn:
             conn.close()
 
-    result = notion_sync_service.check_for_notion_updates(raw_token, actor_id, UPLOAD_FOLDER)
+    result = notion_sync_service.check_for_notion_updates(
+        raw_token, actor_id, UPLOAD_FOLDER,
+        release_unused_uploads=lambda replaced_row, upload_cursor: delete_pending_update_upload_files(
+            replaced_row, cursor=upload_cursor
+        ),
+    )
+
+    if result["status"] == "already_running":
+        # Another Check for Updates (a second click, another manager, or the
+        # automatic background check) is in progress; nothing was changed.
+        return jsonify({
+            "success": False,
+            "alreadyRunning": True,
+            "message": notion_sync_service.ALREADY_RUNNING_MESSAGE,
+            **result,
+        }), 409
 
     if result["status"] == "reconnect_required":
         response_message = "Your Notion connection needs to be renewed. Please reconnect Notion."
     elif result["status"] == "completed":
-        response_message = f"Checked Notion: {result['new']} new, {result['flagged']} updated, {result['unchanged']} unchanged."
+        # "updated" counts both newly queued changes and ones refreshed in
+        # place because the page was edited again before anyone reviewed it.
+        updated_total = result["flagged"] + result.get("refreshed", 0)
+        response_message = f"Checked Notion: {result['new']} new, {updated_total} updated, {result['unchanged']} unchanged."
         if result.get("inaccessible"):
             response_message += (
                 f" {result['inaccessible']} page(s) are no longer accessible and were skipped "
@@ -7117,8 +7135,8 @@ def check_notion_sync():
         action="Checked Notion for updates",
         module="Notion Sync",
         description=(
-            f"New {result['new']}, flagged {result['flagged']}, unchanged {result['unchanged']}, "
-            f"failed {result['failed']}, inaccessible {result.get('inaccessible', 0)}."
+            f"New {result['new']}, flagged {result['flagged']}, refreshed {result.get('refreshed', 0)}, "
+            f"unchanged {result['unchanged']}, failed {result['failed']}, inaccessible {result.get('inaccessible', 0)}."
             if result["status"] != "reconnect_required"
             else "Notion token rejected (401) -- connection marked as needing reconnect."
         )
@@ -8540,9 +8558,13 @@ def _notion_auto_sync_loop():
     on their own, without a manager having to open Notion Sync and click
     "Check for Updates" every time. Runs in a single daemon thread inside
     the one gunicorn worker this service is deployed with (see
-    backend/src/Procfile, --workers 1), so it never runs more than once
-    concurrently. Safe to leave running with nothing connected -- it just
-    checks the active token each cycle and no-ops when there isn't one.
+    backend/src/Procfile, --workers 1) -- but that worker also serves
+    requests on 4 threads, so a manager's manual click can overlap a cycle
+    here. check_for_notion_updates guards against that itself: a cycle that
+    finds another check already running just returns "already_running" and
+    waits for the next interval. Safe to leave running with nothing
+    connected -- it just checks the active token each cycle and no-ops when
+    there isn't one.
     """
     interval_seconds = max(60, int(os.getenv("NOTION_AUTO_SYNC_INTERVAL_SECONDS", "300")))
     time.sleep(30)
@@ -8557,7 +8579,12 @@ def _notion_auto_sync_loop():
             conn.close()
 
             if token:
-                result = notion_sync_service.check_for_notion_updates(token, None, UPLOAD_FOLDER)
+                result = notion_sync_service.check_for_notion_updates(
+                    token, None, UPLOAD_FOLDER,
+                    release_unused_uploads=lambda replaced_row, upload_cursor: delete_pending_update_upload_files(
+                        replaced_row, cursor=upload_cursor
+                    ),
+                )
 
                 if result.get("flaggedItems"):
                     notify_conn = notion_sync_service.get_db_connection()
