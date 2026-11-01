@@ -13489,9 +13489,13 @@ def get_quizzes():
                 q.status,
                 q.created_at,
                 {quiz_extra_select()},
+                MAX(w.title) AS source_article_title,
                 COUNT(qq.question_id) AS question_count
             FROM quiz q
             LEFT JOIN quiz_question qq ON q.quiz_id = qq.quiz_id
+            LEFT JOIN wiki_article w
+                ON w.article_id = q.source_article_id
+               AND COALESCE(w.is_deleted, 0) = 0
             WHERE q.status = 'active'
             GROUP BY q.quiz_id, q.title, q.description, q.category, q.status, q.created_at
             ORDER BY q.created_at DESC
@@ -13739,9 +13743,13 @@ def get_admin_quizzes():
                 q.created_at,
                 q.updated_at,
                 {quiz_extra_select()},
+                MAX(w.title) AS source_article_title,
                 COUNT(qq.question_id) AS question_count
             FROM quiz q
             LEFT JOIN quiz_question qq ON q.quiz_id = qq.quiz_id
+            LEFT JOIN wiki_article w
+                ON w.article_id = q.source_article_id
+               AND COALESCE(w.is_deleted, 0) = 0
             GROUP BY 
                 q.quiz_id,
                 q.title,
@@ -13792,10 +13800,17 @@ def create_admin_quiz():
         created_by = None
 
     difficulty = normalize_quiz_difficulty(data.get("difficulty"))
-    try:
-        source_article_id = int(data.get("source_article_id")) if data.get("source_article_id") else None
-    except (TypeError, ValueError):
+
+    raw_source_article_id = data.get("source_article_id")
+    if raw_source_article_id in (None, "", 0, "0"):
         source_article_id = None
+    else:
+        try:
+            source_article_id = int(raw_source_article_id)
+        except (TypeError, ValueError):
+            return jsonify({"message": "Invalid training material selection."}), 400
+        if source_article_id < 1:
+            return jsonify({"message": "Invalid training material selection."}), 400
 
     # Optional: save the quiz and all of its questions in ONE transaction so a
     # failed question never leaves an empty/partial quiz behind.
@@ -13823,6 +13838,20 @@ def create_admin_quiz():
     try:
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
+
+        if source_article_id is not None:
+            cursor.execute(
+                """SELECT article_id
+                   FROM wiki_article
+                   WHERE article_id = %s
+                     AND COALESCE(is_deleted, 0) = 0
+                   LIMIT 1""",
+                (source_article_id,),
+            )
+            if not cursor.fetchone():
+                return jsonify({
+                    "message": "The selected training material could not be found."
+                }), 400
 
         if ensure_quiz_extra_columns():
             cursor.execute("""
@@ -13908,6 +13937,17 @@ def update_admin_quiz(quiz_id):
     if status not in ["active", "inactive"]:
         status = "active"
 
+    raw_source_article_id = data.get("source_article_id")
+    if raw_source_article_id in (None, "", 0, "0"):
+        source_article_id = None
+    else:
+        try:
+            source_article_id = int(raw_source_article_id)
+        except (TypeError, ValueError):
+            return jsonify({"message": "Invalid training material selection."}), 400
+        if source_article_id < 1:
+            return jsonify({"message": "Invalid training material selection."}), 400
+
     conn = None
     cursor = None
 
@@ -13920,33 +13960,62 @@ def update_admin_quiz(quiz_id):
         if not current:
             return jsonify({"message": "Quiz not found."}), 404
 
+        if source_article_id is not None:
+            cursor.execute(
+                """SELECT article_id
+                   FROM wiki_article
+                   WHERE article_id = %s
+                     AND COALESCE(is_deleted, 0) = 0
+                   LIMIT 1""",
+                (source_article_id,),
+            )
+            if not cursor.fetchone():
+                return jsonify({
+                    "message": "The selected training material could not be found."
+                }), 400
+
         # Publishing a draft (inactive -> active) requires at least one question.
         if status == "active" and str(current["status"]).lower() != "active":
             cursor.execute("SELECT COUNT(*) AS n FROM quiz_question WHERE quiz_id = %s", (quiz_id,))
             if int((cursor.fetchone() or {}).get("n") or 0) == 0:
                 return jsonify({"message": "Add at least one question before publishing."}), 400
 
-        cursor.execute("""
-            UPDATE quiz
-            SET
-                title = %s,
-                description = %s,
-                category = %s,
-                status = %s
-            WHERE quiz_id = %s
-        """, (
-            title,
-            description,
-            category,
-            status,
-            quiz_id
-        ))
-
-        if "difficulty" in data and ensure_quiz_extra_columns():
-            cursor.execute(
-                "UPDATE quiz SET difficulty = %s WHERE quiz_id = %s",
-                (normalize_quiz_difficulty(data.get("difficulty")), quiz_id),
-            )
+        if ensure_quiz_extra_columns():
+            cursor.execute("""
+                UPDATE quiz
+                SET
+                    title = %s,
+                    description = %s,
+                    category = %s,
+                    status = %s,
+                    difficulty = %s,
+                    source_article_id = %s
+                WHERE quiz_id = %s
+            """, (
+                title,
+                description,
+                category,
+                status,
+                normalize_quiz_difficulty(data.get("difficulty")),
+                source_article_id,
+                quiz_id,
+            ))
+        else:
+            cursor.execute("""
+                UPDATE quiz
+                SET
+                    title = %s,
+                    description = %s,
+                    category = %s,
+                    status = %s
+                WHERE quiz_id = %s
+            """, (
+                title,
+                description,
+                category,
+                status,
+                quiz_id
+            ))
 
         conn.commit()
 

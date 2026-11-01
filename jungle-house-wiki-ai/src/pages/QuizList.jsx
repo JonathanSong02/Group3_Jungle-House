@@ -77,6 +77,9 @@ export default function QuizList() {
           category: quiz.category,
           questionCount: quiz.question_count,
           difficulty: quiz.difficulty,
+          passingScore: Number(quiz.passing_score ?? 80),
+          sourceArticleId: quiz.source_article_id || null,
+          sourceArticleTitle: quiz.source_article_title || '',
           questions: [],
         }));
 
@@ -411,19 +414,99 @@ export default function QuizList() {
 
           {showWelcome ? (
             <div className="card-like quiz-welcome-card staff-quiz-welcome">
-              <span className="eyebrow">{t('quiz.ready')}</span>
+              <span className="eyebrow">
+                {tOr('quiz.prepare.kicker', 'Prepare before you start')}
+              </span>
               <h2>{titleLabel(activeQuiz.title)}</h2>
-              <p>{t('quiz.readyInfo', { n: totalQuestions })}</p>
+              <p>
+                {tOr(
+                  'quiz.prepare.description',
+                  'Review the related training material, then begin when you are ready.'
+                )}
+              </p>
+
+              {activeQuiz.sourceArticleId ? (
+                <div
+                  className="card-like"
+                  style={{
+                    marginTop: 8,
+                    padding: '16px 18px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 16,
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <div style={{ minWidth: 0, flex: '1 1 280px' }}>
+                    <span className="eyebrow">
+                      {tOr('quiz.prepare.material', 'Training Material')}
+                    </span>
+                    <h3 style={{ margin: '5px 0 5px' }}>
+                      {activeQuiz.sourceArticleTitle ||
+                        tOr('quiz.prepare.knowledgeArticle', 'Knowledge Base Article')}
+                    </h3>
+                    <p className="muted" style={{ margin: 0 }}>
+                      {tOr(
+                        'quiz.prepare.materialHint',
+                        'Read or revise this material before attempting the assessment.'
+                      )}
+                    </p>
+                  </div>
+
+                  <Link
+                    to={`/knowledge/${activeQuiz.sourceArticleId}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="secondary-btn"
+                  >
+                    {tOr('quiz.prepare.reviewMaterial', 'Review Material')} ↗
+                  </Link>
+                </div>
+              ) : (
+                <div className="quiz-state-card" style={{ minHeight: 0, marginTop: 8 }}>
+                  <strong>{tOr('quiz.prepare.noMaterialTitle', 'No linked reading material')}</strong>
+                  <p>
+                    {tOr(
+                      'quiz.prepare.noMaterialHint',
+                      'You can still attempt this quiz. Ask your Team Leader if you need revision material.'
+                    )}
+                  </p>
+                </div>
+              )}
+
+              <div className="quiz-card-meta" style={{ marginTop: 8 }}>
+                <span>
+                  <strong>{totalQuestions}</strong>
+                  {t('quiz.questionsLabel')}
+                </span>
+                <span>
+                  <strong>{activeQuiz.passingScore ?? 80}%</strong>
+                  {tOr('quiz.prepare.passMark', 'Pass mark')}
+                </span>
+              </div>
+
               {loadingQuestions && <p role="status">{t('quiz.loadingQs')}</p>}
               {questionError && <p role="alert">{questionError}</p>}
               {!loadingQuestions && !questionError && totalQuestions === 0 && <p>{t('quiz.noQs')}</p>}
+
               <div className="button-group wrap-gap top-gap">
-                <button type="button" className="secondary-btn" onClick={handleBackToList}>{t('quiz.back')}</button>
+                <button type="button" className="secondary-btn" onClick={handleBackToList}>
+                  {t('quiz.back')}
+                </button>
                 {questionError ? (
-                  <button type="button" className="primary-btn" onClick={() => fetchQuizQuestions(activeQuizId)}>{t('quiz.retry')}</button>
+                  <button type="button" className="primary-btn" onClick={() => fetchQuizQuestions(activeQuizId)}>
+                    {t('quiz.retry')}
+                  </button>
                 ) : (
-                  <button type="button" className="primary-btn"
-                    onClick={handleBeginQuestions} disabled={loadingQuestions || totalQuestions === 0}>{t('quiz.begin')}</button>
+                  <button
+                    type="button"
+                    className="primary-btn"
+                    onClick={handleBeginQuestions}
+                    disabled={loadingQuestions || totalQuestions === 0}
+                  >
+                    {tOr('quiz.prepare.beginAssessment', 'Begin Quiz')}
+                  </button>
                 )}
               </div>
             </div>

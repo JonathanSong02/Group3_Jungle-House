@@ -11,6 +11,7 @@ const emptyQuizForm = {
   category: 'Training',
   status: 'active',
   difficulty: 'Medium',
+  source_article_id: '',
 };
 
 const emptyQuestionForm = {
@@ -290,7 +291,7 @@ export default function QuizManagement() {
   }, [fetchQuizzes]);
 
   useEffect(() => {
-    if (activeTab !== 'ai-generate' || aiArticles.length > 0) return;
+    if (aiArticles.length > 0) return;
 
     api
       .get('/admin/quizzes/source-articles')
@@ -300,7 +301,7 @@ export default function QuizManagement() {
       .catch((error) => {
         console.error('Load quiz source articles error:', error.response?.data || error);
       });
-  }, [activeTab, aiArticles.length]);
+  }, [aiArticles.length]);
 
   useEffect(() => {
     if (selectedQuizId && activeTab === 'manage') {
@@ -393,6 +394,7 @@ export default function QuizManagement() {
       category: quiz.category || 'Training',
       status: quiz.status || 'active',
       difficulty: quiz.difficulty || 'Medium',
+      source_article_id: quiz.source_article_id ? String(quiz.source_article_id) : '',
     });
     setActiveTab('create');
   };
@@ -930,6 +932,14 @@ export default function QuizManagement() {
                       {selectedQuiz.description ? (
                         <p>{localizeDescription(selectedQuiz.description)}</p>
                       ) : null}
+
+                      {selectedQuiz.source_article_id ? (
+                        <p>
+                          <strong>{tOr('qm.trainingMaterial', 'Training material')}:</strong>{' '}
+                          {selectedQuiz.source_article_title ||
+                            tOr('qm.linkedArticleFallback', `Knowledge Base article #${selectedQuiz.source_article_id}`)}
+                        </p>
+                      ) : null}
                     </div>
 
                     <button
@@ -1189,6 +1199,31 @@ export default function QuizManagement() {
                     onChange={handleQuizChange}
                     placeholder={t('qm.form.descriptionPh')}
                   />
+                </label>
+
+                <label className="qm-field qm-field-full">
+                  <span>{tOr('qm.form.trainingMaterial', 'Training Material / Knowledge Base Article')}</span>
+                  <select
+                    name="source_article_id"
+                    value={quizForm.source_article_id}
+                    onChange={handleQuizChange}
+                  >
+                    <option value="">
+                      {tOr('qm.form.noTrainingMaterial', 'No linked training material')}
+                    </option>
+                    {aiArticles.map((article) => (
+                      <option key={article.article_id} value={article.article_id}>
+                        {article.title}
+                        {article.category ? ` — ${catLabel(article.category)}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <small>
+                    {tOr(
+                      'qm.form.trainingMaterialHint',
+                      'Staff can review this Knowledge Base material before attempting the quiz.'
+                    )}
+                  </small>
                 </label>
 
                 <div className="qm-form-grid">
