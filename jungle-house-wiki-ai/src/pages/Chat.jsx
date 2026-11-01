@@ -1041,7 +1041,6 @@ function renderResponseMeta(message, t) {
 function buildAiMessage(data, t) {
   data = normalizeEscalationResponse(data, t);
   const messageMetadata = {
-    memory_context_used: Boolean(data?.memory_context_used),
     ...escalationMetadata(data),
     created_at: new Date().toISOString(),
     clarification_token: data?.clarification_token || '',

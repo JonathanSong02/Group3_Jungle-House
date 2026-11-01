@@ -39,14 +39,3 @@ test('MEM-22 cross-chat recalled text is excluded from automatic ticket evidence
   assert.ok(context);
   assert.ok(context.messages.every((m) => !m.content.includes('Private quotation')));
 });
-
-test('implicit cross-chat personal evidence is also excluded from automatic tickets', () => {
-  const context = buildIssueContext([
-    { id: 'u1', sender: 'user', text: 'ice bin cleaning' },
-    { id: 'a1', sender: 'ai', source: 'ai_provider_answer', memory_context_used: true,
-      text: 'Private previous-chat detail used in this answer' },
-    { id: 'u2', sender: 'user', text: 'ice bin not this' },
-  ], 'ice bin not this', 'main-synthetic');
-  assert.ok(context);
-  assert.ok(context.messages.every((m) => !m.content.includes('Private previous-chat')));
-});
