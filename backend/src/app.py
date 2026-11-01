@@ -18,6 +18,8 @@ import hmac
 import base64
 import requests
 import difflib
+import io
+import zipfile
 
 
 
@@ -526,8 +528,8 @@ app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024
 @app.errorhandler(413)
 def handle_file_too_large(_error):
     return jsonify({
-        "reply": "This file is too large. Please upload an image under 8MB.",
-        "answer": "This file is too large. Please upload an image under 8MB.",
+        "reply": "This file is too large. Please upload a file under 8MB.",
+        "answer": "This file is too large. Please upload a file under 8MB.",
         "success": False,
         "source": "upload_too_large",
         "fallback": True,
@@ -624,51 +626,289 @@ CORS(
 # Save uploaded article files inside the same static folder served by Flask.
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "pdf", "doc", "docx"}
 
+UPLOAD_MIME_TYPES = {
+    "png": "image/png",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "gif": "image/gif",
+    "webp": "image/webp",
+    "heic": "image/heic",
+    "heif": "image/heif",
+    "pdf": "application/pdf",
+    "doc": "application/msword",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+
+IMAGE_UPLOAD_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp", "heic", "heif"}
+
+# A DOCX is compressed. Limit the structure we inspect so a tiny ZIP cannot
+# advertise an extreme decompressed size ("zip bomb") to later processors.
+DOCX_MAX_ENTRIES = 2000
+DOCX_MAX_UNCOMPRESSED_BYTES = 64 * 1024 * 1024
+
+
+class UploadValidationError(ValueError):
+    """Safe client-facing upload validation failure."""
+
+
+def get_upload_extension(filename):
+    filename = str(filename or "")
+    if "." not in filename:
+        return ""
+    return filename.rsplit(".", 1)[1].strip().lower()
+
+
 def allowed_file(filename):
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+    return get_upload_extension(filename) in ALLOWED_EXTENSIONS
+
+
+def _read_uploaded_file_bytes(file):
+    """Read the upload for inspection and restore its stream for file.save()."""
+    if not file or not getattr(file, "stream", None):
+        raise UploadValidationError("The uploaded file could not be read.")
+
+    stream = file.stream
+
+    try:
+        original_position = stream.tell()
+    except Exception:
+        original_position = 0
+
+    try:
+        stream.seek(0)
+        data = stream.read()
+    except Exception as error:
+        print("UPLOAD VALIDATION READ ERROR:", error)
+        raise UploadValidationError("The uploaded file could not be read.") from None
+    finally:
+        try:
+            stream.seek(original_position)
+        except Exception:
+            try:
+                stream.seek(0)
+            except Exception:
+                pass
+
+    if not data:
+        raise UploadValidationError("The uploaded file is empty.")
+
+    return data
+
+
+def _detect_heif_family(data):
+    """Return 'heic'/'heif' for a valid ISO-BMFF HEIF-family container."""
+    if len(data) < 16 or data[4:8] != b"ftyp":
+        return None
+
+    try:
+        box_size = int.from_bytes(data[0:4], "big")
+    except Exception:
+        return None
+
+    if box_size < 16:
+        return None
+
+    box_end = min(box_size, len(data))
+    major_brand = data[8:12]
+    compatible_brands = [
+        data[index:index + 4]
+        for index in range(16, box_end, 4)
+        if len(data[index:index + 4]) == 4
+    ]
+    brands = {major_brand, *compatible_brands}
+
+    heic_brands = {
+        b"heic", b"heix", b"hevc", b"hevx",
+        b"heim", b"heis",
+    }
+    heif_brands = {
+        b"mif1", b"msf1",
+    }
+
+    if brands & heic_brands:
+        return "heic"
+    if brands & heif_brands:
+        return "heif"
+
+    return None
+
+
+def _is_valid_docx(data):
+    if not data.startswith(b"PK"):
+        return False
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(data), "r") as archive:
+            infos = archive.infolist()
+
+            if not infos or len(infos) > DOCX_MAX_ENTRIES:
+                return False
+
+            total_uncompressed = 0
+            names = set()
+
+            for info in infos:
+                # Encrypted ZIP entries are not accepted as a normal DOCX upload.
+                if info.flag_bits & 0x1:
+                    return False
+
+                total_uncompressed += int(info.file_size or 0)
+                if total_uncompressed > DOCX_MAX_UNCOMPRESSED_BYTES:
+                    return False
+
+                names.add(info.filename.replace("\\", "/"))
+
+            # These structures distinguish a real Word OOXML document from an
+            # arbitrary ZIP renamed to .docx.
+            return (
+                "[Content_Types].xml" in names
+                and "_rels/.rels" in names
+                and "word/document.xml" in names
+            )
+    except (zipfile.BadZipFile, OSError, RuntimeError, ValueError):
+        return False
+
+
+def _is_valid_legacy_doc(data):
+    # Microsoft Compound File Binary header used by legacy .doc files.
+    ole_header = b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1"
+    if not data.startswith(ole_header):
+        return False
+
+    # Word binary documents contain a "WordDocument" compound stream. Requiring
+    # that stream name rejects an .xls/.ppt/OLE container merely renamed .doc.
+    word_document_stream = "WordDocument".encode("utf-16le")
+    return word_document_stream in data
+
+
+def detect_uploaded_file_type(data):
+    """Detect the actual supported format from file bytes, never browser MIME."""
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+
+    if data.startswith(b"\xff\xd8\xff"):
+        return "jpeg"
+
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return "gif"
+
+    if len(data) >= 12 and data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return "webp"
+
+    heif_type = _detect_heif_family(data)
+    if heif_type:
+        return heif_type
+
+    # Normal PDFs begin with the PDF header. Do not accept arbitrary content
+    # containing "%PDF" later in the file.
+    if data.startswith(b"%PDF-"):
+        return "pdf"
+
+    if _is_valid_docx(data):
+        return "docx"
+
+    if _is_valid_legacy_doc(data):
+        return "doc"
+
+    return None
+
+
+def validate_uploaded_file(file):
+    """Validate filename extension against the actual file signature/content.
+
+    Returns a trusted MIME type derived from the bytes, not from the browser.
+    Raises UploadValidationError before anything is written to disk.
+    """
+    if not file or not file.filename:
+        raise UploadValidationError("Please select a file to upload.")
+
+    extension = get_upload_extension(file.filename)
+
+    if extension not in ALLOWED_EXTENSIONS:
+        raise UploadValidationError(
+            "Unsupported file type. Please upload PNG, JPG, GIF, WebP, HEIC/HEIF, PDF, DOC or DOCX."
+        )
+
+    data = _read_uploaded_file_bytes(file)
+    detected_type = detect_uploaded_file_type(data)
+
+    if not detected_type:
+        raise UploadValidationError(
+            "The uploaded file is not a valid supported file."
+        )
+
+    # JPEG commonly uses either .jpg or .jpeg. HEIC/HEIF are the same container
+    # family and may legitimately use either extension depending on the device.
+    if detected_type == "jpeg":
+        valid_extensions = {"jpg", "jpeg"}
+        trusted_mime = "image/jpeg"
+    elif detected_type in {"heic", "heif"}:
+        valid_extensions = {"heic", "heif"}
+        trusted_mime = UPLOAD_MIME_TYPES[extension]
+    else:
+        valid_extensions = {detected_type}
+        trusted_mime = UPLOAD_MIME_TYPES[detected_type]
+
+    if extension not in valid_extensions:
+        raise UploadValidationError(
+            "The uploaded file does not match its file type."
+        )
+
+    # file.save() must see the complete file from byte zero.
+    try:
+        file.stream.seek(0)
+    except Exception:
+        raise UploadValidationError("The uploaded file could not be prepared for saving.") from None
+
+    return trusted_mime
 
 
 def save_article_attachment(file):
     if not file or file.filename == "":
         return None, None
 
-    if not allowed_file(file.filename):
-        return None, None
+    trusted_mime = validate_uploaded_file(file)
 
     filename = secure_filename(file.filename)
-    unique_filename = f"{int(time.time())}_{filename}"
+    if not filename:
+        raise UploadValidationError("The uploaded filename is invalid.")
 
+    unique_filename = f"{int(time.time())}_{filename}"
     file_path = UPLOAD_FOLDER / unique_filename
     file.save(str(file_path))
 
     attachment_url = f"/static/uploads/articles/{unique_filename}"
-    attachment_type = file.content_type
-
-    return attachment_url, attachment_type
-
+    return attachment_url, trusted_mime
 
 
 def save_article_attachments(files):
+    candidates = [
+        file for file in (files or [])
+        if file and getattr(file, "filename", "")
+    ]
+
+    if not candidates:
+        return []
+
+    # Validate the whole batch BEFORE writing any file. A bad file therefore
+    # cannot leave valid-looking partial uploads behind.
+    validated = []
+    for file in candidates:
+        trusted_mime = validate_uploaded_file(file)
+        filename = secure_filename(file.filename)
+        if not filename:
+            raise UploadValidationError("One uploaded filename is invalid.")
+        validated.append((file, filename, trusted_mime))
+
     saved_files = []
 
-    for file in files:
-        if not file or file.filename == "":
-            continue
-
-        if not allowed_file(file.filename):
-            continue
-
-        filename = secure_filename(file.filename)
-        unique_filename = f"{int(time.time() * 1000)}_{filename}"
-
+    for file, filename, trusted_mime in validated:
+        unique_filename = f"{int(time.time() * 1000)}_{secrets.token_hex(3)}_{filename}"
         file_path = UPLOAD_FOLDER / unique_filename
         file.save(str(file_path))
 
-        # Temporary diagnostic logging: two rounds of guessing at the
-        # pasted-image corruption bug (Content-Type header, Vercel proxy)
-        # both turned out wrong. This prints the real, actual bytes Railway
-        # received, so the next fix is based on evidence instead of a
-        # third guess. Safe to remove once that bug is confirmed fixed.
+        # Keep the existing diagnostic logging but do not expose these details
+        # to the browser.
         try:
             saved_size = file_path.stat().st_size
             with open(file_path, "rb") as saved_file:
@@ -676,7 +916,7 @@ def save_article_attachments(files):
             print(
                 "ARTICLE UPLOAD DEBUG:",
                 "filename=", filename,
-                "content_type=", file.content_type,
+                "detected_content_type=", trusted_mime,
                 "saved_size_bytes=", saved_size,
                 "first_16_bytes_hex=", first_bytes.hex(),
             )
@@ -685,12 +925,34 @@ def save_article_attachments(files):
 
         saved_files.append({
             "url": f"/static/uploads/articles/{unique_filename}",
-            "type": file.content_type,
+            "type": trusted_mime,
             "name": filename
         })
 
     return saved_files
 
+
+def save_chat_image(file):
+    """
+    Save an upload from AI Chat or Escalation.
+    The function name is kept as save_chat_image so existing routes still work,
+    but it supports mobile camera photos, images, PDF, DOC and DOCX files.
+    """
+    if not file or file.filename == "":
+        return None, None
+
+    trusted_mime = validate_uploaded_file(file)
+
+    filename = secure_filename(file.filename)
+    if not filename:
+        raise UploadValidationError("The uploaded filename is invalid.")
+
+    unique_filename = f"{int(time.time() * 1000)}_{secrets.token_hex(3)}_{filename}"
+    file_path = CHAT_UPLOAD_FOLDER / unique_filename
+    file.save(str(file_path))
+
+    attachment_url = f"/static/uploads/chat/{unique_filename}"
+    return attachment_url, trusted_mime
 
 def ensure_wiki_article_content_capacity(cursor):
     """
@@ -9325,7 +9587,20 @@ def chat():
                 data["escalation_context"] = None
 
             if uploaded_chat_image:
-                uploaded_chat_image_url, uploaded_chat_image_type = save_chat_image(uploaded_chat_image)
+                try:
+                    uploaded_chat_image_url, uploaded_chat_image_type = save_chat_image(uploaded_chat_image)
+                except UploadValidationError as upload_error:
+                    message = str(upload_error)
+                    return jsonify({
+                        "reply": message,
+                        "answer": message,
+                        "message": message,
+                        "success": False,
+                        "source": "invalid_upload",
+                        "fallback": False,
+                        "escalation_ready": False,
+                        "escalation_required": False,
+                    }), 400
 
                 # Stashed on g so the after_request hook below can attach the
                 # permanent saved URL to whichever response path this request
@@ -10444,6 +10719,12 @@ def add_article():
             "image_files": saved_files
         }), 201
 
+    except UploadValidationError as upload_error:
+        return jsonify({
+            "code": "INVALID_UPLOAD",
+            "message": str(upload_error)
+        }), 400
+
     except Exception as error:
         print("ADD ARTICLE ERROR:", error)
         return jsonify({
@@ -10566,7 +10847,17 @@ def upload_article_editor_image():
     if not uploaded_files:
         uploaded_files = list(request.files.values())
 
-    saved_files = save_article_attachments(uploaded_files)
+    try:
+        saved_files = save_article_attachments(uploaded_files)
+    except UploadValidationError as upload_error:
+        return jsonify({
+            "files": [],
+            "path": "",
+            "baseurl": "",
+            "error": 1,
+            "msg": str(upload_error),
+            "code": "INVALID_UPLOAD"
+        }), 400
 
     if not saved_files:
         return jsonify({
@@ -10614,7 +10905,13 @@ def edit_article(article_id):
     # Multiple image upload support.
     # Frontend must append files using the key name: attachments
     uploaded_files = request.files.getlist("attachments")
-    saved_files = save_article_attachments(uploaded_files)
+    try:
+        saved_files = save_article_attachments(uploaded_files)
+    except UploadValidationError as upload_error:
+        return jsonify({
+            "code": "INVALID_UPLOAD",
+            "message": str(upload_error)
+        }), 400
 
     # Files the client wants to KEEP from what was already attached to this
     # article (JSON array of {url, type, name}). The client is expected to
@@ -11837,7 +12134,13 @@ def submit_escalation_answer(escalation_id):
             image_file = request.files.get('image') or request.files.get('attachment')
 
             if image_file and image_file.filename:
-                answer_image_url, answer_image_type = save_chat_image(image_file)
+                try:
+                    answer_image_url, answer_image_type = save_chat_image(image_file)
+                except UploadValidationError as upload_error:
+                    return jsonify({
+                        "code": "INVALID_UPLOAD",
+                        "message": str(upload_error)
+                    }), 400
 
                 if not answer_image_url:
                     return jsonify({
