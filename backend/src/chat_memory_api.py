@@ -1,6 +1,6 @@
 """Thin integration with existing authenticated Flask chat pipeline."""
 from flask import g, jsonify, request
-from chat_memory_store import ChatMemoryStore, MemoryError, decode, is_recall, request_fingerprint, select_history
+from chat_memory_store import ChatMemoryStore, MemoryError, decode, is_recall, request_fingerprint, select_history, select_cross_history
 
 
 def register_chat_memory(app, connect, owner_id, generate, normalizers=()):
@@ -97,14 +97,18 @@ def register_chat_memory(app, connect, owner_id, generate, normalizers=()):
             g.personal_chat_id = cid
             g.personal_chat_history = select_history(rows, question)
             g.personal_chat_last = next((decode(r['metadata_json']) for r in reversed(rows) if r['role']=='assistant'), {})
-            # Recall is evidence display only: no old AI answer becomes policy,
-            # active SOP state, or automatic escalation evidence.
-            if is_recall(question) and not data.get('force_escalate'):
+            g.personal_chat_cross_used = []
+            candidates, unavailable = [], False
+            if not data.get('force_escalate') and not attachment:
                 try:
-                    evidence = store.recall(owner_id(), cid, question)
-                    unavailable = False
+                    candidates = store.recall(owner_id(), cid, question)
                 except Exception:
-                    evidence, unavailable = [], True
+                    unavailable = True  # optional retrieval must not break KB answering
+            g.personal_chat_cross_history = select_cross_history(candidates, question)
+            # Explicit recall displays original questions. Ordinary questions
+            # keep the normal KB pipeline with separate optional user evidence.
+            if is_recall(question) and not data.get('force_escalate'):
+                evidence = candidates
                 language = data.get('language', 'en')
                 labels = {'en':('Your earlier questions:', 'No reliable matching earlier chat was found.', 'Earlier chats are temporarily unavailable.'),
                           'zh':('你之前问过：', '没有找到可靠匹配的历史聊天。', '暂时无法读取历史聊天。'),
@@ -131,7 +135,14 @@ def register_chat_memory(app, connect, owner_id, generate, normalizers=()):
             if getattr(g,'chat_escalation_context_saved',None) is not None:
                 payload['escalation_context_saved'] = g.chat_escalation_context_saved
                 payload['escalation_context_status'] = g.chat_escalation_context_status
-            payload.setdefault('memory_diagnostics', {'same_chat_messages':len(g.personal_chat_history),'cross_chat_messages':0})
+            if g.personal_chat_cross_used:
+                # Existing source-lock and deletion invalidation also protect
+                # implicit derived responses. Candidates alone are never saved.
+                payload['memory_evidence'] = g.personal_chat_cross_used
+                payload['memory_context_used'] = True
+            payload.setdefault('memory_diagnostics', {'same_chat_messages':len(g.personal_chat_history),
+                'cross_chat_candidates':len(candidates), 'cross_chat_messages':len(g.personal_chat_cross_used),
+                'cross_chat_status':'unavailable' if unavailable else 'ok'})
             store.finish(owner_id(),cid,rid,payload)
             return jsonify(payload), response.status_code
         except Exception as error:

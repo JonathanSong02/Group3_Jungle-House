@@ -33,9 +33,71 @@ def is_recall(text):
     return bool(re.search(r'last time|previous chat|earlier chat|what did i ask|remember when|上次|之前.*聊|以前.*问|sembang sebelum|chat lepas|kali lepas|pernah.*tanya', text, re.I))
 
 
+# Small multilingual lexical aliases, not company facts or object identities.
+# Compound equipment names remain atomic: an ice machine is not an ice bin.
+_TOPIC_ALIASES = {
+    'ice_bin': ('ice bins', 'ice bin', '冰桶', 'tong ais'),
+    'ice_machine': ('ice machine', 'ice maker', '制冰机', '製冰機', 'mesin ais'),
+    'printer': ('printers', 'printer', '打印机', '打印機', 'pencetak'),
+    'membership': ('membership', 'member', 'members', '会员', '會員', 'keahlian', 'ahli'),
+    'honey': ('honey', '蜂蜜', 'madu'),
+    'stocktake': ('stocktake', 'stocktaking', '盘点', '盤點', 'kiraan stok'),
+    'orange': ('orange', '橙色', 'oren'),
+    'blue': ('blue', '蓝色', '藍色', 'biru'),
+    'red': ('red', '红色', '紅色', 'merah'),
+    'green': ('green', '绿色', '綠色', 'hijau'),
+}
+_TOPIC_STOP = set(('what did i ask about last time previous previously chat conversation the a an is it its that this '
+    'and of for to me my you your our we should would could can do does how where when why which on in at '
+    'was were am are have has had been with from before after earlier remember please tell show explain '
+    'clean cleaning cleaned wash washing store stored storage keep put register registration procedure '
+    'process steps step use using daily open close opened closed opening closing need want way question questions properly safely '
+    'proper method sanitize sanitise sanitizing sanitising disinfect washing maintain maintenance '
+    'price prices pricing benefits benefit cost costs information info help more equipment device object '
+    'thing things item items policy guidance topic work product products saya apa yang '
+    'itu dia tadi lepas lalu sebelum tentang pernah kali tanya bagaimana cara membersihkan bersihkan '
+    'cuci mencuci simpan menyimpan di mana patut perlu nak macam buka tutup untuk dan dengan pendaftaran daftar mendaftar').split())
+_TOPIC_CJK_STOP = re.compile('上次|之前|以前|问过|問過|问了|問了|问题|問題|什么|甚麼|聊天|记得|記得|'
+    '应该|應該|如何|怎么|怎麼|怎样|怎樣|哪里|哪裡|清洗|清洁|清潔|清理|消毒|存放|储存|儲存|放在|放哪|注册|註冊|'
+    '这个|這個|那个|那個|它|是否|需要|请问|請問|的|我|要|在|吗|嗎')
+_COLORS = {'orange', 'blue', 'red', 'green'}
+
+
+def topic_terms(text):
+    """Subject signals only; shared question verbs must not retrieve equipment."""
+    text = re.sub(r'<[^>]*>|(?:https?://|data:|blob:)\S+', ' ', str(text)[:1000].casefold())
+    for canonical, aliases in _TOPIC_ALIASES.items():
+        pattern = '|'.join(re.escape(alias) for alias in sorted(aliases, key=len, reverse=True))
+        text = re.sub(r'(?<![a-z0-9_])(?:'+pattern+r')(?![a-z0-9_])', ' '+canonical+' ', text)
+    text = _TOPIC_CJK_STOP.sub(' ', text)
+    result = set(re.findall(r'[a-z][a-z0-9_]*', text)) - _TOPIC_STOP
+    for run in re.findall(r'[\u3400-\u9fff]+', text):
+        result.update(run[i:i+2] for i in range(len(run)-1))
+    return result
+
+
+def has_topic(tokens):
+    subjects = tokens - _COLORS
+    return (len(subjects) >= 2 or any(t in _TOPIC_ALIASES or len(t) >= 4
+            or re.fullmatch(r'[\u3400-\u9fff]{2}', t) for t in subjects))
+
+
+def select_cross_history(candidates, question):
+    """Only one unambiguous subject group; never merge it into active SOP state."""
+    if any(r.get('ambiguous_topic') for r in candidates):
+        return []
+    query = topic_terms(question)
+    eligible = [r for r in candidates if query <= topic_terms(r['content'])]
+    groups = {tuple(sorted(topic_terms(r['content']) - query)) for r in eligible}
+    if len(groups) != 1:
+        return []
+    return eligible[:3]  # each original message is already limited to 1000 chars
+
+
 def select_history(rows, question, budget=10000):
     """Recent continuity plus older relevant evidence, in original sequence order."""
-    rows = [r for r in rows if decode(r.get('metadata_json')).get('source') != 'personal_chat_recall']
+    rows = [r for r in rows if decode(r.get('metadata_json')).get('source') != 'personal_chat_recall'
+            and not decode(r.get('metadata_json')).get('memory_context_used')]
     q = terms(question)
     recent = rows[-8:]
     older = sorted(rows[:-8], key=lambda r: (-len(q & terms(r['content'])), -r['sequence_no']))
@@ -187,24 +249,33 @@ class ChatMemoryStore:
             cur.execute('UPDATE staff_chat_request SET status=%s,response_json=%s,updated_at=UTC_TIMESTAMP(6) WHERE conversation_id=%s AND request_id=%s', (status,json.dumps(payload,ensure_ascii=False) if status=='complete' else None,cid,rid))
 
     def recall(self, owner, cid, question):
-        if not is_recall(question):
-            return []
-        q = terms(question)
-        if not q:
+        q = topic_terms(question)
+        if not has_topic(q):
             return []
         # Fixed 60-session, 80-message/session ceiling; all indexed owner joins.
         with self.transaction() as cur:
             self.owned(cur, owner, cid)
             cur.execute('SELECT conversation_id FROM staff_chat_session WHERE owner_id=%s AND deleted_at IS NULL AND conversation_id<>%s ORDER BY updated_at DESC,conversation_id DESC LIMIT 60', (owner,cid))
             sessions = cur.fetchall()
-            candidates = []
-            for session in sessions:
-                cur.execute("SELECT m.message_id,LEFT(m.content,1000) AS content,m.sequence_no,m.conversation_id FROM staff_chat_message m JOIN staff_chat_session s ON s.conversation_id=m.conversation_id WHERE s.owner_id=%s AND s.deleted_at IS NULL AND s.conversation_id=%s AND m.role='user' ORDER BY m.sequence_no DESC LIMIT 80", (owner,session['conversation_id']))
-                candidates.extend(cur.fetchall())
-        scored = [(len(q & terms(r['content'])), r) for r in candidates]
-        scored = [(score,r) for score,r in scored if score >= min(2,len(q))]
-        scored.sort(key=lambda pair: (-pair[0],pair[1]['conversation_id'],-pair[1]['sequence_no']))
-        return [dict(r,content=r['content'][:1000]) for _,r in scored[:3]]
+            if not sessions:
+                return []
+            # One round trip for bounded per-session indexed reads, rather than
+            # 60 serial queries on every ordinary topic-bearing question.
+            queries, params = [], []
+            for i, session in enumerate(sessions):
+                queries.append("SELECT * FROM (SELECT m.message_id,LEFT(m.content,1000) AS content,m.sequence_no,m.conversation_id FROM staff_chat_message m JOIN staff_chat_session s ON s.conversation_id=m.conversation_id WHERE s.owner_id=%s AND s.deleted_at IS NULL AND s.conversation_id=%s AND m.role='user' ORDER BY m.sequence_no DESC LIMIT 80) AS memory_candidates_"+str(i))
+                params.extend((owner,session['conversation_id']))
+            cur.execute(' UNION ALL '.join(queries), tuple(params))
+            candidates = cur.fetchall()
+        # A named current object/qualifier must be present in the old question;
+        # a generic shared verb or one word of different equipment is not enough.
+        matched = [(r,topic_terms(r['content'])) for r in candidates]
+        matched = [(r,topics) for r,topics in matched if q <= topics]
+        matched.sort(key=lambda pair: (pair[0]['conversation_id'],-pair[0]['sequence_no']))
+        # Detect competing qualifiers before the top-3 cap, so several turns
+        # about orange equipment cannot hide a fourth turn about blue equipment.
+        ambiguous = len({tuple(sorted(topics-q)) for _,topics in matched}) > 1
+        return [dict(r,content=r['content'][:1000],ambiguous_topic=ambiguous) for r,_ in matched[:3]]
 
     def attach(self, owner, cid, path):
         with self.transaction() as cur:

@@ -64,6 +64,7 @@ class MySQLTests(unittest.TestCase):
         other = ChatMemoryStore(lambda:self.driver.connect(**self.config))
         self.assertEqual(len(other.messages(1,source)),2)
         evidence = other.recall(1,dest,'what did I ask about ice bin last time')
+        self.assertEqual(len(other.recall(1,dest,'How should I clean the ice bin?')),1)
         self.store.begin(1,dest,'recall','earlier question','r')
         self.store.finish(1,dest,'recall',{'answer':'copied question','source':'personal_chat_recall','memory_evidence':evidence})
         self.store.delete(1,source)
