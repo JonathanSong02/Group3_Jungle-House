@@ -18,6 +18,19 @@ function toAuthError(error, fallbackMessage) {
   authError.code = responseData?.code || error?.code || null;
   authError.data = responseData;
   authError.status = error?.response?.status || error?.status || null;
+
+  // Preserve the backend's Retry-After value for login rate-limit UX.
+  // Axios may expose headers either as an object or AxiosHeaders instance.
+  const retryAfterHeader =
+    error?.response?.headers?.['retry-after'] ??
+    error?.response?.headers?.get?.('retry-after');
+  const retryAfterSeconds = Number.parseInt(String(retryAfterHeader || ''), 10);
+
+  authError.retryAfterSeconds =
+    Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+      ? retryAfterSeconds
+      : null;
+
   authError.networkError = networkError;
   authError.originalError = error;
   return authError;

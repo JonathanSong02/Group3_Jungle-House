@@ -142,3 +142,97 @@
   }
 }
 
+
+/* =========================================================
+   LOGIN — RATE LIMIT LIVE COOLDOWN
+   ========================================================= */
+
+.auth-lockout-card {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  padding: 12px 13px;
+  border: 1px solid #e7b0aa;
+  border-radius: 14px;
+  background: #fff4f2;
+}
+
+.auth-lockout-icon {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #b8463d;
+  color: #ffffff;
+}
+
+.auth-lockout-icon svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.auth-lockout-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.auth-lockout-copy strong {
+  color: #9f352d;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.3;
+}
+
+.auth-lockout-copy > span {
+  color: #76524f;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.auth-lockout-timer {
+  min-width: 62px;
+  padding: 7px 9px;
+  border: 1px solid #e4a59f;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #9f352d;
+  font-size: 13px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  letter-spacing: 0.02em;
+}
+
+.auth-login-submit:disabled {
+  cursor: not-allowed;
+}
+
+.auth-login-submit:disabled:not(:active) {
+  transform: none;
+}
+
+@media (max-width: 520px) {
+  .auth-lockout-card {
+    grid-template-columns: 32px minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .auth-lockout-icon {
+    width: 32px;
+    height: 32px;
+  }
+
+  .auth-lockout-timer {
+    grid-column: 2;
+    justify-self: start;
+    margin-top: 3px;
+  }
+}
