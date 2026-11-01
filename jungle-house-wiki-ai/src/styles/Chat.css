@@ -2094,20 +2094,3 @@
     font-size: 11.5px;
   }
 }
-.chat-memory-menu { position: relative; flex-shrink: 0; }
-.chat-memory-menu > summary {
-  display: flex; align-items: center; justify-content: center;
-  min-width: 34px; min-height: 34px; padding: 0 8px; border-radius: 10px;
-  border: 1px solid var(--staff-border, var(--border)); color: inherit;
-  background: transparent; cursor: pointer; list-style: none;
-}
-.chat-memory-menu > summary::-webkit-details-marker { display: none; }
-.chat-memory-menu > .chat-memory-tools {
-  position: absolute; top: calc(100% + 8px); right: 0; z-index: 30;
-  display: flex; flex-direction: column; gap: 4px; padding: 8px;
-  min-width: 180px; max-width: calc(100vw - 32px); border-radius: 12px;
-  border: 1px solid var(--staff-border, var(--border));
-  background: var(--staff-card, var(--surface)); color: var(--staff-text, var(--text));
-  box-shadow: 0 8px 24px rgba(0, 0, 0, .16);
-}
-.chat-memory-menu .chat-memory-tools > button { width: 100%; text-align: left; }

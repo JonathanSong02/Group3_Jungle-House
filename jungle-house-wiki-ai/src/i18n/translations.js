@@ -14,10 +14,6 @@ export const LANGUAGE_OPTIONS = [
 ];
 
 const en = {
-  'chat.storageUnavailableTitle': 'Chat unavailable',
-  'chat.uploadRejected': 'Upload rejected',
-  'chat.retryConnection': 'Retry',
-  'chat.options': 'Chat options',
   'chat.loadMoreChats': 'Load more chats',
   'chat.memoryUnavailable': 'Chat storage unavailable. Reload before sending.',
   'chat.legacyPreserved': 'Older browser chats are preserved locally and have not been uploaded. A reviewed import is still required.',
@@ -1467,10 +1463,6 @@ const en = {
 };
 
 const zh = {
-  'chat.storageUnavailableTitle': '聊天暂不可用',
-  'chat.uploadRejected': '上传被拒绝',
-  'chat.retryConnection': '重试',
-  'chat.options': '聊天选项',
   'chat.loadMoreChats': '加载更多聊天',
   'chat.memoryUnavailable': '聊天存储暂不可用，请重新加载后发送。',
   'chat.legacyPreserved': '旧浏览器聊天已保留在本地，尚未上传；仍需审核后导入。',
@@ -2910,10 +2902,6 @@ const zh = {
 };
 
 const ms = {
-  'chat.storageUnavailableTitle': 'Sembang tidak tersedia',
-  'chat.uploadRejected': 'Muat naik ditolak',
-  'chat.retryConnection': 'Cuba lagi',
-  'chat.options': 'Pilihan sembang',
   'chat.loadMoreChats': 'Muat lebih banyak sembang',
   'chat.memoryUnavailable': 'Storan sembang tidak tersedia. Muat semula sebelum menghantar.',
   'chat.legacyPreserved': 'Sembang pelayar lama disimpan secara setempat dan belum dimuat naik. Import yang disemak masih diperlukan.',
