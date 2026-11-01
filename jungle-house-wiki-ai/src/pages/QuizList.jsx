@@ -9,7 +9,12 @@ import '../styles/Quiz.css';
 export default function QuizList() {
   const { user } = useAuth();
   const { t, tOr } = useLanguage();
-  const staffMode = String(user?.role || '').toLowerCase() === 'staff';
+  const normalizedRole = String(user?.role || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]/g, '');
+  const staffMode = normalizedRole === 'staff';
+  const trainingMode = ['staff', 'teamlead', 'manager', 'admin'].includes(normalizedRole);
   const titleLabel = (title) => (title === 'AI Generated Quiz' ? t('qm.defaultAiTitle') : title);
   const catLabel = (category) => tOr(`cat.${category}`, category);
   // Descriptions written by the AI builder are stored in English; translate those.
@@ -129,7 +134,7 @@ export default function QuizList() {
     ['All', ...new Set(quizItems.map((quiz) => quiz.category || 'Training'))],
     [quizItems]
   );
-  const visibleQuizzes = staffMode && categoryFilter !== 'All'
+  const visibleQuizzes = trainingMode && categoryFilter !== 'All'
     ? quizItems.filter((quiz) => (quiz.category || 'Training') === categoryFilter)
     : quizItems;
 
@@ -184,9 +189,9 @@ export default function QuizList() {
       [questionId]: optionValue,
     }));
 
-    // Staff can review an answer before moving on; automatic advance is too
-    // quick for mobile touch screens. Keep the established non-staff flow.
-    if (!staffMode && currentQuestionIndex < totalQuestions - 1) {
+    // All learner roles can review an answer before moving on.
+    // Automatic advance was part of the older non-staff quiz flow.
+    if (!trainingMode && currentQuestionIndex < totalQuestions - 1) {
       autoNextTimerRef.current = setTimeout(() => {
         setCurrentQuestionIndex((prev) =>
           Math.min(prev + 1, totalQuestions - 1)
@@ -291,11 +296,11 @@ export default function QuizList() {
   return (
     <div className={`quiz-page ${staffMode ? 'staff-quiz-page' : ''}`}>
       <PageHeader
-        title={staffMode ? t('quiz.page.titleStaff') : t('quiz.page.title')}
-        subtitle={staffMode ? t('quiz.page.subtitleStaff') : t('quiz.page.subtitle')}
+        title={trainingMode ? t('quiz.page.titleStaff') : t('quiz.page.title')}
+        subtitle={trainingMode ? t('quiz.page.subtitleStaff') : t('quiz.page.subtitle')}
       />
 
-      {staffMode && !activeQuiz && !loadingQuizzes && quizItems.length > 0 ? (
+      {trainingMode && !activeQuiz && !loadingQuizzes && quizItems.length > 0 ? (
         <div className="staff-quiz-filters" role="group" aria-label={t('quiz.filterAria')}
           style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
           {categories.map((category) => (
@@ -309,7 +314,7 @@ export default function QuizList() {
 
       {!activeQuiz ? (
         <div className="cards-grid quiz-list-grid"
-          style={staffMode ? { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 260px), 1fr))', gap: 16 } : undefined}>
+          style={trainingMode ? { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 260px), 1fr))', gap: 16 } : undefined}>
           {loadingQuizzes ? (
             <div className="quiz-state-card" aria-live="polite">
               <span className="quiz-loading-spinner" aria-hidden="true" />
@@ -347,13 +352,13 @@ export default function QuizList() {
                       {tOr(`quiz.difficulty.${quiz.difficulty}`, quiz.difficulty)}
                     </span>
                   ) : null}
-                  {!staffMode && <span className="status-badge pending">{t('quiz.trainingQuiz')}</span>}
+                  {!trainingMode && <span className="status-badge pending">{t('quiz.trainingQuiz')}</span>}
                 </div>
 
                 {quiz.description ? (
-                  <p className="quiz-card-description">{staffMode && quiz.description.length > 100 ? `${localizeDescription(quiz.description).slice(0, 97).trim()}…` : localizeDescription(quiz.description)}</p>
+                  <p className="quiz-card-description">{trainingMode && quiz.description.length > 100 ? `${localizeDescription(quiz.description).slice(0, 97).trim()}…` : localizeDescription(quiz.description)}</p>
                 ) : (
-                  !staffMode && <p className="quiz-card-description">
+                  !trainingMode && <p className="quiz-card-description">
                     {t('quiz.defaultDesc')}
                   </p>
                 )}
@@ -372,7 +377,7 @@ export default function QuizList() {
                   onClick={() => handleStartQuiz(quiz.id)}
                   disabled={!quiz.questionCount}
                 >
-                  {staffMode ? t('quiz.start') : t('quiz.attempt')}
+                  {trainingMode ? t('quiz.start') : t('quiz.attempt')}
                   <span aria-hidden="true">→</span>
                 </button>
               </article>
@@ -404,7 +409,7 @@ export default function QuizList() {
             </div>
           </div>
 
-          {showWelcome ? staffMode ? (
+          {showWelcome ? (
             <div className="card-like quiz-welcome-card staff-quiz-welcome">
               <span className="eyebrow">{t('quiz.ready')}</span>
               <h2>{titleLabel(activeQuiz.title)}</h2>
@@ -422,46 +427,13 @@ export default function QuizList() {
                 )}
               </div>
             </div>
-          ) : (
-            <div className="card-like quiz-welcome-card">
-              <p className="eyebrow">{t('quiz.welcome.kicker')}</p>
-              <h2 style={{ marginBottom: '10px' }}>
-                {t('quiz.welcome.title')}
-              </h2>
-
-              <div className="quiz-welcome-message">
-                <p>{t('quiz.welcome.dear')}</p>
-                <p>{t('quiz.welcome.p1')}</p>
-                <p>{t('quiz.welcome.p2')}</p>
-                <p>{t('quiz.welcome.p3')}</p>
-                <p>{t('quiz.welcome.p4')}</p>
-                <p>{t('quiz.welcome.p5')}</p>
-
-                <p style={{ marginBottom: 0 }}>
-                  {t('quiz.welcome.regards')}
-                  <br />
-                  <strong>Eno Wong</strong>
-                  <br />
-                  King Bee (Kuching)
-                </p>
-              </div>
-
-              <div className="button-group wrap-gap top-gap">
-                <button className="secondary-btn" onClick={handleBackToList}>
-                  {t('quiz.back')}
-                </button>
-                <button className="primary-btn" onClick={handleBeginQuestions}>
-                  {t('quiz.welcome.start')}
-                </button>
-              </div>
-            </div>
           ) : loadingQuestions ? (
             <div className="card-like">
               <p>{t('quiz.loadingQuiz')}</p>
             </div>
           ) : !submitted ? (
             <>
-              {staffMode && totalQuestions > 0 && (
+              {trainingMode && totalQuestions > 0 && (
                 <nav className="staff-quiz-question-nav" aria-label={t('quiz.questionsNav')}
                   style={{ display: 'flex', flexWrap: 'nowrap', overflowX: 'auto', gap: 8, marginBottom: 12, paddingBottom: 4, maxWidth: '100%' }}>
                   {questions.map((item, index) => (
