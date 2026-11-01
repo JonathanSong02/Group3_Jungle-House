@@ -980,29 +980,6 @@ def ensure_wiki_article_content_capacity(cursor):
         print("ENSURE WIKI ARTICLE CONTENT CAPACITY ERROR:", error)
 
 
-def save_chat_image(file):
-    """
-    Save an upload from AI Chat or Escalation.
-    The function name is kept as save_chat_image so existing routes still work,
-    but it now supports mobile camera photos, images, PDF, DOC and DOCX files.
-    """
-    if not file or file.filename == "":
-        return None, None
-
-    if not allowed_file(file.filename):
-        return None, None
-
-    filename = secure_filename(file.filename)
-    unique_filename = f"{int(time.time() * 1000)}_{filename}"
-
-    file_path = CHAT_UPLOAD_FOLDER / unique_filename
-    file.save(str(file_path))
-
-    attachment_url = f"/static/uploads/chat/{unique_filename}"
-    attachment_type = file.content_type or "application/octet-stream"
-
-    return attachment_url, attachment_type
-
 def extract_image_search_text(image_url, original_filename, question):
     filename_text = str(original_filename or "")
 
