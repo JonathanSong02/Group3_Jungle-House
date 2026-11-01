@@ -8,6 +8,7 @@ import '../styles/Chat.css';
 import { buildIssueContext, getClarificationToken, getEscalationQuestion } from '../utils/chatIssueContext';
 import { escalationMetadata, normalizeEscalationResponse, escalationErrorInfo } from '../utils/escalationResponse';
 import { updateSessionMessages, mergeEarlierMessages, hasLegacyChats } from '../utils/persistentChatState';
+import ChatStatusNotice from '../components/ChatStatusNotice';
 
 
 const starterMessages = [
@@ -1558,6 +1559,9 @@ function ChatContent({ storageKeys }) {
   const [selectedImage, setSelectedImage] = useState(null);
   const [selectedImagePreview, setSelectedImagePreview] = useState('');
   const [uploadError, setUploadError] = useState('');
+  const [storageError, setStorageError] = useState('');
+  const [storageLoading, setStorageLoading] = useState(true);
+  const [storageRetry, setStorageRetry] = useState(0);
 
   const memoryText = { unavailable: t('chat.memoryUnavailable'), legacy: t('chat.legacyPreserved') };
   const [hasLegacy] = useState(() => hasLegacyChats(localStorage, storageKeys.sessions));
@@ -1594,24 +1598,27 @@ function ChatContent({ storageKeys }) {
         selectedSessionRef.current = initial.id;
         setActiveSessionId(initial.id);
         setServerReady(true);
+        setStorageError('');
         const recent = await api.get('/chat/history');
         if (!disposed) setHistory(recent.data.history);
       } catch {
-        if (!disposed) setUploadError(t('chat.memoryUnavailable'));
+        if (!disposed) setStorageError(t('chat.memoryUnavailable'));
+      } finally {
+        if (!disposed) setStorageLoading(false);
       }
     };
     bootstrap();
-    const onFocus = () => { if (!currentRequestIdRef.current) bootstrap(); };
+    const onFocus = () => { if (!currentRequestIdRef.current) { setStorageLoading(true); bootstrap(); } };
     window.addEventListener('focus', onFocus);
     return () => { disposed = true; window.removeEventListener('focus', onFocus); };
-  }, [storageKeys, loadServerMessages, t]);
+  }, [storageKeys, loadServerMessages, t, storageRetry]);
 
   useEffect(() => {
     if (activeTab !== 'history') return;
     let disposed = false;
     api.get('/chat/history').then((response) => {
       if (!disposed) setHistory(response.data.history);
-    }).catch(() => { if (!disposed) setUploadError(t('chat.memoryUnavailable')); });
+    }).catch(() => { if (!disposed) setStorageError(t('chat.memoryUnavailable')); });
     return () => { disposed = true; };
   }, [activeTab, t]);
 
@@ -1721,11 +1728,12 @@ function ChatContent({ storageKeys }) {
     setMobileChatMenuOpen(false);
     try {
       const loaded = await loadServerMessages(sessionId);
+      setStorageError('');
       if ((revisionRef.current.get(sessionId) || 0) === revision) {
         setChatSessions((prev) => prev.map((s) => s.id === sessionId ? { ...s, ...loaded } : s));
       }
     } catch {
-      setUploadError(memoryText.unavailable);
+      setStorageError(memoryText.unavailable);
     }
   };
 
@@ -1733,8 +1741,10 @@ function ChatContent({ storageKeys }) {
     let newSession;
     try {
       newSession = { ...(await api.post('/chat/sessions')).data, loaded: true };
+      setStorageError('');
+      setServerReady(true);
     } catch {
-      setUploadError(memoryText.unavailable);
+      setStorageError(memoryText.unavailable);
       return;
     }
     setChatSessions((prev) => [newSession, ...prev.filter((s) => !deletedSessionsRef.current.has(s.id))]);
@@ -1832,7 +1842,7 @@ function ChatContent({ storageKeys }) {
       setHistory((prev) => prev.filter((item) => item.conversation_id !== sessionId));
       if (requestSessionRef.current === sessionId) handleStopGeneration();
     } catch {
-      setUploadError(memoryText.unavailable);
+      setStorageError(memoryText.unavailable);
       return;
     }
     const remainingSessions = chatSessions.filter((session) => session.id !== sessionId);
@@ -1843,7 +1853,7 @@ function ChatContent({ storageKeys }) {
       catch {
         setChatSessions([]);
         setActiveSessionId(null);
-        setUploadError(memoryText.unavailable);
+        setStorageError(memoryText.unavailable);
         return;
       }
 
@@ -1886,13 +1896,13 @@ function ChatContent({ storageKeys }) {
           allSessions.push(...response.data.sessions);
           offset = response.data.next_offset;
         } while (offset != null);
-      } catch { setUploadError(memoryText.unavailable); closeConfirmModal(); return; }
+      } catch { setStorageError(memoryText.unavailable); closeConfirmModal(); return; }
       for (const session of allSessions) {
         try {
           await api.delete(`/chat/sessions/${session.id}`);
           deletedSessionsRef.current.add(session.id);
         } catch {
-          setUploadError(memoryText.unavailable);
+          setStorageError(memoryText.unavailable);
           closeConfirmModal();
           return;
         }
@@ -2017,7 +2027,7 @@ const removeSelectedImage = () => {
   // the team-lead ticket for the original question (force_escalate).
   const handleEscalationOffer = async (offerMessage, shouldEscalate) => {
     if (loading) return;
-    if (!activeSession?.loaded) { setUploadError(memoryText.unavailable); return; }
+    if (!activeSession?.loaded) { setStorageError(memoryText.unavailable); return; }
 
     const initiatingSessionId = activeSessionId;
     const sessionTitle = offerMessage.question || '';
@@ -2095,7 +2105,7 @@ const removeSelectedImage = () => {
     const trimmedQuestion = cleanQuestionInput(question);
 
     if ((!trimmedQuestion && !selectedImage) || loading) return;
-    if (!serverReady || !activeSessionId || !activeSession?.loaded || activeSession.pending?.length) { setUploadError(memoryText.unavailable); return; }
+    if (!serverReady || !activeSessionId || !activeSession?.loaded || activeSession.pending?.length) { setStorageError(memoryText.unavailable); return; }
 
     setUploadError('');
 
@@ -2852,6 +2862,47 @@ const removeSelectedImage = () => {
     );
   };
 
+  const renderMemoryTools = () => (
+    <div className="chat-memory-tools">
+      {nextSessionOffset != null ? <button type="button" className="secondary-btn" onClick={async () => {
+        try {
+          const response = await api.get('/chat/sessions', { params: { offset: nextSessionOffset } });
+          setChatSessions((prev) => [...prev, ...response.data.sessions.filter((s) => !prev.some((p) => p.id === s.id))]);
+          setNextSessionOffset(response.data.next_offset);
+        } catch { setStorageError(memoryText.unavailable); }
+      }}>{t('chat.loadMoreChats')}</button> : null}
+      {activeSession?.nextBefore ? <button type="button" className="secondary-btn" onClick={async () => {
+        const cid = activeSessionId;
+        try {
+          const older = await loadServerMessages(cid, activeSession.nextBefore);
+          setChatSessions((prev) => prev.map((s) => s.id === cid ? { ...s, messages: mergeEarlierMessages(older.messages, s.messages || []), nextBefore: older.nextBefore } : s));
+        } catch { setStorageError(memoryText.unavailable); }
+      }}>{t('chat.loadEarlier')}</button> : null}
+      {activeSession?.pending?.length ? <button type="button" className="secondary-btn" onClick={async () => {
+        const cid = activeSessionId;
+        try {
+          for (const rid of activeSession.pending) {
+            await api.post('/chat/cancel', { request_id: rid });
+            await api.post(`/chat/sessions/${cid}/requests/${rid}/cancel`);
+          }
+          await handleSelectSession(cid);
+        } catch { setStorageError(memoryText.unavailable); }
+      }}>{t('chat.stopUnfinished')}</button> : null}
+      {activeSessionId ? <button type="button" className="secondary-btn" onClick={async () => {
+        const cid = activeSessionId;
+        const title = window.prompt(t('chat.rename'), activeSession?.title || '');
+        if (!title?.trim()) return;
+        try {
+          await api.patch(`/chat/sessions/${cid}`, { title: title.trim() });
+          setChatSessions((prev) => prev.map((s) => s.id === cid ? { ...s, title: title.trim() } : s));
+        } catch { setStorageError(memoryText.unavailable); }
+      }}>{t('chat.rename')}</button> : null}
+    </div>
+  );
+
+  const renderChatStatus = () => <ChatStatusNotice storageError={storageError} uploadError={uploadError}
+    retrying={storageLoading} t={t} onRetry={() => { setStorageLoading(true); setStorageRetry((count) => count + 1); }} />;
+
   const renderAskQuestion = () => {
     return (
       <div className="ai-chat-shell">
@@ -2916,30 +2967,7 @@ const removeSelectedImage = () => {
             </div>
           ) : null}
 
-          {uploadError ? (
-            <div
-              role="alert"
-              style={{
-                display: 'flex',
-                alignItems: 'flex-start',
-                gap: '10px',
-                marginBottom: '10px',
-                padding: '10px 12px',
-                borderRadius: '12px',
-                border: '1px solid #efb0aa',
-                backgroundColor: '#fff5f3',
-                color: '#9f352d',
-                fontSize: '13px',
-                lineHeight: 1.45,
-              }}
-            >
-              <span aria-hidden="true" style={{ fontWeight: 800 }}>⚠</span>
-              <span>
-                <strong style={{ display: 'block', marginBottom: '2px' }}>Upload rejected</strong>
-                {uploadError}
-              </span>
-            </div>
-          ) : null}
+          {renderChatStatus()}
 
           <div className="chat-input-row ai-chat-input-row">
             <input
@@ -3006,7 +3034,7 @@ const removeSelectedImage = () => {
               <button
                 className="primary-btn ai-chat-send-btn"
                 onClick={handleSend}
-                disabled={!question.trim() && !selectedImage}
+                disabled={!serverReady || !activeSession?.loaded || Boolean(activeSession.pending?.length) || (!question.trim() && !selectedImage)}
               >
                 {t('chat.send')}
               </button>
@@ -3035,6 +3063,12 @@ const removeSelectedImage = () => {
         <div className="staff-chat-toolbar">
           <div className="staff-chat-toolbar-title"><span className="staff-chat-mode-dot"/> <span>{hasConversation ? (activeSession?.title || t('chat.conversation')) : t('chat.aiAssistant')}</span></div>
           <div className="staff-chat-toolbar-actions">
+            {(hasConversation || nextSessionOffset != null || activeSession?.pending?.length) ? (
+              <details className="chat-memory-menu">
+                <summary aria-label={t('chat.options')} title={t('chat.options')}>⋯</summary>
+                {renderMemoryTools()}
+              </details>
+            ) : null}
             <button type="button" onClick={() => handleTabChange('history')}>{t('chat.historyLink')}</button>
             {hasConversation && <button type="button" onClick={handleClearCurrentChat}>{t('chat.clearChatLower')}</button>}
           </div>
@@ -3055,30 +3089,7 @@ const removeSelectedImage = () => {
           )}
         </div>
         <div className="staff-chat-bottom">
-          {uploadError ? (
-            <div
-              role="alert"
-              style={{
-                display: 'flex',
-                alignItems: 'flex-start',
-                gap: '10px',
-                margin: '0 0 10px',
-                padding: '10px 12px',
-                borderRadius: '12px',
-                border: '1px solid #efb0aa',
-                backgroundColor: '#fff5f3',
-                color: '#9f352d',
-                fontSize: '13px',
-                lineHeight: 1.45,
-              }}
-            >
-              <span aria-hidden="true" style={{ fontWeight: 800 }}>⚠</span>
-              <span>
-                <strong style={{ display: 'block', marginBottom: '2px' }}>Upload rejected</strong>
-                {uploadError}
-              </span>
-            </div>
-          ) : null}
+          {renderChatStatus()}
           <div className="staff-chat-composer" role="group" aria-label={t('chat.askAssistantGroup')}>
             {selectedImage && <div className="staff-attachment-preview">
               {selectedImagePreview ? <img src={selectedImagePreview} alt={t('chat.selectedFile')}/> : <span className="staff-file-icon">FILE</span>}
@@ -3122,7 +3133,7 @@ const removeSelectedImage = () => {
                   title={t('chat.sendMessage')}
                   aria-label={t('chat.sendMessage')}
                   onClick={handleSend}
-                  disabled={!question.trim() && !selectedImage}
+                  disabled={!serverReady || !activeSession?.loaded || Boolean(activeSession.pending?.length) || (!question.trim() && !selectedImage)}
                 >
                   ↑
                 </button>
@@ -3141,6 +3152,8 @@ const removeSelectedImage = () => {
   const renderChatHistory = () => {
     return (
       <section className="card-like ai-chat-history-page">
+        {hasLegacy ? <p role="status" className="muted small">{memoryText.legacy}</p> : null}
+        {renderChatStatus()}
         <div className="row-between wrap-gap" style={{ marginBottom: '1rem' }}>
           <div>
             <h3>{t('chat.historyTitle')}</h3>
@@ -3339,56 +3352,14 @@ const removeSelectedImage = () => {
     );
   };
 
-  const renderMemoryTools = () => (
-    <div className="chat-memory-tools">
-      {hasLegacy ? <p role="status" className="muted small">{memoryText.legacy}</p> : null}
-      {uploadError ? <p role="alert">{uploadError}</p> : null}
-      {nextSessionOffset != null ? <button type="button" className="secondary-btn" onClick={async () => {
-        try {
-          const response = await api.get('/chat/sessions', { params: { offset: nextSessionOffset } });
-          setChatSessions((prev) => [...prev, ...response.data.sessions.filter((s) => !prev.some((p) => p.id === s.id))]);
-          setNextSessionOffset(response.data.next_offset);
-        } catch { setUploadError(memoryText.unavailable); }
-      }}>{t('chat.loadMoreChats')}</button> : null}
-      {activeSession?.nextBefore ? <button type="button" className="secondary-btn" onClick={async () => {
-        const cid = activeSessionId;
-        try {
-          const older = await loadServerMessages(cid, activeSession.nextBefore);
-          setChatSessions((prev) => prev.map((s) => s.id === cid ? { ...s, messages: mergeEarlierMessages(older.messages, s.messages || []), nextBefore: older.nextBefore } : s));
-        } catch { setUploadError(memoryText.unavailable); }
-      }}>{t('chat.loadEarlier')}</button> : null}
-      {activeSession?.pending?.length ? <button type="button" className="secondary-btn" onClick={async () => {
-        const cid = activeSessionId;
-        try {
-          for (const rid of activeSession.pending) {
-            await api.post('/chat/cancel', { request_id: rid });
-            await api.post(`/chat/sessions/${cid}/requests/${rid}/cancel`);
-          }
-          await handleSelectSession(cid);
-        } catch { setUploadError(memoryText.unavailable); }
-      }}>{t('chat.stopUnfinished')}</button> : null}
-      {activeSessionId ? <button type="button" className="secondary-btn" onClick={async () => {
-        const cid = activeSessionId;
-        const title = window.prompt(t('chat.rename'), activeSession?.title || '');
-        if (!title?.trim()) return;
-        try {
-          await api.patch(`/chat/sessions/${cid}`, { title: title.trim() });
-          setChatSessions((prev) => prev.map((s) => s.id === cid ? { ...s, title: title.trim() } : s));
-        } catch { setUploadError(memoryText.unavailable); }
-      }}>{t('chat.rename')}</button> : null}
-    </div>
-  );
-
   return staffMode ? (
     <div className="staff-chat-page">
-      {renderMemoryTools()}
       {activeTab === 'ask' ? renderStaffAskQuestion() : <div className="staff-history-wrap"><div className="staff-history-top"><button type="button" onClick={() => handleTabChange('ask')}>{t('chat.backToChat')}</button><h1>{t('chat.historyTab')}</h1></div>{renderChatHistory()}</div>}
       {previewImage && <div className="staff-image-overlay" role="dialog" aria-modal="true" aria-label={t('chat.previewImage')} onClick={() => setPreviewImage(null)}><button type="button" onClick={() => setPreviewImage(null)} aria-label={t('chat.closePreview')}>×</button><img src={previewImage} alt="Attachment preview" onClick={(event) => event.stopPropagation()}/></div>}
       {renderConfirmModal()}
     </div>
   ) : (
     <div className="ai-chat-page">
-      {renderMemoryTools()}
       <div className="ai-chat-top-row">
         <div className="ai-chat-page-heading">
           <span className="ai-chat-page-kicker">{t('chat.kicker')}</span>
@@ -3397,6 +3368,12 @@ const removeSelectedImage = () => {
         </div>
 
         <div className="tab-row ai-chat-tabs" aria-label={t('chat.title')}>
+          {messages.some((message) => message.sender === 'user') || nextSessionOffset != null ? (
+            <details className="chat-memory-menu">
+              <summary aria-label={t('chat.options')}>⋯</summary>
+              {renderMemoryTools()}
+            </details>
+          ) : null}
           <button
             type="button"
             className={activeTab === 'ask' ? 'primary-btn' : 'secondary-btn'}

@@ -36,7 +36,12 @@ def generate():
                    question=question,source='knowledge_base',confidence=.9,
                    escalation_ready=False,context={'unclear_count':0})
 
-store = register_chat_memory(app,lambda:fixtures.Connection(fixture.path),lambda:g.owner,generate)
+def preview_connection():
+    if '--storage-unavailable' in sys.argv:
+        raise RuntimeError('Synthetic storage failure')
+    return fixtures.Connection(fixture.path)
+
+store = register_chat_memory(app,preview_connection,lambda:g.owner,generate)
 
 if __name__=='__main__':
     try: app.run(host='127.0.0.1',port=5001,debug=False,use_reloader=False)
