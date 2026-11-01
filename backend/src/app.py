@@ -1545,11 +1545,11 @@ def record_login_history(cursor, user_id=None, email=None, full_name=None, statu
 # =========================
 # LOGIN RATE LIMITING
 # =========================
-# Five invalid credential attempts for the same email + IP within ten
-# minutes trigger a fifteen-minute login block. The state is stored in
-# MySQL instead of process memory, so Railway restarts/workers do not
-# silently reset the protection. The key is SHA-256(email + IP); the
-# limiter table does not store the raw email address or IP address.
+# Primary login protection is ACCOUNT/EMAIL based so it remains stable behind
+# Vercel/Railway proxies. Five invalid password attempts for the same email
+# within ten minutes trigger a fifteen-minute block.
+#
+# The database stores only a SHA-256 rate key, not another copy of the email.
 LOGIN_RATE_LIMIT_MAX_FAILURES = 5
 LOGIN_RATE_LIMIT_WINDOW_MINUTES = 10
 LOGIN_RATE_LIMIT_BLOCK_MINUTES = 15
@@ -1577,14 +1577,13 @@ def ensure_login_rate_limit_table(cursor):
 
 
 def get_login_rate_limit_key(email):
+    """Stable account key; intentionally independent of proxy/client IP."""
     normalized_email = str(email or "").strip().lower()
-    remote_ip = str(request.remote_addr or "unknown").strip()[:64]
-    raw_key = f"{normalized_email}|{remote_ip}"
-    return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
+    return hashlib.sha256(f"email|{normalized_email}".encode("utf-8")).hexdigest()
 
 
 def get_login_rate_limit_status(cursor, email):
-    """Return (blocked, retry_after_seconds) for this email + request IP."""
+    """Return (blocked, retry_after_seconds) for this login email."""
     try:
         ensure_login_rate_limit_table(cursor)
         rate_key = get_login_rate_limit_key(email)
@@ -1600,36 +1599,39 @@ def get_login_rate_limit_status(cursor, email):
         if not row:
             return False, 0
 
-        blocked_until = row.get("blocked_until")
         now = datetime.now()
+        blocked_until = row.get("blocked_until")
 
         if blocked_until and blocked_until > now:
             retry_after = max(1, int((blocked_until - now).total_seconds()))
             return True, retry_after
 
-        # Expired block/state can be discarded. A future invalid attempt
-        # starts a fresh ten-minute window.
+        # A completed block starts clean. This avoids carrying an old failure
+        # count into the next legitimate login attempt.
         if blocked_until and blocked_until <= now:
-            cursor.execute("DELETE FROM login_rate_limit WHERE rate_key = %s", (rate_key,))
+            cursor.execute(
+                "DELETE FROM login_rate_limit WHERE rate_key = %s",
+                (rate_key,)
+            )
 
         return False, 0
 
     except Exception as error:
-        # Authentication should remain available if only the limiter table has
-        # a temporary problem. Keep the diagnostic server-side.
+        # Keep authentication available if only the limiter table has a
+        # temporary problem. The real diagnostic stays server-side.
         print("LOGIN RATE LIMIT CHECK ERROR:", error)
         return False, 0
 
 
 def register_login_rate_limit_failure(cursor, email):
-    """Record one invalid credential attempt and return block status."""
+    """Record one invalid password and return (blocked, retry_after_seconds)."""
     ensure_login_rate_limit_table(cursor)
 
     rate_key = get_login_rate_limit_key(email)
     now = datetime.now()
 
-    # Ensure the row exists before taking a row lock. This also handles two
-    # workers seeing a new email/IP pair at nearly the same time.
+    # Create the row if needed, then lock it so simultaneous failed requests
+    # cannot overwrite each other's counters.
     cursor.execute("""
         INSERT INTO login_rate_limit
             (rate_key, failed_attempts, window_started_at, blocked_until)
@@ -1686,7 +1688,7 @@ def register_login_rate_limit_failure(cursor, email):
 
 
 def clear_login_rate_limit(cursor, email):
-    """Clear the limiter after the submitted password is proven correct."""
+    """Clear the account limiter after the submitted password is proven correct."""
     try:
         ensure_login_rate_limit_table(cursor)
         cursor.execute(
@@ -1698,7 +1700,10 @@ def clear_login_rate_limit(cursor, email):
 
 
 def login_rate_limited_response(retry_after_seconds):
-    retry_after = max(1, int(retry_after_seconds or (LOGIN_RATE_LIMIT_BLOCK_MINUTES * 60)))
+    retry_after = max(
+        1,
+        int(retry_after_seconds or (LOGIN_RATE_LIMIT_BLOCK_MINUTES * 60))
+    )
     response = jsonify({
         "code": "LOGIN_RATE_LIMITED",
         "message": "Too many failed login attempts. Please try again later."
@@ -5495,8 +5500,9 @@ def login():
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
 
-        # Check the server-side limiter BEFORE password verification. The same
-        # response is used whether the email exists or not.
+        # Check the stable account/email limiter before password verification.
+        # It does not depend on request.remote_addr, so Vercel/Railway proxy
+        # changes cannot split repeated failures into different buckets.
         blocked, retry_after = get_login_rate_limit_status(cursor, email)
         if blocked:
             conn.commit()
@@ -5555,10 +5561,8 @@ def login():
 
             return jsonify({"message": "Invalid email or password."}), 401
 
-        # The password is correct. Do not let pending/inactive accounts build
-        # up a brute-force counter simply by repeatedly trying their real
-        # password. Their login_history entry remains available to Security
-        # Monitoring exactly as before.
+        # Password is correct. Clear this account's failed-attempt state before
+        # applying normal pending/inactive-account rules.
         clear_login_rate_limit(cursor, email)
 
         status = str(user.get("status") or "").lower()
