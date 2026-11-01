@@ -19,7 +19,7 @@ names = {"clean_question", "is_nonsense", "normalize_context", "get_chat_memory_
 env = {"re": re, "json": json, "CJK_CHAR_RE": re.compile(r"[\u3400-\u9fff]"),
        "datetime": datetime, "timezone": timezone, "request": types.SimpleNamespace(remote_addr="local", is_json=True),
        "AI_CHAT_MEMORY": {}, "base64": base64, "hashlib": hashlib, "hmac": hmac, "time": time,
-       "app": types.SimpleNamespace(secret_key="isolated-test-only")}
+       "app": types.SimpleNamespace(secret_key="isolated-test-only"), "g": types.SimpleNamespace()}
 nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
 for n in tree.body:
     if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id in {"_MALAY_GREETINGS", "_PINYIN_GREETINGS"} for t in n.targets):
@@ -237,6 +237,7 @@ class ChatRouteTests(unittest.TestCase):
         env["translate_query_to_english_keywords"]=Mock(side_effect=lambda q,lang:q)
         env["is_broad_topic_question"]=Mock(return_value=False)
         env["search_similar_question"]=Mock(return_value=None)
+        env["search_knowledge_base_articles"]=Mock(return_value=None)
         env["process_question"]=Mock(side_effect=lambda **kwargs:({"source":"fallback","confidence":0.0,"context":{},"fallback":True},200))
         env["should_escalate_generic_answer"]=Mock(return_value=False)
         env["clear_ai_fail_count"]=Mock()
@@ -361,6 +362,12 @@ class ChatRouteTests(unittest.TestCase):
         env["save_chat_image"]=Mock(return_value=(None,None))
         self.call()
         self.provider._call_ai_provider_once.assert_not_called()
+    def test_MEM13_current_article_overrides_visual_QA_early_return(self):
+        self.image_request('orange ice bin storage')
+        env['search_visual_image_match'].return_value={'answer':'outdated image policy','confidence':1,'source':'image_retrieval'}
+        env['search_knowledge_base_articles'].return_value={'answer':'current KB policy','confidence':.8,'source':'knowledge_base'}
+        result=self.call()
+        self.assertEqual(result['answer'],'current KB policy')
     def test_route_greeting_skips_memory_and_answer(self):
         self.payload["question"]="hello"
         result=self.call()
@@ -959,6 +966,52 @@ class EscalationReadAndPermissionTests(unittest.TestCase):
                         self.assertEqual(result[1], 403)
                     else:
                         self.assertIsNone(result)
+
+
+class KnowledgePriorityTests(unittest.TestCase):
+    def setUp(self):
+        node = next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='choose_final_result')
+        self.scope = {'CONFIDENCE_DIRECT_ANSWER':.72,'is_valid_answer':lambda r:bool(r.get('answer')),
+                      'standardize_ai_response':lambda r:r}
+        exec(compile(ast.Module(body=[node],type_ignores=[]),'actual_priority.py','exec'),self.scope)
+
+    def test_MEM13_current_KB_beats_old_QA_CSV_and_image_answer(self):
+        kb = {'answer':'current verified policy','confidence':.8,'source':'knowledge_base'}
+        for source in ['qa_knowledge','csv','image']:
+            old = {'answer':'outdated answer','confidence':1.0,'source':source}
+            with self.subTest(source=source):
+                result = self.scope['choose_final_result'](old,old,kb,old)
+                self.assertIs(result,kb)
+
+    def test_navigation_control_remains_available(self):
+        control = {'source':'context_step_out_of_bounds','answer':'Choose an existing step'}
+        self.assertIs(self.scope['choose_final_result'](control,None,None,None),control)
+
+    def kb_scope(self):
+        nodes = [n for n in tree.body if isinstance(n,(ast.FunctionDef,ast.ClassDef)) and n.name in {'PersonalKnowledgeUnavailable','search_knowledge_base_articles'}]
+        cur = Mock(); cur.fetchall.return_value=[{'article_id':1,'title':'Latest'}]
+        conn = Mock(); conn.cursor.return_value=cur
+        self.scope.update(g=types.SimpleNamespace(personal_chat=True),get_db_connection=Mock(return_value=conn),
+                          calculate_article_match_score=lambda q,a:.8,
+                          build_article_ai_result=lambda a,q,s:{'answer':'latest','score':s})
+        exec(compile(ast.Module(body=nodes,type_ignores=[]),'actual_kb_search.py','exec'),self.scope)
+        return cur
+
+    def test_current_KB_lookup_reused_only_within_request(self):
+        cur = self.kb_scope()
+        self.scope['search_knowledge_base_articles']('ice bin',limit=1)
+        self.scope['search_knowledge_base_articles']('ice bin',limit=10)
+        cur.execute.assert_called_once()
+        self.scope['g']=types.SimpleNamespace(personal_chat=True)
+        self.scope['search_knowledge_base_articles']('ice bin',limit=1)
+        self.assertEqual(cur.execute.call_count,2)
+
+    def test_KB_read_failure_cannot_silently_fall_back_to_old_QA(self):
+        self.kb_scope()
+        self.scope['get_db_connection'].side_effect=RuntimeError('private SQL details')
+        with self.assertRaises(self.scope['PersonalKnowledgeUnavailable']) as error:
+            self.scope['search_knowledge_base_articles']('ice bin')
+        self.assertNotIn('private SQL',str(error.exception))
 
 
 if __name__ == "__main__":

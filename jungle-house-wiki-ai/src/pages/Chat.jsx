@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api, { API_BASE_URL } from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -7,6 +7,7 @@ import { useStaffChat } from '../context/StaffChatContext';
 import '../styles/Chat.css';
 import { buildIssueContext, getClarificationToken, getEscalationQuestion } from '../utils/chatIssueContext';
 import { escalationMetadata, normalizeEscalationResponse, escalationErrorInfo } from '../utils/escalationResponse';
+import { updateSessionMessages, mergeEarlierMessages, hasLegacyChats } from '../utils/persistentChatState';
 
 
 const starterMessages = [
@@ -74,9 +75,9 @@ function getChatStorageKeys(user) {
   if (!user || user.status !== 'active' || user.id == null) return null;
   const owner = String(user.id).replace(/[^a-zA-Z0-9_-]/g, '_');
   return {
-    history: `jh_ai_chat_history_${owner}`,
-    sessions: `jh_ai_chat_sessions_${owner}`,
-    active: `jh_active_chat_session_${owner}`,
+    history: `jh_ai_chat_history_v2_${owner}`,
+    sessions: `jh_ai_chat_sessions_v2_${owner}`,
+    active: `jh_active_chat_session_v2_${owner}`,
   };
 }
 
@@ -1376,58 +1377,11 @@ function buildConversationHistory(messages, question) {
   return [...kept].sort((a, b) => a - b).flatMap((index) => usable[index].messages);
 }
 
-function createNewSession() {
-  const now = new Date().toLocaleString();
-
-  return {
-    id: Date.now(),
-    title: 'New Chat',
-    messages: starterMessages,
-    created_at: now,
-    updated_at: now,
-  };
-}
-
-function getChatSessionsFromStorage(storageKeys) {
-  try {
-    const saved = localStorage.getItem(storageKeys.sessions);
-    const sessions = saved ? JSON.parse(saved) : [];
-
-    if (Array.isArray(sessions) && sessions.length > 0) {
-      return sessions;
-    }
-
-    const firstSession = createNewSession();
-    localStorage.setItem(storageKeys.sessions, JSON.stringify([firstSession]));
-    localStorage.setItem(storageKeys.active, String(firstSession.id));
-
-    return [firstSession];
-  } catch (error) {
-    console.error('Unable to read chat sessions:', error);
-    return [createNewSession()];
-  }
-}
-
 function saveChatSessionsToStorage(storageKeys, sessions) {
   try {
-    localStorage.setItem(storageKeys.sessions, JSON.stringify(sessions));
+    localStorage.setItem(storageKeys.sessions, JSON.stringify(sessions.map(({ id, title, updated_at }) => ({ id, title, updated_at }))));
   } catch (error) {
     console.error('Unable to save chat sessions:', error);
-  }
-}
-
-function getActiveSessionIdFromStorage(storageKeys, sessions) {
-  try {
-    const savedId = localStorage.getItem(storageKeys.active);
-
-    if (savedId && sessions.some((session) => String(session.id) === String(savedId))) {
-      return Number(savedId);
-    }
-
-    return sessions[0]?.id || null;
-  } catch (error) {
-    console.error('Unable to read active chat session:', error);
-    return sessions[0]?.id || null;
   }
 }
 
@@ -1449,25 +1403,6 @@ function makeSessionTitle(questionText) {
   }
 
   return `${cleanTitle.slice(0, 35)}...`;
-}
-
-function getHistoryFromStorage(storageKeys) {
-  try {
-    const saved = localStorage.getItem(storageKeys.history);
-    const history = saved ? JSON.parse(saved) : [];
-    return Array.isArray(history) ? history : [];
-  } catch (error) {
-    console.error('Unable to read chat history:', error);
-    return [];
-  }
-}
-
-function saveHistoryToStorage(storageKeys, history) {
-  try {
-    localStorage.setItem(storageKeys.history, JSON.stringify(history));
-  } catch (error) {
-    console.error('Unable to save chat history:', error);
-  }
 }
 
 function getReadableAnswer(message) {
@@ -1598,17 +1533,23 @@ function ChatContent({ storageKeys }) {
   const staffInputRef = useRef(null);
   const [activeTab, setActiveTab] = useState('ask');
   const [mobileChatMenuOpen, setMobileChatMenuOpen] = useState(false);
-  const [chatSessions, setChatSessions] = useState(() => getChatSessionsFromStorage(storageKeys));
-  const [activeSessionId, setActiveSessionId] = useState(() =>
-    getActiveSessionIdFromStorage(storageKeys, chatSessions)
-  );
+  const [chatSessions, setChatSessions] = useState([]);
+  const [activeSessionId, setActiveSessionId] = useState(null);
+  const [serverReady, setServerReady] = useState(false);
+  const [nextSessionOffset, setNextSessionOffset] = useState(null);
+  const selectedSessionRef = useRef(null);
+  const requestSessionRef = useRef(null);
+  const offerRequestsRef = useRef(new Map());
+  const abortControllerRef = useRef(null);
+  const currentRequestIdRef = useRef(null);
+  const deletedSessionsRef = useRef(new Set());
 
   const activeSession =
     chatSessions.find((session) => session.id === activeSessionId) || chatSessions[0];
 
   const messages = activeSession?.messages || starterMessages;
 
-  const [history, setHistory] = useState(() => getHistoryFromStorage(storageKeys));
+  const [history, setHistory] = useState([]);
   const [historySearch, setHistorySearch] = useState('');
   const [question, setQuestion] = useState('');
   const [loading, setLoading] = useState(false);
@@ -1617,14 +1558,68 @@ function ChatContent({ storageKeys }) {
   const [selectedImagePreview, setSelectedImagePreview] = useState('');
   const [uploadError, setUploadError] = useState('');
 
+  const memoryText = { unavailable: t('chat.memoryUnavailable'), legacy: t('chat.legacyPreserved') };
+  const [hasLegacy] = useState(() => hasLegacyChats(localStorage, storageKeys.sessions));
+  const revisionRef = useRef(new Map());
+
+  const loadServerMessages = useCallback(async (sessionId, before = null) => {
+    const response = await api.get(`/chat/sessions/${sessionId}`, { params: before ? { before } : {} });
+    return {
+      messages: response.data.messages.map((item) => item.role === 'user'
+        ? { ...item.metadata, id: item.id, sender: 'user', type: 'text', text: item.content, created_at: item.created_at }
+        : { ...buildAiMessage(item.metadata || { answer: item.content }, t), id: item.id, created_at: item.created_at }),
+      nextBefore: response.data.next_before,
+      pending: response.data.pending_requests || [],
+      loaded: true,
+    };
+  }, [t]);
+
+  useEffect(() => {
+    let disposed = false;
+    const bootstrap = async () => {
+      try {
+        const sessions = [];
+        const response = await api.get('/chat/sessions');
+        sessions.push(...response.data.sessions);
+        if (!disposed) setNextSessionOffset(response.data.next_offset);
+        if (disposed) return;
+        if (!sessions.length) sessions.push({ ...(await api.post('/chat/sessions')).data, loaded: true });
+        if (disposed) return;
+        const saved = localStorage.getItem(storageKeys.active);
+        const initial = sessions.find((s) => s.id === saved) || sessions[0];
+        const loaded = await loadServerMessages(initial.id);
+        if (disposed) return;
+        setChatSessions(sessions.map((s) => s.id === initial.id ? { ...s, ...loaded } : s));
+        selectedSessionRef.current = initial.id;
+        setActiveSessionId(initial.id);
+        setServerReady(true);
+        const recent = await api.get('/chat/history');
+        if (!disposed) setHistory(recent.data.history);
+      } catch {
+        if (!disposed) setUploadError(t('chat.memoryUnavailable'));
+      }
+    };
+    bootstrap();
+    const onFocus = () => { if (!currentRequestIdRef.current) bootstrap(); };
+    window.addEventListener('focus', onFocus);
+    return () => { disposed = true; window.removeEventListener('focus', onFocus); };
+  }, [storageKeys, loadServerMessages, t]);
+
+  useEffect(() => {
+    if (activeTab !== 'history') return;
+    let disposed = false;
+    api.get('/chat/history').then((response) => {
+      if (!disposed) setHistory(response.data.history);
+    }).catch(() => { if (!disposed) setUploadError(t('chat.memoryUnavailable')); });
+    return () => { disposed = true; };
+  }, [activeTab, t]);
+
   // "Stop Generating" support: the AbortController for whatever request is
   // currently in flight, and the ID the backend uses to recognize that
   // same request when the Stop button also tells it to cancel server-side
   // work (grounded AI call / escalation). Refs, not state -- purely
   // internal bookkeeping that a click handler needs to read at call time,
   // not something that should ever trigger its own re-render.
-  const abortControllerRef = useRef(null);
-  const currentRequestIdRef = useRef(null);
   const [confirmModal, setConfirmModal] = useState({
     open: false,
     type: '',
@@ -1677,24 +1672,15 @@ function ChatContent({ storageKeys }) {
   }, [messages, loading, activeSessionId]);
 
   const updateCurrentSessionMessages = (nextMessages, titleQuestion = '', sessionId = activeSessionId) => {
+    if (deletedSessionsRef.current.has(sessionId)) return;
+    revisionRef.current.set(sessionId, (revisionRef.current.get(sessionId) || 0) + 1);
     const now = new Date().toLocaleString();
 
     setChatSessions((prev) => {
-      const updatedSessions = prev.map((session) => {
-        if (session.id !== sessionId) {
-          return session;
-        }
-
-        const shouldUpdateTitle =
-          session.title === 'New Chat' && titleQuestion && titleQuestion.trim();
-
-        return {
-          ...session,
-          title: shouldUpdateTitle ? makeSessionTitle(titleQuestion) : session.title,
-          messages: nextMessages,
-          updated_at: now,
-        };
-      });
+      const target = prev.find((session) => session.id === sessionId);
+      const changes = { updated_at: now };
+      if (target?.title === 'New Chat' && titleQuestion?.trim()) changes.title = makeSessionTitle(titleQuestion);
+      const updatedSessions = updateSessionMessages(prev, sessionId, nextMessages, deletedSessionsRef.current, changes);
 
       saveChatSessionsToStorage(storageKeys, updatedSessions);
       return updatedSessions;
@@ -1704,6 +1690,7 @@ function ChatContent({ storageKeys }) {
   const addChatHistory = (userQuestion, aiMessage) => {
     const newRecord = {
       id: Date.now(),
+      conversation_id: aiMessage.conversation_id || requestSessionRef.current,
       question: userQuestion,
       answer: getReadableAnswer(aiMessage),
       title: aiMessage.title || '',
@@ -1720,26 +1707,39 @@ function ChatContent({ storageKeys }) {
 
     setHistory((prev) => {
       const updatedHistory = [newRecord, ...prev].slice(0, 100);
-      saveHistoryToStorage(storageKeys, updatedHistory);
       return updatedHistory;
     });
   };
 
-  const handleSelectSession = (sessionId) => {
+  const handleSelectSession = async (sessionId) => {
+    const revision = revisionRef.current.get(sessionId) || 0;
+    selectedSessionRef.current = sessionId;
     setActiveSessionId(sessionId);
     saveActiveSessionId(storageKeys, sessionId);
     setActiveTab('ask');
     setMobileChatMenuOpen(false);
+    try {
+      const loaded = await loadServerMessages(sessionId);
+      if ((revisionRef.current.get(sessionId) || 0) === revision) {
+        setChatSessions((prev) => prev.map((s) => s.id === sessionId ? { ...s, ...loaded } : s));
+      }
+    } catch {
+      setUploadError(memoryText.unavailable);
+    }
   };
 
-  const handleNewChat = () => {
-    const newSession = createNewSession();
-    const updatedSessions = [newSession, ...chatSessions];
-
-    setChatSessions(updatedSessions);
+  const handleNewChat = async () => {
+    let newSession;
+    try {
+      newSession = { ...(await api.post('/chat/sessions')).data, loaded: true };
+    } catch {
+      setUploadError(memoryText.unavailable);
+      return;
+    }
+    setChatSessions((prev) => [newSession, ...prev.filter((s) => !deletedSessionsRef.current.has(s.id))]);
     setActiveSessionId(newSession.id);
+    selectedSessionRef.current = newSession.id;
 
-    saveChatSessionsToStorage(storageKeys, updatedSessions);
     saveActiveSessionId(storageKeys, newSession.id);
 
     setQuestion('');
@@ -1747,8 +1747,7 @@ function ChatContent({ storageKeys }) {
     setMobileChatMenuOpen(false);
   };
 
-  // Keep Chat.jsx as the single owner of conversations; the staff sidebar only
-  // receives the lightweight index and issues commands. No new chat API exists.
+  // The sidebar shares this server-backed conversation index.
   useEffect(() => {
     if (staffMode) publishStaffChat(chatSessions, activeSessionId);
   }, [staffMode, publishStaffChat, chatSessions, activeSessionId]);
@@ -1764,7 +1763,7 @@ function ChatContent({ storageKeys }) {
       else { setActiveTab('ask'); setQuestion(''); }
     } else if (command.type === 'select') {
       if (chatSessions.some((session) => String(session.id) === String(command.sessionId))) {
-        handleSelectSession(Number(command.sessionId));
+        handleSelectSession(String(command.sessionId));
       }
     } else if (command.type === 'delete') {
       const target = chatSessions.find((session) => String(session.id) === String(command.sessionId));
@@ -1825,14 +1824,31 @@ function ChatContent({ storageKeys }) {
     });
   };
 
-  const deleteSessionById = (sessionId) => {
+  const deleteSessionById = async (sessionId) => {
+    try {
+      await api.delete(`/chat/sessions/${sessionId}`);
+      deletedSessionsRef.current.add(sessionId);
+      setHistory((prev) => prev.filter((item) => item.conversation_id !== sessionId));
+      if (requestSessionRef.current === sessionId) handleStopGeneration();
+    } catch {
+      setUploadError(memoryText.unavailable);
+      return;
+    }
     const remainingSessions = chatSessions.filter((session) => session.id !== sessionId);
 
     if (remainingSessions.length === 0) {
-      const newSession = createNewSession();
+      let newSession;
+      try { newSession = { ...(await api.post('/chat/sessions')).data, loaded: true }; }
+      catch {
+        setChatSessions([]);
+        setActiveSessionId(null);
+        setUploadError(memoryText.unavailable);
+        return;
+      }
 
       setChatSessions([newSession]);
       setActiveSessionId(newSession.id);
+      selectedSessionRef.current = newSession.id;
 
       saveChatSessionsToStorage(storageKeys, [newSession]);
       saveActiveSessionId(storageKeys, newSession.id);
@@ -1845,23 +1861,45 @@ function ChatContent({ storageKeys }) {
 
     setChatSessions(remainingSessions);
     setActiveSessionId(nextActiveSessionId);
+    selectedSessionRef.current = nextActiveSessionId;
 
     saveChatSessionsToStorage(storageKeys, remainingSessions);
     saveActiveSessionId(storageKeys, nextActiveSessionId);
   };
 
-  const handleConfirmModalAction = () => {
+  const handleConfirmModalAction = async () => {
     if (confirmModal.type === 'delete-session') {
       deleteSessionById(confirmModal.sessionId);
     }
 
     if (confirmModal.type === 'clear-current-chat') {
-      updateCurrentSessionMessages(starterMessages);
+      deleteSessionById(activeSessionId);
     }
 
     if (confirmModal.type === 'clear-history') {
+      const allSessions = [];
+      let offset = 0;
+      try {
+        do {
+          const response = await api.get('/chat/sessions', { params: { offset } });
+          allSessions.push(...response.data.sessions);
+          offset = response.data.next_offset;
+        } while (offset != null);
+      } catch { setUploadError(memoryText.unavailable); closeConfirmModal(); return; }
+      for (const session of allSessions) {
+        try {
+          await api.delete(`/chat/sessions/${session.id}`);
+          deletedSessionsRef.current.add(session.id);
+        } catch {
+          setUploadError(memoryText.unavailable);
+          closeConfirmModal();
+          return;
+        }
+      }
+      setChatSessions([]);
+      setActiveSessionId(null);
       setHistory([]);
-      saveHistoryToStorage(storageKeys, []);
+      await handleNewChat();
     }
 
     closeConfirmModal();
@@ -1876,9 +1914,8 @@ function ChatContent({ storageKeys }) {
   };
 
   const handleDeleteHistory = (historyId) => {
-    const updatedHistory = history.filter((item) => item.id !== historyId);
-    setHistory(updatedHistory);
-    saveHistoryToStorage(storageKeys, updatedHistory);
+    const record = history.find((item) => item.id === historyId);
+    if (record?.conversation_id) openDeleteSessionModal(record.conversation_id, record.question);
   };
 
   const handleClearHistory = () => {
@@ -1966,6 +2003,8 @@ const removeSelectedImage = () => {
 
     const requestId = currentRequestIdRef.current;
     if (requestId) {
+      const sessionId = requestSessionRef.current;
+      if (sessionId) api.post(`/chat/sessions/${sessionId}/requests/${requestId}/cancel`).catch(() => {});
       api.post('/chat/cancel', { request_id: requestId }).catch((error) => {
         console.error('Cancel chat request error:', error);
       });
@@ -1977,6 +2016,7 @@ const removeSelectedImage = () => {
   // the team-lead ticket for the original question (force_escalate).
   const handleEscalationOffer = async (offerMessage, shouldEscalate) => {
     if (loading) return;
+    if (!activeSession?.loaded) { setUploadError(memoryText.unavailable); return; }
 
     const initiatingSessionId = activeSessionId;
     const sessionTitle = offerMessage.question || '';
@@ -1992,15 +2032,24 @@ const removeSelectedImage = () => {
     setLoading(true);
 
     try {
+      const offerKey = `${initiatingSessionId}:${offerMessage.id}`;
+      if (!offerRequestsRef.current.has(offerKey)) offerRequestsRef.current.set(offerKey, crypto.randomUUID());
+      const requestId = offerRequestsRef.current.get(offerKey);
+      currentRequestIdRef.current = requestId;
+      requestSessionRef.current = initiatingSessionId;
       const issueContext = buildIssueContext(messages, offerMessage.question, `main-${initiatingSessionId}`, offerMessage.id);
       const response = await api.post('/chat', {
         question: getEscalationQuestion(issueContext, offerMessage.question),
         force_escalate: true,
+        conversation_id: initiatingSessionId,
+        request_id: requestId,
+        language,
         chat_session_id: `main-${initiatingSessionId}`,
         escalation_context: issueContext,
       });
 
-      const aiMessage = buildAiMessage(response.data || {}, t);
+      if (deletedSessionsRef.current.has(initiatingSessionId)) return;
+      const aiMessage = { ...buildAiMessage(response.data || {}, t), conversation_id: initiatingSessionId };
 
       updateCurrentSessionMessages([...messagesWithOfferClosed, aiMessage], sessionTitle, initiatingSessionId);
       addChatHistory(sessionTitle, aiMessage);
@@ -2045,6 +2094,7 @@ const removeSelectedImage = () => {
     const trimmedQuestion = cleanQuestionInput(question);
 
     if ((!trimmedQuestion && !selectedImage) || loading) return;
+    if (!serverReady || !activeSessionId || !activeSession?.loaded || activeSession.pending?.length) { setUploadError(memoryText.unavailable); return; }
 
     setUploadError('');
 
@@ -2091,6 +2141,7 @@ const removeSelectedImage = () => {
     const controller = new AbortController();
     abortControllerRef.current = controller;
     currentRequestIdRef.current = requestId;
+    requestSessionRef.current = initiatingSessionId;
 
     setLoading(true);
 
@@ -2103,6 +2154,8 @@ const removeSelectedImage = () => {
         formData.append('context', JSON.stringify(context));
         formData.append('attachment', imageToSend);
         formData.append('request_id', requestId);
+        formData.append('conversation_id', initiatingSessionId);
+        formData.append('language', language);
         formData.append('chat_session_id', `main-${initiatingSessionId}`);
         formData.append('escalation_context', JSON.stringify(issueContextForRequest));
         formData.append('clarification_token', getClarificationToken(initiatingMessages, issueContextForRequest));
@@ -2112,7 +2165,7 @@ const removeSelectedImage = () => {
       } else {
         response = await api.post(
           '/chat',
-          { question: trimmedQuestion, context, request_id: requestId, history: historyForRequest, chat_session_id: `main-${initiatingSessionId}`, escalation_context: issueContextForRequest, clarification_token: getClarificationToken(initiatingMessages, issueContextForRequest) },
+          { question: trimmedQuestion, context, request_id: requestId, conversation_id: initiatingSessionId, language, history: historyForRequest, chat_session_id: `main-${initiatingSessionId}`, escalation_context: issueContextForRequest, clarification_token: getClarificationToken(initiatingMessages, issueContextForRequest) },
           { signal: controller.signal }
         );
       }
@@ -2123,7 +2176,8 @@ const removeSelectedImage = () => {
         ? { answer: response.data, type: 'text' }
         : (response.data || {});
 
-      const aiMessage = buildAiMessage(data, t);
+      if (deletedSessionsRef.current.has(initiatingSessionId)) return;
+      const aiMessage = { ...buildAiMessage(data, t), conversation_id: initiatingSessionId };
 
       // The bubble we just saved above is still pointing at a blob: URL,
       // which only exists in this browser tab and gets revoked below --
@@ -2150,6 +2204,7 @@ const removeSelectedImage = () => {
         URL.revokeObjectURL(imagePreviewToRevoke);
       }
     } catch (error) {
+      if (deletedSessionsRef.current.has(initiatingSessionId)) return;
       // An intentional Stop click, not a real failure -- show a calm status
       // line under the question instead of a scary red network error, and
       // never touch the composer (it may already hold a draft the user
@@ -2178,7 +2233,6 @@ const removeSelectedImage = () => {
         const messagesAfterStop = [...messagesAfterUserQuestion, stoppedMessage];
 
         saveResponseMessages(messagesAfterStop);
-        addChatHistory(displayQuestion, stoppedMessage);
 
         // Deliberately NOT revoking imagePreviewToRevoke here: the request
         // never got a response, so there's no permanent URL to swap into
@@ -2252,13 +2306,13 @@ const removeSelectedImage = () => {
           const messagesAfterError = [...messagesAfterUserQuestion, errorMessage];
 
           saveResponseMessages(messagesAfterError);
-          addChatHistory(displayQuestion, errorMessage);
         }
       }
     } finally {
       setLoading(false);
       abortControllerRef.current = null;
       currentRequestIdRef.current = null;
+      requestSessionRef.current = null;
     }
   };
 
@@ -3194,7 +3248,7 @@ const removeSelectedImage = () => {
       },
       'clear-history': {
         title: t('chat.modal.clearHistoryTitle'),
-        message: t('chat.modal.clearHistoryMessage'),
+        message: t('chat.clearAllServer'),
         confirm: t('common.clear'),
       },
     }[confirmModal.type] || {
@@ -3284,14 +3338,56 @@ const removeSelectedImage = () => {
     );
   };
 
+  const renderMemoryTools = () => (
+    <div className="chat-memory-tools">
+      {hasLegacy ? <p role="status" className="muted small">{memoryText.legacy}</p> : null}
+      {uploadError ? <p role="alert">{uploadError}</p> : null}
+      {nextSessionOffset != null ? <button type="button" className="secondary-btn" onClick={async () => {
+        try {
+          const response = await api.get('/chat/sessions', { params: { offset: nextSessionOffset } });
+          setChatSessions((prev) => [...prev, ...response.data.sessions.filter((s) => !prev.some((p) => p.id === s.id))]);
+          setNextSessionOffset(response.data.next_offset);
+        } catch { setUploadError(memoryText.unavailable); }
+      }}>{t('chat.loadMoreChats')}</button> : null}
+      {activeSession?.nextBefore ? <button type="button" className="secondary-btn" onClick={async () => {
+        const cid = activeSessionId;
+        try {
+          const older = await loadServerMessages(cid, activeSession.nextBefore);
+          setChatSessions((prev) => prev.map((s) => s.id === cid ? { ...s, messages: mergeEarlierMessages(older.messages, s.messages || []), nextBefore: older.nextBefore } : s));
+        } catch { setUploadError(memoryText.unavailable); }
+      }}>{t('chat.loadEarlier')}</button> : null}
+      {activeSession?.pending?.length ? <button type="button" className="secondary-btn" onClick={async () => {
+        const cid = activeSessionId;
+        try {
+          for (const rid of activeSession.pending) {
+            await api.post('/chat/cancel', { request_id: rid });
+            await api.post(`/chat/sessions/${cid}/requests/${rid}/cancel`);
+          }
+          await handleSelectSession(cid);
+        } catch { setUploadError(memoryText.unavailable); }
+      }}>{t('chat.stopUnfinished')}</button> : null}
+      {activeSessionId ? <button type="button" className="secondary-btn" onClick={async () => {
+        const cid = activeSessionId;
+        const title = window.prompt(t('chat.rename'), activeSession?.title || '');
+        if (!title?.trim()) return;
+        try {
+          await api.patch(`/chat/sessions/${cid}`, { title: title.trim() });
+          setChatSessions((prev) => prev.map((s) => s.id === cid ? { ...s, title: title.trim() } : s));
+        } catch { setUploadError(memoryText.unavailable); }
+      }}>{t('chat.rename')}</button> : null}
+    </div>
+  );
+
   return staffMode ? (
     <div className="staff-chat-page">
+      {renderMemoryTools()}
       {activeTab === 'ask' ? renderStaffAskQuestion() : <div className="staff-history-wrap"><div className="staff-history-top"><button type="button" onClick={() => handleTabChange('ask')}>{t('chat.backToChat')}</button><h1>{t('chat.historyTab')}</h1></div>{renderChatHistory()}</div>}
       {previewImage && <div className="staff-image-overlay" role="dialog" aria-modal="true" aria-label={t('chat.previewImage')} onClick={() => setPreviewImage(null)}><button type="button" onClick={() => setPreviewImage(null)} aria-label={t('chat.closePreview')}>×</button><img src={previewImage} alt="Attachment preview" onClick={(event) => event.stopPropagation()}/></div>}
       {renderConfirmModal()}
     </div>
   ) : (
     <div className="ai-chat-page">
+      {renderMemoryTools()}
       <div className="ai-chat-top-row">
         <div className="ai-chat-page-heading">
           <span className="ai-chat-page-kicker">{t('chat.kicker')}</span>
@@ -3395,7 +3491,7 @@ const removeSelectedImage = () => {
 // and keeps one user's UI history out of another user's screen.
 export default function Chat() {
   const { user } = useAuth();
-  const storageKeys = getChatStorageKeys(user);
+  const storageKeys = useMemo(() => getChatStorageKeys(user), [user]);
   if (!storageKeys) return null;
   return <ChatContent key={storageKeys.sessions} storageKeys={storageKeys} />;
 }
