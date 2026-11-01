@@ -14,13 +14,6 @@ export const LANGUAGE_OPTIONS = [
 ];
 
 const en = {
-  'chat.loadMoreChats': 'Load more chats',
-  'chat.memoryUnavailable': 'Chat storage unavailable. Reload before sending.',
-  'chat.legacyPreserved': 'Older browser chats are preserved locally and have not been uploaded. A reviewed import is still required.',
-  'chat.loadEarlier': 'Load earlier messages',
-  'chat.stopUnfinished': 'Stop unfinished reply',
-  'chat.rename': 'Rename chat',
-  'chat.clearAllServer': 'Delete all chats and their personal memory? Independent escalation evidence will be retained.',
   'esc.evidence.original': 'Original Staff Question',
   'esc.evidence.previous': 'Previous AI Response',
   'esc.evidence.why': 'Why Escalated',
@@ -1463,13 +1456,6 @@ const en = {
 };
 
 const zh = {
-  'chat.loadMoreChats': '加载更多聊天',
-  'chat.memoryUnavailable': '聊天存储暂不可用，请重新加载后发送。',
-  'chat.legacyPreserved': '旧浏览器聊天已保留在本地，尚未上传；仍需审核后导入。',
-  'chat.loadEarlier': '加载更早消息',
-  'chat.stopUnfinished': '停止未完成的回复',
-  'chat.rename': '重命名聊天',
-  'chat.clearAllServer': '删除所有聊天及其个人记忆？独立的升级工单证据会保留。',
   'esc.evidence.original': '员工原始问题',
   'esc.evidence.previous': '先前 AI 回复',
   'esc.evidence.why': '升级原因',
@@ -2902,13 +2888,6 @@ const zh = {
 };
 
 const ms = {
-  'chat.loadMoreChats': 'Muat lebih banyak sembang',
-  'chat.memoryUnavailable': 'Storan sembang tidak tersedia. Muat semula sebelum menghantar.',
-  'chat.legacyPreserved': 'Sembang pelayar lama disimpan secara setempat dan belum dimuat naik. Import yang disemak masih diperlukan.',
-  'chat.loadEarlier': 'Muat mesej terdahulu',
-  'chat.stopUnfinished': 'Hentikan jawapan belum selesai',
-  'chat.rename': 'Namakan semula sembang',
-  'chat.clearAllServer': 'Padam semua sembang dan ingatan peribadi? Bukti eskalasi berasingan akan dikekalkan.',
   'esc.evidence.original': 'Soalan Asal Kakitangan',
   'esc.evidence.previous': 'Jawapan AI Sebelumnya',
   'esc.evidence.why': 'Sebab Eskalasi',

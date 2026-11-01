@@ -63,9 +63,6 @@ export function buildIssueContext(messages, triggerQuestion, conversationId, off
   const turns = [];
   for (const message of messages) {
     if (!message || !['user', 'ai'].includes(message.sender)) continue;
-    // Cross-chat quotations require separate staff confirmation before they
-    // can become ticket evidence. This enhancement adds no such workflow.
-    if (message.source === 'personal_chat_recall') continue;
     if (message.sender === 'user') turns.push({ user: message, messages: [] });
     const turn = turns.at(-1);
     if (!turn || message.loading || /^frontend_/.test(message.source || '') || message.source === 'user_stopped_generation') continue;

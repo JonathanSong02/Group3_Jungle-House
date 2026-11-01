@@ -7,14 +7,14 @@ function readChatIndex(user) {
   if (!user || user.status !== 'active' || user.id == null) return { sessions: [], activeSessionId: null };
   const owner = String(user.id).replace(/[^a-zA-Z0-9_-]/g, '_');
   try {
-    const stored = JSON.parse(localStorage.getItem(`jh_ai_chat_sessions_v2_${owner}`) || '[]');
+    const stored = JSON.parse(localStorage.getItem(`jh_ai_chat_sessions_${owner}`) || '[]');
     const sessions = Array.isArray(stored) ? stored.map((item) => ({
       id: item.id,
       title: item.title || 'New Chat',
       updated_at: item.updated_at || '',
     })) : [];
-    const activeSessionId = localStorage.getItem(`jh_active_chat_session_v2_${owner}`);
-    return { sessions, activeSessionId: activeSessionId || sessions[0]?.id || null };
+    const activeSessionId = localStorage.getItem(`jh_active_chat_session_${owner}`);
+    return { sessions, activeSessionId: activeSessionId ? Number(activeSessionId) : sessions[0]?.id || null };
   } catch {
     return { sessions: [], activeSessionId: null };
   }
