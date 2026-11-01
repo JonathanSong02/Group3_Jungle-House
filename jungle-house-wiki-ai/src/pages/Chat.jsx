@@ -1615,6 +1615,7 @@ function ChatContent({ storageKeys }) {
   const [previewImage, setPreviewImage] = useState(null);
   const [selectedImage, setSelectedImage] = useState(null);
   const [selectedImagePreview, setSelectedImagePreview] = useState('');
+  const [uploadError, setUploadError] = useState('');
 
   // "Stop Generating" support: the AbortController for whatever request is
   // currently in flight, and the ID the backend uses to recognize that
@@ -1895,6 +1896,8 @@ function ChatContent({ storageKeys }) {
       return false;
     }
 
+    setUploadError('');
+
     if (selectedImagePreview) {
       URL.revokeObjectURL(selectedImagePreview);
     }
@@ -1945,6 +1948,7 @@ function ChatContent({ storageKeys }) {
 
 const removeSelectedImage = () => {
   setSelectedImage(null);
+  setUploadError('');
 
   if (selectedImagePreview) {
     URL.revokeObjectURL(selectedImagePreview);
@@ -2041,6 +2045,8 @@ const removeSelectedImage = () => {
     const trimmedQuestion = cleanQuestionInput(question);
 
     if ((!trimmedQuestion && !selectedImage) || loading) return;
+
+    setUploadError('');
 
     const initiatingSessionId = activeSessionId;
     const initiatingMessages = [...messages];
@@ -2183,42 +2189,71 @@ const removeSelectedImage = () => {
         console.error('Chat request failed:', error);
 
         const errorCode = error?.response?.data?.code;
-        const ticketError = escalationErrorInfo(error, t);
-        const requestMessage = ticketError?.text || (
-          error?.response?.status === 401 ||
-          errorCode === 'SESSION_EXPIRED' ||
-          errorCode === 'ACCOUNT_INACTIVE'
-            ? 'Your session has expired or your account is inactive. Please sign in again.'
-            : errorCode === 'CSRF_INVALID'
-              ? 'Security verification failed. Refresh the page and try again.'
-              : error?.response?.data?.message ||
-                error?.message ||
-                'Failed to connect to backend. Please check whether Flask is running.');
+        const errorSource = error?.response?.data?.source;
+        const isInvalidUpload =
+          errorCode === 'INVALID_UPLOAD' ||
+          errorSource === 'invalid_upload';
 
-        const errorMessage = {
-          ...ticketError,
-          id: Date.now() + 1,
-          sender: 'ai',
-          type: 'text',
-          text: requestMessage,
-          context: {
+        if (isInvalidUpload) {
+          const uploadMessage =
+            error?.response?.data?.message ||
+            error?.response?.data?.reply ||
+            'The uploaded file is not a valid supported file.';
+
+          // Remove the optimistic user bubble because the backend rejected the
+          // upload before saving anything. This prevents broken blob: previews
+          // from being written into chat history/localStorage.
+          saveResponseMessages(initiatingMessages);
+
+          if (imagePreviewToRevoke) {
+            URL.revokeObjectURL(imagePreviewToRevoke);
+          }
+
+          // Keep a typed question available so the staff member can attach a
+          // valid replacement and retry. Do not overwrite a newer draft.
+          if (trimmedQuestion) {
+            setQuestion((currentValue) => currentValue || trimmedQuestion);
+          }
+
+          setUploadError(uploadMessage);
+        } else {
+          const ticketError = escalationErrorInfo(error, t);
+          const requestMessage = ticketError?.text || (
+            error?.response?.status === 401 ||
+            errorCode === 'SESSION_EXPIRED' ||
+            errorCode === 'ACCOUNT_INACTIVE'
+              ? 'Your session has expired or your account is inactive. Please sign in again.'
+              : errorCode === 'CSRF_INVALID'
+                ? 'Security verification failed. Refresh the page and try again.'
+                : error?.response?.data?.message ||
+                  error?.message ||
+                  'Failed to connect to backend. Please check whether Flask is running.');
+
+          const errorMessage = {
+            ...ticketError,
+            id: Date.now() + 1,
+            sender: 'ai',
+            type: 'text',
+            text: requestMessage,
+            context: {
+              unclear_count: 0,
+            },
             unclear_count: 0,
-          },
-          unclear_count: 0,
-          escalation_ready: false,
-          escalation_required: false,
-          confidence: 0,
-          confidence_label: 'low',
-          source: 'frontend_request_error',
-          fallback: true,
-          fallback_message: requestMessage,
-          message: requestMessage,
-        };
+            escalation_ready: false,
+            escalation_required: false,
+            confidence: 0,
+            confidence_label: 'low',
+            source: 'frontend_request_error',
+            fallback: true,
+            fallback_message: requestMessage,
+            message: requestMessage,
+          };
 
-        const messagesAfterError = [...messagesAfterUserQuestion, errorMessage];
+          const messagesAfterError = [...messagesAfterUserQuestion, errorMessage];
 
-        saveResponseMessages(messagesAfterError);
-        addChatHistory(displayQuestion, errorMessage);
+          saveResponseMessages(messagesAfterError);
+          addChatHistory(displayQuestion, errorMessage);
+        }
       }
     } finally {
       setLoading(false);
@@ -2826,6 +2861,31 @@ const removeSelectedImage = () => {
             </div>
           ) : null}
 
+          {uploadError ? (
+            <div
+              role="alert"
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: '10px',
+                marginBottom: '10px',
+                padding: '10px 12px',
+                borderRadius: '12px',
+                border: '1px solid #efb0aa',
+                backgroundColor: '#fff5f3',
+                color: '#9f352d',
+                fontSize: '13px',
+                lineHeight: 1.45,
+              }}
+            >
+              <span aria-hidden="true" style={{ fontWeight: 800 }}>⚠</span>
+              <span>
+                <strong style={{ display: 'block', marginBottom: '2px' }}>Upload rejected</strong>
+                {uploadError}
+              </span>
+            </div>
+          ) : null}
+
           <div className="chat-input-row ai-chat-input-row">
             <input
               value={question}
@@ -2940,6 +3000,30 @@ const removeSelectedImage = () => {
           )}
         </div>
         <div className="staff-chat-bottom">
+          {uploadError ? (
+            <div
+              role="alert"
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: '10px',
+                margin: '0 0 10px',
+                padding: '10px 12px',
+                borderRadius: '12px',
+                border: '1px solid #efb0aa',
+                backgroundColor: '#fff5f3',
+                color: '#9f352d',
+                fontSize: '13px',
+                lineHeight: 1.45,
+              }}
+            >
+              <span aria-hidden="true" style={{ fontWeight: 800 }}>⚠</span>
+              <span>
+                <strong style={{ display: 'block', marginBottom: '2px' }}>Upload rejected</strong>
+                {uploadError}
+              </span>
+            </div>
+          ) : null}
           <div className="staff-chat-composer" role="group" aria-label={t('chat.askAssistantGroup')}>
             {selectedImage && <div className="staff-attachment-preview">
               {selectedImagePreview ? <img src={selectedImagePreview} alt={t('chat.selectedFile')}/> : <span className="staff-file-icon">FILE</span>}
