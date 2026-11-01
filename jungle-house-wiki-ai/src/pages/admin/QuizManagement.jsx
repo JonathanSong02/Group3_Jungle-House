@@ -4,6 +4,7 @@ import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../i18n/LanguageContext';
 import './styles/QuizManagement.css';
+import './styles/QuizManagementAIBuild.css';
 
 const emptyQuizForm = {
   title: '',
@@ -35,7 +36,7 @@ const emptyAiForm = {
   difficulty: 'Medium',
 };
 
-const aiQuestionCounts = [3, 5, 10];
+const aiQuestionCounts = [5, 10, 15, 20];
 const aiDifficulties = ['Easy', 'Medium', 'Hard'];
 
 const blankAiQuestion = () => ({
@@ -188,6 +189,9 @@ export default function QuizManagement() {
   });
 
   const selectedQuiz = quizzes.find((quiz) => quiz.quiz_id === selectedQuizId);
+  const selectedAiSourceArticle = aiArticles.find(
+    (article) => String(article.article_id) === String(aiForm.articleId)
+  );
 
   const filteredQuizzes = useMemo(() => {
     const keyword = searchTerm.trim().toLowerCase();
@@ -523,6 +527,16 @@ export default function QuizManagement() {
     setAiError('');
     setAiPreview(null);
 
+    const requestedQuestionCount = Number(aiForm.questionCount);
+    if (
+      !Number.isInteger(requestedQuestionCount) ||
+      requestedQuestionCount < 1 ||
+      requestedQuestionCount > 20
+    ) {
+      setAiError('Please enter a whole number from 1 to 20 questions.');
+      return;
+    }
+
     try {
       setAiLoading(true);
 
@@ -538,7 +552,7 @@ export default function QuizManagement() {
             (chosenArticle ? t('qm.titleSuffix', { title: chosenArticle.title }) : t('qm.defaultAiTitle')),
           sourceCategory: aiForm.sourceCategory,
           articleId: aiForm.articleId ? Number(aiForm.articleId) : null,
-          count: Number(aiForm.questionCount) || 5,
+          count: requestedQuestionCount,
           difficulty: aiForm.difficulty,
           status: 'inactive',
         },
@@ -1312,124 +1326,243 @@ export default function QuizManagement() {
         ) : null}
 
         {activeTab === 'ai-generate' ? (
-          <div className="qm-ai-layout">
-            <section className="qm-ai-builder">
-              <div className="qm-ai-head">
-                <div className="qm-ai-icon">
-                  <Icon name="sparkles" size={25} />
+          <div className="qm-ai-layout qm-ai-layout-v2">
+            <section className="qm-ai-builder qm-ai-builder-v2">
+              <div className="qm-ai-v2-top">
+                <div className="qm-ai-head">
+                  <div className="qm-ai-icon">
+                    <Icon name="sparkles" size={25} />
+                  </div>
+
+                  <div>
+                    <span>{tOr('qm.ai.fastKicker', 'FASTEST WAY TO BUILD TRAINING')}</span>
+                    <h2>{tOr('qm.ai.builderTitle', 'AI Quiz Builder')}</h2>
+                  </div>
                 </div>
 
-                <div>
-                  <span>{t('qm.ai.kicker')}</span>
-                  <h2>{t('qm.ai.heading')}</h2>
-                </div>
+                <p className="qm-ai-v2-intro">
+                  {tOr(
+                    'qm.ai.builderIntro',
+                    'Generate grounded questions from verified Knowledge Base content, review them, then publish when ready.'
+                  )}
+                </p>
               </div>
 
-              <form className="qm-ai-form" onSubmit={generateAiQuiz}>
-                <label className="qm-field qm-field-full">
-                  <span>{t('qm.ai.quizTitle')}</span>
-                  <input
-                    name="title"
-                    value={aiForm.title}
-                    onChange={handleAiFormChange}
-                    placeholder={t('qm.ai.titlePh')}
-                  />
-                </label>
+              <form className="qm-ai-form qm-ai-form-v2" onSubmit={generateAiQuiz}>
+                <section className="qm-ai-setup-card">
+                  <div className="qm-ai-setup-heading">
+                    <span className="qm-ai-step">1</span>
+                    <div>
+                      <strong>{tOr('qm.ai.sourceSetup', 'Choose training source')}</strong>
+                      <small>
+                        {tOr(
+                          'qm.ai.sourceSetupHint',
+                          'A specific article is best because it also becomes the learner revision material.'
+                        )}
+                      </small>
+                    </div>
+                  </div>
 
-                <label className="qm-field qm-field-full">
-                  <span>{t('quiz.gen.article')}</span>
-                  <select
-                    name="articleId"
-                    value={aiForm.articleId}
-                    onChange={handleAiFormChange}
-                  >
-                    <option value="">{t('quiz.gen.allKnowledge')}</option>
-                    {aiArticles.map((article) => (
-                      <option key={article.article_id} value={article.article_id}>
-                        {article.title}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                {!aiForm.articleId ? (
                   <label className="qm-field qm-field-full">
-                    <span>{t('qm.ai.category')}</span>
+                    <span>{t('quiz.gen.article')}</span>
                     <select
-                      name="sourceCategory"
-                      value={aiForm.sourceCategory}
+                      name="articleId"
+                      value={aiForm.articleId}
                       onChange={handleAiFormChange}
                     >
-                      {aiSourceCategories.map((category) => (
-                        <option key={category} value={category}>
-                          {category === 'All' ? t('qm.ai.allKnowledge') : catLabel(category)}
+                      <option value="">{t('quiz.gen.allKnowledge')}</option>
+                      {aiArticles.map((article) => (
+                        <option key={article.article_id} value={article.article_id}>
+                          {article.title}
+                          {article.category ? ` — ${catLabel(article.category)}` : ''}
                         </option>
                       ))}
                     </select>
                   </label>
-                ) : null}
 
-                <div className="qm-field qm-field-full">
-                  <span>{t('quiz.gen.count')}</span>
-                  <div className="qm-chip-row" role="radiogroup">
-                    {aiQuestionCounts.map((count) => (
-                      <button
-                        key={count}
-                        type="button"
-                        role="radio"
-                        aria-checked={Number(aiForm.questionCount) === count}
-                        className={`qm-chip ${
-                          Number(aiForm.questionCount) === count ? 'active' : ''
-                        }`}
-                        onClick={() =>
-                          setAiForm((prev) => ({ ...prev, questionCount: count }))
-                        }
-                      >
-                        {count}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                  {aiForm.articleId ? (
+                    <div className="qm-ai-source-note success">
+                      <Icon name="check" size={16} />
+                      <span>
+                        <strong>{selectedAiSourceArticle?.title || tOr('qm.ai.articleSelected', 'Article selected')}</strong>
+                        <small>
+                          {tOr(
+                            'qm.ai.revisionLinked',
+                            'This article will also be linked to the quiz as Staff revision material.'
+                          )}
+                        </small>
+                      </span>
+                    </div>
+                  ) : (
+                    <>
+                      <label className="qm-field qm-field-full">
+                        <span>{t('qm.ai.category')}</span>
+                        <select
+                          name="sourceCategory"
+                          value={aiForm.sourceCategory}
+                          onChange={handleAiFormChange}
+                        >
+                          {aiSourceCategories.map((category) => (
+                            <option key={category} value={category}>
+                              {category === 'All' ? t('qm.ai.allKnowledge') : catLabel(category)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
 
-                <div className="qm-field qm-field-full">
-                  <span>{t('quiz.gen.difficulty')}</span>
-                  <div className="qm-chip-row" role="radiogroup">
-                    {aiDifficulties.map((level) => (
-                      <button
-                        key={level}
-                        type="button"
-                        role="radio"
-                        aria-checked={aiForm.difficulty === level}
-                        className={`qm-chip qm-chip-${level.toLowerCase()} ${
-                          aiForm.difficulty === level ? 'active' : ''
-                        }`}
-                        onClick={() =>
-                          setAiForm((prev) => ({ ...prev, difficulty: level }))
-                        }
-                      >
-                        {t(`quiz.difficulty.${level}`)}
-                      </button>
-                    ))}
+                      <div className="qm-ai-source-note">
+                        <Icon name="quiz" size={16} />
+                        <span>
+                          <strong>{tOr('qm.ai.categoryMode', 'Category-wide generation')}</strong>
+                          <small>
+                            {tOr(
+                              'qm.ai.categoryModeHint',
+                              'Useful for broad quizzes, but no single Knowledge Base article will be linked as revision material.'
+                            )}
+                          </small>
+                        </span>
+                      </div>
+                    </>
+                  )}
+                </section>
+
+                <section className="qm-ai-setup-card">
+                  <div className="qm-ai-setup-heading">
+                    <span className="qm-ai-step">2</span>
+                    <div>
+                      <strong>{tOr('qm.ai.quizSetup', 'Configure the quiz')}</strong>
+                      <small>
+                        {tOr('qm.ai.quizSetupHint', 'Set the title, number of questions and difficulty.')}
+                      </small>
+                    </div>
                   </div>
-                  <small className="qm-chip-hint">
-                    {t(`quiz.gen.hint.${aiForm.difficulty}`)}
-                  </small>
+
+                  <label className="qm-field qm-field-full">
+                    <span>{t('qm.ai.quizTitle')}</span>
+                    <input
+                      name="title"
+                      value={aiForm.title}
+                      onChange={handleAiFormChange}
+                      placeholder={t('qm.ai.titlePh')}
+                    />
+                  </label>
+
+                  <div className="qm-field qm-field-full">
+                    <span>{t('quiz.gen.count')}</span>
+
+                    <div className="qm-ai-count-control">
+                      <div className="qm-chip-row qm-ai-count-presets" role="radiogroup">
+                        {aiQuestionCounts.map((count) => (
+                          <button
+                            key={count}
+                            type="button"
+                            role="radio"
+                            aria-checked={Number(aiForm.questionCount) === count}
+                            className={`qm-chip ${
+                              Number(aiForm.questionCount) === count ? 'active' : ''
+                            }`}
+                            onClick={() =>
+                              setAiForm((prev) => ({ ...prev, questionCount: count }))
+                            }
+                          >
+                            {count}
+                          </button>
+                        ))}
+                      </div>
+
+                      <label className="qm-ai-custom-count">
+                        <span>{tOr('qm.ai.customCount', 'Custom')}</span>
+                        <input
+                          type="number"
+                          min="1"
+                          max="20"
+                          step="1"
+                          inputMode="numeric"
+                          value={aiForm.questionCount}
+                          onChange={(event) =>
+                            setAiForm((prev) => ({
+                              ...prev,
+                              questionCount: event.target.value,
+                            }))
+                          }
+                          aria-label={tOr('qm.ai.customQuestionCount', 'Custom question count')}
+                        />
+                      </label>
+                    </div>
+
+                    <small className="qm-ai-field-hint">
+                      {tOr(
+                        'qm.ai.countHint',
+                        'Choose a preset or type any whole number from 1 to 20.'
+                      )}
+                    </small>
+                  </div>
+
+                  <div className="qm-field qm-field-full">
+                    <span>{t('quiz.gen.difficulty')}</span>
+                    <div className="qm-chip-row qm-ai-difficulty-row" role="radiogroup">
+                      {aiDifficulties.map((level) => (
+                        <button
+                          key={level}
+                          type="button"
+                          role="radio"
+                          aria-checked={aiForm.difficulty === level}
+                          className={`qm-chip qm-chip-${level.toLowerCase()} ${
+                            aiForm.difficulty === level ? 'active' : ''
+                          }`}
+                          onClick={() =>
+                            setAiForm((prev) => ({ ...prev, difficulty: level }))
+                          }
+                        >
+                          {t(`quiz.difficulty.${level}`)}
+                        </button>
+                      ))}
+                    </div>
+                    <small className="qm-ai-field-hint">
+                      {t(`quiz.gen.hint.${aiForm.difficulty}`)}
+                    </small>
+                  </div>
+                </section>
+
+                <div className="qm-ai-config-summary" aria-label="Quiz generation summary">
+                  <div>
+                    <span>{tOr('qm.ai.summarySource', 'Source')}</span>
+                    <strong>
+                      {selectedAiSourceArticle?.title ||
+                        (aiForm.sourceCategory === 'All'
+                          ? tOr('qm.ai.allKnowledge', 'All Knowledge')
+                          : catLabel(aiForm.sourceCategory))}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>{tOr('qm.ai.summaryQuestions', 'Questions')}</span>
+                    <strong>{aiForm.questionCount || '—'}</strong>
+                  </div>
+                  <div>
+                    <span>{tOr('qm.ai.summaryDifficulty', 'Difficulty')}</span>
+                    <strong>{tOr(`quiz.difficulty.${aiForm.difficulty}`, aiForm.difficulty)}</strong>
+                  </div>
                 </div>
 
                 <button
-                  className="qm-btn qm-btn-ai qm-generate-btn"
+                  className="qm-btn qm-btn-ai qm-generate-btn qm-generate-btn-v2"
                   type="submit"
                   disabled={aiLoading}
                 >
                   <Icon name="sparkles" />
-                  {aiLoading ? t('quiz.gen.generating') : t('quiz.gen.generate')}
+                  {aiLoading
+                    ? t('quiz.gen.generating')
+                    : tOr(
+                        'qm.ai.generateCount',
+                        `Generate ${aiForm.questionCount || ''} Questions`
+                      )}
                 </button>
               </form>
 
               {aiError ? <div className="qm-ai-error">{aiError}</div> : null}
             </section>
 
-            <section className="qm-ai-preview">
+            <section className="qm-ai-preview qm-ai-preview-v2">
               {aiLoading ? (
                 <div className="qm-ai-skeleton" role="status" aria-live="polite">
                   <strong>{t('quiz.gen.generating')}</strong>
@@ -1445,12 +1578,55 @@ export default function QuizManagement() {
                   )}
                 </div>
               ) : !aiPreview ? (
-                <div className="qm-ai-empty">
+                <div className="qm-ai-empty qm-ai-empty-v2">
                   <div className="qm-ai-empty-orb">
                     <Icon name="sparkles" size={30} />
                   </div>
-                  <strong>{t('qm.ai.previewTitle')}</strong>
-                  <span>{t('qm.ai.previewHint')}</span>
+
+                  <span className="qm-ai-preview-kicker">
+                    {tOr('qm.ai.previewKicker', 'AI PREVIEW')}
+                  </span>
+                  <strong>{tOr('qm.ai.previewReadyTitle', 'Ready to generate')}</strong>
+                  <span>
+                    {tOr(
+                      'qm.ai.previewReadyHint',
+                      'Your generated questions will appear here for review before anything is published.'
+                    )}
+                  </span>
+
+                  <div className="qm-ai-empty-steps">
+                    <div>
+                      <span>1</span>
+                      <p>
+                        <strong>{tOr('qm.ai.previewStep1', 'Choose source')}</strong>
+                        <small>{tOr('qm.ai.previewStep1Hint', 'Use a KB article or category.')}</small>
+                      </p>
+                    </div>
+                    <div>
+                      <span>2</span>
+                      <p>
+                        <strong>{tOr('qm.ai.previewStep2', 'Generate')}</strong>
+                        <small>{tOr('qm.ai.previewStep2Hint', 'AI creates grounded questions.')}</small>
+                      </p>
+                    </div>
+                    <div>
+                      <span>3</span>
+                      <p>
+                        <strong>{tOr('qm.ai.previewStep3', 'Review & publish')}</strong>
+                        <small>{tOr('qm.ai.previewStep3Hint', 'Edit every question before publishing.')}</small>
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="qm-ai-empty-summary">
+                    <span>{aiForm.questionCount || '—'} {t('quiz.questions')}</span>
+                    <span>{tOr(`quiz.difficulty.${aiForm.difficulty}`, aiForm.difficulty)}</span>
+                    <span>
+                      {selectedAiSourceArticle
+                        ? tOr('qm.ai.linkedRevision', 'Revision material linked')
+                        : tOr('qm.ai.categorySource', 'Category source')}
+                    </span>
+                  </div>
                 </div>
               ) : (
                 <>
