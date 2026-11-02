@@ -6031,8 +6031,14 @@ def change_password(user_id):
     if not current_password or not new_password or not confirm_password:
         return jsonify({"message": "All password fields are required."}), 400
 
-    if len(new_password) < 6:
-        return jsonify({"message": "New password must be at least 6 characters."}), 400
+    if len(new_password) < 8:
+        return jsonify({"message": "New password must be at least 8 characters."}), 400
+
+    if not re.search(r"[A-Z]", new_password):
+        return jsonify({"message": "New password must include at least one uppercase letter."}), 400
+
+    if not re.search(r"\d", new_password):
+        return jsonify({"message": "New password must include at least one number."}), 400
 
     if new_password != confirm_password:
         return jsonify({"message": "New password and confirm password do not match."}), 400
