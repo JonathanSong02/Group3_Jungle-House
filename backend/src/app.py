@@ -4864,45 +4864,6 @@ def search_related_knowledge_base_articles(question, limit=3, min_score=CONFIDEN
     return scored_results[:limit]
 
 
-def build_article_search_segments(article):
-    """
-    Split an article into independently-scorable text segments for the
-    related-knowledge search above: title/category/subcategory as one
-    segment, then each numbered step (parsed the same way parse_article_steps
-    already does for rendering) as its own segment, plus any free-text lead-in
-    before the first numbered step (e.g. a "Stocktake:" sub-heading). A query
-    is scored against whichever ONE segment matches best, so a long multi-step
-    SOP isn't penalized for containing many OTHER unrelated steps.
-    """
-    title = str(article.get("title") or "")
-    category = str(article.get("category") or "")
-    sub_category = str(article.get("sub_category") or "")
-    raw_content = article.get("content")
-    plain_content = normalize_article_html_for_parsing(raw_content)
-
-    segments = [f"{title} {category} {sub_category}"]
-
-    # parse_article_steps() normalizes internally too (redundant but
-    # idempotent/harmless); the lead-in slice below needs to search the SAME
-    # normalized plain text so its offsets line up with real content.
-    steps = parse_article_steps(raw_content)
-
-    if steps:
-        first_step_match = re.search(
-            r"(?:^|\n)\s*(?:step\s*)?\d+\s*[\).:-]", plain_content, re.IGNORECASE
-        )
-        if first_step_match and first_step_match.start() > 0:
-            lead_in = plain_content[:first_step_match.start()].strip()
-            if lead_in:
-                segments.append(lead_in)
-
-        for step in steps:
-            segments.append(str(step.get("answer") or step.get("content") or ""))
-    else:
-        segments.append(plain_content)
-
-    return segments
-
 def process_question(question, context=None, search_question=None):
     """
     `search_question` optionally overrides what drives KB/database/model
