@@ -111,7 +111,17 @@ function StaffShell() {
   const visibleSessions = sessions.filter((item) => item.title?.toLowerCase().includes(search.trim().toLowerCase()));
 
   return (
-    <div className={`staff-workspace ${collapsed ? 'staff-is-collapsed' : ''} ${mobileOpen ? 'staff-mobile-open' : ''} ${isChatRoute ? 'staff-chat-route' : ''}`} data-jh-theme={effectiveAppearance} data-jh-contrast={effectiveContrast} data-jh-accent={settings.accent} lang={settings.language === 'zh' ? 'zh-Hans' : settings.language}>
+    <div
+      className={`staff-workspace ${collapsed ? 'staff-is-collapsed' : ''} ${mobileOpen ? 'staff-mobile-open' : ''} ${isChatRoute ? 'staff-chat-route' : ''}`}
+      data-jh-theme={effectiveAppearance}
+      data-jh-contrast={effectiveContrast}
+      data-jh-accent={settings.accent}
+      data-jh-text-size={settings.textSize}
+      data-jh-density={settings.density}
+      data-jh-content-width={settings.contentWidth}
+      data-jh-motion={settings.motion}
+      lang={settings.language === 'zh' ? 'zh-Hans' : settings.language}
+    >
       {mobileOpen && <button type="button" className="staff-overlay" aria-label={t('staff.closeNavigation')} onClick={() => setMobileOpen(false)} />}
       <aside className="staff-sidebar" aria-label="Staff navigation">
         <div className="staff-brand">

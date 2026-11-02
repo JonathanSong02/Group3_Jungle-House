@@ -262,7 +262,15 @@
   .staff-prompt-card { min-height:109px; }
   .staff-prompt-icon { margin-bottom:0; }
 }
-@media (prefers-reduced-motion:reduce) { .staff-workspace *, .staff-workspace *::before, .staff-workspace *::after { scroll-behavior:auto !important; transition:none !important; animation:none !important; } }
+@media (prefers-reduced-motion:reduce) {
+  .staff-workspace[data-jh-motion="system"] *,
+  .staff-workspace[data-jh-motion="system"] *::before,
+  .staff-workspace[data-jh-motion="system"] *::after {
+    scroll-behavior:auto !important;
+    transition:none !important;
+    animation:none !important;
+  }
+}
 
 @media (hover:none) { .staff-delete-recent { opacity:1; } }
 @media (max-height:570px) { .staff-chat-page { height:auto; min-height:calc(100dvh - 66px); overflow:visible; } .staff-chat-experience {min-height:590px;} .staff-chat-home .staff-chat-bottom {padding-bottom:10px;} }
@@ -603,6 +611,220 @@
 .staff-workspace[data-jh-contrast="increased"] :focus-visible {outline:3px solid var(--jh-accent);outline-offset:3px;}
 .staff-workspace[data-jh-contrast="increased"] .staff-chat-transcript .message-bubble.ai {border-color:#193d27 !important;}
 
+
+/* ---------- Personalisation: readability, density, width and motion ---------- */
+
+/* Text-size tokens. These intentionally target common reading/UI text rather
+   than browser zoom, so controls and layouts remain stable. */
+.staff-workspace[data-jh-text-size="small"] {
+  --jh-body-font:13px;
+  --jh-small-font:10px;
+  --jh-nav-font:12px;
+  --jh-h1-font:26px;
+  --jh-h2-font:21px;
+  --jh-h3-font:17px;
+  --jh-h4-font:15px;
+}
+
+.staff-workspace[data-jh-text-size="default"] {
+  --jh-body-font:14px;
+  --jh-small-font:11px;
+  --jh-nav-font:13px;
+  --jh-h1-font:30px;
+  --jh-h2-font:23px;
+  --jh-h3-font:18px;
+  --jh-h4-font:16px;
+}
+
+.staff-workspace[data-jh-text-size="large"] {
+  --jh-body-font:15.5px;
+  --jh-small-font:12px;
+  --jh-nav-font:14px;
+  --jh-h1-font:33px;
+  --jh-h2-font:25px;
+  --jh-h3-font:20px;
+  --jh-h4-font:17.5px;
+}
+
+.staff-workspace[data-jh-text-size="xlarge"] {
+  --jh-body-font:17px;
+  --jh-small-font:13px;
+  --jh-nav-font:15px;
+  --jh-h1-font:36px;
+  --jh-h2-font:28px;
+  --jh-h3-font:22px;
+  --jh-h4-font:19px;
+}
+
+.staff-workspace[data-jh-text-size] .staff-nav-link,
+.staff-workspace[data-jh-text-size] .staff-recent-chat,
+.staff-workspace[data-jh-text-size] .staff-account-menu :is(a,button),
+.staff-workspace[data-jh-text-size] .staff-search-results > button {
+  font-size:var(--jh-nav-font) !important;
+}
+
+.staff-workspace[data-jh-text-size] .staff-content :is(
+  p, li, td, th, label, input, textarea, select, button
+),
+.staff-workspace[data-jh-text-size] .staff-chat-transcript .message-bubble,
+.staff-workspace[data-jh-text-size] .staff-chat-transcript .chat-html-content {
+  font-size:var(--jh-body-font) !important;
+}
+
+.staff-workspace[data-jh-text-size] .staff-content :is(
+  small, .muted, .eyebrow, .quiz-card-description, .kb-article-category
+),
+.staff-workspace[data-jh-text-size] .staff-profile-identity small,
+.staff-workspace[data-jh-text-size] .staff-ai-disclaimer {
+  font-size:var(--jh-small-font) !important;
+}
+
+.staff-workspace[data-jh-text-size] .staff-content h1 {font-size:var(--jh-h1-font) !important;}
+.staff-workspace[data-jh-text-size] .staff-content h2 {font-size:var(--jh-h2-font) !important;}
+.staff-workspace[data-jh-text-size] .staff-content h3 {font-size:var(--jh-h3-font) !important;}
+.staff-workspace[data-jh-text-size] .staff-content h4 {font-size:var(--jh-h4-font) !important;}
+
+/* Comfortable is the existing layout. Compact reduces unused space without
+   shrinking touch targets below a practical size. */
+.staff-workspace[data-jh-density="compact"] .staff-sidebar {
+  padding-top:14px;
+  padding-bottom:9px;
+}
+
+.staff-workspace[data-jh-density="compact"] .staff-brand {
+  min-height:42px;
+  margin-bottom:15px;
+}
+
+.staff-workspace[data-jh-density="compact"] .staff-nav-link {
+  min-height:38px;
+  padding:8px 11px;
+  gap:10px;
+}
+
+.staff-workspace[data-jh-density="compact"] .staff-recent-header {
+  margin-top:18px;
+}
+
+.staff-workspace[data-jh-density="compact"] .staff-recent-chat {
+  min-height:36px;
+  padding:8px 9px;
+}
+
+.staff-workspace[data-jh-density="compact"] .staff-content:not(.staff-content-chat) {
+  padding-top:22px;
+  padding-bottom:22px;
+}
+
+.staff-workspace[data-jh-density="compact"] .staff-chat-transcript {
+  gap:12px;
+}
+
+.staff-workspace[data-jh-density="compact"] .staff-chat-transcript .message-bubble,
+.staff-workspace[data-jh-density="compact"] .staff-chat-transcript .message-bubble.ai {
+  padding:14px 18px;
+}
+
+/* Content width affects normal work pages only. Chat keeps its purpose-built
+   transcript/composer widths. */
+.staff-workspace[data-jh-content-width="standard"] {
+  --jh-content-max:1240px;
+}
+
+.staff-workspace[data-jh-content-width="wide"] {
+  --jh-content-max:1600px;
+}
+
+.staff-workspace[data-jh-content-width] .staff-content:not(.staff-content-chat) > * {
+  width:min(100%, var(--jh-content-max));
+  margin-inline:auto;
+}
+
+/* Explicit reduced motion overrides the OS. "System" follows the media query
+   above, while "Normal" preserves the application's standard motion. */
+.staff-workspace[data-jh-motion="reduced"] *,
+.staff-workspace[data-jh-motion="reduced"] *::before,
+.staff-workspace[data-jh-motion="reduced"] *::after {
+  scroll-behavior:auto !important;
+  transition:none !important;
+  animation:none !important;
+}
+
+/* Personalise control variants */
+.jh-segmented.jh-segmented-four {
+  grid-template-columns:repeat(4,minmax(0,1fr));
+}
+
+.jh-segmented.jh-segmented-two {
+  grid-template-columns:repeat(2,minmax(0,1fr));
+}
+
+.jh-preferences-reset {
+  margin-top:22px;
+  padding:16px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:14px;
+  border:1px solid #d7e3d5;
+  border-radius:15px;
+  background:#f7faf5;
+}
+
+.jh-preferences-reset > div {
+  min-width:0;
+}
+
+.jh-preferences-reset strong {
+  display:block;
+  color:#23412d;
+  font-size:13px;
+}
+
+.jh-preferences-reset p {
+  margin:4px 0 0;
+  color:#5a705f;
+  font-size:10.5px;
+  line-height:1.5;
+}
+
+.staff-workspace .jh-preferences-reset button {
+  flex:0 0 auto;
+  min-height:38px;
+  padding:8px 12px;
+  border:1px solid #c9d8c8;
+  border-radius:10px;
+  background:#fff;
+  color:#31533b;
+  font-weight:700;
+  font-size:11px;
+}
+
+.staff-workspace .jh-preferences-reset button:hover {
+  border-color:var(--jh-accent);
+  color:var(--jh-accent);
+  background:var(--jh-accent-tint);
+}
+
+@media(max-width:600px) {
+  .jh-segmented.jh-segmented-four {
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+
+  .jh-preferences-reset {
+    align-items:stretch;
+    flex-direction:column;
+  }
+
+  .staff-workspace .jh-preferences-reset button {
+    width:100%;
+  }
+
+  .staff-workspace[data-jh-content-width] .staff-content:not(.staff-content-chat) > * {
+    width:100%;
+  }
+}
+
 /* ---------- Signature settings drawer: spacious, not a clone ---------- */
 .staff-workspace .jh-preferences-top-trigger {width:40px;height:40px;border:1px solid var(--staff-border);background:var(--staff-panel);color:var(--staff-text);}
 .staff-workspace .jh-preferences-top-trigger:hover {background:var(--jh-accent-tint);color:var(--jh-accent);}
@@ -657,7 +879,12 @@
 .jh-preferences-saved {font-size:11px;text-align:center;color:#486a50;margin:22px 0 0;}
 @media(max-width:600px) { .jh-preferences-hero{padding:24px 19px;}.jh-preferences-sections{padding:8px 19px 24px;}.staff-workspace .jh-preferences-top-trigger{width:36px;height:36px;}.jh-preferences-hero h2{font-size:23px;} }
 @media(max-width:390px) {.jh-appearance-choices{gap:6px;}.jh-appearance-choice{padding:8px;}.jh-appearance-choice.selected{padding:7px;}.jh-segmented label{font-size:11px;}}
-@media(prefers-reduced-motion:reduce) { .staff-workspace .jh-preferences-panel *{transition:none;animation:none;} }
+@media(prefers-reduced-motion:reduce) {
+  .staff-workspace[data-jh-motion="system"] .jh-preferences-panel * {
+    transition:none !important;
+    animation:none !important;
+  }
+}
 
 /* ============================================================================
    STEP 13 — STAFF WORKSPACE: CHAT HEIGHT + SHORT-SCREEN ACCESSIBILITY

@@ -7,12 +7,25 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import { useLanguage } from '../i18n/LanguageContext';
 
 const PreferencesContext = createContext(null);
-const INITIAL = Object.freeze({ appearance: 'light', contrast: 'system', accent: 'forest', language: 'en' });
+const INITIAL = Object.freeze({
+  appearance: 'light',
+  contrast: 'system',
+  accent: 'forest',
+  language: 'en',
+  textSize: 'default',
+  density: 'comfortable',
+  contentWidth: 'standard',
+  motion: 'system',
+});
 const VALID = {
   appearance: ['light', 'dark', 'system'],
   contrast: ['system', 'medium', 'increased'],
   accent: ['forest', 'honey', 'ocean', 'orchid'],
   language: ['en', 'zh', 'ms'],
+  textSize: ['small', 'default', 'large', 'xlarge'],
+  density: ['comfortable', 'compact'],
+  contentWidth: ['standard', 'wide'],
+  motion: ['system', 'normal', 'reduced'],
 };
 
 const translations = {
@@ -25,7 +38,14 @@ const translations = {
     settingsSubtitle: 'Make your Jungle House experience your own.', appearance: 'Appearance',
     light: 'Light', dark: 'Dark', system: 'System', contrast: 'Contrast', medium: 'Medium',
     increased: 'Increased', accent: 'Accent colour', forest: 'Forest', honey: 'Honey', ocean: 'Ocean',
-    orchid: 'Orchid', language: 'Interface language', preview: 'Your preview', sampleTitle: 'Knowledge, beautifully organised.',
+    orchid: 'Orchid', language: 'Interface language',
+    textSize: 'Text size', textSmall: 'Small', textDefault: 'Default', textLarge: 'Large', textExtraLarge: 'Extra Large',
+    density: 'Interface density', comfortable: 'Comfortable', compact: 'Compact',
+    contentWidth: 'Content width', standard: 'Standard', wide: 'Wide',
+    motion: 'Motion', normal: 'Normal', reduced: 'Reduced',
+    resetPreferences: 'Reset personalisation', resetDescription: 'Restore the default appearance, readability, layout and language settings.',
+    restoreDefaults: 'Restore defaults',
+    preview: 'Your preview', sampleTitle: 'Knowledge, beautifully organised.',
     sampleDetail: 'A calmer space for every shift.', note: 'Language changes menus, buttons and labels across the app. Articles, quiz content and AI answers stay in their original language.',
     saved: 'Saved on this browser for your account.', close: 'Close preferences', searchPlaceholder: 'Search your conversations…', noMatches: 'No matching conversations.', viewHistory: 'View detailed chat history', openSettings: 'Open workspace preferences',
   },
@@ -38,7 +58,14 @@ const translations = {
     settingsSubtitle: '打造属于您的 Jungle House 工作体验。', appearance: '外观', light: '浅色',
     dark: '深色', system: '跟随系统', contrast: '对比度', medium: '标准', increased: '增强',
     accent: '主题色', forest: '森林绿', honey: '蜂蜜金', ocean: '海洋蓝', orchid: '兰花紫',
-    language: '界面语言', preview: '预览效果', sampleTitle: '让知识井然有序。', sampleDetail: '每个班次，都更从容。',
+    language: '界面语言',
+    textSize: '文字大小', textSmall: '小', textDefault: '默认', textLarge: '大', textExtraLarge: '特大',
+    density: '界面密度', comfortable: '舒适', compact: '紧凑',
+    contentWidth: '内容宽度', standard: '标准', wide: '宽屏',
+    motion: '动画效果', normal: '正常', reduced: '减少动画',
+    resetPreferences: '重置个性化设置', resetDescription: '恢复默认的外观、可读性、布局和语言设置。',
+    restoreDefaults: '恢复默认设置',
+    preview: '预览效果', sampleTitle: '让知识井然有序。', sampleDetail: '每个班次，都更从容。',
     note: '语言设置会更改整个应用的菜单、按钮和标签。文章、测验内容及 AI 回答将保持原语言。',
     saved: '设置已在此浏览器中按账户保存。', close: '关闭设置', searchPlaceholder: '搜索您的对话…', noMatches: '未找到匹配的对话。', viewHistory: '查看详细聊天记录', openSettings: '打开工作空间设置',
   },
@@ -53,6 +80,12 @@ const translations = {
     appearance: 'Paparan', light: 'Cerah', dark: 'Gelap', system: 'Ikut sistem', contrast: 'Kontras',
     medium: 'Sederhana', increased: 'Dipertingkat', accent: 'Warna tema', forest: 'Hutan',
     honey: 'Madu', ocean: 'Lautan', orchid: 'Orkid', language: 'Bahasa antara muka',
+    textSize: 'Saiz teks', textSmall: 'Kecil', textDefault: 'Lalai', textLarge: 'Besar', textExtraLarge: 'Sangat besar',
+    density: 'Kepadatan antara muka', comfortable: 'Selesa', compact: 'Padat',
+    contentWidth: 'Lebar kandungan', standard: 'Standard', wide: 'Lebar',
+    motion: 'Pergerakan', normal: 'Normal', reduced: 'Dikurangkan',
+    resetPreferences: 'Tetapkan semula personalisasi', resetDescription: 'Pulihkan tetapan paparan, kebolehbacaan, susun atur dan bahasa lalai.',
+    restoreDefaults: 'Pulihkan lalai',
     preview: 'Pratonton anda', sampleTitle: 'Pengetahuan yang tersusun.', sampleDetail: 'Ruang lebih tenang untuk setiap syif.',
     note: 'Bahasa mengubah menu, butang dan label di seluruh aplikasi. Artikel, kandungan kuiz dan jawapan AI kekal dalam bahasa asal.',
     saved: 'Disimpan dalam pelayar ini untuk akaun anda.', close: 'Tutup tetapan',
@@ -109,13 +142,25 @@ export function StaffPreferencesProvider({ user, children }) {
     setSettings((current) => ({ ...current, [name]: value }));
   };
 
+  const resetPreferences = () => {
+    setSettings({ ...INITIAL });
+    setLanguage(INITIAL.language);
+  };
+
   const effectiveAppearance = settings.appearance === 'system'
     ? (systemDark ? 'dark' : 'light') : settings.appearance;
   const effectiveContrast = settings.contrast === 'system'
     ? (systemContrast ? 'increased' : 'medium') : settings.contrast;
   // Staff-specific labels first, then the shared app dictionary (nav.*, common.*, ...).
   const t = (key) => translations[settings.language]?.[key] || translations.en[key] || appT(key);
-  const contextValue = useMemo(() => ({ settings, setPreference, effectiveAppearance, effectiveContrast, t }),
+  const contextValue = useMemo(() => ({
+    settings,
+    setPreference,
+    resetPreferences,
+    effectiveAppearance,
+    effectiveContrast,
+    t,
+  }),
     // settings captures the language as well as all other preferences.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [settings, effectiveAppearance, effectiveContrast]);
@@ -132,6 +177,17 @@ const options = {
   appearance: ['light', 'dark', 'system'],
   contrast: ['system', 'medium', 'increased'],
   accent: ['forest', 'honey', 'ocean', 'orchid'],
+  textSize: ['small', 'default', 'large', 'xlarge'],
+  density: ['comfortable', 'compact'],
+  contentWidth: ['standard', 'wide'],
+  motion: ['system', 'normal', 'reduced'],
+};
+
+const textSizeLabels = {
+  small: 'textSmall',
+  default: 'textDefault',
+  large: 'textLarge',
+  xlarge: 'textExtraLarge',
 };
 const languageOptions = [
   { value: 'en', label: 'English' },
@@ -140,7 +196,7 @@ const languageOptions = [
 ];
 
 export function StaffPreferencesDialog({ onClose }) {
-  const { settings, setPreference, t, effectiveAppearance } = useStaffPreferences();
+  const { settings, setPreference, resetPreferences, t, effectiveAppearance } = useStaffPreferences();
   const closeButton = useRef(null);
   useEffect(() => {
     const previous = document.activeElement;
@@ -189,6 +245,42 @@ export function StaffPreferencesDialog({ onClose }) {
             </div>
           </fieldset>
           <fieldset className="jh-preferences-group">
+            <legend>{t('textSize')}</legend>
+            <div className="jh-segmented jh-segmented-four">
+              {options.textSize.map((value) => <label key={value} className={settings.textSize === value ? 'selected' : ''}>
+                <input type="radio" name="jh-text-size" checked={settings.textSize === value}
+                  onChange={() => setPreference('textSize', value)} /><span>{t(textSizeLabels[value])}</span>
+              </label>)}
+            </div>
+          </fieldset>
+          <fieldset className="jh-preferences-group">
+            <legend>{t('density')}</legend>
+            <div className="jh-segmented jh-segmented-two">
+              {options.density.map((value) => <label key={value} className={settings.density === value ? 'selected' : ''}>
+                <input type="radio" name="jh-density" checked={settings.density === value}
+                  onChange={() => setPreference('density', value)} /><span>{t(value)}</span>
+              </label>)}
+            </div>
+          </fieldset>
+          <fieldset className="jh-preferences-group">
+            <legend>{t('contentWidth')}</legend>
+            <div className="jh-segmented jh-segmented-two">
+              {options.contentWidth.map((value) => <label key={value} className={settings.contentWidth === value ? 'selected' : ''}>
+                <input type="radio" name="jh-content-width" checked={settings.contentWidth === value}
+                  onChange={() => setPreference('contentWidth', value)} /><span>{t(value)}</span>
+              </label>)}
+            </div>
+          </fieldset>
+          <fieldset className="jh-preferences-group">
+            <legend>{t('motion')}</legend>
+            <div className="jh-segmented">
+              {options.motion.map((value) => <label key={value} className={settings.motion === value ? 'selected' : ''}>
+                <input type="radio" name="jh-motion" checked={settings.motion === value}
+                  onChange={() => setPreference('motion', value)} /><span>{t(value)}</span>
+              </label>)}
+            </div>
+          </fieldset>
+          <fieldset className="jh-preferences-group">
             <legend>{t('accent')}</legend>
             <div className="jh-accent-choices">
               {options.accent.map((value) => <label key={value} className={settings.accent === value ? 'selected' : ''}>
@@ -213,6 +305,13 @@ export function StaffPreferencesDialog({ onClose }) {
           <div className="jh-preferences-preview" data-preview-theme={effectiveAppearance}>
             <span>{t('preview')}</span><strong>{t('sampleTitle')}</strong><small>{t('sampleDetail')}</small>
             <div className="jh-preview-progress"><i/></div>
+          </div>
+          <div className="jh-preferences-reset">
+            <div>
+              <strong>{t('resetPreferences')}</strong>
+              <p>{t('resetDescription')}</p>
+            </div>
+            <button type="button" onClick={resetPreferences}>{t('restoreDefaults')}</button>
           </div>
           <p className="jh-preferences-saved" role="status">✓ {t('saved')}</p>
         </div>
