@@ -13403,6 +13403,7 @@ def generate_quiz():
     }), 400
 
 _QUIZ_EXTRA_COLUMNS_READY = False
+_QUIZ_TRAINING_MATERIAL_TABLE_READY = False
 QUIZ_DIFFICULTIES = ("Easy", "Medium", "Hard")
 _LEGACY_QUIZ_DIFFICULTY = {"basic": "Easy", "intermediate": "Medium", "advanced": "Hard"}
 
@@ -13447,8 +13448,23 @@ def ensure_quiz_extra_columns():
         for column, statement in alterations.items():
             if column not in existing:
                 cursor.execute(statement)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS quiz_training_material (
+                quiz_id INT NOT NULL,
+                article_id INT NOT NULL,
+                sort_order INT NOT NULL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (quiz_id, article_id),
+                INDEX idx_qtm_quiz_id (quiz_id),
+                INDEX idx_qtm_article_id (article_id)
+            )
+        """)
+
         conn.commit()
         _QUIZ_EXTRA_COLUMNS_READY = True
+        global _QUIZ_TRAINING_MATERIAL_TABLE_READY
+        _QUIZ_TRAINING_MATERIAL_TABLE_READY = True
         return True
     except Exception as error:
         print("QUIZ: could not ensure difficulty/passing_score columns:", error)
@@ -13469,6 +13485,195 @@ def quiz_extra_select(alias="q"):
             f"MAX({alias}.source_article_id) AS source_article_id"
         )
     return "'Medium' AS difficulty, 80 AS passing_score, NULL AS source_article_id"
+
+
+def normalize_quiz_material_ids(raw_ids, fallback_primary_id=None, max_items=12):
+    """Return a unique ordered list of valid positive article IDs."""
+    values = raw_ids if isinstance(raw_ids, list) else []
+    if not values and fallback_primary_id:
+        values = [fallback_primary_id]
+
+    result = []
+    seen = set()
+
+    for raw_id in values:
+        try:
+            article_id = int(raw_id)
+        except (TypeError, ValueError):
+            raise ValueError("Invalid training material selection.") from None
+
+        if article_id < 1:
+            raise ValueError("Invalid training material selection.")
+
+        if article_id not in seen:
+            seen.add(article_id)
+            result.append(article_id)
+
+        if len(result) > max_items:
+            raise ValueError(f"Select at most {max_items} training materials.")
+
+    return result
+
+
+def validate_quiz_material_ids(cursor, article_ids):
+    """Verify every linked training article still exists and is not deleted."""
+    if not article_ids:
+        return []
+
+    placeholders = ", ".join(["%s"] * len(article_ids))
+    cursor.execute(
+        f"""SELECT article_id, title, category
+            FROM wiki_article
+            WHERE COALESCE(is_deleted, 0) = 0
+              AND article_id IN ({placeholders})""",
+        tuple(article_ids),
+    )
+    rows = cursor.fetchall() or []
+    by_id = {int(row["article_id"]): row for row in rows}
+
+    missing = [article_id for article_id in article_ids if article_id not in by_id]
+    if missing:
+        raise ValueError("One or more selected training materials could not be found.")
+
+    return [by_id[article_id] for article_id in article_ids]
+
+
+def replace_quiz_training_materials(cursor, quiz_id, article_ids):
+    """Replace the ordered linked-material set for one quiz."""
+    cursor.execute("DELETE FROM quiz_training_material WHERE quiz_id = %s", (quiz_id,))
+
+    for sort_order, article_id in enumerate(article_ids):
+        cursor.execute(
+            """INSERT INTO quiz_training_material
+               (quiz_id, article_id, sort_order)
+               VALUES (%s, %s, %s)""",
+            (quiz_id, article_id, sort_order),
+        )
+
+
+def attach_quiz_training_materials(cursor, quizzes):
+    """Attach training_materials arrays to quiz rows for learner/admin APIs."""
+    quizzes = quizzes or []
+    if not quizzes:
+        return quizzes
+
+    quiz_ids = [int(row["quiz_id"]) for row in quizzes if row.get("quiz_id") is not None]
+    if not quiz_ids:
+        return quizzes
+
+    placeholders = ", ".join(["%s"] * len(quiz_ids))
+    cursor.execute(
+        f"""SELECT qtm.quiz_id, w.article_id, w.title, w.category
+            FROM quiz_training_material qtm
+            JOIN wiki_article w ON w.article_id = qtm.article_id
+            WHERE qtm.quiz_id IN ({placeholders})
+              AND COALESCE(w.is_deleted, 0) = 0
+            ORDER BY qtm.quiz_id ASC, qtm.sort_order ASC, qtm.article_id ASC""",
+        tuple(quiz_ids),
+    )
+
+    material_map = {}
+    for row in cursor.fetchall() or []:
+        material_map.setdefault(int(row["quiz_id"]), []).append({
+            "id": int(row["article_id"]),
+            "article_id": int(row["article_id"]),
+            "title": row.get("title") or "",
+            "category": row.get("category") or "",
+        })
+
+    for quiz in quizzes:
+        quiz_id = int(quiz["quiz_id"])
+        materials = material_map.get(quiz_id, [])
+
+        # Backward compatibility for quizzes created before the mapping table:
+        # expose the existing primary source_article_id as one material.
+        if not materials and quiz.get("source_article_id"):
+            materials = [{
+                "id": int(quiz["source_article_id"]),
+                "article_id": int(quiz["source_article_id"]),
+                "title": quiz.get("source_article_title") or "",
+                "category": "",
+            }]
+
+        quiz["training_materials"] = materials
+
+    return quizzes
+
+
+def resolve_generated_quiz_materials(questions, selected_source_article=None):
+    """Map AI question sourceTitle values back to real KB articles.
+
+    A selected article always wins. In category/all-knowledge mode, only exact
+    case-insensitive title matches are linked, so the system never invents or
+    guesses a reading article.
+    """
+    if selected_source_article:
+        return [{
+            "id": int(selected_source_article["article_id"]),
+            "article_id": int(selected_source_article["article_id"]),
+            "title": selected_source_article.get("title") or "",
+            "category": selected_source_article.get("category") or "",
+        }]
+
+    counts = {}
+    first_seen = {}
+    normalized_titles = []
+
+    for index, question in enumerate(questions or []):
+        title = str(question.get("sourceTitle") or "").strip()
+        key = title.casefold()
+
+        if not key:
+            continue
+
+        counts[key] = counts.get(key, 0) + 1
+        first_seen.setdefault(key, index)
+
+        if key not in normalized_titles:
+            normalized_titles.append(key)
+
+    if not normalized_titles:
+        return []
+
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute(
+            f"""SELECT article_id, title, category
+                FROM wiki_article
+                WHERE COALESCE(is_deleted, 0) = 0
+                  AND ({' OR '.join(['LOWER(TRIM(title)) = %s'] * len(normalized_titles))})""",
+            tuple(normalized_titles),
+        )
+        rows = cursor.fetchall() or []
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+    by_key = {str(row.get("title") or "").strip().casefold(): row for row in rows}
+
+    ordered_keys = sorted(
+        (key for key in normalized_titles if key in by_key),
+        key=lambda key: (-counts.get(key, 0), first_seen.get(key, 10**9)),
+    )
+
+    result = []
+    for key in ordered_keys[:12]:
+        row = by_key[key]
+        result.append({
+            "id": int(row["article_id"]),
+            "article_id": int(row["article_id"]),
+            "title": row.get("title") or "",
+            "category": row.get("category") or "",
+            "question_count": counts.get(key, 0),
+        })
+
+    return result
 
 
 @app.route("/api/quizzes", methods=["GET"])
@@ -13501,7 +13706,8 @@ def get_quizzes():
             ORDER BY q.created_at DESC
         """)
 
-        quizzes = cursor.fetchall()
+        quizzes = cursor.fetchall() or []
+        attach_quiz_training_materials(cursor, quizzes)
 
         return jsonify(quizzes), 200
 
@@ -13762,7 +13968,8 @@ def get_admin_quizzes():
             ORDER BY q.created_at DESC
         """)
 
-        quizzes = cursor.fetchall()
+        quizzes = cursor.fetchall() or []
+        attach_quiz_training_materials(cursor, quizzes)
 
         return jsonify(quizzes), 200
 
@@ -13812,6 +14019,17 @@ def create_admin_quiz():
         if source_article_id < 1:
             return jsonify({"message": "Invalid training material selection."}), 400
 
+    try:
+        source_article_ids = normalize_quiz_material_ids(
+            data.get("source_article_ids"),
+            fallback_primary_id=source_article_id,
+        )
+    except ValueError as material_error:
+        return jsonify({"message": str(material_error)}), 400
+
+    if source_article_ids:
+        source_article_id = source_article_ids[0]
+
     # Optional: save the quiz and all of its questions in ONE transaction so a
     # failed question never leaves an empty/partial quiz behind.
     new_questions = []
@@ -13839,19 +14057,10 @@ def create_admin_quiz():
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
 
-        if source_article_id is not None:
-            cursor.execute(
-                """SELECT article_id
-                   FROM wiki_article
-                   WHERE article_id = %s
-                     AND COALESCE(is_deleted, 0) = 0
-                   LIMIT 1""",
-                (source_article_id,),
-            )
-            if not cursor.fetchone():
-                return jsonify({
-                    "message": "The selected training material could not be found."
-                }), 400
+        try:
+            validate_quiz_material_ids(cursor, source_article_ids)
+        except ValueError as material_error:
+            return jsonify({"message": str(material_error)}), 400
 
         if ensure_quiz_extra_columns():
             cursor.execute("""
@@ -13881,6 +14090,8 @@ def create_admin_quiz():
             ))
 
         quiz_id = cursor.lastrowid
+
+        replace_quiz_training_materials(cursor, quiz_id, source_article_ids)
 
         for q_text, a, b, c, d, correct, explanation in new_questions:
             cursor.execute("""
@@ -13948,6 +14159,17 @@ def update_admin_quiz(quiz_id):
         if source_article_id < 1:
             return jsonify({"message": "Invalid training material selection."}), 400
 
+    try:
+        source_article_ids = normalize_quiz_material_ids(
+            data.get("source_article_ids") if "source_article_ids" in data else None,
+            fallback_primary_id=source_article_id,
+        )
+    except ValueError as material_error:
+        return jsonify({"message": str(material_error)}), 400
+
+    if source_article_ids:
+        source_article_id = source_article_ids[0]
+
     conn = None
     cursor = None
 
@@ -13960,19 +14182,10 @@ def update_admin_quiz(quiz_id):
         if not current:
             return jsonify({"message": "Quiz not found."}), 404
 
-        if source_article_id is not None:
-            cursor.execute(
-                """SELECT article_id
-                   FROM wiki_article
-                   WHERE article_id = %s
-                     AND COALESCE(is_deleted, 0) = 0
-                   LIMIT 1""",
-                (source_article_id,),
-            )
-            if not cursor.fetchone():
-                return jsonify({
-                    "message": "The selected training material could not be found."
-                }), 400
+        try:
+            validate_quiz_material_ids(cursor, source_article_ids)
+        except ValueError as material_error:
+            return jsonify({"message": str(material_error)}), 400
 
         # Publishing a draft (inactive -> active) requires at least one question.
         if status == "active" and str(current["status"]).lower() != "active":
@@ -14016,6 +14229,8 @@ def update_admin_quiz(quiz_id):
                 status,
                 quiz_id
             ))
+
+        replace_quiz_training_materials(cursor, quiz_id, source_article_ids)
 
         conn.commit()
 
@@ -14645,7 +14860,7 @@ answer correct:
 - "options": array of exactly 4 strings
 - "correctAnswerIndex": integer, 0, 1, 2 or 3
 - "explanation": string
-- "sourceTitle": string (the article title this question is based on)
+- "sourceTitle": string (copy the exact article title shown after ### in the source content; do not paraphrase it)
 {strict_note}
 Source content:
 {source_text}
@@ -14872,7 +15087,16 @@ def ai_generate_quiz():
         else f"Quiz generated from the latest verified {category_label} content."
     )
 
-    print(f"AI QUIZ: generation succeeded via '{generation_method}', {len(questions)} question(s).")
+    auto_materials = resolve_generated_quiz_materials(
+        questions,
+        selected_source_article=source_article,
+    )
+    primary_material = auto_materials[0] if auto_materials else None
+
+    print(
+        f"AI QUIZ: generation succeeded via '{generation_method}', "
+        f"{len(questions)} question(s), {len(auto_materials)} linked material(s)."
+    )
 
     return jsonify({
         "success": True,
@@ -14883,8 +15107,10 @@ def ai_generate_quiz():
             "status": status,
             "difficulty": difficulty,
             "count": question_count,
-            "sourceArticleId": source_article["article_id"] if source_article else None,
-            "sourceArticleTitle": source_article["title"] if source_article else None,
+            "sourceArticleId": primary_material["article_id"] if primary_material else None,
+            "sourceArticleTitle": primary_material["title"] if primary_material else None,
+            "sourceArticleIds": [item["article_id"] for item in auto_materials],
+            "sourceArticles": auto_materials,
             "questions": questions,
             "generationMethod": generation_method,
         }

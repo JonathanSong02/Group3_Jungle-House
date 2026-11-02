@@ -361,6 +361,9 @@ export default function QuizManagement() {
 
       const payload = {
         ...quizForm,
+        source_article_ids: quizForm.source_article_id
+          ? [Number(quizForm.source_article_id)]
+          : [],
         created_by: user?.id || user?.user_id || null,
       };
 
@@ -665,6 +668,9 @@ export default function QuizManagement() {
         status: publish ? 'active' : 'inactive',
         difficulty: aiPreview.difficulty,
         source_article_id: aiPreview.sourceArticleId || null,
+        source_article_ids:
+          aiPreview.sourceArticleIds ||
+          (aiPreview.sourceArticles || []).map((article) => article.article_id || article.id),
         created_by: user?.id || user?.user_id || null,
         questions: aiPreview.questions.map((question) => ({
           question_text: question.question.trim(),
@@ -947,7 +953,17 @@ export default function QuizManagement() {
                         <p>{localizeDescription(selectedQuiz.description)}</p>
                       ) : null}
 
-                      {selectedQuiz.source_article_id ? (
+                      {(selectedQuiz.training_materials || []).length > 0 ? (
+                        <div className="qm-linked-materials-summary">
+                          <strong>{tOr('qm.trainingMaterial', 'Training material')}:</strong>
+                          <span>
+                            {(selectedQuiz.training_materials || [])
+                              .map((article) => article.title)
+                              .filter(Boolean)
+                              .join(', ')}
+                          </span>
+                        </div>
+                      ) : selectedQuiz.source_article_id ? (
                         <p>
                           <strong>{tOr('qm.trainingMaterial', 'Training material')}:</strong>{' '}
                           {selectedQuiz.source_article_title ||
@@ -1688,6 +1704,52 @@ export default function QuizManagement() {
                         {aiSaving ? '...' : t('quiz.edit.publish')}
                       </button>
                     </div>
+                  </div>
+
+                  <div className="qm-ai-auto-materials">
+                    <div className="qm-ai-auto-materials-head">
+                      <div>
+                        <span>{tOr('qm.ai.autoMaterialKicker', 'AUTO-LINKED REVISION MATERIAL')}</span>
+                        <strong>
+                          {(aiPreview.sourceArticles || []).length > 0
+                            ? tOr(
+                                'qm.ai.autoMaterialReady',
+                                `${(aiPreview.sourceArticles || []).length} Knowledge Base ${
+                                  (aiPreview.sourceArticles || []).length === 1 ? 'article' : 'articles'
+                                } linked automatically`
+                              )
+                            : tOr('qm.ai.autoMaterialNone', 'No exact source article could be linked')}
+                        </strong>
+                      </div>
+                    </div>
+
+                    {(aiPreview.sourceArticles || []).length > 0 ? (
+                      <div className="qm-ai-auto-material-list">
+                        {(aiPreview.sourceArticles || []).map((article) => (
+                          <div key={article.article_id || article.id} className="qm-ai-auto-material-item">
+                            <Icon name="quiz" size={16} />
+                            <span>
+                              <strong>{article.title}</strong>
+                              <small>
+                                {article.category ? catLabel(article.category) : tOr('qm.ai.knowledgeBase', 'Knowledge Base')}
+                                {article.question_count
+                                  ? ` · ${article.question_count} ${
+                                      article.question_count === 1 ? 'question' : 'questions'
+                                    }`
+                                  : ''}
+                              </small>
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="qm-ai-auto-material-warning">
+                        {tOr(
+                          'qm.ai.autoMaterialWarning',
+                          'The generated questions did not return an exact Knowledge Base article title. You can still save the quiz, but no automatic reading material will be attached.'
+                        )}
+                      </p>
+                    )}
                   </div>
 
                   <div className="qm-ai-question-list">

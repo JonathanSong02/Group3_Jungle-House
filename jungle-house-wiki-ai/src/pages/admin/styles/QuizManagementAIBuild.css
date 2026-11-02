@@ -452,3 +452,93 @@
     min-height: 320px;
   }
 }
+
+
+/* Automatic revision-material attribution -------------------------------- */
+
+.qm-ai-auto-materials {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 16px;
+  padding: 14px;
+  background: #f4faf6;
+  border: 1px solid #cfe6d5;
+  border-radius: 14px;
+}
+
+.qm-ai-auto-materials-head > div {
+  display: grid;
+  gap: 3px;
+}
+
+.qm-ai-auto-materials-head span {
+  color: #4a8a68;
+  font-size: 9px;
+  font-weight: 850;
+  letter-spacing: 0.07em;
+}
+
+.qm-ai-auto-materials-head strong {
+  color: #285f45;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.qm-ai-auto-material-list {
+  display: grid;
+  gap: 7px;
+}
+
+.qm-ai-auto-material-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 9px 10px;
+  color: #3b5145;
+  background: #fff;
+  border: 1px solid #dcece1;
+  border-radius: 10px;
+}
+
+.qm-ai-auto-material-item > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: #4f8d6c;
+}
+
+.qm-ai-auto-material-item > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.qm-ai-auto-material-item strong {
+  color: #314c3d;
+  font-size: 10.5px;
+  font-weight: 850;
+}
+
+.qm-ai-auto-material-item small {
+  color: #7b8f82;
+  font-size: 9px;
+}
+
+.qm-ai-auto-material-warning {
+  margin: 0;
+  color: #8c6642;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.qm-linked-materials-summary {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  color: var(--qm-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.qm-linked-materials-summary strong {
+  color: var(--qm-ink);
+}

@@ -80,6 +80,9 @@ export default function QuizList() {
           passingScore: Number(quiz.passing_score ?? 80),
           sourceArticleId: quiz.source_article_id || null,
           sourceArticleTitle: quiz.source_article_title || '',
+          trainingMaterials: Array.isArray(quiz.training_materials)
+            ? quiz.training_materials
+            : [],
           questions: [],
         }));
 
@@ -425,7 +428,62 @@ export default function QuizList() {
                 )}
               </p>
 
-              {activeQuiz.sourceArticleId ? (
+              {(activeQuiz.trainingMaterials || []).length > 0 ? (
+                <div style={{ display: 'grid', gap: 10, marginTop: 8 }}>
+                  <div>
+                    <span className="eyebrow">
+                      {(activeQuiz.trainingMaterials || []).length === 1
+                        ? tOr('quiz.prepare.material', 'Training Material')
+                        : tOr('quiz.prepare.materials', 'Training Materials')}
+                    </span>
+                    <p className="muted" style={{ margin: '4px 0 0' }}>
+                      {tOr(
+                        'quiz.prepare.materialHint',
+                        'Read or revise the related material before attempting the assessment.'
+                      )}
+                    </p>
+                  </div>
+
+                  {(activeQuiz.trainingMaterials || []).map((material, index) => (
+                    <div
+                      key={material.article_id || material.id}
+                      className="card-like"
+                      style={{
+                        padding: '14px 16px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 16,
+                        flexWrap: 'wrap',
+                      }}
+                    >
+                      <div style={{ minWidth: 0, flex: '1 1 280px' }}>
+                        <span className="eyebrow">
+                          {tOr('quiz.prepare.materialNumber', `Material ${index + 1}`)}
+                        </span>
+                        <h3 style={{ margin: '4px 0 3px' }}>
+                          {material.title ||
+                            tOr('quiz.prepare.knowledgeArticle', 'Knowledge Base Article')}
+                        </h3>
+                        {material.category ? (
+                          <p className="muted small" style={{ margin: 0 }}>
+                            {catLabel(material.category)}
+                          </p>
+                        ) : null}
+                      </div>
+
+                      <Link
+                        to={`/knowledge/${material.article_id || material.id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="secondary-btn"
+                      >
+                        {tOr('quiz.prepare.reviewMaterial', 'Review Material')} ↗
+                      </Link>
+                    </div>
+                  ))}
+                </div>
+              ) : activeQuiz.sourceArticleId ? (
                 <div
                   className="card-like"
                   style={{
@@ -446,12 +504,6 @@ export default function QuizList() {
                       {activeQuiz.sourceArticleTitle ||
                         tOr('quiz.prepare.knowledgeArticle', 'Knowledge Base Article')}
                     </h3>
-                    <p className="muted" style={{ margin: 0 }}>
-                      {tOr(
-                        'quiz.prepare.materialHint',
-                        'Read or revise this material before attempting the assessment.'
-                      )}
-                    </p>
                   </div>
 
                   <Link
