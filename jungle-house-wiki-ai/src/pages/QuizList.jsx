@@ -1,11 +1,153 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
-import api from '../services/api';
+import api, { API_BASE_URL } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
 import '../styles/Quiz.css';
 import '../styles/QuizProgress.css';
+
+
+const QUIZ_READER_STATIC_BASE = API_BASE_URL.startsWith('http')
+  ? API_BASE_URL.replace(/\/api\/?$/, '').replace(/\/+$/, '')
+  : '';
+
+const QUIZ_READER_INTERNAL_HOSTS = new Set([
+  'group3jungle-house-production.up.railway.app',
+  'ai-powered-wiki-training-assistant.vercel.app',
+  'jhgroup3.com',
+  'www.jhgroup3.com',
+]);
+
+function rewriteQuizReaderAssetUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+
+  if (/^https?:\/\//i.test(raw)) {
+    try {
+      const parsed = new URL(raw);
+      const currentOrigin =
+        typeof window !== 'undefined' ? window.location.origin : '';
+
+      if (
+        parsed.pathname.startsWith('/static/') &&
+        (QUIZ_READER_INTERNAL_HOSTS.has(parsed.hostname.toLowerCase()) ||
+          parsed.origin === currentOrigin)
+      ) {
+        return `${QUIZ_READER_STATIC_BASE}${parsed.pathname}${parsed.search}${parsed.hash}`;
+      }
+    } catch {
+      return raw;
+    }
+  }
+
+  if (raw.startsWith('/static/')) {
+    return `${QUIZ_READER_STATIC_BASE}${raw}`;
+  }
+
+  return raw;
+}
+
+function stripHtmlForReadingTime(value) {
+  const raw = String(value || '');
+  if (!raw) return '';
+
+  if (typeof DOMParser === 'undefined') {
+    return raw.replace(/<[^>]*>/g, ' ');
+  }
+
+  const documentNode = new DOMParser().parseFromString(raw, 'text/html');
+  return documentNode.body?.textContent || '';
+}
+
+function estimateReadingMinutes(value) {
+  const text = stripHtmlForReadingTime(value).replace(/\s+/g, ' ').trim();
+  if (!text) return 1;
+
+  const words = text.split(/\s+/).filter(Boolean).length;
+  const cjkCharacters = (text.match(/[\u3400-\u9fff]/g) || []).length;
+
+  // Use a character-based estimate when the content is primarily CJK,
+  // otherwise use a comfortable workplace-reading pace of ~200 wpm.
+  if (cjkCharacters > 80 && words < 40) {
+    return Math.max(1, Math.ceil(cjkCharacters / 400));
+  }
+
+  return Math.max(1, Math.ceil(words / 200));
+}
+
+function plainTextToReaderHtml(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '<p>No article content is available.</p>';
+
+  const looksLikeHtml = /<[a-z][\s\S]*>/i.test(raw);
+  if (looksLikeHtml) return raw;
+
+  return raw
+    .split(/\n{2,}/)
+    .map((paragraph) => `<p>${paragraph.replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/\n/g, '<br />')}</p>`)
+    .join('');
+}
+
+function sanitizeQuizReaderHtml(value) {
+  const raw = plainTextToReaderHtml(value);
+
+  if (typeof DOMParser === 'undefined') {
+    return raw;
+  }
+
+  const documentNode = new DOMParser().parseFromString(raw, 'text/html');
+
+  documentNode
+    .querySelectorAll(
+      'script, style, iframe, object, embed, form, input, textarea, select, button, base, meta, link'
+    )
+    .forEach((node) => node.remove());
+
+  documentNode.body.querySelectorAll('*').forEach((element) => {
+    [...element.attributes].forEach((attribute) => {
+      const name = attribute.name.toLowerCase();
+
+      if (
+        name.startsWith('on') ||
+        name === 'srcdoc' ||
+        name === 'style'
+      ) {
+        element.removeAttribute(attribute.name);
+      }
+    });
+
+    if (element.tagName === 'IMG') {
+      const src = rewriteQuizReaderAssetUrl(element.getAttribute('src'));
+      if (src) {
+        element.setAttribute('src', src);
+        element.setAttribute('loading', 'lazy');
+      } else {
+        element.removeAttribute('src');
+      }
+    }
+
+    if (element.tagName === 'A') {
+      const href = String(element.getAttribute('href') || '').trim();
+      const safeHref =
+        href.startsWith('/') ||
+        href.startsWith('#') ||
+        /^(https?:|mailto:|tel:)/i.test(href);
+
+      if (!safeHref) {
+        element.removeAttribute('href');
+      } else {
+        element.setAttribute('target', '_blank');
+        element.setAttribute('rel', 'noopener noreferrer');
+      }
+    }
+  });
+
+  return documentNode.body.innerHTML;
+}
 
 export default function QuizList() {
   const { user } = useAuth();
@@ -48,6 +190,16 @@ export default function QuizList() {
   const [historicalAttempt, setHistoricalAttempt] = useState(null);
   const [historicalAttemptLoading, setHistoricalAttemptLoading] = useState(false);
   const [historicalAttemptError, setHistoricalAttemptError] = useState('');
+  const [materialReader, setMaterialReader] = useState({
+    open: false,
+    loading: false,
+    material: null,
+    article: null,
+    html: '',
+    error: '',
+  });
+  const [materialCache, setMaterialCache] = useState({});
+  const [reviewedMaterialIds, setReviewedMaterialIds] = useState({});
 
   const startedAtRef = useRef(null);
 
@@ -209,10 +361,154 @@ export default function QuizList() {
     });
   };
 
+  const getMaterialId = (material) =>
+    material?.article_id || material?.id || null;
+
+  const loadTrainingMaterial = async (material) => {
+    const articleId = getMaterialId(material);
+    if (!articleId) {
+      throw new Error('Training material is missing an article ID.');
+    }
+
+    if (materialCache[articleId]) {
+      return materialCache[articleId];
+    }
+
+    const response = await api.get(`/articles/${encodeURIComponent(articleId)}`);
+    const article = response.data;
+
+    if (!article?.article_id) {
+      throw new Error('Training material could not be loaded.');
+    }
+
+    const prepared = {
+      article,
+      html: sanitizeQuizReaderHtml(article.content),
+      minutes: estimateReadingMinutes(article.content),
+    };
+
+    setMaterialCache((current) => ({
+      ...current,
+      [articleId]: prepared,
+    }));
+
+    return prepared;
+  };
+
+  const openMaterialReader = async (material) => {
+    setMaterialReader({
+      open: true,
+      loading: true,
+      material,
+      article: null,
+      html: '',
+      error: '',
+    });
+
+    try {
+      const prepared = await loadTrainingMaterial(material);
+
+      setMaterialReader({
+        open: true,
+        loading: false,
+        material,
+        article: prepared.article,
+        html: prepared.html,
+        error: '',
+      });
+    } catch (error) {
+      console.warn('Failed to open training material:', error);
+
+      setMaterialReader({
+        open: true,
+        loading: false,
+        material,
+        article: null,
+        html: '',
+        error:
+          error.response?.data?.message ||
+          error.message ||
+          tOr('quiz.prepare.readerLoadFailed', 'Could not load this training material.'),
+      });
+    }
+  };
+
+  const closeMaterialReader = () => {
+    setMaterialReader((current) => ({
+      ...current,
+      open: false,
+      loading: false,
+      error: '',
+    }));
+  };
+
+  const finishReviewingMaterial = () => {
+    const articleId = getMaterialId(materialReader.material);
+
+    if (articleId) {
+      setReviewedMaterialIds((current) => ({
+        ...current,
+        [articleId]: true,
+      }));
+    }
+
+    closeMaterialReader();
+  };
+
+  const materialReadingMinutes = (material) => {
+    const articleId = getMaterialId(material);
+    return articleId ? materialCache[articleId]?.minutes : null;
+  };
+
   const activeQuiz = useMemo(
     () => quizItems.find((quiz) => quiz.id === activeQuizId) || null,
     [quizItems, activeQuizId]
   );
+
+  useEffect(() => {
+    if (!showWelcome || !activeQuiz) return undefined;
+
+    const materials =
+      (activeQuiz.trainingMaterials || []).length > 0
+        ? activeQuiz.trainingMaterials
+        : activeQuiz.sourceArticleId
+          ? [{
+              article_id: activeQuiz.sourceArticleId,
+              title: activeQuiz.sourceArticleTitle,
+            }]
+          : [];
+
+    materials.forEach((material) => {
+      const articleId = getMaterialId(material);
+      if (!articleId || materialCache[articleId]) return;
+
+      loadTrainingMaterial(material).catch((error) => {
+        console.warn('Could not prefetch training material metadata:', error);
+      });
+    });
+
+    return undefined;
+  }, [activeQuizId, showWelcome]);
+
+  useEffect(() => {
+    if (!materialReader.open) return undefined;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        closeMaterialReader();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [materialReader.open]);
 
   const categories = useMemo(() =>
     ['All', ...new Set(quizItems.map((quiz) => quiz.category || 'Training'))],
@@ -564,6 +860,12 @@ export default function QuizList() {
                         {index + 1}. {entry.question}
                       </h4>
 
+                      {entry.source_title ? (
+                        <div className="quiz-rv-source">
+                          {tOr('quiz.history.sourceMaterial', 'Source')}: {entry.source_title}
+                        </div>
+                      ) : null}
+
                       <ul className="quiz-rv-options">
                         {options.map((option, optionIndex) => {
                           const letter = String.fromCharCode(65 + optionIndex);
@@ -638,76 +940,140 @@ export default function QuizList() {
                     </p>
                   </div>
 
-                  {(activeQuiz.trainingMaterials || []).map((material, index) => (
-                    <div
-                      key={material.article_id || material.id}
-                      className="card-like"
-                      style={{
-                        padding: '14px 16px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: 16,
-                        flexWrap: 'wrap',
-                      }}
-                    >
-                      <div style={{ minWidth: 0, flex: '1 1 280px' }}>
-                        <span className="eyebrow">
-                          {tOr('quiz.prepare.materialNumber', `Material ${index + 1}`)}
-                        </span>
-                        <h3 style={{ margin: '4px 0 3px' }}>
-                          {material.title ||
-                            tOr('quiz.prepare.knowledgeArticle', 'Knowledge Base Article')}
-                        </h3>
-                        {material.category ? (
-                          <p className="muted small" style={{ margin: 0 }}>
-                            {catLabel(material.category)}
-                          </p>
-                        ) : null}
-                      </div>
+                  {(activeQuiz.trainingMaterials || []).map((material, index) => {
+                    const materialId = material.article_id || material.id;
+                    const readingMinutes = materialReadingMinutes(material);
+                    const reviewed = Boolean(reviewedMaterialIds[materialId]);
 
-                      <Link
-                        to={`/knowledge/${material.article_id || material.id}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="secondary-btn"
+                    return (
+                      <div
+                        key={materialId}
+                        className={`card-like quiz-material-card ${reviewed ? 'is-reviewed' : ''}`}
                       >
-                        {tOr('quiz.prepare.reviewMaterial', 'Review Material')} ↗
-                      </Link>
-                    </div>
-                  ))}
+                        <div className="quiz-material-book" aria-hidden="true">📖</div>
+
+                        <div className="quiz-material-card-copy">
+                          <div className="quiz-material-card-topline">
+                            <span className="eyebrow">
+                              {tOr('quiz.prepare.materialNumber', `Material ${index + 1}`)}
+                            </span>
+                            <span className={`quiz-material-status ${reviewed ? 'reviewed' : ''}`}>
+                              {reviewed
+                                ? tOr('quiz.prepare.reviewedBadge', 'Reviewed ✓')
+                                : tOr('quiz.prepare.recommendedBadge', 'Recommended before attempt')}
+                            </span>
+                          </div>
+
+                          <h3>
+                            {material.title ||
+                              tOr('quiz.prepare.knowledgeArticle', 'Knowledge Base Article')}
+                          </h3>
+
+                          <div className="quiz-material-meta">
+                            <span>
+                              {material.category
+                                ? catLabel(material.category)
+                                : tOr('quiz.prepare.knowledgeBase', 'Knowledge Base')}
+                            </span>
+                            <span aria-hidden="true">•</span>
+                            <span>
+                              {readingMinutes
+                                ? tOr(
+                                    'quiz.prepare.readingTime',
+                                    `About ${readingMinutes} min read`
+                                  )
+                                : tOr('quiz.prepare.calculatingTime', 'Calculating reading time…')}
+                            </span>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          className="secondary-btn quiz-material-link"
+                          onClick={() => openMaterialReader(material)}
+                        >
+                          <span className="quiz-material-link-copy">
+                            <span className="quiz-material-link-label">
+                              {reviewed
+                                ? tOr('quiz.prepare.reviewAgain', 'Review again')
+                                : tOr('quiz.prepare.reviewMaterial', 'Review Training Material')}
+                            </span>
+                            <span className="quiz-material-link-subtext">
+                              {tOr('quiz.prepare.openReader', 'Read without leaving the quiz')}
+                            </span>
+                          </span>
+                          <span className="quiz-material-link-icon" aria-hidden="true">→</span>
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
               ) : activeQuiz.sourceArticleId ? (
                 <div
-                  className="card-like"
-                  style={{
-                    marginTop: 8,
-                    padding: '16px 18px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: 16,
-                    flexWrap: 'wrap',
-                  }}
+                  className={`card-like quiz-material-card ${
+                    reviewedMaterialIds[activeQuiz.sourceArticleId] ? 'is-reviewed' : ''
+                  }`}
+                  style={{ marginTop: 8 }}
                 >
-                  <div style={{ minWidth: 0, flex: '1 1 280px' }}>
-                    <span className="eyebrow">
-                      {tOr('quiz.prepare.material', 'Training Material')}
-                    </span>
-                    <h3 style={{ margin: '5px 0 5px' }}>
+                  <div className="quiz-material-book" aria-hidden="true">📖</div>
+
+                  <div className="quiz-material-card-copy">
+                    <div className="quiz-material-card-topline">
+                      <span className="eyebrow">
+                        {tOr('quiz.prepare.material', 'Training Material')}
+                      </span>
+                      <span
+                        className={`quiz-material-status ${
+                          reviewedMaterialIds[activeQuiz.sourceArticleId] ? 'reviewed' : ''
+                        }`}
+                      >
+                        {reviewedMaterialIds[activeQuiz.sourceArticleId]
+                          ? tOr('quiz.prepare.reviewedBadge', 'Reviewed ✓')
+                          : tOr('quiz.prepare.recommendedBadge', 'Recommended before attempt')}
+                      </span>
+                    </div>
+
+                    <h3>
                       {activeQuiz.sourceArticleTitle ||
                         tOr('quiz.prepare.knowledgeArticle', 'Knowledge Base Article')}
                     </h3>
+
+                    <div className="quiz-material-meta">
+                      <span>{tOr('quiz.prepare.knowledgeBase', 'Knowledge Base')}</span>
+                      <span aria-hidden="true">•</span>
+                      <span>
+                        {materialCache[activeQuiz.sourceArticleId]?.minutes
+                          ? tOr(
+                              'quiz.prepare.readingTime',
+                              `About ${materialCache[activeQuiz.sourceArticleId].minutes} min read`
+                            )
+                          : tOr('quiz.prepare.calculatingTime', 'Calculating reading time…')}
+                      </span>
+                    </div>
                   </div>
 
-                  <Link
-                    to={`/knowledge/${activeQuiz.sourceArticleId}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="secondary-btn"
+                  <button
+                    type="button"
+                    className="secondary-btn quiz-material-link"
+                    onClick={() =>
+                      openMaterialReader({
+                        article_id: activeQuiz.sourceArticleId,
+                        title: activeQuiz.sourceArticleTitle,
+                      })
+                    }
                   >
-                    {tOr('quiz.prepare.reviewMaterial', 'Review Material')} ↗
-                  </Link>
+                    <span className="quiz-material-link-copy">
+                      <span className="quiz-material-link-label">
+                        {reviewedMaterialIds[activeQuiz.sourceArticleId]
+                          ? tOr('quiz.prepare.reviewAgain', 'Review again')
+                          : tOr('quiz.prepare.reviewMaterial', 'Review Training Material')}
+                      </span>
+                      <span className="quiz-material-link-subtext">
+                        {tOr('quiz.prepare.openReader', 'Read without leaving the quiz')}
+                      </span>
+                    </span>
+                    <span className="quiz-material-link-icon" aria-hidden="true">→</span>
+                  </button>
                 </div>
               ) : (
                 <div className="quiz-state-card" style={{ minHeight: 0, marginTop: 8 }}>
@@ -780,7 +1146,51 @@ export default function QuizList() {
                       </div>
                     </div>
 
-                    {attemptHistory.latest_wrong_count > 0 ? (
+                    {(attemptHistory.weak_areas || []).length > 0 ? (
+                      <div className="quiz-weak-areas">
+                        <div className="quiz-weak-areas-head">
+                          <div>
+                            <strong>{tOr('quiz.history.revisionFocus', 'Recommended Revision')}</strong>
+                            <span>
+                              {tOr(
+                                'quiz.history.weakAreasHint',
+                                'Focus on the training materials where you have made the most mistakes.'
+                              )}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="quiz-weak-area-list">
+                          {(attemptHistory.weak_areas || []).map((area, index) => (
+                            <div
+                              key={`${area.article_id || 'general'}-${area.title}-${index}`}
+                              className="quiz-weak-area-card"
+                            >
+                              <div className="quiz-weak-area-rank">{index + 1}</div>
+                              <div className="quiz-weak-area-copy">
+                                <strong>{area.title}</strong>
+                                <span>
+                                  {area.wrong_count} {area.wrong_count === 1 ? 'mistake' : 'mistakes'}
+                                  {' · '}
+                                  {area.accuracy}% accuracy
+                                </span>
+                              </div>
+
+                              {area.article_id ? (
+                                <Link
+                                  to={`/knowledge/${area.article_id}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="secondary-btn quiz-weak-area-action"
+                                >
+                                  {tOr('quiz.history.reviewMaterial', 'Review Material')} ↗
+                                </Link>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : attemptHistory.latest_wrong_count > 0 ? (
                       <div className="quiz-history-revision-note">
                         <strong>{tOr('quiz.history.revisionFocus', 'Revision focus')}</strong>
                         <span>
@@ -1108,6 +1518,116 @@ export default function QuizList() {
           )}
         </div>
       )}
+
+      {materialReader.open ? (
+        <div
+          className="quiz-reader-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="quiz-reader-title"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              closeMaterialReader();
+            }
+          }}
+        >
+          <section className="quiz-reader-modal">
+            <header className="quiz-reader-header">
+              <div className="quiz-reader-header-icon" aria-hidden="true">📖</div>
+
+              <div className="quiz-reader-header-copy">
+                <span className="eyebrow">
+                  {tOr('quiz.prepare.trainingMaterial', 'Training Material')}
+                </span>
+                <h2 id="quiz-reader-title">
+                  {materialReader.article?.title ||
+                    materialReader.material?.title ||
+                    tOr('quiz.prepare.knowledgeArticle', 'Knowledge Base Article')}
+                </h2>
+
+                {!materialReader.loading && !materialReader.error ? (
+                  <div className="quiz-reader-meta">
+                    <span>
+                      {materialReader.article?.category
+                        ? catLabel(materialReader.article.category)
+                        : tOr('quiz.prepare.knowledgeBase', 'Knowledge Base')}
+                    </span>
+                    <span aria-hidden="true">•</span>
+                    <span>
+                      {tOr(
+                        'quiz.prepare.readingTime',
+                        `About ${estimateReadingMinutes(materialReader.article?.content)} min read`
+                      )}
+                    </span>
+                    <span className="quiz-reader-recommended">
+                      {tOr('quiz.prepare.recommendedBadge', 'Recommended before attempt')}
+                    </span>
+                  </div>
+                ) : null}
+              </div>
+
+              <button
+                type="button"
+                className="quiz-reader-close"
+                onClick={closeMaterialReader}
+                aria-label={tOr('quiz.prepare.closeReader', 'Close training material')}
+              >
+                ×
+              </button>
+            </header>
+
+            <div className="quiz-reader-body">
+              {materialReader.loading ? (
+                <div className="quiz-reader-state" role="status">
+                  <span className="quiz-reader-spinner" aria-hidden="true" />
+                  <strong>{tOr('quiz.prepare.loadingMaterial', 'Loading training material…')}</strong>
+                </div>
+              ) : materialReader.error ? (
+                <div className="quiz-reader-state error" role="alert">
+                  <strong>{tOr('quiz.prepare.readerErrorTitle', 'Unable to load material')}</strong>
+                  <p>{materialReader.error}</p>
+                </div>
+              ) : (
+                <article
+                  className="quiz-reader-content"
+                  dangerouslySetInnerHTML={{ __html: materialReader.html }}
+                />
+              )}
+            </div>
+
+            <footer className="quiz-reader-footer">
+              <div className="quiz-reader-footer-note">
+                {tOr(
+                  'quiz.prepare.readerFooter',
+                  'Review this material, then return to the assessment when you are ready.'
+                )}
+              </div>
+
+              <div className="quiz-reader-footer-actions">
+                {getMaterialId(materialReader.material) ? (
+                  <Link
+                    to={`/knowledge/${getMaterialId(materialReader.material)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="secondary-btn"
+                  >
+                    {tOr('quiz.prepare.openFullArticle', 'Open Full Article')} ↗
+                  </Link>
+                ) : null}
+
+                <button
+                  type="button"
+                  className="primary-btn quiz-reader-done"
+                  onClick={finishReviewingMaterial}
+                  disabled={materialReader.loading || Boolean(materialReader.error)}
+                >
+                  ✓ {tOr('quiz.prepare.doneReviewing', 'Done Reviewing')}
+                </button>
+              </div>
+            </footer>
+          </section>
+        </div>
+      ) : null}
 
       {showUnanswered ? (
         <div className="quiz-rv-overlay" role="dialog" aria-modal="true" aria-labelledby="quiz-unanswered-title">
