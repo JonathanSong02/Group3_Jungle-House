@@ -530,6 +530,76 @@ export default function QuizList() {
   const passed = serverResult?.passed ?? score >= passingScore;
   const sourceArticle = serverResult?.source_article || null;
 
+  const masteryMeta = (status) => {
+    const map = {
+      not_started: {
+        label: tOr('quiz.mastery.notStarted', 'Not started'),
+        tone: 'neutral',
+        message: tOr(
+          'quiz.mastery.notStartedHint',
+          'Complete your first attempt to start building familiarity.'
+        ),
+      },
+      needs_review: {
+        label: tOr('quiz.mastery.needsReview', 'Needs Review'),
+        tone: 'needs-review',
+        message: tOr(
+          'quiz.mastery.needsReviewHint',
+          'Review the training material and repeat the quiz to strengthen recall.'
+        ),
+      },
+      developing: {
+        label: tOr('quiz.mastery.developing', 'Developing'),
+        tone: 'developing',
+        message: tOr(
+          'quiz.mastery.developingHint',
+          'Your familiarity is improving. More practice will help make the knowledge easier to recall at work.'
+        ),
+      },
+      familiar: {
+        label: tOr('quiz.mastery.familiar', 'Familiar'),
+        tone: 'familiar',
+        message: tOr(
+          'quiz.mastery.familiarHint',
+          'You are consistently meeting the expected level. Continue occasional practice to retain it.'
+        ),
+      },
+      mastered: {
+        label: tOr('quiz.mastery.mastered', 'Mastered'),
+        tone: 'mastered',
+        message: tOr(
+          'quiz.mastery.masteredHint',
+          'You have shown strong and consistent recall across recent attempts.'
+        ),
+      },
+    };
+
+    return map[status] || map.not_started;
+  };
+
+  const masteryProgress = (mastery) => {
+    if (!mastery) return 0;
+
+    const statusBase = {
+      not_started: 0,
+      needs_review: 20,
+      developing: 45,
+      familiar: 72,
+      mastered: 100,
+    };
+
+    if (mastery.status === 'mastered') return 100;
+
+    const average = Number(mastery.recent_average ?? 0);
+    const streak = Number(mastery.current_pass_streak ?? 0);
+    const base = statusBase[mastery.status] ?? 0;
+
+    return Math.min(
+      96,
+      Math.max(base, Math.round(base + average * 0.18 + Math.min(streak, 3) * 3))
+    );
+  };
+
   const formatElapsed = (seconds) => {
     const minutes = Math.floor(seconds / 60);
     const rest = seconds % 60;
@@ -1131,6 +1201,81 @@ export default function QuizList() {
                   </div>
                 ) : attemptHistory?.attempt_count > 0 ? (
                   <>
+                    {attemptHistory.mastery ? (() => {
+                      const meta = masteryMeta(attemptHistory.mastery.status);
+                      const progress = masteryProgress(attemptHistory.mastery);
+
+                      return (
+                        <div className={`quiz-mastery-card ${meta.tone}`}>
+                          <div className="quiz-mastery-main">
+                            <div className="quiz-mastery-icon" aria-hidden="true">
+                              {attemptHistory.mastery.status === 'mastered'
+                                ? '★'
+                                : attemptHistory.mastery.status === 'familiar'
+                                  ? '✓'
+                                  : attemptHistory.mastery.status === 'developing'
+                                    ? '↗'
+                                    : '!'}
+                            </div>
+
+                            <div className="quiz-mastery-copy">
+                              <span className="eyebrow">
+                                {tOr('quiz.mastery.title', 'Knowledge Familiarity')}
+                              </span>
+                              <div className="quiz-mastery-title-row">
+                                <strong>{meta.label}</strong>
+                                {attemptHistory.mastery.recent_average != null ? (
+                                  <span>
+                                    {tOr(
+                                      'quiz.mastery.recentAverage',
+                                      `${attemptHistory.mastery.recent_average}% recent average`
+                                    )}
+                                  </span>
+                                ) : null}
+                              </div>
+                              <p>{meta.message}</p>
+                            </div>
+                          </div>
+
+                          <div className="quiz-mastery-meter" aria-label={`${progress}%`}>
+                            <span style={{ width: `${progress}%` }} />
+                          </div>
+
+                          <div className="quiz-mastery-facts">
+                            <span>
+                              <strong>{attemptHistory.mastery.current_pass_streak || 0}</strong>
+                              {tOr('quiz.mastery.passStreak', 'current pass streak')}
+                            </span>
+                            <span>
+                              <strong>
+                                {attemptHistory.mastery.recent_attempt_count || 0}/3
+                              </strong>
+                              {tOr('quiz.mastery.recentAttempts', 'recent attempts tracked')}
+                            </span>
+                            <span>
+                              <strong>
+                                {Number(attemptHistory.mastery.trend_change || 0) > 0 ? '+' : ''}
+                                {attemptHistory.mastery.trend_change || 0}%
+                              </strong>
+                              {tOr('quiz.mastery.trend', '5-attempt trend')}
+                            </span>
+                          </div>
+
+                          {attemptHistory.mastery.status !== 'mastered' ? (
+                            <div className="quiz-mastery-goal">
+                              <strong>{tOr('quiz.mastery.nextGoal', 'Mastery goal')}</strong>
+                              <span>
+                                {tOr(
+                                  'quiz.mastery.goalHint',
+                                  'Reach 90%+ average across your latest 3 attempts while passing all three.'
+                                )}
+                              </span>
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })() : null}
+
                     <div className="quiz-history-stats">
                       <div>
                         <span>{tOr('quiz.history.latest', 'Latest')}</span>
@@ -1213,6 +1358,38 @@ export default function QuizList() {
                         </span>
                       </div>
                     )}
+
+                    {(attemptHistory.attempts || []).length >= 2 ? (
+                      <div className="quiz-score-progress">
+                        <div className="quiz-score-progress-head">
+                          <strong>{tOr('quiz.mastery.scoreProgress', 'Score Progress')}</strong>
+                          <span>{tOr('quiz.mastery.latestFive', 'Latest 5 attempts')}</span>
+                        </div>
+
+                        <div className="quiz-score-bars">
+                          {(attemptHistory.attempts || [])
+                            .slice(0, 5)
+                            .reverse()
+                            .map((attempt) => (
+                              <div
+                                key={`progress-${attempt.result_id}`}
+                                className="quiz-score-bar-item"
+                                title={`${attempt.percentage}%`}
+                              >
+                                <div className="quiz-score-bar-track">
+                                  <span
+                                    style={{
+                                      height: `${Math.max(4, Number(attempt.percentage || 0))}%`,
+                                    }}
+                                  />
+                                </div>
+                                <small>#{attempt.attempt_number}</small>
+                                <strong>{attempt.percentage}%</strong>
+                              </div>
+                            ))}
+                        </div>
+                      </div>
+                    ) : null}
 
                     <div className="quiz-history-list">
                       {(attemptHistory.attempts || []).map((attempt) => (
@@ -1506,11 +1683,49 @@ export default function QuizList() {
                 </Link>
               ) : null}
 
+              <div className="quiz-practice-again">
+                <div className="quiz-practice-again-icon" aria-hidden="true">↻</div>
+                <div>
+                  <strong>
+                    {passed
+                      ? tOr('quiz.practice.keepFresh', 'Keep the knowledge fresh')
+                      : tOr('quiz.practice.strengthenRecall', 'Strengthen your recall')}
+                  </strong>
+                  <p>
+                    {passed
+                      ? tOr(
+                          'quiz.practice.passHint',
+                          'Repeating the same approved knowledge helps make important procedures easier to remember during daily work.'
+                        )
+                      : tOr(
+                          'quiz.practice.failHint',
+                          'Review your mistakes and training material, then try the same knowledge again until it becomes familiar.'
+                        )}
+                  </p>
+                </div>
+              </div>
+
+              {attemptHistory?.mastery ? (() => {
+                const meta = masteryMeta(attemptHistory.mastery.status);
+                return (
+                  <div className={`quiz-result-mastery ${meta.tone}`}>
+                    <span>{tOr('quiz.mastery.afterAttempt', 'Current familiarity')}</span>
+                    <strong>{meta.label}</strong>
+                    {attemptHistory.mastery.recent_average != null ? (
+                      <small>
+                        {attemptHistory.mastery.recent_average}%{' '}
+                        {tOr('quiz.mastery.recentAverageShort', 'recent average')}
+                      </small>
+                    ) : null}
+                  </div>
+                );
+              })() : null}
+
               <div className="button-group wrap-gap top-gap">
-                <button className="secondary-btn" onClick={handleRetake}>
-                  {t('quiz.result.retake')}
+                <button className="primary-btn quiz-practice-again-btn" onClick={handleRetake}>
+                  ↻ {tOr('quiz.practice.again', 'Practice Again')}
                 </button>
-                <button className="primary-btn" onClick={handleBackToList}>
+                <button className="secondary-btn" onClick={handleBackToList}>
                   {t('quiz.result.back')}
                 </button>
               </div>

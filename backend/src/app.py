@@ -13452,6 +13452,19 @@ def ensure_quiz_extra_columns():
             if column not in existing:
                 cursor.execute(statement)
 
+        cursor.execute(
+            """SELECT COLUMN_NAME FROM information_schema.COLUMNS
+               WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'quiz_question'"""
+        )
+        question_existing = {str(row[0]).lower() for row in cursor.fetchall()}
+        question_alterations = {
+            "source_article_id": "ALTER TABLE quiz_question ADD COLUMN source_article_id INT NULL",
+            "source_title": "ALTER TABLE quiz_question ADD COLUMN source_title VARCHAR(255) NULL",
+        }
+        for column, statement in question_alterations.items():
+            if column not in question_existing:
+                cursor.execute(statement)
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS quiz_training_material (
                 quiz_id INT NOT NULL,
@@ -13714,12 +13727,28 @@ def ensure_quiz_attempt_answer_table():
                 is_correct TINYINT(1) NOT NULL DEFAULT 0,
                 explanation TEXT NULL,
                 points INT NOT NULL DEFAULT 1,
+                source_article_id INT NULL,
+                source_title VARCHAR(255) NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE KEY uq_quiz_attempt_answer_result_question (result_id, question_id),
                 INDEX idx_quiz_attempt_answer_result (result_id),
                 INDEX idx_quiz_attempt_answer_user_quiz (user_id, quiz_id)
             )
         """)
+        cursor.execute(
+            """SELECT COLUMN_NAME FROM information_schema.COLUMNS
+               WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'quiz_attempt_answer'"""
+        )
+        attempt_existing = {str(row[0]).lower() for row in cursor.fetchall()}
+        if "source_article_id" not in attempt_existing:
+            cursor.execute(
+                "ALTER TABLE quiz_attempt_answer ADD COLUMN source_article_id INT NULL"
+            )
+        if "source_title" not in attempt_existing:
+            cursor.execute(
+                "ALTER TABLE quiz_attempt_answer ADD COLUMN source_title VARCHAR(255) NULL"
+            )
+
         conn.commit()
         _QUIZ_ATTEMPT_ANSWER_TABLE_READY = True
         return True
@@ -13779,7 +13808,7 @@ def serialize_quiz_attempt_time(value):
     return str(value or "")
 
 
-def quiz_attempt_history_payload(cursor, quiz_id, user_id, limit=50):
+def quiz_attempt_history_payload(cursor, quiz_id, user_id, limit=50, passing_score=80):
     """Return summary + recent attempts for one learner and one quiz."""
     result_id_column = get_quiz_result_id_column(cursor)
 
@@ -13832,6 +13861,87 @@ def quiz_attempt_history_payload(cursor, quiz_id, user_id, limit=50):
 
     latest = attempts[0] if attempts else None
 
+    recent_attempts = attempts[:3]
+    recent_scores = [float(item["percentage"]) for item in recent_attempts]
+    recent_average = (
+        round(sum(recent_scores) / len(recent_scores), 1)
+        if recent_scores else None
+    )
+
+    pass_threshold = int(passing_score or 80)
+    current_pass_streak = 0
+    for item in attempts:
+        if float(item["percentage"]) >= pass_threshold:
+            current_pass_streak += 1
+        else:
+            break
+
+    if not recent_scores:
+        mastery_status = "not_started"
+    elif (
+        len(recent_scores) >= 3
+        and all(score >= pass_threshold for score in recent_scores)
+        and recent_average >= 90
+    ):
+        mastery_status = "mastered"
+    elif (
+        len(recent_scores) >= 2
+        and all(score >= pass_threshold for score in recent_scores[:2])
+        and recent_average >= pass_threshold
+    ):
+        mastery_status = "familiar"
+    elif recent_average >= 60 or any(score >= pass_threshold for score in recent_scores):
+        mastery_status = "developing"
+    else:
+        mastery_status = "needs_review"
+
+    trend_window = attempts[:5]
+    if len(trend_window) >= 2:
+        trend_change = round(
+            float(trend_window[0]["percentage"]) -
+            float(trend_window[-1]["percentage"]),
+            1,
+        )
+    else:
+        trend_change = 0.0
+
+    cursor.execute(
+        """SELECT
+               COALESCE(a.source_article_id, q.source_article_id) AS article_id,
+               COALESCE(NULLIF(a.source_title, ''), w.title, 'General quiz content') AS source_title,
+               SUM(CASE WHEN a.is_correct = 0 THEN 1 ELSE 0 END) AS wrong_count,
+               COUNT(*) AS answered_count,
+               COUNT(DISTINCT a.result_id) AS attempts_seen
+           FROM quiz_attempt_answer a
+           JOIN quiz q ON q.quiz_id = a.quiz_id
+           LEFT JOIN wiki_article w
+             ON w.article_id = COALESCE(a.source_article_id, q.source_article_id)
+            AND COALESCE(w.is_deleted, 0) = 0
+           WHERE a.quiz_id = %s
+             AND a.user_id = %s
+           GROUP BY
+               COALESCE(a.source_article_id, q.source_article_id),
+               COALESCE(NULLIF(a.source_title, ''), w.title, 'General quiz content')
+           HAVING SUM(CASE WHEN a.is_correct = 0 THEN 1 ELSE 0 END) > 0
+           ORDER BY wrong_count DESC, answered_count DESC, source_title ASC
+           LIMIT 5""",
+        (quiz_id, user_id),
+    )
+
+    weak_areas = []
+    for row in cursor.fetchall() or []:
+        answered_count = int(row.get("answered_count") or 0)
+        wrong_count = int(row.get("wrong_count") or 0)
+        weak_areas.append({
+            "article_id": int(row["article_id"]) if row.get("article_id") else None,
+            "title": row.get("source_title") or "General quiz content",
+            "wrong_count": wrong_count,
+            "answered_count": answered_count,
+            "accuracy": round((answered_count - wrong_count) * 100 / answered_count, 1)
+            if answered_count else 0,
+            "attempts_seen": int(row.get("attempts_seen") or 0),
+        })
+
     return {
         "quiz_id": quiz_id,
         "attempt_count": int(aggregate.get("attempt_count") or 0),
@@ -13843,6 +13953,20 @@ def quiz_attempt_history_payload(cursor, quiz_id, user_id, limit=50):
         "latest_percentage": latest["percentage"] if latest else None,
         "latest_wrong_count": latest["wrong_count"] if latest else 0,
         "latest_result_id": latest["result_id"] if latest else None,
+        "mastery": {
+            "status": mastery_status,
+            "recent_average": recent_average,
+            "recent_attempt_count": len(recent_scores),
+            "current_pass_streak": current_pass_streak,
+            "trend_change": trend_change,
+            "passing_score": pass_threshold,
+            "mastered_requirement": {
+                "minimum_attempts": 3,
+                "recent_average": 90,
+                "all_recent_pass": True,
+            },
+        },
+        "weak_areas": weak_areas,
         "attempts": attempts,
     }
 
@@ -13867,12 +13991,14 @@ def get_my_quiz_attempts(quiz_id):
         if not quiz_row:
             return jsonify({"message": "Quiz not found."}), 404
 
+        quiz_passing_score = int(quiz_row.get("passing_score") or 80)
         payload = quiz_attempt_history_payload(
             cursor,
             quiz_id,
             current_auth_user_id(),
+            passing_score=quiz_passing_score,
         )
-        payload["passing_score"] = int(quiz_row.get("passing_score") or 80)
+        payload["passing_score"] = quiz_passing_score
 
         return jsonify(payload), 200
     except Exception as error:
@@ -13931,7 +14057,9 @@ def get_my_quiz_attempt_detail(quiz_id, result_id):
                       correct_option,
                       is_correct,
                       explanation,
-                      points
+                      points,
+                      source_article_id,
+                      source_title
                FROM quiz_attempt_answer
                WHERE result_id = %s
                  AND quiz_id = %s
@@ -13959,6 +14087,8 @@ def get_my_quiz_attempt_detail(quiz_id, result_id):
                 "is_correct": bool(row.get("is_correct")),
                 "explanation": row.get("explanation") or "",
                 "points": int(row.get("points") or 1),
+                "source_article_id": int(row["source_article_id"]) if row.get("source_article_id") else None,
+                "source_title": row.get("source_title") or "",
             })
 
         return jsonify({
@@ -14171,7 +14301,9 @@ def submit_quiz(quiz_id):
                       option_d,
                       correct_option,
                       explanation,
-                      points
+                      points,
+                      source_article_id,
+                      source_title
                FROM quiz_question
                WHERE quiz_id = %s
                ORDER BY question_id ASC""",
@@ -14215,11 +14347,13 @@ def submit_quiz(quiz_id):
                 """INSERT INTO quiz_attempt_answer
                    (result_id, quiz_id, user_id, question_id, question_order,
                     question_text, option_a, option_b, option_c, option_d,
-                    selected_option, correct_option, is_correct, explanation, points)
+                    selected_option, correct_option, is_correct, explanation, points,
+                    source_article_id, source_title)
                    VALUES
                    (%s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s)""",
+                    %s, %s, %s, %s, %s,
+                    %s, %s)""",
                 (
                     result_id,
                     quiz_id,
@@ -14236,6 +14370,8 @@ def submit_quiz(quiz_id):
                     1 if is_correct else 0,
                     row.get("explanation") or "",
                     int(row.get("points") or 1),
+                    row.get("source_article_id") or quiz_row.get("source_article_id"),
+                    row.get("source_title") or quiz_row.get("source_title") or "",
                 ),
             )
 
@@ -14403,7 +14539,26 @@ def create_admin_quiz():
             correct = str(item.get("correct_option") or "").strip().upper()
             if not q_text or not all(options) or correct not in ("A", "B", "C", "D"):
                 return jsonify({"message": "Every question needs text, four options and one correct answer (A-D)."}), 400
-            new_questions.append((q_text, *options, correct, str(item.get("explanation") or "").strip()))
+            raw_question_source_id = item.get("source_article_id")
+            try:
+                question_source_id = (
+                    int(raw_question_source_id)
+                    if raw_question_source_id not in (None, "", 0, "0")
+                    else source_article_id
+                )
+            except (TypeError, ValueError):
+                question_source_id = source_article_id
+
+            if source_article_ids and question_source_id not in source_article_ids:
+                question_source_id = source_article_id
+
+            new_questions.append((
+                q_text,
+                *options,
+                correct,
+                str(item.get("explanation") or "").strip(),
+                question_source_id,
+            ))
 
     if status == "active" and raw_questions is not None and not new_questions:
         return jsonify({"message": "A published quiz needs at least one question."}), 400
@@ -14416,9 +14571,14 @@ def create_admin_quiz():
         cursor = conn.cursor(dictionary=True)
 
         try:
-            validate_quiz_material_ids(cursor, source_article_ids)
+            validated_materials = validate_quiz_material_ids(cursor, source_article_ids)
         except ValueError as material_error:
             return jsonify({"message": str(material_error)}), 400
+
+        material_title_by_id = {
+            int(row["article_id"]): row.get("title") or ""
+            for row in validated_materials
+        }
 
         if ensure_quiz_extra_columns():
             cursor.execute("""
@@ -14451,13 +14611,20 @@ def create_admin_quiz():
 
         replace_quiz_training_materials(cursor, quiz_id, source_article_ids)
 
-        for q_text, a, b, c, d, correct, explanation in new_questions:
+        for q_text, a, b, c, d, correct, explanation, question_source_id in new_questions:
+            question_source_title = (
+                material_title_by_id.get(int(question_source_id), "")
+                if question_source_id else ""
+            )
             cursor.execute("""
                 INSERT INTO quiz_question
                 (quiz_id, question_text, option_a, option_b, option_c, option_d,
-                 correct_option, explanation, points)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 1)
-            """, (quiz_id, q_text, a, b, c, d, correct, explanation))
+                 correct_option, explanation, points, source_article_id, source_title)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 1, %s, %s)
+            """, (
+                quiz_id, q_text, a, b, c, d, correct, explanation,
+                question_source_id, question_source_title
+            ))
 
         conn.commit()
 
@@ -14738,9 +14905,10 @@ def create_quiz_question(quiz_id):
         cursor = conn.cursor(dictionary=True)
 
         cursor.execute("""
-            SELECT quiz_id
-            FROM quiz
-            WHERE quiz_id = %s
+            SELECT q.quiz_id, q.source_article_id, w.title AS source_title
+            FROM quiz q
+            LEFT JOIN wiki_article w ON w.article_id = q.source_article_id
+            WHERE q.quiz_id = %s
             LIMIT 1
         """, (quiz_id,))
 
@@ -14760,9 +14928,11 @@ def create_quiz_question(quiz_id):
                 option_d,
                 correct_option,
                 explanation,
-                points
+                points,
+                source_article_id,
+                source_title
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             quiz_id,
             question_text,
@@ -14772,7 +14942,9 @@ def create_quiz_question(quiz_id):
             option_d,
             correct_option,
             explanation,
-            points
+            points,
+            quiz.get("source_article_id"),
+            quiz.get("source_title") or ""
         ))
 
         conn.commit()
