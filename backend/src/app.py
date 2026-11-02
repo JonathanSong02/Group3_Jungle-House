@@ -2903,6 +2903,7 @@ def wipe_pending_registration(cursor, user_id, email):
         ("notification", [("user_id", user_id), ("created_by", user_id)]),
         ("notification_user_reads", [("user_id", user_id)]),
         ("user_message", [("sender_id", user_id), ("receiver_id", user_id)]),
+        ("quiz_attempt_answer", [("user_id", user_id)]),
         ("quiz_result", [("user_id", user_id)]),
         ("escalation", [("asked_by", user_id), ("handled_by", user_id), ("deleted_by", user_id)]),
     ]
@@ -13404,6 +13405,8 @@ def generate_quiz():
 
 _QUIZ_EXTRA_COLUMNS_READY = False
 _QUIZ_TRAINING_MATERIAL_TABLE_READY = False
+_QUIZ_ATTEMPT_ANSWER_TABLE_READY = False
+_QUIZ_RESULT_ID_COLUMN = None
 QUIZ_DIFFICULTIES = ("Easy", "Medium", "Hard")
 _LEGACY_QUIZ_DIFFICULTY = {"basic": "Easy", "intermediate": "Medium", "advanced": "Hard"}
 
@@ -13676,6 +13679,311 @@ def resolve_generated_quiz_materials(questions, selected_source_article=None):
     return result
 
 
+
+def ensure_quiz_attempt_answer_table():
+    """Create snapshot storage for historical quiz reviews.
+
+    No foreign keys are used here so this remains compatible with older
+    Railway schemas where quiz_result/question key types may differ.
+    """
+    global _QUIZ_ATTEMPT_ANSWER_TABLE_READY
+
+    if _QUIZ_ATTEMPT_ANSWER_TABLE_READY:
+        return True
+
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS quiz_attempt_answer (
+                attempt_answer_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                result_id BIGINT NOT NULL,
+                quiz_id INT NOT NULL,
+                user_id INT NOT NULL,
+                question_id INT NOT NULL,
+                question_order INT NOT NULL,
+                question_text TEXT NOT NULL,
+                option_a TEXT NOT NULL,
+                option_b TEXT NOT NULL,
+                option_c TEXT NOT NULL,
+                option_d TEXT NOT NULL,
+                selected_option CHAR(1) NOT NULL,
+                correct_option CHAR(1) NOT NULL,
+                is_correct TINYINT(1) NOT NULL DEFAULT 0,
+                explanation TEXT NULL,
+                points INT NOT NULL DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_quiz_attempt_answer_result_question (result_id, question_id),
+                INDEX idx_quiz_attempt_answer_result (result_id),
+                INDEX idx_quiz_attempt_answer_user_quiz (user_id, quiz_id)
+            )
+        """)
+        conn.commit()
+        _QUIZ_ATTEMPT_ANSWER_TABLE_READY = True
+        return True
+    except Exception as error:
+        print("QUIZ ATTEMPT ANSWER TABLE ERROR:", error)
+        return False
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+def get_quiz_result_id_column(cursor):
+    """Find the real quiz_result primary/auto-increment ID column safely."""
+    global _QUIZ_RESULT_ID_COLUMN
+
+    if _QUIZ_RESULT_ID_COLUMN:
+        return _QUIZ_RESULT_ID_COLUMN
+
+    cursor.execute("SHOW COLUMNS FROM quiz_result")
+    rows = cursor.fetchall() or []
+
+    normalized = []
+    for row in rows:
+        if isinstance(row, dict):
+            normalized.append({
+                "field": str(row.get("Field") or ""),
+                "key": str(row.get("Key") or ""),
+                "extra": str(row.get("Extra") or ""),
+            })
+        else:
+            normalized.append({
+                "field": str(row[0] if len(row) > 0 else ""),
+                "key": str(row[3] if len(row) > 3 else ""),
+                "extra": str(row[5] if len(row) > 5 else ""),
+            })
+
+    # Prefer the primary auto-increment column, then common historical names.
+    for item in normalized:
+        if item["key"].upper() == "PRI" and "auto_increment" in item["extra"].lower():
+            _QUIZ_RESULT_ID_COLUMN = item["field"]
+            return _QUIZ_RESULT_ID_COLUMN
+
+    fields = {item["field"] for item in normalized}
+    for candidate in ("result_id", "quiz_result_id", "id"):
+        if candidate in fields:
+            _QUIZ_RESULT_ID_COLUMN = candidate
+            return _QUIZ_RESULT_ID_COLUMN
+
+    raise RuntimeError("quiz_result does not have a usable result identifier.")
+
+
+def serialize_quiz_attempt_time(value):
+    if isinstance(value, datetime):
+        return value.isoformat(timespec="seconds")
+    return str(value or "")
+
+
+def quiz_attempt_history_payload(cursor, quiz_id, user_id, limit=50):
+    """Return summary + recent attempts for one learner and one quiz."""
+    result_id_column = get_quiz_result_id_column(cursor)
+
+    cursor.execute(
+        f"""SELECT q.{result_id_column} AS result_id,
+                   q.score,
+                   q.total_questions,
+                   q.percentage,
+                   q.completed_at,
+                   EXISTS(
+                       SELECT 1
+                       FROM quiz_attempt_answer a
+                       WHERE a.result_id = q.{result_id_column}
+                       LIMIT 1
+                   ) AS review_available
+            FROM quiz_result q
+            WHERE q.quiz_id = %s
+              AND q.user_id = %s
+            ORDER BY q.completed_at DESC, q.{result_id_column} DESC
+            LIMIT %s""",
+        (quiz_id, user_id, int(limit)),
+    )
+    rows = cursor.fetchall() or []
+
+    cursor.execute(
+        """SELECT COUNT(*) AS attempt_count,
+                  MAX(percentage) AS best_percentage
+           FROM quiz_result
+           WHERE quiz_id = %s
+             AND user_id = %s""",
+        (quiz_id, user_id),
+    )
+    aggregate = cursor.fetchone() or {}
+
+    attempts = []
+    for index, row in enumerate(rows):
+        total_questions = int(row.get("total_questions") or 0)
+        score = int(row.get("score") or 0)
+        percentage = float(row.get("percentage") or 0)
+        attempts.append({
+            "result_id": int(row["result_id"]),
+            "attempt_number": max(1, int(aggregate.get("attempt_count") or len(rows)) - index),
+            "score": score,
+            "total_questions": total_questions,
+            "wrong_count": max(0, total_questions - score),
+            "percentage": percentage,
+            "completed_at": serialize_quiz_attempt_time(row.get("completed_at")),
+            "review_available": bool(row.get("review_available")),
+        })
+
+    latest = attempts[0] if attempts else None
+
+    return {
+        "quiz_id": quiz_id,
+        "attempt_count": int(aggregate.get("attempt_count") or 0),
+        "best_percentage": (
+            float(aggregate["best_percentage"])
+            if aggregate.get("best_percentage") is not None
+            else None
+        ),
+        "latest_percentage": latest["percentage"] if latest else None,
+        "latest_wrong_count": latest["wrong_count"] if latest else 0,
+        "latest_result_id": latest["result_id"] if latest else None,
+        "attempts": attempts,
+    }
+
+
+@app.route("/api/quizzes/<int:quiz_id>/attempts", methods=["GET"])
+def get_my_quiz_attempts(quiz_id):
+    """Current learner's own attempt history for one published quiz."""
+    if not ensure_quiz_attempt_answer_table():
+        return jsonify({"message": "Quiz history is temporarily unavailable."}), 503
+
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        cursor.execute(
+            "SELECT quiz_id, passing_score FROM quiz WHERE quiz_id = %s LIMIT 1",
+            (quiz_id,),
+        )
+        quiz_row = cursor.fetchone()
+        if not quiz_row:
+            return jsonify({"message": "Quiz not found."}), 404
+
+        payload = quiz_attempt_history_payload(
+            cursor,
+            quiz_id,
+            current_auth_user_id(),
+        )
+        payload["passing_score"] = int(quiz_row.get("passing_score") or 80)
+
+        return jsonify(payload), 200
+    except Exception as error:
+        print("GET QUIZ ATTEMPT HISTORY ERROR:", error)
+        return jsonify({"message": "Could not load your quiz attempt history."}), 500
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/quizzes/<int:quiz_id>/attempts/<int:result_id>", methods=["GET"])
+def get_my_quiz_attempt_detail(quiz_id, result_id):
+    """Historical review snapshot for the signed-in learner only."""
+    if not ensure_quiz_attempt_answer_table():
+        return jsonify({"message": "Quiz history is temporarily unavailable."}), 503
+
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        result_id_column = get_quiz_result_id_column(cursor)
+
+        cursor.execute(
+            f"""SELECT q.{result_id_column} AS result_id,
+                       q.quiz_id,
+                       q.score,
+                       q.total_questions,
+                       q.percentage,
+                       q.completed_at,
+                       z.passing_score
+                FROM quiz_result q
+                JOIN quiz z ON z.quiz_id = q.quiz_id
+                WHERE q.{result_id_column} = %s
+                  AND q.quiz_id = %s
+                  AND q.user_id = %s
+                LIMIT 1""",
+            (result_id, quiz_id, current_auth_user_id()),
+        )
+        attempt = cursor.fetchone()
+
+        if not attempt:
+            return jsonify({"message": "Quiz attempt not found."}), 404
+
+        cursor.execute(
+            """SELECT question_id,
+                      question_order,
+                      question_text,
+                      option_a,
+                      option_b,
+                      option_c,
+                      option_d,
+                      selected_option,
+                      correct_option,
+                      is_correct,
+                      explanation,
+                      points
+               FROM quiz_attempt_answer
+               WHERE result_id = %s
+                 AND quiz_id = %s
+                 AND user_id = %s
+               ORDER BY question_order ASC, attempt_answer_id ASC""",
+            (result_id, quiz_id, current_auth_user_id()),
+        )
+        answer_rows = cursor.fetchall() or []
+
+        review = []
+        for row in answer_rows:
+            review.append({
+                "question_id": int(row["question_id"]),
+                "question_order": int(row.get("question_order") or 0),
+                "question": row.get("question_text") or "",
+                "options": [
+                    row.get("option_a") or "",
+                    row.get("option_b") or "",
+                    row.get("option_c") or "",
+                    row.get("option_d") or "",
+                ],
+                "selected_option": str(row.get("selected_option") or "").upper(),
+                "correct_option": str(row.get("correct_option") or "").upper(),
+                "correct_answer": str(row.get("correct_option") or "").upper(),
+                "is_correct": bool(row.get("is_correct")),
+                "explanation": row.get("explanation") or "",
+                "points": int(row.get("points") or 1),
+            })
+
+        return jsonify({
+            "result_id": int(attempt["result_id"]),
+            "quiz_id": int(attempt["quiz_id"]),
+            "score": int(attempt.get("score") or 0),
+            "total_questions": int(attempt.get("total_questions") or 0),
+            "percentage": float(attempt.get("percentage") or 0),
+            "passing_score": int(attempt.get("passing_score") or 80),
+            "passed": float(attempt.get("percentage") or 0) >= int(attempt.get("passing_score") or 80),
+            "completed_at": serialize_quiz_attempt_time(attempt.get("completed_at")),
+            "review_available": bool(review),
+            "review": review,
+        }), 200
+    except Exception as error:
+        print("GET QUIZ ATTEMPT DETAIL ERROR:", error)
+        return jsonify({"message": "Could not load this quiz attempt."}), 500
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+
 @app.route("/api/quizzes", methods=["GET"])
 def get_quizzes():
     conn = None
@@ -13817,6 +14125,9 @@ def submit_quiz(quiz_id):
             return jsonify({"message": "Each answer must be A, B, C, or D."}), 400
         answers[question_id] = raw_option.strip().upper()
 
+    if not ensure_quiz_attempt_answer_table():
+        return jsonify({"message": "Quiz history storage is temporarily unavailable. Please retry."}), 503
+
     conn = None
     cursor = None
     try:
@@ -13852,7 +14163,18 @@ def submit_quiz(quiz_id):
             }
 
         cursor.execute(
-            "SELECT question_id, correct_option, explanation FROM quiz_question WHERE quiz_id = %s ORDER BY question_id ASC",
+            """SELECT question_id,
+                      question_text,
+                      option_a,
+                      option_b,
+                      option_c,
+                      option_d,
+                      correct_option,
+                      explanation,
+                      points
+               FROM quiz_question
+               WHERE quiz_id = %s
+               ORDER BY question_id ASC""",
             (quiz_id,),
         )
         questions = cursor.fetchall() or []
@@ -13881,6 +14203,42 @@ def submit_quiz(quiz_id):
             (quiz_id, current_auth_user_id(), correct_count, total_questions, percentage),
         )
         result_id = cursor.lastrowid
+        learner_id = current_auth_user_id()
+
+        for question_order, row in enumerate(questions, start=1):
+            question_id = int(row["question_id"])
+            correct_option = str(row.get("correct_option") or "").strip().upper()
+            selected_option = answers[question_id]
+            is_correct = selected_option == correct_option
+
+            cursor.execute(
+                """INSERT INTO quiz_attempt_answer
+                   (result_id, quiz_id, user_id, question_id, question_order,
+                    question_text, option_a, option_b, option_c, option_d,
+                    selected_option, correct_option, is_correct, explanation, points)
+                   VALUES
+                   (%s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s)""",
+                (
+                    result_id,
+                    quiz_id,
+                    learner_id,
+                    question_id,
+                    question_order,
+                    row.get("question_text") or "",
+                    row.get("option_a") or "",
+                    row.get("option_b") or "",
+                    row.get("option_c") or "",
+                    row.get("option_d") or "",
+                    selected_option,
+                    correct_option,
+                    1 if is_correct else 0,
+                    row.get("explanation") or "",
+                    int(row.get("points") or 1),
+                ),
+            )
+
         conn.commit()
 
         # Safe to reveal now that the attempt is scored and saved -- the

@@ -5,6 +5,7 @@ import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
 import '../styles/Quiz.css';
+import '../styles/QuizProgress.css';
 
 export default function QuizList() {
   const { user } = useAuth();
@@ -41,6 +42,12 @@ export default function QuizList() {
   const [loadingQuestions, setLoadingQuestions] = useState(false);
   const [showUnanswered, setShowUnanswered] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [attemptHistory, setAttemptHistory] = useState(null);
+  const [attemptHistoryLoading, setAttemptHistoryLoading] = useState(false);
+  const [attemptHistoryError, setAttemptHistoryError] = useState('');
+  const [historicalAttempt, setHistoricalAttempt] = useState(null);
+  const [historicalAttemptLoading, setHistoricalAttemptLoading] = useState(false);
+  const [historicalAttemptError, setHistoricalAttemptError] = useState('');
 
   const startedAtRef = useRef(null);
 
@@ -131,6 +138,77 @@ export default function QuizList() {
     }
   };
 
+  const fetchQuizAttempts = async (quizId) => {
+    if (!quizId) return;
+
+    try {
+      setAttemptHistoryLoading(true);
+      setAttemptHistoryError('');
+
+      const response = await api.get(`/quizzes/${quizId}/attempts`);
+      setAttemptHistory(response.data || null);
+    } catch (error) {
+      console.warn('Failed to load quiz attempt history:', error);
+      setAttemptHistory(null);
+      setAttemptHistoryError(
+        error.response?.data?.message ||
+        tOr('quiz.history.loadFailed', 'Could not load your previous attempts.')
+      );
+    } finally {
+      setAttemptHistoryLoading(false);
+    }
+  };
+
+  const handleReviewHistoricalAttempt = async (resultId) => {
+    if (!activeQuizId || !resultId) return;
+
+    try {
+      setHistoricalAttemptLoading(true);
+      setHistoricalAttemptError('');
+
+      const response = await api.get(
+        `/quizzes/${activeQuizId}/attempts/${resultId}`
+      );
+
+      if (!response.data?.review_available) {
+        setHistoricalAttempt(null);
+        setHistoricalAttemptError(
+          tOr(
+            'quiz.history.oldAttemptUnavailable',
+            'Detailed review is unavailable for this older attempt. New attempts will include full answer history.'
+          )
+        );
+        return;
+      }
+
+      setHistoricalAttempt(response.data);
+    } catch (error) {
+      console.warn('Failed to load historical quiz attempt:', error);
+      setHistoricalAttempt(null);
+      setHistoricalAttemptError(
+        error.response?.data?.message ||
+        tOr('quiz.history.reviewFailed', 'Could not load this attempt review.')
+      );
+    } finally {
+      setHistoricalAttemptLoading(false);
+    }
+  };
+
+  const formatAttemptDate = (value) => {
+    if (!value) return '';
+
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return String(value);
+
+    return parsed.toLocaleString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
   const activeQuiz = useMemo(
     () => quizItems.find((quiz) => quiz.id === activeQuizId) || null,
     [quizItems, activeQuizId]
@@ -174,8 +252,14 @@ export default function QuizList() {
     setSaveError('');
     setServerResult(null);
     setQuestionError('');
+    setHistoricalAttempt(null);
+    setHistoricalAttemptError('');
+    setAttemptHistory(null);
 
-    await fetchQuizQuestions(quizId);
+    await Promise.all([
+      fetchQuizQuestions(quizId),
+      fetchQuizAttempts(quizId),
+    ]);
   };
 
   const handleBeginQuestions = () => {
@@ -255,6 +339,7 @@ export default function QuizList() {
       );
       setSaveStatus('saved');
       setSubmitted(true);
+      await fetchQuizAttempts(activeQuizId);
     } catch (submitError) {
       console.warn('Quiz result save was not confirmed:', submitError);
       setSaveStatus('unsaved');
@@ -278,6 +363,8 @@ export default function QuizList() {
     setSaveStatus('idle');
     setSaveError('');
     setServerResult(null);
+    setHistoricalAttempt(null);
+    setHistoricalAttemptError('');
   };
 
   const handleBackToList = () => {
@@ -292,6 +379,10 @@ export default function QuizList() {
     setSaveError('');
     setServerResult(null);
     setQuestionError('');
+    setAttemptHistory(null);
+    setAttemptHistoryError('');
+    setHistoricalAttempt(null);
+    setHistoricalAttemptError('');
   };
 
   const answeredCount = Object.keys(selectedAnswers).length;
@@ -396,7 +487,11 @@ export default function QuizList() {
             <div className="row-between wrap-gap">
               <div>
                 <h2 className="quiz-session-title">{titleLabel(activeQuiz.title)}</h2>
-                {!showWelcome ? (
+                {historicalAttempt ? (
+                  <p className="muted" style={{ marginBottom: 0 }}>
+                    {tOr('quiz.history.reviewingAttempt', 'Reviewing previous attempt')}
+                  </p>
+                ) : !showWelcome ? (
                   <p className="muted" style={{ marginBottom: 0 }}>
                     {t('quiz.questionN', { n: currentQuestionIndex + 1, total: totalQuestions })}
                   </p>
@@ -415,7 +510,106 @@ export default function QuizList() {
             </div>
           </div>
 
-          {showWelcome ? (
+          {historicalAttempt ? (
+            <div className="card-like quiz-history-review">
+              <div className={`quiz-history-review-head ${historicalAttempt.passed ? 'is-pass' : 'is-fail'}`}>
+                <div>
+                  <span className="eyebrow">
+                    {tOr('quiz.history.previousAttempt', 'Previous Attempt')}
+                  </span>
+                  <h2>
+                    {historicalAttempt.percentage}% ·{' '}
+                    {historicalAttempt.passed
+                      ? t('quiz.result.pass')
+                      : t('quiz.result.fail')}
+                  </h2>
+                  <p className="muted" style={{ marginBottom: 0 }}>
+                    {historicalAttempt.score}/{historicalAttempt.total_questions}{' '}
+                    {tOr('quiz.history.correct', 'correct')}
+                    {historicalAttempt.completed_at
+                      ? ` · ${formatAttemptDate(historicalAttempt.completed_at)}`
+                      : ''}
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={() => {
+                    setHistoricalAttempt(null);
+                    setHistoricalAttemptError('');
+                  }}
+                >
+                  {tOr('quiz.history.backToProgress', 'Back to Progress')}
+                </button>
+              </div>
+
+              <div className="stack-gap top-gap">
+                {(historicalAttempt.review || []).map((entry, index) => {
+                  const selectedLetter = entry.selected_option;
+                  const correctLetter = entry.correct_option || entry.correct_answer || '';
+                  const options = Array.isArray(entry.options) ? entry.options : [];
+
+                  return (
+                    <div
+                      key={`${historicalAttempt.result_id}-${entry.question_id}-${index}`}
+                      className={`quiz-review-card quiz-rv-card ${
+                        entry.is_correct ? 'is-correct' : 'is-wrong'
+                      }`}
+                    >
+                      <h4 className="quiz-rv-question">
+                        <span className="quiz-rv-mark" aria-hidden="true">
+                          {entry.is_correct ? '✓' : '✗'}
+                        </span>
+                        {index + 1}. {entry.question}
+                      </h4>
+
+                      <ul className="quiz-rv-options">
+                        {options.map((option, optionIndex) => {
+                          const letter = String.fromCharCode(65 + optionIndex);
+                          const isChosen = selectedLetter === letter;
+                          const isAnswer = correctLetter === letter;
+                          let state = '';
+                          if (isAnswer) state = 'correct';
+                          else if (isChosen) state = 'wrong';
+
+                          return (
+                            <li
+                              key={letter}
+                              className={`quiz-rv-option ${state} ${
+                                isChosen ? 'chosen' : ''
+                              }`}
+                            >
+                              <span className="quiz-rv-letter">{letter}</span>
+                              <span className="quiz-rv-text">{option}</span>
+                              <span className="quiz-rv-tag">
+                                {isChosen && isAnswer
+                                  ? `✓ ${t('quiz.result.yourAnswer')}`
+                                  : null}
+                                {isChosen && !isAnswer
+                                  ? `✗ ${t('quiz.result.yourAnswer')}`
+                                  : null}
+                                {!isChosen && isAnswer
+                                  ? t('quiz.result.correctAnswer')
+                                  : null}
+                              </span>
+                            </li>
+                          );
+                        })}
+                      </ul>
+
+                      {entry.explanation ? (
+                        <div className="quiz-rv-explanation">
+                          <strong>{t('quiz.result.explanation')}:</strong>{' '}
+                          {entry.explanation}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : showWelcome ? (
             <div className="card-like quiz-welcome-card staff-quiz-welcome">
               <span className="eyebrow">
                 {tOr('quiz.prepare.kicker', 'Prepare before you start')}
@@ -541,6 +735,138 @@ export default function QuizList() {
               {loadingQuestions && <p role="status">{t('quiz.loadingQs')}</p>}
               {questionError && <p role="alert">{questionError}</p>}
               {!loadingQuestions && !questionError && totalQuestions === 0 && <p>{t('quiz.noQs')}</p>}
+
+              <section className="quiz-progress-history">
+                <div className="quiz-progress-history-head">
+                  <div>
+                    <span className="eyebrow">
+                      {tOr('quiz.history.title', 'Your Training Progress')}
+                    </span>
+                    <h3>{tOr('quiz.history.attemptHistory', 'Attempt History')}</h3>
+                  </div>
+
+                  {attemptHistory?.attempt_count > 0 ? (
+                    <span className="quiz-history-count">
+                      {attemptHistory.attempt_count}{' '}
+                      {attemptHistory.attempt_count === 1
+                        ? tOr('quiz.history.attempt', 'attempt')
+                        : tOr('quiz.history.attempts', 'attempts')}
+                    </span>
+                  ) : null}
+                </div>
+
+                {attemptHistoryLoading ? (
+                  <div className="quiz-history-empty">
+                    {tOr('quiz.history.loading', 'Loading your previous attempts...')}
+                  </div>
+                ) : attemptHistoryError ? (
+                  <div className="quiz-history-error" role="alert">
+                    {attemptHistoryError}
+                  </div>
+                ) : attemptHistory?.attempt_count > 0 ? (
+                  <>
+                    <div className="quiz-history-stats">
+                      <div>
+                        <span>{tOr('quiz.history.latest', 'Latest')}</span>
+                        <strong>{attemptHistory.latest_percentage}%</strong>
+                      </div>
+                      <div>
+                        <span>{tOr('quiz.history.best', 'Best')}</span>
+                        <strong>{attemptHistory.best_percentage}%</strong>
+                      </div>
+                      <div>
+                        <span>{tOr('quiz.history.attempts', 'Attempts')}</span>
+                        <strong>{attemptHistory.attempt_count}</strong>
+                      </div>
+                    </div>
+
+                    {attemptHistory.latest_wrong_count > 0 ? (
+                      <div className="quiz-history-revision-note">
+                        <strong>{tOr('quiz.history.revisionFocus', 'Revision focus')}</strong>
+                        <span>
+                          {tOr(
+                            'quiz.history.latestMistakes',
+                            `Review the ${attemptHistory.latest_wrong_count} question${
+                              attemptHistory.latest_wrong_count === 1 ? '' : 's'
+                            } you missed in your latest attempt before trying again.`
+                          )}
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="quiz-history-revision-note success">
+                        <strong>{tOr('quiz.history.strongResult', 'Strong result')}</strong>
+                        <span>
+                          {tOr(
+                            'quiz.history.noLatestMistakes',
+                            'You answered every question correctly in your latest attempt.'
+                          )}
+                        </span>
+                      </div>
+                    )}
+
+                    <div className="quiz-history-list">
+                      {(attemptHistory.attempts || []).map((attempt) => (
+                        <div key={attempt.result_id} className="quiz-history-row">
+                          <div className="quiz-history-row-main">
+                            <span className="quiz-history-attempt-number">
+                              #{attempt.attempt_number}
+                            </span>
+                            <div>
+                              <strong>{attempt.percentage}%</strong>
+                              <small>
+                                {attempt.score}/{attempt.total_questions}{' '}
+                                {tOr('quiz.history.correct', 'correct')}
+                                {attempt.completed_at
+                                  ? ` · ${formatAttemptDate(attempt.completed_at)}`
+                                  : ''}
+                              </small>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            className="secondary-btn quiz-history-review-btn"
+                            onClick={() =>
+                              handleReviewHistoricalAttempt(attempt.result_id)
+                            }
+                            disabled={
+                              historicalAttemptLoading || !attempt.review_available
+                            }
+                            title={
+                              attempt.review_available
+                                ? tOr('quiz.history.review', 'Review attempt')
+                                : tOr(
+                                    'quiz.history.oldAttemptUnavailable',
+                                    'Detailed review is unavailable for attempts completed before history tracking was added.'
+                                  )
+                            }
+                          >
+                            {attempt.review_available
+                              ? tOr('quiz.history.review', 'Review')
+                              : tOr('quiz.history.summaryOnly', 'Summary only')}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+
+                    {historicalAttemptError ? (
+                      <div className="quiz-history-error" role="alert">
+                        {historicalAttemptError}
+                      </div>
+                    ) : null}
+                  </>
+                ) : (
+                  <div className="quiz-history-empty">
+                    <strong>{tOr('quiz.history.firstAttempt', 'No attempts yet')}</strong>
+                    <span>
+                      {tOr(
+                        'quiz.history.firstAttemptHint',
+                        'Complete this quiz once and your progress will appear here.'
+                      )}
+                    </span>
+                  </div>
+                )}
+              </section>
 
               <div className="button-group wrap-gap top-gap">
                 <button type="button" className="secondary-btn" onClick={handleBackToList}>
