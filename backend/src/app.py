@@ -9461,6 +9461,12 @@ def ensure_chat_cancel_table(cursor):
     """)
 
 
+def chat_cancel_key(request_id):
+    # Scoped to the signed-in user, so cancelling only ever affects that
+    # user's own requests. Fits the VARCHAR(64) column: a UUID is 36 chars.
+    return f"{current_auth_user_id()}:{request_id}"
+
+
 def mark_chat_request_cancelled(request_id):
     request_id = str(request_id or "").strip()
     if not request_id:
@@ -9476,7 +9482,7 @@ def mark_chat_request_cancelled(request_id):
 
         cursor.execute(
             "INSERT IGNORE INTO chat_cancelled_requests (request_id) VALUES (%s)",
-            (request_id,)
+            (chat_cancel_key(request_id),)
         )
         # A cancelled request is only ever checked within seconds of being
         # marked, so anything older than 10 minutes is just leftover noise
@@ -9510,7 +9516,7 @@ def is_chat_request_cancelled(request_id):
 
         cursor.execute(
             "SELECT 1 FROM chat_cancelled_requests WHERE request_id = %s LIMIT 1",
-            (request_id,)
+            (chat_cancel_key(request_id),)
         )
         return cursor.fetchone() is not None
     except Exception as error:
