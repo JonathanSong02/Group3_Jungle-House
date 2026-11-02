@@ -24,6 +24,41 @@ const NOTION_OAUTH_BACKEND_URL = String(
 
 const NOTION_OAUTH_ORIGIN = new URL(NOTION_OAUTH_BACKEND_URL).origin;
 
+// The compare view shows stored article/Notion HTML to managers, so anything
+// executable must go first. Deliberately removes ONLY that: links, images,
+// video embeds, fonts, colours and checkboxes must look exactly as authored,
+// which is why this isn't the stricter sanitizer used on the other pages.
+function stripExecutableHtml(html) {
+  // A detached document: nothing parsed here runs or loads while being cleaned.
+  const wrapper = document.implementation.createHTMLDocument('').createElement('div');
+  wrapper.innerHTML = String(html || '');
+
+  wrapper.querySelectorAll('script, base, meta, animate, set').forEach((element) => element.remove());
+
+  wrapper.querySelectorAll('*').forEach((element) => {
+    Array.from(element.attributes).forEach((attribute) => {
+      const name = attribute.name.toLowerCase();
+      // Browsers ignore spaces and control characters inside a URL scheme.
+      const value = Array.from(attribute.value)
+        .filter((character) => character.charCodeAt(0) > 32)
+        .join('')
+        .toLowerCase();
+
+      if (
+        name.startsWith('on') ||
+        name === 'srcdoc' ||
+        value.startsWith('javascript:') ||
+        value.startsWith('vbscript:') ||
+        value.startsWith('data:text/html')
+      ) {
+        element.removeAttribute(attribute.name);
+      }
+    });
+  });
+
+  return wrapper.innerHTML;
+}
+
 export default function NotionSync() {
   const { user } = useAuth();
   const { t, tOr } = useLanguage();
@@ -1344,7 +1379,7 @@ export default function NotionSync() {
                         ) : (
                           <div
                             className="article-rich-content"
-                            dangerouslySetInnerHTML={{ __html: item.previous_content || '' }}
+                            dangerouslySetInnerHTML={{ __html: stripExecutableHtml(item.previous_content) }}
                           />
                         )}
                       </div>
@@ -1353,7 +1388,7 @@ export default function NotionSync() {
                         <div className="ns-version-label">{t('ns.fromNotion')}</div>
                         <div
                           className="article-rich-content"
-                          dangerouslySetInnerHTML={{ __html: item.proposed_content || '' }}
+                          dangerouslySetInnerHTML={{ __html: stripExecutableHtml(item.proposed_content) }}
                         />
                       </div>
                     </div>
