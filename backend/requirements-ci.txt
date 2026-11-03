@@ -1,0 +1,18 @@
+# Packages the backend TESTS import. Used only by .github/workflows/ci.yml:
+#
+#     pip install -r requirements-ci.txt -c requirements.txt
+#
+# No versions are repeated here. `-c requirements.txt` makes pip honour every pin in requirements.txt (Flask,
+# flask-cors, Werkzeug ...), so the two files cannot drift apart. Unpinned packages get the latest release,
+# exactly as on Railway.
+#
+# Left out on purpose: torch, sentence-transformers, pandas, scikit-learn, numpy, Pillow, gunicorn.
+# app.py imports predict_intent (pandas) and image_embedding_helper (torch) inside try/except, and the whole
+# suite passes without them. That saves several GB of downloads on every run.
+Flask
+flask-cors
+Werkzeug
+mysql-connector-python
+requests
+resend
+cryptography

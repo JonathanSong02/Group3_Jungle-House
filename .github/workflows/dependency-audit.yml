@@ -1,0 +1,70 @@
+name: Dependency audit
+
+# REPORT ONLY. Runs once a week and on demand (Actions tab -> "Dependency audit" -> Run workflow).
+# It never runs on a push or a pull request, so it can never block a merge or a deployment. A red run just means
+# "look at the log": a known vulnerability is listed in one of the dependencies. It changes nothing.
+on:
+  schedule:
+    - cron: "23 3 * * 1" # Mondays, 03:23 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  npm-audit:
+    name: npm audit (frontend, production dependencies)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: jungle-house-wiki-ai
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+
+      # Reads package-lock.json only; nothing is installed.
+      - name: Audit
+        run: npm audit --omit=dev
+
+  pip-audit:
+    name: pip-audit (backend)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install pip-audit
+        run: python -m pip install pip-audit
+
+      # Every exactly pinned line of requirements.txt (torch, pandas, Flask ...), looked up by name and version,
+      # so nothing heavy is installed. Lines without == (for example numpy>=1.26) cannot be looked up this way.
+      - name: Audit the pinned production requirements
+        run: |
+          grep -E '^[A-Za-z0-9_.-]+==' backend/requirements.txt > pinned-requirements.txt
+          pip-audit --no-deps --disable-pip -r pinned-requirements.txt
+
+      # The unpinned packages resolve to their latest release, so audit what that really installs.
+      # (pip itself is upgraded first so the venv's own bundled pip does not show up as a project finding.)
+      - name: Audit the packages the tests install
+        if: success() || failure()
+        run: |
+          python -m venv "$RUNNER_TEMP/ci-env"
+          "$RUNNER_TEMP/ci-env/bin/python" -m pip install --upgrade pip
+          "$RUNNER_TEMP/ci-env/bin/python" -m pip install -r backend/requirements-ci.txt -c backend/requirements.txt
+          pip-audit --path "$RUNNER_TEMP"/ci-env/lib/python3.12/site-packages
