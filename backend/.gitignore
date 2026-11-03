@@ -7,3 +7,5 @@ __pycache__/
 
 # Plan / undo files written by tools/notion_pending_cleanup.py (contain page titles and ids)
 tools/cleanup_output/
+# Schema snapshots and draft baselines written by tools/schema_snapshot.py / migrate.py (review before sharing)
+tools/schema_output/
