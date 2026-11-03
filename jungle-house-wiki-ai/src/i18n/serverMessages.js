@@ -71,6 +71,8 @@ const EXACT = {
   "Notion did not respond in time.": 'srv.e67',
   "The database could not save this page.": 'srv.e68',
   "Notion is limiting requests right now (HTTP 429). Try again in a minute.": 'srv.e69',
+  "The sync stopped unexpectedly. You can start it again.": 'srv.e70',
+  "Failed to load the sync status.": 'srv.e71',
 };
 
 const PATTERNS = [

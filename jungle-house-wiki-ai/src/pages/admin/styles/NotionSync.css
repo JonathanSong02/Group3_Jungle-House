@@ -1370,3 +1370,151 @@
   font-size:11px;
   overflow-wrap:anywhere;
 }
+
+/* ==========================================================================
+   BACKGROUND CHECK — running state, progress and last-run line
+   The check runs on the server (it can take minutes); the page shows it as
+   "running" and then the result. Small-screen safe: everything wraps.
+   ========================================================================== */
+
+.ns-run-status{
+  margin-top:14px;
+  padding:14px 16px;
+  color:var(--ns-ink);
+  background:rgba(255,243,218,.72);
+  border:1px solid rgba(201,138,37,.32);
+  border-radius:14px;
+}
+
+.ns-run-head{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:8px 10px;
+  min-width:0;
+}
+
+.ns-run-head strong{
+  font-size:13px;
+  font-weight:850;
+}
+
+.ns-run-spinner{
+  flex:0 0 auto;
+  width:14px;
+  height:14px;
+  border:2px solid rgba(201,138,37,.3);
+  border-top-color:var(--ns-gold);
+  border-radius:50%;
+  animation:ns-spin .8s linear infinite;
+}
+
+.ns-run-trigger{
+  margin-left:auto;
+  padding:3px 9px;
+  color:#76501b;
+  background:#fff;
+  border:1px solid rgba(201,138,37,.3);
+  border-radius:999px;
+  font-size:10.5px;
+  font-weight:800;
+}
+
+.ns-run-bar{
+  height:9px;
+  margin-top:11px;
+  overflow:hidden;
+  background:rgba(201,138,37,.18);
+  border-radius:999px;
+}
+
+.ns-run-bar>i{
+  display:block;
+  height:100%;
+  min-width:4px;
+  background:linear-gradient(90deg,var(--ns-gold),#e0a44a);
+  border-radius:999px;
+  transition:width .4s ease;
+}
+
+.ns-run-meta{
+  margin:8px 0 0;
+  color:var(--ns-muted);
+  font-size:11.5px;
+  font-weight:700;
+}
+
+.ns-run-note{
+  margin:10px 0 0;
+  padding:9px 11px;
+  color:#76501b;
+  background:#fff;
+  border:1px solid rgba(201,138,37,.28);
+  border-radius:10px;
+  font-size:11.5px;
+  font-weight:750;
+  overflow-wrap:anywhere;
+}
+
+.ns-last-run{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:6px 10px;
+  margin-top:14px;
+  color:var(--ns-muted);
+  font-size:11.5px;
+  font-weight:700;
+  overflow-wrap:anywhere;
+}
+
+.ns-last-run-label{
+  color:var(--ns-ink);
+  font-weight:850;
+}
+
+.ns-run-pill{
+  padding:3px 10px;
+  border:1px solid transparent;
+  border-radius:999px;
+  font-size:10.5px;
+  font-weight:850;
+}
+
+.ns-run-pill.done{
+  color:#3b6b4a;
+  background:rgba(79,132,96,.14);
+  border-color:rgba(79,132,96,.3);
+}
+
+.ns-run-pill.failed{
+  color:var(--ns-red);
+  background:rgba(168,78,69,.1);
+  border-color:rgba(168,78,69,.3);
+}
+
+.ns-run-error{
+  color:var(--ns-red);
+  border-color:rgba(168,78,69,.3);
+  overflow-wrap:anywhere;
+}
+
+@media (max-width:520px){
+  .ns-run-status{
+    padding:12px;
+  }
+
+  .ns-run-trigger{
+    margin-left:0;
+  }
+}
+
+@media (prefers-reduced-motion:reduce){
+  .ns-run-spinner{
+    animation:none;
+  }
+
+  .ns-run-bar>i{
+    transition:none;
+  }
+}

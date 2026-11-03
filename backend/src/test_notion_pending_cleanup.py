@@ -11,11 +11,14 @@ Run (from backend/src):
     python -m unittest test_notion_pending_cleanup -v
 """
 
+import contextlib
 import csv
 import re
 import sqlite3
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from datetime import datetime
 from pathlib import Path
@@ -357,6 +360,61 @@ class PendingCleanupTests(unittest.TestCase):
         self.assertFalse(self.undo_log.exists())
 
         self.assertEqual(self.run_tool(apply=True), 0, "works once the sync has finished")
+
+    def service_on_test_db(self):
+        """Point the sync service (not only the cleanup tool) at this SQLite test database."""
+        stack = contextlib.ExitStack()
+        stack.enter_context(patch.object(svc, "get_db_connection", lambda: _Conn(self.dbfile)))
+        stack.enter_context(patch.object(svc, "ensure_notion_sync_tables", lambda cursor: None))
+        return stack
+
+    def test_apply_refuses_while_a_real_background_sync_is_running(self):
+        gate, entered = threading.Event(), threading.Event()
+
+        def slow_discover(_token):
+            entered.set()
+            gate.wait(20)
+            return []
+
+        self.item("p-1", 1)
+        self.item("p-1", 2)
+        before = self.snapshot("notion_pending_updates")
+
+        with self.service_on_test_db(), patch.object(svc, "discover_notion_content", slow_discover):
+            started = svc.start_background_check("t", 1, self.dir)
+            self.assertTrue(started["started"])
+            self.assertTrue(entered.wait(5))
+            try:
+                code = self.run_tool(apply=True)
+            finally:
+                gate.set()
+
+        self.assertEqual(code, 2)
+        self.assertEqual(self.snapshot("notion_pending_updates"), before)
+        self.assertIn("sync is running", self.output().lower())
+
+        deadline = time.monotonic() + 10
+        while svc._CHECK_RUN_LOCK.locked() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertEqual(self.run_tool(apply=True), 0, "works once the sync has finished")
+
+    def test_a_sync_cannot_start_while_the_cleanup_is_applying(self):
+        self.item("p-1", 1)
+        self.item("p-1", 2)
+        attempts = []
+        real = svc.trash_pending_update
+
+        def trash_then_try_to_sync(cursor, pending_id, actor_id):
+            if not attempts:
+                attempts.append(svc.start_background_check("t", 1, self.dir))
+            return real(cursor, pending_id, actor_id)
+
+        with self.service_on_test_db(), patch.object(svc, "trash_pending_update", side_effect=trash_then_try_to_sync):
+            code = self.run_tool(apply=True)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(attempts[0]["outcome"], "already_running", "the cleanup holds the same lock as the sync")
+        self.assertEqual(self.q("SELECT status FROM notion_sync_jobs"), [], "and no run was recorded")
 
     def test_apply_refuses_when_the_lock_cannot_be_taken_at_all(self):
         self.item("p-1", 1)

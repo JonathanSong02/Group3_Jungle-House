@@ -4,6 +4,14 @@ import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../i18n/LanguageContext';
 import { translateServerMessage } from '../../i18n/serverMessages';
+import {
+  formatElapsed,
+  getPollDelayMs,
+  isLongRunning,
+  progressPercent,
+  shouldKeepPolling,
+  shouldShowRetryNote,
+} from '../../utils/notionSyncRun';
 import './styles/NotionSync.css';
 
 // Notion's redirect_uri has to be the backend's own real, stable public
@@ -70,7 +78,16 @@ export default function NotionSync() {
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
-  const [checking, setChecking] = useState(false);
+  // "Check for Updates" runs on the server and can take minutes -- longer than
+  // the browser waits for one request -- so the page does not wait on it. It
+  // shows the latest run reported by /notion-sync/check/status instead
+  // (running / done / failed), whoever started it (this manager, another one,
+  // or the automatic check), and polls while one is running.
+  const [starting, setStarting] = useState(false);
+  const [syncRun, setSyncRun] = useState(null);
+  const [statusLoaded, setStatusLoaded] = useState(false);
+  const [pollFailures, setPollFailures] = useState(0);
+  const [pollTick, setPollTick] = useState(0);
 
   const [message, setMessage] = useState(() => {
     const params = new URLSearchParams(window.location.search);
@@ -82,7 +99,6 @@ export default function NotionSync() {
     return '';
   });
 
-  const [checkResult, setCheckResult] = useState(null);
   const [jobs, setJobs] = useState([]);
   const [pending, setPending] = useState([]);
   const [expandedPendingId, setExpandedPendingId] = useState(null);
@@ -115,7 +131,7 @@ export default function NotionSync() {
 
   const oauthPopupRef = useRef(null);
   const oauthPopupPollRef = useRef(null);
-  // setChecking() only takes effect on the next render, so two clicks in the
+  // setStarting() only takes effect on the next render, so two clicks in the
   // same tick could both start a check. The ref flips immediately.
   const checkingRef = useRef(false);
 
@@ -247,22 +263,54 @@ export default function NotionSync() {
     }
   };
 
+  // Asks the server for the latest sync run. Returns the run, null when no sync
+  // has ever run, or undefined when the server could not be reached (the sync
+  // itself is unaffected; the caller keeps what it knew and the poll backs off).
+  const fetchRunStatus = async () => {
+    try {
+      const response = await api.get('/notion-sync/check/status');
+      const run = response.data?.run || null;
+      setSyncRun(run);
+      setPollFailures(0);
+      return run;
+    } catch (error) {
+      console.error('Fetch Notion sync status error:', error);
+      setPollFailures((count) => count + 1);
+      return undefined;
+    } finally {
+      setStatusLoaded(true);
+      setPollTick((tick) => tick + 1);
+    }
+  };
+
   const handleCheckForUpdates = async ({ silent } = {}) => {
     if (checkingRef.current) return;
     checkingRef.current = true;
 
     try {
-      setChecking(true);
+      setStarting(true);
       if (!silent) setMessage('');
-      setCheckResult(null);
 
+      // Returns within moments: the server starts the check in the background.
       const response = await api.post('/notion-sync/check', {
         user_id: actorId,
       });
 
-      setCheckResult(response.data);
-      if (!silent) setMessage(tm(response.data?.message) || '');
-      await Promise.all([fetchJobs(), fetchPending(), fetchObsolete()]);
+      if (response.data?.alreadyRunning && !silent) {
+        // Not an error: someone (or the automatic check) already started one.
+        setMessage(t('ns.alreadyRunning'));
+      }
+
+      // Either way, the status route says what is really going on.
+      const run = await fetchRunStatus();
+      if (run === undefined) {
+        // The check did start; only the status request failed. Show it as
+        // running so the polling carries on instead of looking idle.
+        setSyncRun({ state: 'running', trigger: 'manual', elapsedSeconds: 0, progress: null, summary: null });
+      } else if (run && run.state !== 'running') {
+        // A small workspace can finish before the first status answer.
+        refreshAfterRun(run);
+      }
     } catch (error) {
       console.error('Check Notion for updates error:', error);
       if (!silent) {
@@ -276,15 +324,9 @@ export default function NotionSync() {
         // error text while still looking "connected".
         fetchConfig();
       }
-      if (error.response?.data?.alreadyRunning) {
-        // Another check (automatic or by another manager) is in progress --
-        // show what it has queued so far instead of leaving the lists stale.
-        fetchJobs();
-        fetchPending();
-      }
     } finally {
       checkingRef.current = false;
-      setChecking(false);
+      setStarting(false);
     }
   };
 
@@ -325,6 +367,9 @@ export default function NotionSync() {
     fetchTrashed();
     fetchObsolete();
     fetchAppConfig();
+    // A sync may already be running (started earlier, by another manager, or
+    // by the automatic check) -- or have finished while this page was closed.
+    fetchRunStatus();
 
     if (connected) {
       setMessage(t('ns.connectedOk'));
@@ -358,6 +403,52 @@ export default function NotionSync() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const syncState = syncRun?.state || null;
+  const isRunning = starting || syncState === 'running';
+
+  // While a run is going, ask for its status again after a delay that grows
+  // with the run's age (and when the tab is hidden or the server is
+  // unreachable). Each finished request re-runs this effect (pollTick), which
+  // schedules the next one; leaving the page or the run ending clears it.
+  useEffect(() => {
+    // Also keeps trying (quietly) when the last status could not be loaded --
+    // never treated as a failed sync, just "ask again in a moment".
+    if (!shouldKeepPolling({ state: syncState, failures: pollFailures })) return undefined;
+
+    const timer = window.setTimeout(
+      fetchRunStatus,
+      getPollDelayMs({
+        elapsedSeconds: syncRun?.elapsedSeconds,
+        hidden: typeof document !== 'undefined' && document.hidden,
+        failures: pollFailures,
+      })
+    );
+
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncState, pollTick, pollFailures]);
+
+  // The run this page was watching just ended: bring the lists up to date once
+  // (a run that was already over by the first status answer is handled in
+  // handleCheckForUpdates).
+  const refreshAfterRun = (run) => {
+    fetchJobs();
+    fetchPending();
+    fetchObsolete();
+    if (run?.reconnectRequired) fetchConfig();
+  };
+
+  const previousSyncStateRef = useRef(null);
+  useEffect(() => {
+    const previous = previousSyncStateRef.current;
+    previousSyncStateRef.current = syncState;
+
+    if (previous === 'running' && (syncState === 'done' || syncState === 'failed')) {
+      refreshAfterRun(syncRun);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncState]);
 
   const handleConnect = async () => {
     setConnecting(true);
@@ -427,7 +518,7 @@ export default function NotionSync() {
 
       setMessage(t('ns.ok.disconnected'));
       setConfig(null);
-      setCheckResult(null);
+      setSyncRun(null);
       setPending([]);
     } catch (error) {
       console.error('Disconnect Notion error:', error);
@@ -1005,11 +1096,11 @@ export default function NotionSync() {
           <button
             className="ns-sync-btn"
             type="button"
-            disabled={checking || !config?.connected}
-            aria-busy={checking}
+            disabled={isRunning || !config?.connected}
+            aria-busy={isRunning}
             onClick={() => handleCheckForUpdates()}
           >
-            {checking ? t('ns.checking') : t('ns.checkUpdates')}
+            {isRunning ? t('ns.checking') : t('ns.checkUpdates')}
           </button>
 
           {needsReconnect ? (
@@ -1018,55 +1109,121 @@ export default function NotionSync() {
             </div>
           ) : null}
 
-          {checkResult ? (
-            <div className="ns-sync-result-grid">
-              <div>
-                <span>{t('ns.result.new')}</span>
-                <strong>{checkResult.new ?? 0}</strong>
+          {isRunning ? (
+            <div className="ns-run-status" role="status" aria-live="polite">
+              <div className="ns-run-head">
+                <span className="ns-run-spinner" aria-hidden="true" />
+                <strong>{t('ns.checking')}</strong>
+                {syncState === 'running' && syncRun?.trigger ? (
+                  <span className="ns-run-trigger">{t(`ns.trigger.${syncRun.trigger}`)}</span>
+                ) : null}
               </div>
-              <div>
-                <span>{t('ns.result.flagged')}</span>
-                {/* Includes changes refreshed in place because the page was edited again before review. */}
-                <strong>{(checkResult.flagged ?? 0) + (checkResult.refreshed ?? 0)}</strong>
-              </div>
-              <div>
-                <span>{t('ns.result.unchanged')}</span>
-                <strong>{checkResult.unchanged ?? 0}</strong>
-              </div>
-              <div className={Number(checkResult.failed) > 0 ? 'failed' : ''}>
-                <span>{t('ns.result.failed')}</span>
-                <strong>{checkResult.failed ?? 0}</strong>
-              </div>
-              {Number(checkResult.inaccessible) > 0 ? (
-                <div className="failed">
-                  <span>{t('ns.result.inaccessible')}</span>
-                  <strong>{checkResult.inaccessible}</strong>
-                </div>
-              ) : null}
-            </div>
-          ) : (
-            <div className="ns-sync-note">
-              <span>{t('ns.safeRerun')}</span>
-            </div>
-          )}
 
-          {Array.isArray(checkResult?.failedItems) && checkResult.failedItems.length > 0 ? (
-            <div className="ns-failed-list" role="alert">
-              <strong>{t('ns.failedHeading', { n: checkResult.failed ?? checkResult.failedItems.length })}</strong>
-              <ul>
-                {checkResult.failedItems.map((item, index) => (
-                  <li key={`${item.pageId || 'page'}-${index}`}>
-                    <span className="ns-failed-title">{item.title || t('ns.untitled')}</span>
-                    <span className="ns-failed-reason">{tm(item.reason)}</span>
-                  </li>
-                ))}
-              </ul>
+              {progressPercent(syncRun?.progress) !== null ? (
+                <>
+                  <div
+                    className="ns-run-bar"
+                    role="progressbar"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={progressPercent(syncRun.progress)}
+                  >
+                    <i style={{ width: `${progressPercent(syncRun.progress)}%` }} />
+                  </div>
+                  <p className="ns-run-meta">
+                    {t('ns.running.progress', { done: syncRun.progress.processed, total: syncRun.progress.total })}
+                  </p>
+                </>
+              ) : (
+                <p className="ns-run-meta">{t('ns.running.starting')}</p>
+              )}
+
+              {syncState === 'running' ? (
+                <p className="ns-run-meta">{t('ns.running.elapsed', { time: formatElapsed(syncRun?.elapsedSeconds) })}</p>
+              ) : null}
+
+              <p className="ns-run-meta">{t('ns.running.leave')}</p>
+
+              {isLongRunning(syncRun) ? (
+                <p className="ns-run-note">{t('ns.running.longer')}</p>
+              ) : null}
+
+              {shouldShowRetryNote({ state: syncState, failures: pollFailures }) ? (
+                <p className="ns-run-note">{t('ns.running.retry')}</p>
+              ) : null}
             </div>
           ) : null}
 
-          {checkResult?.inaccessible > 0 ? (
+          {!isRunning && syncRun ? (
+            <>
+              <div className="ns-last-run">
+                <span className="ns-last-run-label">{t('ns.lastRun')}</span>
+                <span className={`ns-run-pill ${syncState}`}>
+                  {syncState === 'done' ? t('ns.lastRun.done') : t('ns.lastRun.failed')}
+                </span>
+                {syncRun.finishedAt ? <span>{syncRun.finishedAt}</span> : null}
+                {syncRun.trigger ? <span>{t(`ns.trigger.${syncRun.trigger}`)}</span> : null}
+              </div>
+
+              {syncState === 'failed' ? (
+                <div className="ns-sync-note ns-run-error" role="alert">
+                  <span>{tm(syncRun.errorMessage) || t('ns.err.check')}</span>
+                </div>
+              ) : null}
+
+              {syncState === 'done' && syncRun.summary ? (
+                <div className="ns-sync-result-grid">
+                  <div>
+                    <span>{t('ns.result.new')}</span>
+                    <strong>{syncRun.summary.new ?? 0}</strong>
+                  </div>
+                  <div>
+                    <span>{t('ns.result.flagged')}</span>
+                    {/* Includes changes refreshed in place because the page was edited again before review. */}
+                    <strong>{syncRun.summary.updated ?? 0}</strong>
+                  </div>
+                  <div>
+                    <span>{t('ns.result.unchanged')}</span>
+                    <strong>{syncRun.summary.skipped ?? 0}</strong>
+                  </div>
+                  <div className={Number(syncRun.summary.failed) > 0 ? 'failed' : ''}>
+                    <span>{t('ns.result.failed')}</span>
+                    <strong>{syncRun.summary.failed ?? 0}</strong>
+                  </div>
+                  {Number(syncRun.summary.inaccessible) > 0 ? (
+                    <div className="failed">
+                      <span>{t('ns.result.inaccessible')}</span>
+                      <strong>{syncRun.summary.inaccessible}</strong>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {Array.isArray(syncRun.summary?.failedItems) && syncRun.summary.failedItems.length > 0 ? (
+                <div className="ns-failed-list" role="alert">
+                  <strong>{t('ns.failedHeading', { n: syncRun.summary.failed ?? syncRun.summary.failedItems.length })}</strong>
+                  <ul>
+                    {syncRun.summary.failedItems.map((item, index) => (
+                      <li key={`${item.pageId || 'page'}-${index}`}>
+                        <span className="ns-failed-title">{item.title || t('ns.untitled')}</span>
+                        <span className="ns-failed-reason">{tm(item.reason)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
+              {syncState === 'done' && syncRun.summary?.inaccessible > 0 ? (
+                <div className="ns-sync-note">
+                  <span>{t('ns.inaccessibleNote')}</span>
+                </div>
+              ) : null}
+            </>
+          ) : null}
+
+          {!isRunning && !syncRun && statusLoaded ? (
             <div className="ns-sync-note">
-              <span>{t('ns.inaccessibleNote')}</span>
+              <span>{t('ns.safeRerun')}</span>
             </div>
           ) : null}
         </section>

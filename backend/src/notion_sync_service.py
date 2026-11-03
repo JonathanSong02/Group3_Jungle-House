@@ -286,6 +286,26 @@ def ensure_notion_sync_tables(cursor):
         )
     """)
 
+    # A sync run is now recorded as soon as it starts (status 'running') and
+    # updated until it ends, instead of only being written at the end -- so the
+    # Notion Sync page can show "running" and the result without holding one
+    # HTTP request open. last_heartbeat lets a run whose process died be
+    # detected; details is a small JSON text (progress while running, the
+    # summary and failed pages when done); trigger_source is manual/auto.
+    # Nullable additions only: existing rows and code are unaffected.
+    jobs_columns = {
+        "last_heartbeat": "ALTER TABLE notion_sync_jobs ADD COLUMN last_heartbeat DATETIME NULL",
+        "trigger_source": "ALTER TABLE notion_sync_jobs ADD COLUMN trigger_source VARCHAR(20) NULL",
+        "details": "ALTER TABLE notion_sync_jobs ADD COLUMN details TEXT NULL",
+    }
+    existing_jobs_columns = {
+        row["Field"] if isinstance(row, dict) else row[0]
+        for row in _describe_table(cursor, "notion_sync_jobs")
+    }
+    for column_name, statement in jobs_columns.items():
+        if column_name not in existing_jobs_columns:
+            cursor.execute(statement)
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS notion_oauth_states (
             state VARCHAR(64) PRIMARY KEY,
@@ -1154,7 +1174,22 @@ def _normalize_notion_edited_time(last_edited_time):
 _CHECK_RUN_LOCK = threading.Lock()
 _DB_CHECK_LOCK_NAME = "jungle_house_notion_check"
 ALREADY_RUNNING_MESSAGE = "Another sync is already running."
+RECONNECT_MESSAGE = "Your Notion connection needs to be renewed. Please reconnect Notion."
+STALE_RUN_MESSAGE = "The sync stopped unexpectedly. You can start it again."
 MAX_REPORTED_FAILED_PAGES = 25
+
+# A running sync writes a heartbeat to its notion_sync_jobs row at least this
+# often (checked once per page). A row whose heartbeat stops is a run whose
+# process died (deploy, crash, OOM kill) and must not read "running" forever:
+#  - quiet for CHECK_STALE_AFTER_SECONDS             -> dead, whatever else we know;
+#  - quiet for CHECK_STALE_IF_UNLOCKED_SECONDS while the MySQL sync lock is
+#    free (a live run always holds it)                -> dead, sooner.
+CHECK_HEARTBEAT_EVERY_SECONDS = 15
+CHECK_STALE_AFTER_SECONDS = 600
+CHECK_STALE_IF_UNLOCKED_SECONDS = 120
+# How long start_background_check waits for the run to report that it really
+# started (or was refused by another process) before answering anyway.
+CHECK_CLAIM_WAIT_SECONDS = 15
 
 
 class NotionCheckAlreadyRunning(Exception):
@@ -1189,6 +1224,203 @@ def _release_db_check_lock(cursor):
     except Exception:
         # The lock is released when the connection closes anyway.
         pass
+
+
+def _db_check_lock_is_free(cursor):
+    """True: nobody holds the sync lock. False: a live run (here or in another process) does. None: can't tell."""
+    try:
+        cursor.execute("SELECT IS_FREE_LOCK(%s) AS free", (_DB_CHECK_LOCK_NAME,))
+        row = cursor.fetchone()
+        free = row["free"] if isinstance(row, dict) else row[0]
+    except Exception:
+        return None
+
+    if free == 1:
+        return True
+    if free == 0:
+        return False
+    return None
+
+
+# =========================
+# SYNC RUN RECORD (one notion_sync_jobs row per run: written when the run
+# starts, kept fresh while it works, finished when it ends -- this is what the
+# Notion Sync page reads, so it never has to hold an HTTP request open)
+# =========================
+def _open_run(cursor, actor_id, trigger):
+    cursor.execute("""
+        INSERT INTO notion_sync_jobs (status, created_by, trigger_source, last_heartbeat)
+        VALUES ('running', %s, %s, NOW())
+    """, (actor_id, trigger))
+    return cursor.lastrowid
+
+
+def _close_orphaned_runs(cursor):
+    """Call only while holding the sync lock: then no other run is alive, so a row still 'running' is a corpse."""
+    cursor.execute("""
+        UPDATE notion_sync_jobs
+        SET status = 'failed', completed_at = NOW(), error_message = %s
+        WHERE status = 'running'
+    """, (STALE_RUN_MESSAGE,))
+
+
+def _finish_run(cursor, run_id, status, counts, error_message, details):
+    cursor.execute("""
+        UPDATE notion_sync_jobs
+        SET status = %s, imported_count = %s, updated_count = %s, skipped_count = %s,
+            failed_count = %s, error_message = %s, completed_at = NOW(),
+            last_heartbeat = NOW(), details = %s
+        WHERE id = %s
+    """, (status, *counts, error_message, details, run_id))
+
+
+class _RunProgress:
+    """Keeps the run's heartbeat and "N of M pages" fresh while it works (throttled, never raises)."""
+
+    def __init__(self, conn, cursor, run_id):
+        self.conn = conn
+        self.cursor = cursor
+        self.run_id = run_id
+        self.total = None
+        self._last = None
+
+    def beat(self, processed=0, force=False):
+        if self.run_id is None:
+            return
+
+        now = time.monotonic()
+        if not force and self._last is not None and now - self._last < CHECK_HEARTBEAT_EVERY_SECONDS:
+            return
+        self._last = now
+
+        try:
+            progress = None if self.total is None else {"processed": processed, "total": self.total}
+            self.cursor.execute("""
+                UPDATE notion_sync_jobs
+                SET last_heartbeat = NOW(), details = %s
+                WHERE id = %s AND status = 'running'
+            """, (json.dumps({"progress": progress}), self.run_id))
+            self.conn.commit()
+        except Exception as error:
+            print("NOTION HEARTBEAT ERROR:", type(error).__name__)
+
+
+def _read_latest_run(cursor):
+    cursor.execute("""
+        SELECT id, status, trigger_source, started_at, completed_at, last_heartbeat,
+               imported_count, updated_count, skipped_count, failed_count, error_message, details,
+               TIMESTAMPDIFF(SECOND, started_at, NOW()) AS elapsed_seconds,
+               TIMESTAMPDIFF(SECOND, started_at, completed_at) AS duration_seconds,
+               TIMESTAMPDIFF(SECOND, last_heartbeat, NOW()) AS heartbeat_age_seconds,
+               TIMESTAMPDIFF(SECOND, completed_at, NOW()) AS finished_ago_seconds
+        FROM notion_sync_jobs
+        ORDER BY id DESC
+        LIMIT 1
+    """)
+    return cursor.fetchone()
+
+
+def _format_run_time(value):
+    return value.strftime("%d/%m/%Y %I:%M %p") if hasattr(value, "strftime") else None
+
+
+def _parse_run_details(raw):
+    try:
+        parsed = json.loads(raw) if raw else {}
+        return parsed if isinstance(parsed, dict) else {}
+    except (TypeError, ValueError):
+        return {}
+
+
+def get_check_status(conn):
+    """
+    The latest sync run (manual or automatic) for the Notion Sync page:
+    {"run": None} before any run, else {"run": {state: running|done|failed, ...}}.
+
+    Cheap on purpose -- the page polls it every few seconds -- so it does not
+    run the full table setup; it only does so if the jobs table / its new
+    columns turn out to be missing. A run that says 'running' but whose
+    process is gone is settled here as failed (and reported as stale), so the
+    page never shows a sync that will never finish.
+    """
+    cursor = conn.cursor(dictionary=True)
+    try:
+        return _check_status_from(conn, cursor)
+    finally:
+        cursor.close()
+
+
+def _check_status_from(conn, cursor):
+    try:
+        row = _read_latest_run(cursor)
+    except mysql.connector.Error as error:
+        if getattr(error, "errno", None) not in (1146, 1054):
+            raise
+        ensure_notion_sync_tables(cursor)
+        row = _read_latest_run(cursor)
+
+    if row is None:
+        return {"run": None}
+
+    stale = False
+    if row["status"] == "running":
+        quiet = row.get("heartbeat_age_seconds")
+        if quiet is None:
+            quiet = row.get("elapsed_seconds") or 0
+        if quiet > CHECK_STALE_AFTER_SECONDS or (
+            quiet > CHECK_STALE_IF_UNLOCKED_SECONDS and _db_check_lock_is_free(cursor) is True
+        ):
+            cursor.execute("""
+                UPDATE notion_sync_jobs
+                SET status = 'failed', completed_at = NOW(), error_message = %s
+                WHERE id = %s AND status = 'running'
+            """, (STALE_RUN_MESSAGE, row["id"]))
+            conn.commit()
+            stale = True
+            row = _read_latest_run(cursor)
+
+    status = row["status"]
+    state = "running" if status == "running" else "done" if status == "completed" else "failed"
+    details = _parse_run_details(row.get("details"))
+    summary = None
+    progress = None
+
+    if state == "running":
+        progress = details.get("progress")
+    else:
+        summary = details.get("summary")
+        if summary is None:
+            # A row written before runs were tracked: rebuild it from the counters.
+            summary = {
+                "new": row.get("imported_count") or 0,
+                "updated": row.get("updated_count") or 0,
+                "skipped": row.get("skipped_count") or 0,
+                "failed": row.get("failed_count") or 0,
+                "inaccessible": 0,
+                "failedItems": [],
+            }
+
+    error_message = None
+    if state == "failed":
+        error_message = RECONNECT_MESSAGE if status == "reconnect_required" else (row.get("error_message") or STALE_RUN_MESSAGE)
+
+    return {
+        "run": {
+            "id": row["id"],
+            "state": state,
+            "trigger": row.get("trigger_source"),
+            "stale": stale,
+            "startedAt": _format_run_time(row.get("started_at")),
+            "finishedAt": _format_run_time(row.get("completed_at")),
+            "elapsedSeconds": row.get("elapsed_seconds") if state == "running" else row.get("duration_seconds"),
+            "secondsSinceHeartbeat": row.get("heartbeat_age_seconds") if state == "running" else None,
+            "finishedAgoSeconds": row.get("finished_ago_seconds") if state != "running" else None,
+            "progress": progress,
+            "summary": summary,
+            "errorMessage": error_message,
+            "reconnectRequired": status == "reconnect_required" or bool(details.get("reconnectRequired")),
+        }
+    }
 
 
 def _check_result(status, error_message=None):
@@ -1312,12 +1544,17 @@ def _stage_pending_item(cursor, page_id, article_id, title, content_html,
     return cursor.lastrowid, None
 
 
-def check_for_notion_updates(token, actor_id, upload_folder, release_unused_uploads=None):
+def check_for_notion_updates(token, actor_id, upload_folder, release_unused_uploads=None, trigger="manual"):
     """
-    Runs one "Check for Updates" -- see _run_check_for_notion_updates for what
-    it does per page. Only one run is allowed at a time: if another is
-    already in progress (here, or in another process via a MySQL lock) this
-    returns immediately with status "already_running" and changes nothing.
+    Runs one "Check for Updates" and waits for it to finish -- see
+    _run_check_for_notion_updates for what it does per page. Only one run is
+    allowed at a time: if another is already in progress (here, or in another
+    process via a MySQL lock) this returns immediately with status
+    "already_running" and changes nothing.
+
+    This is what the automatic background loop calls (trigger="auto"). A
+    manager's click uses start_background_check instead, which runs the very
+    same code on a thread so the HTTP request does not have to wait for it.
 
     release_unused_uploads(row, cursor), if given, is called after a queued
     item was refreshed in place, with that item's replaced content, so the
@@ -1328,12 +1565,104 @@ def check_for_notion_updates(token, actor_id, upload_folder, release_unused_uplo
         return _check_result("already_running", ALREADY_RUNNING_MESSAGE)
 
     try:
-        return _run_check_for_notion_updates(token, actor_id, upload_folder, release_unused_uploads)
+        return _run_check_for_notion_updates(token, actor_id, upload_folder, release_unused_uploads, trigger)
     finally:
         _CHECK_RUN_LOCK.release()
 
 
-def _run_check_for_notion_updates(token, actor_id, upload_folder, release_unused_uploads):
+class _RunClaim:
+    """
+    Lets the thread that starts a background run learn, within a moment,
+    whether the run really started (it holds both locks and has its record),
+    was refused because another process already runs one, or failed to start
+    -- instead of answering the browser before it knows.
+    """
+
+    def __init__(self):
+        self.event = threading.Event()
+        self.outcome = None
+        self.run_id = None
+        self.message = None
+        self._guard = threading.Lock()
+
+    def _settle(self, outcome, run_id=None, message=None):
+        with self._guard:
+            if self.event.is_set():
+                return  # the first answer wins
+            self.outcome, self.run_id, self.message = outcome, run_id, message
+            self.event.set()
+
+    def started(self, run_id):
+        self._settle("started", run_id)
+
+    def refused(self, outcome, message=None):
+        self._settle(outcome, None, message)
+
+
+def start_background_check(token, actor_id, upload_folder, release_unused_uploads=None,
+                           trigger="manual", on_finished=None):
+    """
+    Starts "Check for Updates" on its own thread and returns right away, so a
+    large Notion workspace no longer has to fit inside one HTTP request (the
+    browser gives up on those after 60 seconds while the work carries on).
+
+    Takes the same locks as check_for_notion_updates and holds them for the
+    whole run; the thread lock is handed to the worker thread and is always
+    released when the run ends, however it ends. The run is recorded in
+    notion_sync_jobs, which is what get_check_status reads.
+
+    Returns {"started", "outcome", "runId", "message"} where outcome is
+      "started"          the run is going (runId identifies it),
+      "already_running"  another run, here or in another process, holds the lock,
+      "failed"           it could not even start (message is safe to show),
+      "starting"         no answer within CHECK_CLAIM_WAIT_SECONDS; treat as started.
+
+    on_finished(result), if given, is called on the worker thread after the
+    lock is released (app.py uses it for the manager notifications and the
+    audit log); an error in it can never keep the lock held.
+    """
+    if not _CHECK_RUN_LOCK.acquire(blocking=False):
+        return {"started": False, "outcome": "already_running", "runId": None, "message": ALREADY_RUNNING_MESSAGE}
+
+    claim = _RunClaim()
+
+    def worker():
+        result = None
+        try:
+            result = _run_check_for_notion_updates(
+                token, actor_id, upload_folder, release_unused_uploads, trigger, claim)
+        except Exception as error:  # the run handles its own errors; this is the last line of defence
+            print("NOTION BACKGROUND CHECK ERROR:", type(error).__name__)
+            claim.refused("failed", _safe_run_error_message(error))
+        finally:
+            claim.refused("failed", "The sync could not be started.")  # no-op if already answered
+            _CHECK_RUN_LOCK.release()
+
+        if on_finished is not None and result is not None:
+            try:
+                on_finished(result)
+            except Exception as error:
+                print("NOTION CHECK FINISH CALLBACK ERROR:", type(error).__name__)
+
+    try:
+        threading.Thread(target=worker, name="notion-check", daemon=True).start()
+    except Exception:
+        _CHECK_RUN_LOCK.release()
+        raise
+
+    claim.event.wait(CHECK_CLAIM_WAIT_SECONDS)
+
+    outcome = claim.outcome or "starting"
+    return {
+        "started": outcome in ("started", "starting"),
+        "outcome": outcome,
+        "runId": claim.run_id,
+        "message": ALREADY_RUNNING_MESSAGE if outcome == "already_running" else claim.message,
+    }
+
+
+def _run_check_for_notion_updates(token, actor_id, upload_folder, release_unused_uploads,
+                                  trigger="manual", claim=None):
     """
     Discovers everything currently shared with the connected integration
     (discover_notion_content) and, per page:
@@ -1374,6 +1703,7 @@ def _run_check_for_notion_updates(token, actor_id, upload_folder, release_unused
     auth_failed = False
     db_lock_held = False
     status = "failed"
+    run_id = None
 
     try:
         conn = get_db_connection()
@@ -1386,9 +1716,26 @@ def _run_check_for_notion_updates(token, actor_id, upload_folder, release_unused
             raise NotionCheckAlreadyRunning()
         db_lock_held = lock_state is True
 
-        pages = discover_notion_content(token)
+        if db_lock_held:
+            # While we hold the lock nothing else is alive, so a row still
+            # marked 'running' is left over from a process that died.
+            _close_orphaned_runs(cursor)
+            conn.commit()
 
-        for page in pages:
+        # From here on the Notion Sync page can see this run. Recorded before
+        # any slow Notion call so "running" shows immediately.
+        run_id = _open_run(cursor, actor_id, trigger)
+        conn.commit()
+        progress = _RunProgress(conn, cursor, run_id)
+        if claim is not None:
+            claim.started(run_id)
+
+        pages = discover_notion_content(token)
+        progress.total = len(pages)
+        progress.beat(0, force=True)
+
+        for page_index, page in enumerate(pages):
+            progress.beat(page_index)
             page_id = page.get("id")
             last_edited_time = page.get("last_edited_time")
             page_title = _safe_page_title(page)
@@ -1570,6 +1917,7 @@ def _run_check_for_notion_updates(token, actor_id, upload_folder, release_unused
             WHERE obsolete_status != 'missing'
         """)
         for obsolete_row in (cursor.fetchall() or []):
+            progress.beat(len(pages))
             if obsolete_row["notion_page_id"] in discovered_page_ids:
                 continue
             try:
@@ -1592,6 +1940,8 @@ def _run_check_for_notion_updates(token, actor_id, upload_folder, release_unused
         # Another process holds the MySQL lock. Nothing was read or written.
         status = "already_running"
         error_message = ALREADY_RUNNING_MESSAGE
+        if claim is not None:
+            claim.refused("already_running", ALREADY_RUNNING_MESSAGE)
     except NotionAuthError as auth_error:
         if conn:
             conn.rollback()
@@ -1607,11 +1957,10 @@ def _run_check_for_notion_updates(token, actor_id, upload_folder, release_unused
         # here, but only ever hand the caller a safe, readable message.
         error_message = _safe_run_error_message(error)
         print("NOTION CHECK ERROR:", error)
+        if claim is not None:
+            claim.refused("failed", error_message)  # no-op if the run had already started
     finally:
         if cursor:
-            if db_lock_held:
-                _release_db_check_lock(cursor)
-
             try:
                 if auth_failed:
                     mark_notion_connection_status(cursor, "reconnect_required", error_message)
@@ -1623,18 +1972,32 @@ def _run_check_for_notion_updates(token, actor_id, upload_folder, release_unused
 
             # A refused run did nothing, so it is not a sync job to list.
             if status != "already_running":
+                counts = (new_count, flagged_count + refreshed_count, unchanged_count, failed_count)
+                summary = {
+                    "new": new_count,
+                    "updated": flagged_count + refreshed_count,
+                    "skipped": unchanged_count,
+                    "failed": failed_count,
+                    "inaccessible": inaccessible_count,
+                    "failedItems": failed_items[:MAX_REPORTED_FAILED_PAGES],
+                }
+                details = json.dumps({"summary": summary, "reconnectRequired": auth_failed})
                 try:
-                    cursor.execute("""
-                        INSERT INTO notion_sync_jobs
-                        (status, imported_count, updated_count, skipped_count, failed_count, error_message, completed_at, created_by)
-                        VALUES (%s, %s, %s, %s, %s, %s, NOW(), %s)
-                    """, (
-                        status, new_count, flagged_count + refreshed_count, unchanged_count,
-                        failed_count, error_message, actor_id,
-                    ))
+                    if run_id is not None:
+                        _finish_run(cursor, run_id, status, counts, error_message, details)
+                    else:
+                        cursor.execute("""
+                            INSERT INTO notion_sync_jobs
+                            (status, imported_count, updated_count, skipped_count, failed_count, error_message, completed_at, created_by)
+                            VALUES (%s, %s, %s, %s, %s, %s, NOW(), %s)
+                        """, (status, *counts, error_message, actor_id))
                     conn.commit()
-                except Exception:
-                    pass
+                except Exception as record_error:
+                    print("NOTION RUN RECORD ERROR:", type(record_error).__name__)
+
+            # Last: the record above is final before anyone can start another run.
+            if db_lock_held:
+                _release_db_check_lock(cursor)
 
             cursor.close()
         if conn:
@@ -1655,6 +2018,7 @@ def _run_check_for_notion_updates(token, actor_id, upload_folder, release_unused
         "obsoleteMissing": obsolete_missing_count,
         "errorMessage": error_message,
         "flaggedItems": flagged_items,
+        "runId": run_id,
     }
 
 

@@ -4,7 +4,8 @@ Runs the real notion_sync_service code (check_for_notion_updates and
 apply_pending_update) with the Notion API calls patched out. Needs no MySQL
 server and no network: SQL goes to an in-memory-style SQLite file through a
 small adapter that translates the few MySQL-only bits the service uses
-(%s placeholders, NOW(), SELECT ... FOR UPDATE, GET_LOCK/RELEASE_LOCK).
+(%s placeholders, NOW(), SELECT ... FOR UPDATE, GET_LOCK/RELEASE_LOCK/IS_FREE_LOCK,
+TIMESTAMPDIFF(SECOND, a, b)).
 
 Not covered here (needs a real MySQL): the INFORMATION_SCHEMA / ALTER TABLE
 DDL in ensure_notion_sync_tables and the real GET_LOCK / row-lock behaviour.
@@ -72,13 +73,19 @@ class _Cursor:
 
     def execute(self, sql, params=()):
         text = " ".join(sql.split())
-        lock = re.match(r"SELECT (GET_LOCK|RELEASE_LOCK)\(%s(?:, \d+)?\)(?: AS (\w+))?$", text)
+        lock = re.match(r"SELECT (GET_LOCK|RELEASE_LOCK|IS_FREE_LOCK)\(%s(?:, \d+)?\)(?: AS (\w+))?$", text)
         if lock:
             value = self._conn._lock_call(lock.group(1), params[0])
             self._synthetic = ([lock.group(2) or lock.group(1)], [(value,)])
             return
         self._synthetic = None
         text = text.replace("%s", "?").replace("NOW()", "CURRENT_TIMESTAMP")
+        # TIMESTAMPDIFF(SECOND, earlier, later) -> whole seconds, like MySQL
+        text = re.sub(
+            r"TIMESTAMPDIFF\(SECOND,\s*(\w+),\s*(\w+)\)",
+            r"(CAST(strftime('%s', \2) AS INTEGER) - CAST(strftime('%s', \1) AS INTEGER))",
+            text,
+        )
         text = re.sub(r"\s+FOR UPDATE$", "", text)
         try:
             self._cur.execute(text, tuple(params))
@@ -150,6 +157,8 @@ class _Conn:
                     self._held.add(name)
                     return 1
                 return 0
+            if function == "IS_FREE_LOCK":
+                return 0 if name in _LOCKS else 1
             if _LOCKS.get(name) is self:
                 del _LOCKS[name]
                 self._held.discard(name)
@@ -188,7 +197,8 @@ CREATE TABLE notion_sync_jobs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     status TEXT, imported_count INTEGER, updated_count INTEGER, skipped_count INTEGER,
     failed_count INTEGER, error_message TEXT,
-    started_at DATETIME DEFAULT CURRENT_TIMESTAMP, completed_at DATETIME, created_by INTEGER
+    started_at DATETIME DEFAULT CURRENT_TIMESTAMP, completed_at DATETIME, created_by INTEGER,
+    last_heartbeat DATETIME, trigger_source TEXT, details TEXT
 );
 CREATE TABLE notion_sync_configs (
     id INTEGER PRIMARY KEY AUTOINCREMENT, is_active INTEGER DEFAULT 1,

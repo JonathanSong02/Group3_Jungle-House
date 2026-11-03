@@ -2078,6 +2078,7 @@ _MANAGER_ENDPOINTS = {
     "start_notion_oauth",
     "disconnect_notion_sync",
     "check_notion_sync",
+    "get_notion_check_status",
     "get_notion_pending_updates",
     "auto_categorize_notion_articles_route",
     "apply_notion_pending_update",
@@ -7588,61 +7589,77 @@ def check_notion_sync():
         if conn:
             conn.close()
 
-    result = notion_sync_service.check_for_notion_updates(
+    # A big Notion workspace can take minutes -- far longer than the browser
+    # waits for one request (60 s) -- so the check runs on its own thread and
+    # this answers at once. The page then asks get_notion_check_status for
+    # progress and the result. The same locks as the automatic check apply.
+    outcome = notion_sync_service.start_background_check(
         raw_token, actor_id, UPLOAD_FOLDER,
         release_unused_uploads=lambda replaced_row, upload_cursor: delete_pending_update_upload_files(
             replaced_row, cursor=upload_cursor
         ),
+        trigger="manual",
+        on_finished=lambda result: _finish_manual_notion_check(result, actor_id),
     )
 
-    if result["status"] == "already_running":
-        # Another Check for Updates (a second click, another manager, or the
-        # automatic background check) is in progress; nothing was changed.
+    if outcome["outcome"] == "already_running":
+        # A second click, another manager, or the automatic check: nothing was
+        # started and nothing changed. Not an error -- the page just shows
+        # the run that is already going.
         return jsonify({
-            "success": False,
+            "success": True,
+            "started": False,
             "alreadyRunning": True,
             "message": notion_sync_service.ALREADY_RUNNING_MESSAGE,
-            **result,
-        }), 409
+        }), 200
 
-    if result["status"] == "reconnect_required":
-        response_message = "Your Notion connection needs to be renewed. Please reconnect Notion."
-    elif result["status"] == "completed":
-        # "updated" counts both newly queued changes and ones refreshed in
-        # place because the page was edited again before anyone reviewed it.
-        updated_total = result["flagged"] + result.get("refreshed", 0)
-        response_message = f"Checked Notion: {result['new']} new, {updated_total} updated, {result['unchanged']} unchanged."
-        if result.get("inaccessible"):
-            response_message += (
-                f" {result['inaccessible']} page(s) are no longer accessible and were skipped "
-                "-- they may have been removed from the integration's permissions."
+    if outcome["outcome"] == "failed":
+        return jsonify({
+            "success": False,
+            "started": False,
+            "message": outcome.get("message") or "Failed to start checking Notion for updates.",
+        }), 500
+
+    return jsonify({
+        "success": True,
+        "started": True,
+        "runId": outcome.get("runId"),
+        "message": "Sync started.",
+    }), 202
+
+
+def _notify_managers_of_flagged_items(result, actor_id):
+    """Tell the managers about the pages a check found (shared by the manual and automatic checks)."""
+    if not result.get("flaggedItems"):
+        return
+
+    notify_conn = None
+    notify_cursor = None
+    try:
+        notify_conn = notion_sync_service.get_db_connection()
+        notify_cursor = notify_conn.cursor(dictionary=True)
+        for item in result["flaggedItems"]:
+            _notify_managers_of_notion_update(
+                notify_cursor, item["title"], item["article_id"], actor_id,
+                kind=item.get("kind", "update"),
             )
-        if result.get("obsoleteUpdated"):
-            response_message += f" {result['obsoleteUpdated']} Obsolete page(s) have changed in Notion."
-        if result.get("obsoleteMissing"):
-            response_message += f" {result['obsoleteMissing']} Obsolete page(s) are no longer found in Notion."
-    else:
-        response_message = result.get("errorMessage") or "Failed to check Notion for updates."
+        notify_conn.commit()
+    except Exception as notify_error:
+        print("NOTION UPDATE NOTIFICATION ERROR:", notify_error)
+    finally:
+        if notify_cursor:
+            notify_cursor.close()
+        if notify_conn:
+            notify_conn.close()
 
-    if result.get("flaggedItems"):
-        notify_conn = None
-        notify_cursor = None
-        try:
-            notify_conn = notion_sync_service.get_db_connection()
-            notify_cursor = notify_conn.cursor(dictionary=True)
-            for item in result["flaggedItems"]:
-                _notify_managers_of_notion_update(
-                    notify_cursor, item["title"], item["article_id"], actor_id,
-                    kind=item.get("kind", "update"),
-                )
-            notify_conn.commit()
-        except Exception as notify_error:
-            print("NOTION UPDATE NOTIFICATION ERROR:", notify_error)
-        finally:
-            if notify_cursor:
-                notify_cursor.close()
-            if notify_conn:
-                notify_conn.close()
+
+def _finish_manual_notion_check(result, actor_id):
+    """
+    Runs on the background thread when a manager-started check ends -- the
+    notifications and audit entry the request itself used to do once the sync
+    had finished. An "already running" result never gets here (it ran nothing).
+    """
+    _notify_managers_of_flagged_items(result, actor_id)
 
     add_audit_log(
         actor_id=actor_id,
@@ -7656,11 +7673,50 @@ def check_notion_sync():
         )
     )
 
-    return jsonify({
-        "success": result["status"] == "completed",
-        "message": response_message,
-        **result,
-    }), 200
+
+@app.route("/api/notion-sync/check/status", methods=["GET"])
+def get_notion_check_status():
+    """
+    The latest sync run (manual or automatic): running / done / failed, its
+    progress, and the result. Managers only -- the same role guard as the
+    other Notion routes (listed in _MANAGER_ENDPOINTS) plus the in-route
+    manager check. Polled by the Notion Sync page, so it stays cheap.
+    """
+    if not NOTION_SYNC_SERVICE_AVAILABLE:
+        return jsonify({"success": False, "message": "Notion sync service is not available on this server."}), 500
+
+    actor_id = current_auth_user_id()
+
+    conn = None
+    cursor = None
+
+    try:
+        conn = notion_sync_service.get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        if not is_ai_settings_manager(cursor, actor_id):
+            return jsonify({"success": False, "message": "Only managers can check for Notion updates."}), 403
+
+        cursor.close()
+        cursor = None
+
+        status = notion_sync_service.get_check_status(conn)
+
+        response = jsonify({"success": True, **status})
+        response.headers["Cache-Control"] = "no-store"
+        return response, 200
+
+    except Exception as error:
+        # Type and number only: the message of a database error can carry
+        # connection details, and this route is polled every few seconds.
+        print("GET NOTION CHECK STATUS ERROR:", type(error).__name__, getattr(error, "errno", ""))
+        return jsonify({"success": False, "message": "Failed to load the sync status."}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 
 @app.route("/api/notion-sync/pending-updates", methods=["GET"])
@@ -9093,24 +9149,17 @@ def _notion_auto_sync_loop():
             conn.close()
 
             if token:
+                # trigger="auto" records this run in notion_sync_jobs like a
+                # manual one, so the Notion Sync page shows it as running too.
                 result = notion_sync_service.check_for_notion_updates(
                     token, None, UPLOAD_FOLDER,
                     release_unused_uploads=lambda replaced_row, upload_cursor: delete_pending_update_upload_files(
                         replaced_row, cursor=upload_cursor
                     ),
+                    trigger="auto",
                 )
 
-                if result.get("flaggedItems"):
-                    notify_conn = notion_sync_service.get_db_connection()
-                    notify_cursor = notify_conn.cursor(dictionary=True)
-                    for item in result["flaggedItems"]:
-                        _notify_managers_of_notion_update(
-                            notify_cursor, item["title"], item["article_id"], None,
-                            kind=item.get("kind", "update"),
-                        )
-                    notify_conn.commit()
-                    notify_cursor.close()
-                    notify_conn.close()
+                _notify_managers_of_flagged_items(result, None)
 
                 if result.get("new") or result.get("flagged"):
                     add_audit_log(
