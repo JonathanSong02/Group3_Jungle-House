@@ -1237,3 +1237,38 @@
   line-height:1;
   white-space:normal;
 }
+
+
+/* ==========================================================================
+   PERSONALISATION GEOMETRY SAFETY
+   ========================================================================== */
+
+.staff-workspace :is(
+  .profile-avatar-modern,
+  .profile-meta-icon,
+  .profile-panel-icon,
+  .profile-security-shield,
+  .um2-avatar,
+  .um2-stat-icon,
+  .um2-clear-icon,
+  .um2-email-icon,
+  .staff-avatar,
+  .staff-brand-icon,
+  .staff-welcome-icon
+) {
+  align-items: center;
+  justify-items: center;
+  text-align: center;
+}
+
+.staff-workspace[data-jh-text-size] :is(
+  .profile-meta-icon,
+  .profile-panel-icon,
+  .profile-security-shield,
+  .um2-avatar,
+  .um2-stat-icon,
+  .um2-clear-icon,
+  .um2-email-icon
+) {
+  line-height: 1 !important;
+}

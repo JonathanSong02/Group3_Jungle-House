@@ -1059,3 +1059,52 @@
     animation: none;
   }
 }
+
+
+/* ==========================================================================
+   FINAL ICON / AVATAR ALIGNMENT GUARD
+   ========================================================================== */
+
+.um2-page :is(
+  .um2-avatar,
+  .um2-stat-icon,
+  .um2-clear-icon,
+  .um2-email-icon
+) {
+  box-sizing: border-box;
+  display: grid !important;
+  place-items: center !important;
+  align-content: center !important;
+  justify-content: center !important;
+  text-align: center !important;
+  padding: 0 !important;
+  margin-top: 0 !important;
+  text-indent: 0 !important;
+  line-height: 1 !important;
+  overflow: hidden !important;
+  white-space: nowrap !important;
+}
+
+.um2-page .um2-avatar {
+  width: 44px !important;
+  height: 44px !important;
+  flex: 0 0 44px !important;
+  font-size: 12px !important;
+  font-weight: 850 !important;
+}
+
+.um2-page :is(.um2-review-person, .um2-person-cell, .um2-modal-user) {
+  align-items: center !important;
+}
+
+.um2-page :is(.um2-review-person, .um2-person-cell, .um2-modal-user) > div {
+  align-self: center;
+}
+
+@media (max-width: 680px) {
+  .um2-page .um2-avatar {
+    width: 40px !important;
+    height: 40px !important;
+    flex-basis: 40px !important;
+  }
+}
