@@ -462,6 +462,8 @@
 
   display: grid;
   place-items: center;
+  margin: 0;
+  overflow: visible;
 
   color: #4f6b4c;
   background: #e9f1e5;
@@ -473,7 +475,7 @@
   min-width: 0;
 }
 
-.profile-security-summary span {
+.profile-security-summary > div > span {
   display: block;
 
   color: #657663;
@@ -2501,7 +2503,7 @@
   border-color: #cfdfca;
 }
 
-.profile-page .profile-security-summary span { font-size: 11.5px; }
+.profile-page .profile-security-summary > div > span { font-size: 11.5px; }
 .profile-page .profile-security-summary strong { font-size: 15px; }
 
 .profile-page .profile-security-summary p,

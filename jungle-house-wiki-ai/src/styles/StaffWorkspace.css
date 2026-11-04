@@ -656,33 +656,78 @@
   --jh-h4-font:19px;
 }
 
+/* Keep navigation readable, but do not force typography into fixed-size icon
+   containers or management table controls. */
 .staff-workspace[data-jh-text-size] .staff-nav-link,
 .staff-workspace[data-jh-text-size] .staff-recent-chat,
 .staff-workspace[data-jh-text-size] .staff-account-menu :is(a,button),
 .staff-workspace[data-jh-text-size] .staff-search-results > button {
-  font-size:var(--jh-nav-font) !important;
+  font-size:var(--jh-nav-font);
 }
 
-.staff-workspace[data-jh-text-size] .staff-content :is(
-  p, li, td, th, label, input, textarea, select, button
-),
-.staff-workspace[data-jh-text-size] .staff-chat-transcript .message-bubble,
-.staff-workspace[data-jh-text-size] .staff-chat-transcript .chat-html-content {
-  font-size:var(--jh-body-font) !important;
+/* Page headings are safe to scale across all Staff/Management routes. */
+.staff-workspace[data-jh-text-size] .staff-content .page-header :is(h1,h2) {
+  font-size:var(--jh-h1-font);
 }
 
-.staff-workspace[data-jh-text-size] .staff-content :is(
-  small, .muted, .eyebrow, .quiz-card-description, .kb-article-category
-),
-.staff-workspace[data-jh-text-size] .staff-profile-identity small,
-.staff-workspace[data-jh-text-size] .staff-ai-disclaimer {
-  font-size:var(--jh-small-font) !important;
+.staff-workspace[data-jh-text-size] .staff-content .page-header p {
+  font-size:var(--jh-body-font);
 }
 
-.staff-workspace[data-jh-text-size] .staff-content h1 {font-size:var(--jh-h1-font) !important;}
-.staff-workspace[data-jh-text-size] .staff-content h2 {font-size:var(--jh-h2-font) !important;}
-.staff-workspace[data-jh-text-size] .staff-content h3 {font-size:var(--jh-h3-font) !important;}
-.staff-workspace[data-jh-text-size] .staff-content h4 {font-size:var(--jh-h4-font) !important;}
+/* Larger text is applied to reading/training surfaces rather than every
+   fixed admin control, table cell or icon container. */
+.staff-workspace[data-jh-text-size] :is(
+  .staff-chat-transcript .message-bubble,
+  .staff-chat-transcript .chat-html-content,
+  .article-container,
+  .article-detail-state,
+  .staff-quiz-page,
+  .quiz-reader-content,
+  .messages-chat-main,
+  .notifications-workspace
+) :is(p,li,blockquote) {
+  font-size:var(--jh-body-font);
+}
+
+.staff-workspace[data-jh-text-size] :is(
+  .article-container,
+  .article-detail-state,
+  .staff-quiz-page,
+  .quiz-reader-content,
+  .messages-chat-main,
+  .notifications-workspace
+) :is(small,.muted,.eyebrow) {
+  font-size:var(--jh-small-font);
+}
+
+.staff-workspace[data-jh-text-size] :is(
+  .article-container,
+  .article-detail-state,
+  .staff-quiz-page,
+  .quiz-reader-content
+) h2 {
+  font-size:var(--jh-h2-font);
+}
+
+.staff-workspace[data-jh-text-size] :is(
+  .article-container,
+  .article-detail-state,
+  .staff-quiz-page,
+  .quiz-reader-content
+) h3 {
+  font-size:var(--jh-h3-font);
+}
+
+.staff-workspace[data-jh-text-size] :is(
+  .article-container,
+  .article-detail-state,
+  .staff-quiz-page,
+  .quiz-reader-content
+) h4 {
+  font-size:var(--jh-h4-font);
+}
+
+/* Inputs, buttons and admin table cells retain their page-specific sizing. */
 
 /* Comfortable is the existing layout. Compact reduces unused space without
    shrinking touch targets below a practical size. */
@@ -1168,3 +1213,27 @@
   }
 }
 
+
+
+/* Compatibility guards for older nested text selectors ------------------ */
+.staff-workspace .profile-security-summary > .profile-security-shield {
+  display:grid;
+  place-items:center;
+  margin:0;
+  overflow:visible;
+}
+
+.staff-workspace .profile-security-summary > .profile-security-shield > svg {
+  display:block;
+  margin:auto;
+}
+
+.staff-workspace .um2-avatar {
+  display:inline-grid;
+  place-items:center;
+  margin:0;
+  overflow:visible;
+  text-align:center;
+  line-height:1;
+  white-space:normal;
+}

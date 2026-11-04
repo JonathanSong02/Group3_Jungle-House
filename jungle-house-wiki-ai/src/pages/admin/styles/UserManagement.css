@@ -375,9 +375,9 @@
   white-space: nowrap;
 }
 
-.um2-review-person span:not(.um2-status),
-.um2-person-cell span,
-.um2-modal-user span {
+.um2-review-person > div > span,
+.um2-person-cell > div > span,
+.um2-modal-user > div > span {
   display: block;
   overflow: hidden;
   margin-top: 3px;
@@ -393,6 +393,11 @@
   flex: 0 0 44px;
   display: inline-grid;
   place-items: center;
+  margin: 0;
+  overflow: visible;
+  text-align: center;
+  line-height: 1;
+  white-space: normal;
   color: #315b45;
   background: #e9f2eb;
   border: 1px solid #ceded1;
