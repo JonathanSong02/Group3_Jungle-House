@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
 import api, { API_BASE_URL } from '../services/api';
@@ -1734,115 +1735,120 @@ export default function QuizList() {
         </div>
       )}
 
-      {materialReader.open ? (
-        <div
-          className="quiz-reader-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="quiz-reader-title"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              closeMaterialReader();
-            }
-          }}
-        >
-          <section className="quiz-reader-modal">
-            <header className="quiz-reader-header">
-              <div className="quiz-reader-header-icon" aria-hidden="true">📖</div>
+      {materialReader.open && typeof document !== 'undefined'
+        ? createPortal(
+            <div
+              className="quiz-reader-overlay"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="quiz-reader-title"
+              onMouseDown={(event) => {
+                if (event.target === event.currentTarget) {
+                  closeMaterialReader();
+                }
+              }}
+            >
+              <section className="quiz-reader-modal">
+                <header className="quiz-reader-header">
+                  <div className="quiz-reader-header-icon" aria-hidden="true">📖</div>
 
-              <div className="quiz-reader-header-copy">
-                <span className="eyebrow">
-                  {tOr('quiz.prepare.trainingMaterial', 'Training Material')}
-                </span>
-                <h2 id="quiz-reader-title">
-                  {materialReader.article?.title ||
-                    materialReader.material?.title ||
-                    tOr('quiz.prepare.knowledgeArticle', 'Knowledge Base Article')}
-                </h2>
+                  <div className="quiz-reader-header-copy">
+                    <span className="eyebrow">
+                      {tOr('quiz.prepare.trainingMaterial', 'Training Material')}
+                    </span>
+                    <h2 id="quiz-reader-title">
+                      {materialReader.article?.title ||
+                        materialReader.material?.title ||
+                        tOr('quiz.prepare.knowledgeArticle', 'Knowledge Base Article')}
+                    </h2>
 
-                {!materialReader.loading && !materialReader.error ? (
-                  <div className="quiz-reader-meta">
-                    <span>
-                      {materialReader.article?.category
-                        ? catLabel(materialReader.article.category)
-                        : tOr('quiz.prepare.knowledgeBase', 'Knowledge Base')}
-                    </span>
-                    <span aria-hidden="true">•</span>
-                    <span>
-                      {tOr(
-                        'quiz.prepare.readingTime',
-                        `About ${estimateReadingMinutes(materialReader.article?.content)} min read`
-                      )}
-                    </span>
-                    <span className="quiz-reader-recommended">
-                      {tOr('quiz.prepare.recommendedBadge', 'Recommended before attempt')}
-                    </span>
+                    {!materialReader.loading && !materialReader.error ? (
+                      <div className="quiz-reader-meta">
+                        <span>
+                          {materialReader.article?.category
+                            ? catLabel(materialReader.article.category)
+                            : tOr('quiz.prepare.knowledgeBase', 'Knowledge Base')}
+                        </span>
+                        <span aria-hidden="true">•</span>
+                        <span>
+                          {tOr(
+                            'quiz.prepare.readingTime',
+                            `About ${estimateReadingMinutes(materialReader.article?.content)} min read`
+                          )}
+                        </span>
+                        <span className="quiz-reader-recommended">
+                          {tOr('quiz.prepare.recommendedBadge', 'Recommended before attempt')}
+                        </span>
+                      </div>
+                    ) : null}
                   </div>
-                ) : null}
-              </div>
 
-              <button
-                type="button"
-                className="quiz-reader-close"
-                onClick={closeMaterialReader}
-                aria-label={tOr('quiz.prepare.closeReader', 'Close training material')}
-              >
-                ×
-              </button>
-            </header>
-
-            <div className="quiz-reader-body">
-              {materialReader.loading ? (
-                <div className="quiz-reader-state" role="status">
-                  <span className="quiz-reader-spinner" aria-hidden="true" />
-                  <strong>{tOr('quiz.prepare.loadingMaterial', 'Loading training material…')}</strong>
-                </div>
-              ) : materialReader.error ? (
-                <div className="quiz-reader-state error" role="alert">
-                  <strong>{tOr('quiz.prepare.readerErrorTitle', 'Unable to load material')}</strong>
-                  <p>{materialReader.error}</p>
-                </div>
-              ) : (
-                <article
-                  className="quiz-reader-content"
-                  dangerouslySetInnerHTML={{ __html: materialReader.html }}
-                />
-              )}
-            </div>
-
-            <footer className="quiz-reader-footer">
-              <div className="quiz-reader-footer-note">
-                {tOr(
-                  'quiz.prepare.readerFooter',
-                  'Review this material, then return to the assessment when you are ready.'
-                )}
-              </div>
-
-              <div className="quiz-reader-footer-actions">
-                {getMaterialId(materialReader.material) ? (
-                  <Link
-                    to={`/knowledge/${getMaterialId(materialReader.material)}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="secondary-btn"
+                  <button
+                    type="button"
+                    className="quiz-reader-close"
+                    onClick={closeMaterialReader}
+                    aria-label={tOr('quiz.prepare.closeReader', 'Close training material')}
                   >
-                    {tOr('quiz.prepare.openFullArticle', 'Open Full Article')} ↗
-                  </Link>
-                ) : null}
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M6 6l12 12M18 6 6 18" />
+                    </svg>
+                  </button>
+                </header>
 
-                <button
-                  type="button"
-                  className="primary-btn quiz-reader-done"
-                  onClick={finishReviewingMaterial}
-                  disabled={materialReader.loading || Boolean(materialReader.error)}
-                >
-                  ✓ {tOr('quiz.prepare.doneReviewing', 'Done Reviewing')}
-                </button>
-              </div>
-            </footer>
-          </section>
-        </div>
-      ) : null}
+                <div className="quiz-reader-body">
+                  {materialReader.loading ? (
+                    <div className="quiz-reader-state" role="status">
+                      <span className="quiz-reader-spinner" aria-hidden="true" />
+                      <strong>{tOr('quiz.prepare.loadingMaterial', 'Loading training material…')}</strong>
+                    </div>
+                  ) : materialReader.error ? (
+                    <div className="quiz-reader-state error" role="alert">
+                      <strong>{tOr('quiz.prepare.readerErrorTitle', 'Unable to load material')}</strong>
+                      <p>{materialReader.error}</p>
+                    </div>
+                  ) : (
+                    <article
+                      className="quiz-reader-content"
+                      dangerouslySetInnerHTML={{ __html: materialReader.html }}
+                    />
+                  )}
+                </div>
+
+                <footer className="quiz-reader-footer">
+                  <div className="quiz-reader-footer-note">
+                    {tOr(
+                      'quiz.prepare.readerFooter',
+                      'Review this material, then return to the assessment when you are ready.'
+                    )}
+                  </div>
+
+                  <div className="quiz-reader-footer-actions">
+                    {getMaterialId(materialReader.material) ? (
+                      <Link
+                        to={`/knowledge/${getMaterialId(materialReader.material)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="secondary-btn"
+                      >
+                        {tOr('quiz.prepare.openFullArticle', 'Open Full Article')} ↗
+                      </Link>
+                    ) : null}
+
+                    <button
+                      type="button"
+                      className="primary-btn quiz-reader-done"
+                      onClick={finishReviewingMaterial}
+                      disabled={materialReader.loading || Boolean(materialReader.error)}
+                    >
+                      ✓ {tOr('quiz.prepare.doneReviewing', 'Done Reviewing')}
+                    </button>
+                  </div>
+                </footer>
+              </section>
+            </div>,
+            document.body
+          )
+        : null}
 
       {showUnanswered ? (
         <div className="quiz-rv-overlay" role="dialog" aria-modal="true" aria-labelledby="quiz-unanswered-title">

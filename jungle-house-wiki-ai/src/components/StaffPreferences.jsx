@@ -219,8 +219,17 @@ export function StaffPreferencesDialog({ onClose }) {
               <h2 id="jh-preferences-heading">{t('settingsTitle')}</h2>
               <p>{t('settingsSubtitle')}</p></div>
           </div>
-          <button ref={closeButton} type="button" className="jh-preferences-close" onClick={onClose}
-            aria-label={t('close')}>×</button>
+          <button
+            ref={closeButton}
+            type="button"
+            className="jh-preferences-close"
+            onClick={onClose}
+            aria-label={t('close')}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 6l12 12M18 6 6 18" />
+            </svg>
+          </button>
         </div>
         <div className="jh-preferences-sections">
           <fieldset className="jh-preferences-group">

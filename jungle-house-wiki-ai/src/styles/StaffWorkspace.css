@@ -1272,3 +1272,194 @@
 ) {
   line-height: 1 !important;
 }
+
+
+/* ==========================================================================
+   MOBILE POLISH — BRAND MARK + iPHONE TOPBAR + PERSONALISE CLOSE
+   ========================================================================== */
+
+.staff-workspace .jh-brand-mark {
+  --jh-brand-size: 30px;
+  width: var(--jh-brand-size);
+  height: var(--jh-brand-size);
+  flex: 0 0 var(--jh-brand-size);
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  overflow: hidden;
+  color: #fff !important;
+  background:
+    radial-gradient(circle at 72% 24%, rgba(255,255,255,.18), transparent 30%),
+    linear-gradient(145deg, var(--jh-accent), color-mix(in srgb, var(--jh-accent) 78%, #0c3b27));
+  border: 1px solid color-mix(in srgb, var(--jh-accent) 76%, #ffffff);
+  border-radius: calc(var(--jh-brand-size) * .34);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--jh-accent) 20%, transparent);
+}
+
+.staff-workspace .jh-brand-mark svg {
+  width: 72%;
+  height: 72%;
+  display: block;
+  overflow: visible;
+  color: #fff !important;
+}
+
+.staff-workspace .jh-brand-mark .jh-brand-leaf-shape {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.staff-workspace .jh-brand-mark .jh-brand-leaf-vein {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+}
+
+.staff-workspace .jh-brand-mark .jh-brand-spark {
+  fill: currentColor;
+  stroke: none;
+}
+
+.staff-workspace .staff-brand .jh-brand-mark.staff-brand-icon {
+  width: var(--jh-brand-size);
+  height: var(--jh-brand-size);
+  color: #fff !important;
+}
+
+.staff-workspace .staff-topbar-label {
+  min-width: 0;
+}
+
+.staff-workspace .staff-topbar-label > span:not(.jh-brand-mark) {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.staff-workspace .staff-topbar-label .jh-brand-mark svg,
+.staff-workspace[data-jh-theme="dark"] .staff-topbar-label .jh-brand-mark svg,
+.staff-workspace[data-jh-theme="light"] .staff-topbar-label .jh-brand-mark svg {
+  color: #fff !important;
+}
+
+/* Safari can position the multiplication-sign glyph visually off-centre.
+   The button now contains an SVG, and this keeps it centred in every mode. */
+.staff-workspace .jh-preferences-close {
+  top: max(18px, calc(env(safe-area-inset-top) + 10px));
+  right: max(16px, env(safe-area-inset-right));
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  line-height: 0;
+  font-size: 0;
+  z-index: 3;
+  touch-action: manipulation;
+}
+
+.staff-workspace .jh-preferences-close svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+@media (max-width: 680px) {
+  .staff-workspace .staff-topbar {
+    min-width: 0;
+    gap: 8px;
+    padding-left: max(10px, env(safe-area-inset-left));
+    padding-right: max(10px, env(safe-area-inset-right));
+  }
+
+  .staff-workspace .staff-hamburger {
+    width: 38px;
+    height: 38px;
+    flex: 0 0 38px;
+    color: #416151;
+    background: rgba(255,255,255,.64);
+    border: 1px solid rgba(51,91,66,.14);
+  }
+
+  .staff-workspace .staff-topbar-label {
+    flex: 1 1 auto;
+    gap: 7px;
+    overflow: hidden;
+    font-size: 13px;
+  }
+
+  .staff-workspace .staff-topbar-label .jh-brand-mark {
+    --jh-brand-size: 30px !important;
+  }
+
+  .staff-workspace .staff-topbar-actions {
+    flex: 0 0 auto;
+    gap: 3px;
+  }
+
+  .staff-workspace .staff-topbar-actions > .staff-icon-button,
+  .staff-workspace .staff-avatar-top,
+  .staff-workspace .jh-preferences-top-trigger {
+    width: 36px;
+    height: 36px;
+    flex-basis: 36px;
+  }
+
+  .jh-preferences-hero {
+    padding:
+      max(22px, calc(env(safe-area-inset-top) + 14px))
+      64px
+      22px
+      max(18px, env(safe-area-inset-left));
+  }
+
+  .jh-preferences-hero-heading {
+    padding-right: 0;
+  }
+}
+
+@media (max-width: 430px) {
+  .staff-workspace .staff-topbar {
+    gap: 6px;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
+  .staff-workspace .staff-hamburger {
+    width: 34px;
+    height: 34px;
+    flex-basis: 34px;
+  }
+
+  .staff-workspace .staff-topbar-label {
+    gap: 6px;
+  }
+
+  .staff-workspace .staff-topbar-label .jh-brand-mark {
+    --jh-brand-size: 28px !important;
+  }
+
+  .staff-workspace .staff-topbar-label > span:not(.jh-brand-mark) {
+    font-size: 12.5px;
+  }
+
+  .staff-workspace .staff-topbar-actions > .staff-icon-button,
+  .staff-workspace .staff-avatar-top,
+  .staff-workspace .jh-preferences-top-trigger {
+    width: 34px;
+    height: 34px;
+    flex-basis: 34px;
+  }
+
+  .staff-workspace .staff-topbar-actions {
+    gap: 2px;
+  }
+}
+

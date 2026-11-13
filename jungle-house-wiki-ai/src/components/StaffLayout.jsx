@@ -33,6 +33,32 @@ function Symbol({ name, size = 20 }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name] || paths.chat}</svg>;
 }
 
+
+function BrandMark({ size = 30, className = '' }) {
+  return (
+    <span
+      className={`jh-brand-mark ${className}`.trim()}
+      style={{ '--jh-brand-size': `${size}px` }}
+      aria-hidden="true"
+    >
+      <svg viewBox="0 0 32 32" role="presentation">
+        <path
+          className="jh-brand-leaf-shape"
+          d="M8.2 22.6c.1-7.2 4-11.4 11.6-12.6-.9 7.4-4.8 11.6-11.6 12.6Z"
+        />
+        <path
+          className="jh-brand-leaf-vein"
+          d="M8.7 22.7c2.9-5.2 6.2-8.5 10.4-10.7"
+        />
+        <path
+          className="jh-brand-spark"
+          d="M23.6 5.2 25 8.7l3.5 1.4-3.5 1.4-1.4 3.5-1.4-3.5-3.5-1.4 3.5-1.4 1.4-3.5Z"
+        />
+      </svg>
+    </span>
+  );
+}
+
 const staffLinks = [
   { to: '/knowledge', text: 'Knowledge Base', icon: 'book' },
   { to: '/quiz', text: 'Training & Quiz', icon: 'quiz' },
@@ -125,7 +151,7 @@ function StaffShell() {
       {mobileOpen && <button type="button" className="staff-overlay" aria-label={t('staff.closeNavigation')} onClick={() => setMobileOpen(false)} />}
       <aside className="staff-sidebar" aria-label="Staff navigation">
         <div className="staff-brand">
-          <span className="staff-brand-icon"><Symbol name="leaf" size={25}/></span>
+          <BrandMark size={34} className="staff-brand-icon" />
           {!collapsed && <div><strong>Jungle House AI</strong><small>{roleLabel}</small></div>}
           <button type="button" className="staff-icon-button staff-collapse-button" aria-label={collapsed ? t('staff.expandSidebar') : t('staff.collapseSidebar')} onClick={() => setCollapsed((current) => !current)}><Symbol name="panel" size={19}/></button>
           <button type="button" className="staff-icon-button staff-mobile-close" aria-label={t('staff.closeNavigation')} onClick={() => setMobileOpen(false)}><Symbol name="close"/></button>
@@ -160,7 +186,7 @@ function StaffShell() {
         </div>
       </aside>
       <div className="staff-main">
-        <header className="staff-topbar"><button type="button" className="staff-icon-button staff-hamburger" onClick={() => setMobileOpen(true)} aria-label={t('staff.openNavigation')}><Symbol name="menu"/></button><div className="staff-topbar-label"><Symbol name="leaf" size={19}/><span>Jungle House AI</span><small>{workspaceLabel}</small></div><div className="staff-topbar-actions"><LanguageSelector placement="down" /><button type="button" className="staff-icon-button jh-preferences-top-trigger" title={t('settings')} aria-label={t('openSettings')} onClick={() => setPreferencesOpen(true)}><Symbol name="more" size={20}/></button><NavLink to="/notifications" aria-label={t('nav.notifications')} title={t('nav.notifications')} className="staff-icon-button"><Symbol name="bell" size={20}/></NavLink><NavLink to="/profile" className="staff-avatar staff-avatar-top" aria-label={`${t('profile')}: ${fullName}`} title={fullName}>{initial}</NavLink></div></header>
+        <header className="staff-topbar"><button type="button" className="staff-icon-button staff-hamburger" onClick={() => setMobileOpen(true)} aria-label={t('staff.openNavigation')}><Symbol name="menu"/></button><div className="staff-topbar-label"><BrandMark size={30}/><span>Jungle House AI</span><small>{workspaceLabel}</small></div><div className="staff-topbar-actions"><LanguageSelector placement="down" /><button type="button" className="staff-icon-button jh-preferences-top-trigger" title={t('settings')} aria-label={t('openSettings')} onClick={() => setPreferencesOpen(true)}><Symbol name="more" size={20}/></button><NavLink to="/notifications" aria-label={t('nav.notifications')} title={t('nav.notifications')} className="staff-icon-button"><Symbol name="bell" size={20}/></NavLink><NavLink to="/profile" className="staff-avatar staff-avatar-top" aria-label={`${t('profile')}: ${fullName}`} title={fullName}>{initial}</NavLink></div></header>
         <main className={`staff-content ${location.pathname === '/chat' ? 'staff-content-chat' : ''}`} id="staff-content"><Outlet context={{ firstName }}/></main>
       </div>
       {preferencesOpen && <StaffPreferencesDialog onClose={closePreferences} />}
