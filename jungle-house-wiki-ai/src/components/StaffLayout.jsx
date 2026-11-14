@@ -9,6 +9,8 @@ function Symbol({ name, size = 20 }) {
   const paths = {
     menu: <><path d="M4 7h16M4 12h16M4 17h16" /></>,
     panel: <><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16" /></>,
+    chevronLeft: <><path d="m15 18-6-6 6-6" /></>,
+    chevronRight: <><path d="m9 18 6-6-6-6" /></>,
     edit: <><path d="M12 5H6a3 3 0 0 0-3 3v10a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-6"/><path d="m11 13 9-9a2 2 0 0 1 2 2l-9 9-4 1z" /></>,
     search: <><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 5 5" /></>,
     book: <><path d="M4 5a3 3 0 0 1 3-3h13v18H7a3 3 0 0 0-3 3zM4 5v18M8 7h8M8 11h6" /></>,
@@ -154,7 +156,15 @@ function StaffShell() {
         <div className="staff-brand">
           <BrandMark size={34} className="staff-brand-icon" />
           {!collapsed && <div><strong>Jungle House AI</strong><small>{roleLabel}</small></div>}
-          <button type="button" className="staff-icon-button staff-collapse-button" aria-label={collapsed ? t('staff.expandSidebar') : t('staff.collapseSidebar')} onClick={() => setCollapsed((current) => !current)}><Symbol name="panel" size={19}/></button>
+          <button
+            type="button"
+            className="staff-icon-button staff-collapse-button"
+            aria-label={collapsed ? t('staff.expandSidebar') : t('staff.collapseSidebar')}
+            title={collapsed ? t('staff.expandSidebar') : t('staff.collapseSidebar')}
+            onClick={() => setCollapsed((current) => !current)}
+          >
+            <Symbol name={collapsed ? 'chevronRight' : 'chevronLeft'} size={20}/>
+          </button>
           <button type="button" className="staff-icon-button staff-mobile-close" aria-label={t('staff.closeNavigation')} onClick={() => setMobileOpen(false)}><Symbol name="close"/></button>
         </div>
         <div className="staff-nav-scroll">

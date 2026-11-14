@@ -1530,3 +1530,61 @@
   min-height: 18px;
 }
 
+
+
+/* ==========================================================================
+   SIDEBAR COLLAPSE / EXPAND CONTROL
+   ========================================================================== */
+
+.staff-workspace .staff-collapse-button {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: #416151;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(49, 89, 68, 0.18);
+  border-radius: 11px;
+}
+
+.staff-workspace .staff-collapse-button svg {
+  width: 20px !important;
+  height: 20px !important;
+  min-width: 20px;
+  min-height: 20px;
+  display: block;
+  stroke-width: 2.25;
+}
+
+.staff-workspace .staff-collapse-button:hover,
+.staff-workspace .staff-collapse-button:focus-visible {
+  color: var(--jh-accent);
+  background: var(--jh-accent-tint);
+  border-color: color-mix(in srgb, var(--jh-accent) 35%, transparent);
+}
+
+@media (min-width: 1025px) {
+  .staff-workspace.staff-is-collapsed .staff-brand {
+    justify-content: space-between;
+    gap: 4px;
+    padding-left: 4px;
+    padding-right: 4px;
+  }
+
+  .staff-workspace.staff-is-collapsed .staff-collapse-button {
+    margin: 0;
+    width: 32px;
+    height: 32px;
+    flex-basis: 32px;
+    border-radius: 10px;
+  }
+
+  .staff-workspace.staff-is-collapsed .staff-collapse-button svg {
+    width: 18px !important;
+    height: 18px !important;
+    min-width: 18px;
+    min-height: 18px;
+  }
+}
