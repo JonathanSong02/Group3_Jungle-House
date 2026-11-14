@@ -25,6 +25,7 @@ function Symbol({ name, size = 20 }) {
     review: <><path d="M12 3 20 7v6c0 5-3.5 7.5-8 8-4.5-.5-8-3-8-8V7z"/><path d="m8.5 12 2.3 2.3 4.7-5" /></>,
     users: <><path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2M9.5 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.9M16 3.3a4 4 0 0 1 0 7.4" /></>,
     settings: <><circle cx="12" cy="12" r="3"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" /></>,
+    tune: <><path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M8 14v6"/><circle cx="14" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></>,
     sync: <><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5 9a7 7 0 0 1 12-2l3 5M4 12l3 5a7 7 0 0 0 12-2" /></>,
     analytics: <><path d="M4 19V5M4 19h16M8 16v-5M12 16V8M16 16v-3m0-5 4-4m-4 0h4v4" /></>,
     security: <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/><path d="m9.5 12.5 2 2 3.5-4.5" /></>,
@@ -186,7 +187,7 @@ function StaffShell() {
         </div>
       </aside>
       <div className="staff-main">
-        <header className="staff-topbar"><button type="button" className="staff-icon-button staff-hamburger" onClick={() => setMobileOpen(true)} aria-label={t('staff.openNavigation')}><Symbol name="menu"/></button><div className="staff-topbar-label"><BrandMark size={30}/><span>Jungle House AI</span><small>{workspaceLabel}</small></div><div className="staff-topbar-actions"><LanguageSelector placement="down" /><button type="button" className="staff-icon-button jh-preferences-top-trigger" title={t('settings')} aria-label={t('openSettings')} onClick={() => setPreferencesOpen(true)}><Symbol name="more" size={20}/></button><NavLink to="/notifications" aria-label={t('nav.notifications')} title={t('nav.notifications')} className="staff-icon-button"><Symbol name="bell" size={20}/></NavLink><NavLink to="/profile" className="staff-avatar staff-avatar-top" aria-label={`${t('profile')}: ${fullName}`} title={fullName}>{initial}</NavLink></div></header>
+        <header className="staff-topbar"><button type="button" className="staff-icon-button staff-hamburger" onClick={() => setMobileOpen(true)} aria-label={t('staff.openNavigation')}><Symbol name="menu"/></button><div className="staff-topbar-label"><BrandMark size={30}/><span>Jungle House AI</span><small>{workspaceLabel}</small></div><div className="staff-topbar-actions"><LanguageSelector placement="down" /><button type="button" className="staff-icon-button jh-preferences-top-trigger" title={t('settings')} aria-label={t('openSettings')} onClick={() => setPreferencesOpen(true)}><Symbol name="tune" size={19}/></button><NavLink to="/notifications" aria-label={t('nav.notifications')} title={t('nav.notifications')} className="staff-icon-button"><Symbol name="bell" size={20}/></NavLink><NavLink to="/profile" className="staff-avatar staff-avatar-top" aria-label={`${t('profile')}: ${fullName}`} title={fullName}>{initial}</NavLink></div></header>
         <main className={`staff-content ${location.pathname === '/chat' ? 'staff-content-chat' : ''}`} id="staff-content"><Outlet context={{ firstName }}/></main>
       </div>
       {preferencesOpen && <StaffPreferencesDialog onClose={closePreferences} />}

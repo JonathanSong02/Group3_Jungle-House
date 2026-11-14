@@ -1463,3 +1463,70 @@
   }
 }
 
+
+
+/* ==========================================================================
+   BRAND / TOPBAR FINAL CLEANUP
+   Desktop: sidebar owns the logo.
+   Tablet/mobile: sidebar is off-canvas, so topbar owns the logo.
+   ========================================================================== */
+
+@media (min-width: 1025px) {
+  .staff-workspace .staff-topbar-label > .jh-brand-mark {
+    display: none !important;
+  }
+
+  .staff-workspace .staff-topbar-label {
+    gap: 0;
+  }
+
+  .staff-workspace .staff-topbar-label > span:not(.jh-brand-mark) {
+    display: inline-block;
+  }
+
+  /* When desktop sidebar is collapsed, keep its compact brand mark visible
+     as the single brand icon on the left side. */
+  .staff-workspace.staff-is-collapsed .staff-brand .jh-brand-mark.staff-brand-icon {
+    display: grid !important;
+  }
+}
+
+@media (max-width: 1024px) {
+  .staff-workspace .staff-topbar-label > .jh-brand-mark {
+    display: grid !important;
+  }
+
+  .staff-workspace .staff-brand .jh-brand-mark.staff-brand-icon {
+    display: grid !important;
+  }
+}
+
+/* Make the Personalise trigger visually clear and stable. */
+.staff-workspace .jh-preferences-top-trigger {
+  color: #315944;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(49, 89, 68, 0.20);
+}
+
+.staff-workspace .jh-preferences-top-trigger:hover,
+.staff-workspace .jh-preferences-top-trigger:focus-visible {
+  color: var(--jh-accent);
+  background: var(--jh-accent-tint);
+  border-color: color-mix(in srgb, var(--jh-accent) 38%, transparent);
+}
+
+.staff-workspace .jh-preferences-top-trigger svg {
+  width: 19px !important;
+  height: 19px !important;
+  display: block !important;
+  overflow: visible !important;
+  stroke-width: 1.9;
+}
+
+/* Keep all topbar SVGs from being visually squeezed into a dash. */
+.staff-workspace .staff-topbar-actions .staff-icon-button > svg {
+  flex: 0 0 auto;
+  min-width: 18px;
+  min-height: 18px;
+}
+
