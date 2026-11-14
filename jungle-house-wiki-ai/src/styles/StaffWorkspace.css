@@ -1588,3 +1588,72 @@
     min-height: 18px;
   }
 }
+
+
+/* ==========================================================================
+   FINAL SIDEBAR + SETTINGS ICON POLISH
+   ========================================================================== */
+
+@media (min-width: 1025px) {
+  .staff-workspace:not(.staff-is-collapsed) .staff-brand .jh-brand-mark.staff-brand-icon {
+    display: grid !important;
+  }
+
+  /* Collapsed desktop sidebar: only one expand control remains visible. */
+  .staff-workspace.staff-is-collapsed .staff-brand .jh-brand-mark.staff-brand-icon {
+    display: none !important;
+  }
+
+  .staff-workspace.staff-is-collapsed .staff-brand {
+    min-height: 47px;
+    justify-content: center !important;
+    padding: 0 !important;
+    gap: 0 !important;
+  }
+
+  .staff-workspace.staff-is-collapsed .staff-collapse-button {
+    width: 38px !important;
+    height: 38px !important;
+    flex: 0 0 38px !important;
+    margin: 0 auto !important;
+    color: #315944;
+    background: rgba(255, 255, 255, 0.82);
+    border: 1px solid rgba(49, 89, 68, 0.22);
+    border-radius: 12px;
+    box-shadow: 0 5px 12px rgba(32, 73, 49, 0.08);
+  }
+
+  .staff-workspace.staff-is-collapsed .staff-collapse-button svg {
+    width: 19px !important;
+    height: 19px !important;
+    min-width: 19px !important;
+    min-height: 19px !important;
+    stroke-width: 2.15;
+  }
+}
+
+/* Personalise uses the conventional gear/settings symbol. */
+.staff-workspace .jh-preferences-top-trigger {
+  color: #405d4d;
+  background: rgba(255, 255, 255, 0.74);
+  border: 1px solid rgba(49, 89, 68, 0.16);
+  border-radius: 11px;
+  box-shadow: none;
+}
+
+.staff-workspace .jh-preferences-top-trigger:hover,
+.staff-workspace .jh-preferences-top-trigger:focus-visible {
+  color: var(--jh-accent);
+  background: var(--jh-accent-tint);
+  border-color: color-mix(in srgb, var(--jh-accent) 30%, #c9d8ce);
+}
+
+.staff-workspace .jh-preferences-top-trigger svg {
+  width: 18px !important;
+  height: 18px !important;
+  min-width: 18px !important;
+  min-height: 18px !important;
+  display: block !important;
+  stroke-width: 1.8 !important;
+}
+
