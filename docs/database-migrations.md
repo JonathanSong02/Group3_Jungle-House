@@ -10,7 +10,7 @@ old SQL scripts, is in [database-schema.md](database-schema.md).
 
 | Piece | Where |
 |---|---|
-| Migration files (numbered) | `backend/migrations/0001_baseline.py` (production as it is), `0002_escalation_indexes.py` (optional) |
+| Migration files (numbered) | `backend/migrations/0001_baseline.py` (production as it is), `0002_escalation_indexes.py` (optional), `0003_login_known_devices.py` (table for the device-based login lockout) |
 | Command line tool | `backend/tools/migrate.py` (`status`, `check`, `apply`, `baseline`, `generate-baseline`) |
 | Read-only snapshot tool | `backend/tools/schema_snapshot.py` |
 | Shared code | `backend/tools/migration_lib.py`, `backend/tools/schema_lib.py` |
@@ -66,7 +66,7 @@ optional 0002 are "not applied yet", not drift. For the production snapshot of 2
 ```powershell
 # in a PowerShell window used only for this: point MYSQL_* at the NEW database
 python backend/tools/migrate.py apply --dry-run     # shows every statement, changes nothing
-python backend/tools/migrate.py apply               # builds all 36 tables, adds the 0002 indexes, records both
+python backend/tools/migrate.py apply               # builds all 37 tables, adds the 0002 indexes, records all three
 python backend/tools/migrate.py check               # should say: Schema matches the migrations.
 ```
 
@@ -75,7 +75,7 @@ python backend/tools/migrate.py check               # should say: Schema matches
 ```powershell
 railway run python backend/tools/migrate.py check       # read-only: must show no [ERROR] and no [WARNING]
 railway run python backend/tools/migrate.py baseline    # records 0001 ONLY if the schema matches it
-railway run python backend/tools/migrate.py status      # 0001 applied, 0002 PENDING
+railway run python backend/tools/migrate.py status      # 0001 applied, 0002 and 0003 PENDING
 ```
 
 `baseline` changes nothing except creating `schema_migrations` and inserting one row. If the schema differs
@@ -95,9 +95,23 @@ Migrations are applied in order, so the next `apply` runs 0002; if you never run
 two `ALTER TABLE ... ADD KEY` statements and touches no data. Once it is recorded, `check` also expects the two
 indexes.
 
+**Migration 0003 (`login_known_devices`).** The device-based login lockout needs one new table. The app creates
+it by itself on the first login after the deploy (`login_lockout.py`, `ensure_known_device_table`), so the site
+works whether or not 0003 has been applied. Until it is recorded, `check` prints one warning
+(`extra table login_known_devices`). To record it:
+
+```powershell
+railway run python backend/tools/migrate.py apply --dry-run   # shows 0002 (two indexes) and 0003 (one table, or "exists")
+railway run python backend/tools/migrate.py apply
+```
+
+Because migrations run in order, this `apply` also runs the optional 0002. If production was never baselined
+(section D), do `baseline` first. If the app has already created the table by then, `baseline` needs
+`--accept-extras`, because the baseline does not know that table.
+
 ## E. Adding a migration
 
-Create `backend/migrations/0003_short_name.py` (next number, no gaps):
+Create `backend/migrations/0004_short_name.py` (next number, no gaps):
 
 ```python
 from migration_lib import col, index
@@ -174,8 +188,8 @@ docker run --name jh-scratch -e MYSQL_ROOT_PASSWORD=scratch-only -e MYSQL_DATABA
 $env:MYSQL_HOST = "127.0.0.1"; $env:MYSQL_PORT = "3307"; $env:MYSQL_USER = "root"
 $env:MYSQL_PASSWORD = "scratch-only"; $env:MYSQL_DATABASE = "jh_scratch"
 
-python backend/tools/migrate.py apply --dry-run      # 38 statements: 36 tables and the 2 indexes of 0002
-python backend/tools/migrate.py apply                # builds all tables; expect: Applied 2 migration(s)
+python backend/tools/migrate.py apply --dry-run      # 39 statements: 36 tables, the 2 indexes of 0002, the table of 0003
+python backend/tools/migrate.py apply                # builds all tables; expect: Applied 3 migration(s)
 python backend/tools/migrate.py check                # expect: 0 difference(s), 0 warning(s); anything else is a finding
 python backend/tools/migrate.py apply                # expect: Nothing to do
 python backend/tools/schema_snapshot.py --out scratch.json
@@ -185,8 +199,9 @@ python backend/tools/migrate.py check --snapshot scratch.json
 Then exercise the parts the unit tests cannot:
 
 1. **Baseline path:** `docker exec jh-scratch mysql -uroot -pscratch-only jh_scratch -e "DROP TABLE schema_migrations"`,
-   then `migrate.py baseline --accept-extras`: it must record 0001, change nothing else, and report exactly two
-   warnings (the 0002 indexes on `escalation`, which the baseline does not have).
+   then `migrate.py baseline --accept-extras`: it must record 0001, change nothing else, and report exactly three
+   warnings (the two 0002 indexes on `escalation` and the 0003 table `login_known_devices`, which the baseline
+   does not have).
 2. **Runtime code on top:** start the backend against this database and open a few pages (login, chat, quizzes,
    Notion Sync status). Then `migrate.py check` again: the app's own `ensure_*` calls must not have produced new
    differences. This is the real proof that the baseline and the runtime DDL agree.
@@ -212,7 +227,7 @@ Goal: stop changing the schema while requests are being served, and know the ver
    database lock prevents two deploys from racing, and a failed migration fails the deploy instead of the site.
 4. **2c, retire runtime DDL one function at a time.** Each `ensure_*` already has its table in the baseline. Replace
    the body with "check the version, otherwise raise a clear error", one feature per change, each with a test,
-   starting with the rarely used ones (`ensure_chat_cancel_table`, `ensure_login_rate_limit_table`) and finishing
+   starting with the rarely used ones (`ensure_chat_cancel_table`, `login_lockout.ensure_counter_table`) and finishing
    with Notion Sync, which is also driven by a background thread. Delete the dead `ensure_registration_keys_table`.
 5. **Non-additive changes** (changing a type, dropping a column, `CONVERT TO CHARACTER SET`) get their own explicit,
    reviewed operation and a rollback note. They are not available in Phase 1 on purpose. Prefer "expand, deploy,

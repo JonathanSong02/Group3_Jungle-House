@@ -1467,6 +1467,17 @@ const en = {
   'ns.status.missing': 'missing',
   'ns.status.updated': 'updated',
   'ns.status.obsolete': 'obsolete',
+  // Login lockout (device based). {time} is the server countdown as mm:ss.
+  'login.lock.title': 'Login temporarily locked',
+  'login.lock.text': 'Too many wrong attempts on this device. Try again in {time}.',
+  'login.lock.hint': 'You can also use a device you have signed in on before, or reset your password.',
+  'login.lock.timer': 'Try again in {time}',
+  'login.lock.button': 'Login locked · {time}',
+  'login.error.invalid': 'Email or password is incorrect.',
+  'audit.a.login_locked_known_device': 'Login locked on a known device',
+  'audit.a.login_locked_unknown_devices': 'Login locked for unknown devices',
+  'notif.t.loginLocked': 'Sign-in attempts blocked',
+  'notif.d.loginLocked': 'Someone entered a wrong password for your account several times on a device that has not signed in before. New devices are locked for a short time. Devices you have already used are not affected. If this was not you, change your password.',
 };
 
 const zh = {
@@ -2913,6 +2924,16 @@ const zh = {
   'ns.status.missing': '缺失',
   'ns.status.updated': '已更新',
   'ns.status.obsolete': '已过时',
+  'login.lock.title': '登录已暂时锁定',
+  'login.lock.text': '此设备上的错误尝试次数过多。请在 {time} 后重试。',
+  'login.lock.hint': '您也可以使用以前登录过的设备，或重置密码。',
+  'login.lock.timer': '请在 {time} 后重试',
+  'login.lock.button': '登录已锁定 · {time}',
+  'login.error.invalid': '邮箱或密码不正确。',
+  'audit.a.login_locked_known_device': '已知设备上的登录已锁定',
+  'audit.a.login_locked_unknown_devices': '未知设备的登录已锁定',
+  'notif.t.loginLocked': '登录尝试已被阻止',
+  'notif.d.loginLocked': '有人在一台从未登录过的设备上多次输入了您账户的错误密码。新设备已被短时间锁定。您已使用过的设备不受影响。如果这不是您本人的操作，请更改密码。',
 };
 
 const ms = {
@@ -4359,6 +4380,16 @@ const ms = {
   'ns.status.missing': 'hilang',
   'ns.status.updated': 'dikemas kini',
   'ns.status.obsolete': 'usang',
+  'login.lock.title': 'Log masuk dikunci sementara',
+  'login.lock.text': 'Terlalu banyak percubaan salah pada peranti ini. Cuba lagi dalam {time}.',
+  'login.lock.hint': 'Anda juga boleh menggunakan peranti yang pernah anda log masuk sebelum ini, atau tetapkan semula kata laluan anda.',
+  'login.lock.timer': 'Cuba lagi dalam {time}',
+  'login.lock.button': 'Log masuk dikunci · {time}',
+  'login.error.invalid': 'E-mel atau kata laluan tidak betul.',
+  'audit.a.login_locked_known_device': 'Log masuk dikunci pada peranti yang dikenali',
+  'audit.a.login_locked_unknown_devices': 'Log masuk dikunci untuk peranti yang tidak dikenali',
+  'notif.t.loginLocked': 'Percubaan log masuk disekat',
+  'notif.d.loginLocked': 'Seseorang telah memasukkan kata laluan yang salah untuk akaun anda beberapa kali pada peranti yang belum pernah log masuk. Peranti baharu dikunci untuk seketika. Peranti yang pernah anda gunakan tidak terjejas. Jika ini bukan anda, tukar kata laluan anda.',
 };
 
 export const translations = { en, zh, ms };

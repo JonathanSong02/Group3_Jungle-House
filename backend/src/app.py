@@ -89,6 +89,9 @@ from db_helper import (
     similarity_ratio as db_similarity_ratio,
 )
 
+# Login lockout rules, limits and storage (device based). See login_lockout.py.
+import login_lockout
+
 # AI provider settings (Gemini/OpenAI/DeepSeek/Claude) are optional --
 # the app must still run even if the cryptography dependency isn't
 # installed yet (e.g. right after this feature is deployed but before the
@@ -1782,174 +1785,242 @@ def record_login_history(cursor, user_id=None, email=None, full_name=None, statu
 
 
 # =========================
-# LOGIN RATE LIMITING
+# LOGIN LOCKOUT (device based)
 # =========================
-# Primary login protection is ACCOUNT/EMAIL based so it remains stable behind
-# Vercel/Railway proxies. Five invalid password attempts for the same email
-# within ten minutes trigger a fifteen-minute block.
+# The rules, every limit and the storage are in login_lockout.py (one config
+# place). This section is only the Flask side: the device cookie, the 429
+# response and the Security Monitoring entries.
 #
-# The database stores only a SHA-256 rate key, not another copy of the email.
-LOGIN_RATE_LIMIT_MAX_FAILURES = 5
-LOGIN_RATE_LIMIT_WINDOW_MINUTES = 10
-LOGIN_RATE_LIMIT_BLOCK_MINUTES = 15
-_LOGIN_RATE_LIMIT_TABLE_READY = False
+# A known device (it signed in to the account before) has its own counter.
+# All unknown devices share one counter per account. The client IP is not
+# used, because behind Vercel/Railway it is not reliable.
+_LOGIN_UNKNOWN_ACCOUNT_HASH = None
+LOGIN_LOCK_NOTICE_TITLE = "Sign-in attempts blocked"
+LOGIN_LOCK_NOTICE_EVERY_HOURS = 12
 
 
-def ensure_login_rate_limit_table(cursor):
-    global _LOGIN_RATE_LIMIT_TABLE_READY
+def read_login_device():
+    """(device_id, device_hash) from the signed device cookie, or (None, None)."""
+    return login_lockout.read_device_cookie(
+        app.config["SECRET_KEY"],
+        request.cookies.get(login_lockout.DEVICE_COOKIE_NAME),
+    )
 
-    if _LOGIN_RATE_LIMIT_TABLE_READY:
+
+def set_login_device_cookie(response, device_id):
+    """Long-lived, signed, HttpOnly. It only selects a lockout counter and
+    never signs anyone in: the password is always checked."""
+    response.set_cookie(
+        login_lockout.DEVICE_COOKIE_NAME,
+        login_lockout.sign_device_id(app.config["SECRET_KEY"], device_id),
+        max_age=login_lockout.device_cookie_max_age(),
+        httponly=True,
+        secure=bool(app.config.get("SESSION_COOKIE_SECURE")),
+        samesite="Lax",
+        path=login_lockout.DEVICE_COOKIE_PATH,
+    )
+
+
+def remember_login_device(response, user_id, forget_others=False, clear_counter_email=None):
+    """Mark the browser that sent this request as a known device of user_id.
+
+    Only call this after the user has proved who they are: a valid signed-in
+    session (/auth/me, change password) or a valid emailed reset link (reset
+    password). Login does the same inside its own transaction.
+
+    forget_others=True removes the account's other known devices first (the
+    password was changed or reset). Best effort: a failure here never breaks
+    the request it is attached to.
+    """
+    conn = None
+    cursor = None
+
+    try:
+        device_id, device_hash = read_login_device()
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        login_lockout.ensure_login_lockout_tables(cursor)
+
+        if forget_others:
+            login_lockout.forget_devices(cursor, user_id, keep_device_hash=device_hash)
+            state = "unknown"
+        else:
+            state = login_lockout.refresh_known_device(cursor, user_id, device_hash)
+
+        if state == "fresh":
+            conn.commit()
+            return False
+
+        if not device_id:
+            device_id = login_lockout.new_device_id()
+            device_hash = login_lockout.hash_device_id(device_id)
+
+        if state == "unknown":
+            login_lockout.remember_device(cursor, user_id, device_hash)
+
+        if clear_counter_email:
+            login_lockout.clear_device_counter(cursor, clear_counter_email, device_hash)
+
+        conn.commit()
+        set_login_device_cookie(response, device_id)
+        return True
+
+    except Exception:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        print("LOGIN DEVICE ERROR: Could not remember this device.")
+        return False
+
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+def run_login_lockout_cleanup(conn, cursor):
+    """Now and then, delete finished counters and expired devices so the
+    tables do not grow forever. Best effort; login history is not touched."""
+    if not login_lockout.cleanup_is_due():
         return
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS login_rate_limit (
-            rate_key CHAR(64) PRIMARY KEY,
-            failed_attempts INT NOT NULL DEFAULT 0,
-            window_started_at DATETIME NULL,
-            blocked_until DATETIME NULL,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                ON UPDATE CURRENT_TIMESTAMP,
-            INDEX idx_login_rate_limit_blocked_until (blocked_until)
-        )
-    """)
-    _LOGIN_RATE_LIMIT_TABLE_READY = True
-
-
-def get_login_rate_limit_key(email):
-    """Stable account key; intentionally independent of proxy/client IP."""
-    normalized_email = str(email or "").strip().lower()
-    return hashlib.sha256(f"email|{normalized_email}".encode("utf-8")).hexdigest()
-
-
-def get_login_rate_limit_status(cursor, email):
-    """Return (blocked, retry_after_seconds) for this login email."""
     try:
-        ensure_login_rate_limit_table(cursor)
-        rate_key = get_login_rate_limit_key(email)
-
-        cursor.execute("""
-            SELECT failed_attempts, window_started_at, blocked_until
-            FROM login_rate_limit
-            WHERE rate_key = %s
-            LIMIT 1
-        """, (rate_key,))
-        row = cursor.fetchone()
-
-        if not row:
-            return False, 0
-
-        now = datetime.now()
-        blocked_until = row.get("blocked_until")
-
-        if blocked_until and blocked_until > now:
-            retry_after = max(1, int((blocked_until - now).total_seconds()))
-            return True, retry_after
-
-        # A completed block starts clean. This avoids carrying an old failure
-        # count into the next legitimate login attempt.
-        if blocked_until and blocked_until <= now:
-            cursor.execute(
-                "DELETE FROM login_rate_limit WHERE rate_key = %s",
-                (rate_key,)
-            )
-
-        return False, 0
-
-    except Exception as error:
-        # Keep authentication available if only the limiter table has a
-        # temporary problem. The real diagnostic stays server-side.
-        print("LOGIN RATE LIMIT CHECK ERROR:", error)
-        return False, 0
+        login_lockout.cleanup(cursor)
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        print("LOGIN LOCKOUT ERROR: Cleanup failed.")
 
 
-def register_login_rate_limit_failure(cursor, email):
-    """Record one invalid password and return (blocked, retry_after_seconds)."""
-    ensure_login_rate_limit_table(cursor)
+def check_password_for_unknown_account(password):
+    """Spend the same hashing time as a real account, so the response time
+    does not reveal whether an email is registered. Always False."""
+    global _LOGIN_UNKNOWN_ACCOUNT_HASH
 
-    rate_key = get_login_rate_limit_key(email)
-    now = datetime.now()
+    if _LOGIN_UNKNOWN_ACCOUNT_HASH is None:
+        _LOGIN_UNKNOWN_ACCOUNT_HASH = generate_password_hash(secrets.token_urlsafe(24))
 
-    # Create the row if needed, then lock it so simultaneous failed requests
-    # cannot overwrite each other's counters.
-    cursor.execute("""
-        INSERT INTO login_rate_limit
-            (rate_key, failed_attempts, window_started_at, blocked_until)
-        VALUES (%s, 0, NULL, NULL)
-        ON DUPLICATE KEY UPDATE rate_key = VALUES(rate_key)
-    """, (rate_key,))
-
-    cursor.execute("""
-        SELECT failed_attempts, window_started_at, blocked_until
-        FROM login_rate_limit
-        WHERE rate_key = %s
-        FOR UPDATE
-    """, (rate_key,))
-    row = cursor.fetchone() or {}
-
-    blocked_until = row.get("blocked_until")
-    if blocked_until and blocked_until > now:
-        retry_after = max(1, int((blocked_until - now).total_seconds()))
-        return True, retry_after
-
-    window_started_at = row.get("window_started_at")
-    failed_attempts = int(row.get("failed_attempts") or 0)
-
-    if (
-        not window_started_at
-        or now - window_started_at > timedelta(minutes=LOGIN_RATE_LIMIT_WINDOW_MINUTES)
-    ):
-        window_started_at = now
-        failed_attempts = 1
-    else:
-        failed_attempts += 1
-
-    new_blocked_until = None
-    if failed_attempts >= LOGIN_RATE_LIMIT_MAX_FAILURES:
-        new_blocked_until = now + timedelta(minutes=LOGIN_RATE_LIMIT_BLOCK_MINUTES)
-
-    cursor.execute("""
-        UPDATE login_rate_limit
-        SET failed_attempts = %s,
-            window_started_at = %s,
-            blocked_until = %s
-        WHERE rate_key = %s
-    """, (
-        failed_attempts,
-        window_started_at,
-        new_blocked_until,
-        rate_key,
-    ))
-
-    if new_blocked_until:
-        return True, LOGIN_RATE_LIMIT_BLOCK_MINUTES * 60
-
-    return False, 0
-
-
-def clear_login_rate_limit(cursor, email):
-    """Clear the account limiter after the submitted password is proven correct."""
     try:
-        ensure_login_rate_limit_table(cursor)
-        cursor.execute(
-            "DELETE FROM login_rate_limit WHERE rate_key = %s",
-            (get_login_rate_limit_key(email),)
-        )
-    except Exception as error:
-        print("LOGIN RATE LIMIT CLEAR ERROR:", error)
+        check_password_hash(_LOGIN_UNKNOWN_ACCOUNT_HASH, password)
+    except Exception:
+        pass
+
+    return False
 
 
 def login_rate_limited_response(retry_after_seconds):
+    """Same answer for every lock, whichever counter caused it and whether or
+    not the email is registered. The countdown comes from the server."""
     retry_after = max(
         1,
-        int(retry_after_seconds or (LOGIN_RATE_LIMIT_BLOCK_MINUTES * 60))
+        int(retry_after_seconds or (login_lockout.RULE_UNKNOWN_DEVICES.block_minutes * 60))
     )
     response = jsonify({
         "code": "LOGIN_RATE_LIMITED",
-        "message": "Too many failed login attempts. Please try again later."
+        "message": "Too many wrong attempts on this device. Please try again later.",
+        "retry_after_seconds": retry_after,
     })
     response.headers["Retry-After"] = str(retry_after)
     response.headers["Cache-Control"] = "no-store"
     return response, 429
+
+
+def notify_owner_of_login_lock(user):
+    """Tell the account owner that unknown devices were locked, at most once
+    every LOGIN_LOCK_NOTICE_EVERY_HOURS hours. Best effort."""
+    conn = None
+    cursor = None
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT notification_id
+            FROM notification
+            WHERE user_id = %s
+              AND title = %s
+              AND created_at > (NOW() - INTERVAL %s HOUR)
+            LIMIT 1
+        """, (user["user_id"], LOGIN_LOCK_NOTICE_TITLE, int(LOGIN_LOCK_NOTICE_EVERY_HOURS)))
+        if cursor.fetchone():
+            return
+    except Exception:
+        print("LOGIN LOCK NOTICE ERROR: Could not check earlier notices.")
+        return
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+    create_notification_safe(
+        user_id=user["user_id"],
+        title=LOGIN_LOCK_NOTICE_TITLE,
+        detail=(
+            "Someone entered a wrong password for your account several times on a device "
+            "that has not signed in before. New devices are locked for a short time. "
+            "Devices you have already used are not affected. "
+            "If this was not you, change your password."
+        ),
+        notification_type="system",
+        related_id=user["user_id"],
+    )
+
+
+def record_login_lock_event(gate, email, user):
+    """Security Monitoring entry when a lock starts.
+
+    Written once per lock (not once per blocked request). It contains the
+    email, like the other authentication entries, and never a password, a
+    cookie value or a device id.
+    """
+    if not gate or not gate.newly_blocked:
+        return
+
+    try:
+        shown_email = str(email or "")[:120]
+
+        if gate.scope == login_lockout.RULE_KNOWN_DEVICE.scope:
+            rule = login_lockout.RULE_KNOWN_DEVICE
+            action = "Login locked on a known device"
+            description = (
+                f"{rule.max_failures} wrong passwords on one known device for {shown_email}. "
+                f"Only that device is locked for {rule.block_minutes} minutes."
+            )
+        else:
+            rule = login_lockout.RULE_UNKNOWN_DEVICES
+            action = "Login locked for unknown devices"
+            description = (
+                f"{rule.max_failures} wrong passwords for {shown_email} from devices that have not signed in "
+                f"to it before. Unknown devices are locked for {rule.block_minutes} minutes. "
+                "Devices that signed in before are not affected."
+            )
+            if not user:
+                description += " No account uses this email."
+
+        add_audit_log(
+            actor_id=None,
+            actor_name="System",
+            action=action,
+            module="Authentication",
+            description=description,
+        )
+
+        if (
+            user
+            and gate.scope == login_lockout.RULE_UNKNOWN_DEVICES.scope
+            and str(user.get("status") or "").lower() == "active"
+        ):
+            notify_owner_of_login_lock(user)
+
+    except Exception:
+        print("LOGIN LOCK EVENT ERROR: Could not record the lock.")
 
 
 def add_audit_log(actor_id=None, actor_name="System", action="", module="", description=""):
@@ -2019,6 +2090,10 @@ def auth_me():
         "csrf_token": session["csrf_token"],
     })
     response.headers["Cache-Control"] = "no-store"
+    # A valid session was created by a correct password on this browser, so
+    # the browser is a known device of this account. This also covers people
+    # who were already signed in when the device-based lockout went live.
+    remember_login_device(response, current_auth_user_id())
     return response, 200
 
 
@@ -5637,9 +5712,20 @@ def reset_password():
             description=f"Password reset completed for {token_row.get('email')}."
         )
 
-        return jsonify({
+        response = jsonify({
             "message": "Password updated successfully. You can now sign in with your new password."
-        }), 200
+        })
+        # Lockout only (the reset itself is unchanged): the emailed link proved
+        # who this is, so this browser becomes the account's known device with
+        # a clean counter, and the account's older known devices are removed.
+        # The new password is still required to sign in.
+        remember_login_device(
+            response,
+            token_row["user_id"],
+            forget_others=True,
+            clear_counter_email=token_row.get("email"),
+        )
+        return response, 200
 
     except Exception as error:
         if conn:
@@ -5698,17 +5784,13 @@ def login():
     conn = None
     cursor = None
 
+    # The device cookie only decides WHICH failure counter this attempt uses.
+    # It never replaces the password check below.
+    device_id, device_hash = read_login_device()
+
     try:
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
-
-        # Check the stable account/email limiter before password verification.
-        # It does not depend on request.remote_addr, so Vercel/Railway proxy
-        # changes cannot split repeated failures into different buckets.
-        blocked, retry_after = get_login_rate_limit_status(cursor, email)
-        if blocked:
-            conn.commit()
-            return login_rate_limited_response(retry_after)
 
         cursor.execute("""
             SELECT u.user_id, u.full_name, u.email, u.password_hash,
@@ -5718,54 +5800,79 @@ def login():
         """, (email,))
         user = cursor.fetchone()
 
-        if not user:
-            record_login_history(
-                cursor,
-                email=email,
-                full_name="Unknown",
-                status="failed"
-            )
-            blocked, retry_after = register_login_rate_limit_failure(cursor, email)
-            conn.commit()
-
-            if blocked:
-                return login_rate_limited_response(retry_after)
-
-            return jsonify({"message": "Invalid email or password."}), 401
-
-        stored = str(user.get("password_hash") or "")
+        # Reserve this attempt BEFORE the password is checked, under a row
+        # lock, so simultaneous guesses cannot slip past the limit. A known
+        # device has its own counter; every other device shares one counter
+        # per account. Unregistered emails are counted exactly the same way.
+        lock_counters = []
         try:
-            password_ok = check_password_hash(stored, password)
-        except Exception:
-            password_ok = False
-
-        if not password_ok and hmac.compare_digest(stored, password):
-            stored = generate_password_hash(password)  # Upgrade legacy plaintext on login.
-            cursor.execute(
-                "UPDATE users SET password_hash = %s WHERE user_id = %s",
-                (stored, user["user_id"])
+            login_lockout.ensure_counter_table(cursor)
+            known_device = login_lockout.lookup_known_device(
+                cursor, user["user_id"] if user else 0, device_hash
             )
-            password_ok = True
+            lock_counters = login_lockout.counters_for_login(
+                email, device_hash if known_device else None
+            )
+            gate = login_lockout.begin_attempt(cursor, lock_counters)
+            conn.commit()  # Release the row lock before the slow password hash.
+        except Exception:
+            # Keep sign-in available if only the lockout storage has a
+            # problem (same choice as before). The diagnostic stays server-side.
+            conn.rollback()
+            lock_counters = []
+            gate = None
+            print("LOGIN LOCKOUT ERROR: Could not check the lockout counters.")
+
+        if gate and gate.blocked:
+            record_login_lock_event(gate, email, user)
+            return login_rate_limited_response(gate.retry_after)
+
+        stored = str(user.get("password_hash") or "") if user else ""
+        if user:
+            try:
+                password_ok = check_password_hash(stored, password)
+            except Exception:
+                password_ok = False
+
+            if not password_ok and hmac.compare_digest(stored, password):
+                stored = generate_password_hash(password)  # Upgrade legacy plaintext on login.
+                cursor.execute(
+                    "UPDATE users SET password_hash = %s WHERE user_id = %s",
+                    (stored, user["user_id"])
+                )
+                password_ok = True
+        else:
+            password_ok = check_password_for_unknown_account(password)
 
         if not password_ok:
             record_login_history(
                 cursor,
-                user["user_id"],
-                user["email"],
-                user["full_name"],
+                user["user_id"] if user else None,
+                user["email"] if user else email,
+                user["full_name"] if user else "Unknown",
                 "failed"
             )
-            blocked, retry_after = register_login_rate_limit_failure(cursor, email)
+            gate = login_lockout.record_failure(cursor, lock_counters)
             conn.commit()
+            run_login_lockout_cleanup(conn, cursor)
 
-            if blocked:
-                return login_rate_limited_response(retry_after)
+            if gate.blocked:
+                record_login_lock_event(gate, email, user)
+                return login_rate_limited_response(gate.retry_after)
 
-            return jsonify({"message": "Invalid email or password."}), 401
+            # Same code, message and status for a wrong password and for an
+            # email that is not registered.
+            return jsonify({
+                "code": "INVALID_CREDENTIALS",
+                "message": "Email or password is incorrect."
+            }), 401
 
-        # Password is correct. Clear this account's failed-attempt state before
-        # applying normal pending/inactive-account rules.
-        clear_login_rate_limit(cursor, email)
+        # Password is correct. Reset only the counter of this device and this
+        # account before applying normal pending/inactive-account rules.
+        try:
+            login_lockout.record_success(cursor, lock_counters)
+        except Exception:
+            print("LOGIN LOCKOUT ERROR: Could not reset the lockout counter.")
 
         status = str(user.get("status") or "").lower()
         if status != "active":
@@ -5797,7 +5904,23 @@ def login():
             user["full_name"],
             "success"
         )
+
+        # This browser has now proved the password, so it becomes a known
+        # device of this account (a new random id if it has no cookie yet).
+        remembered_device_id = device_id or login_lockout.new_device_id()
+        try:
+            login_lockout.ensure_known_device_table(cursor)
+            login_lockout.remember_device(
+                cursor,
+                user["user_id"],
+                login_lockout.hash_device_id(remembered_device_id),
+            )
+        except Exception:
+            remembered_device_id = None
+            print("LOGIN DEVICE ERROR: Could not remember this device.")
+
         conn.commit()
+        run_login_lockout_cleanup(conn, cursor)
 
         session.clear()  # Rotate the session on login; prevent session fixation.
         session.permanent = True
@@ -5812,6 +5935,8 @@ def login():
             "csrf_token": session["csrf_token"],
         })
         response.headers["Cache-Control"] = "no-store"
+        if remembered_device_id:
+            set_login_device_cookie(response, remembered_device_id)
         return response, 200
 
     except Exception:
@@ -6053,7 +6178,11 @@ def change_password(user_id):
         conn.commit()
         session["password_fingerprint"] = password_session_fingerprint(new_hash)
 
-        return jsonify({"message": "Password updated successfully."}), 200
+        response = jsonify({"message": "Password updated successfully."})
+        # Lockout only: the other known devices of this account are removed
+        # with the old password. This browser stays a known device.
+        remember_login_device(response, user_id, forget_others=True)
+        return response, 200
 
     except mysql.connector.Error as err:
         print("CHANGE PASSWORD MYSQL ERROR:", err)

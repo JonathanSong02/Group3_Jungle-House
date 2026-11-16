@@ -46,6 +46,8 @@ const ACTIONS = {
   "Approved escalation answer": 'audit.a.approved_escalation_answer',
   "Approved account registration": 'audit.a.approved_account_registration',
   "Applied Notion update": 'audit.a.applied_notion_update',
+  "Login locked on a known device": 'audit.a.login_locked_known_device',
+  "Login locked for unknown devices": 'audit.a.login_locked_unknown_devices',
 };
 
 const MODULES = {

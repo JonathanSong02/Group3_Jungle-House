@@ -7,6 +7,7 @@ const TITLE_KEYS = {
   'account approved': 'notif.t.approved',
   'registration declined': 'notif.t.declined',
   'password changed': 'notif.t.pwChanged',
+  'sign-in attempts blocked': 'notif.t.loginLocked',
 };
 
 const DETAIL_PATTERNS = [
@@ -16,6 +17,7 @@ const DETAIL_PATTERNS = [
   { re: /^Your account was approved\. Sign in with your email and password\.$/, key: 'notif.d.approved', vars: () => ({}) },
   { re: /^Your registration was declined\. Contact your Manager for assistance\.(.*)$/s, key: 'notif.d.declined', vars: () => ({}), suffix: true },
   { re: /^Your Jungle House AI Wiki password was reset successfully\.$/, key: 'notif.d.pwChanged', vars: () => ({}) },
+  { re: /^Someone entered a wrong password for your account several times on a device that has not signed in before\./, key: 'notif.d.loginLocked', vars: () => ({}) },
 ];
 
 

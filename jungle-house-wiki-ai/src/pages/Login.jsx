@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../i18n/LanguageContext';
+import { formatCooldown, isLockedFor } from '../utils/loginCooldown';
 import '../styles/AuthSecurity.css';
 
 export default function Login() {
@@ -11,9 +13,12 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [cooldownUntil, setCooldownUntil] = useState(null);
   const [cooldownSeconds, setCooldownSeconds] = useState(0);
+  // The server locks one account on this device, so remember which email it was.
+  const [lockedEmail, setLockedEmail] = useState('');
 
   // AuthContext signs in through Flask and verifies the cookie with /auth/me.
   const { login } = useAuth();
+  const { t } = useLanguage();
   const navigate = useNavigate();
   const location = useLocation();
   const requestedLocation = location.state?.from;
@@ -44,15 +49,10 @@ export default function Login() {
     return () => window.clearInterval(timerId);
   }, [cooldownUntil]);
 
-  const formatCooldown = (seconds) => {
-    const safeSeconds = Math.max(0, Number(seconds) || 0);
-    const minutes = Math.floor(safeSeconds / 60);
-    const remainingSeconds = safeSeconds % 60;
-
-    return `${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`;
-  };
-
-  const loginLocked = cooldownSeconds > 0;
+  // Locked only while the email typed is the one the server locked on this
+  // device. Another account can still be used here; the server decides anyway.
+  const loginLocked = isLockedFor(lockedEmail, form.email, cooldownSeconds);
+  const cooldownText = formatCooldown(cooldownSeconds);
 
   const destinationFor = () => {
     // Preserve the user's original protected-page destination, including its
@@ -87,11 +87,13 @@ export default function Login() {
     setError('');
     setInfo('');
 
+    const submittedEmail = form.email.trim().toLowerCase();
+
     try {
       // Approval directly changes the backend account to active; there is no
       // activation key or second login stage.
       await login({
-        email: form.email.trim().toLowerCase(),
+        email: submittedEmail,
         password: form.password,
       });
       navigate(destinationFor(), { replace: true });
@@ -100,17 +102,22 @@ export default function Login() {
       const code = authError?.code || data.code;
 
       if (code === 'LOGIN_RATE_LIMITED' || authError?.status === 429) {
-        // Prefer the real server cooldown. The 15-minute fallback only protects
-        // the UX if a proxy/browser hides the Retry-After response header.
+        // The remaining time comes from the server (response body, then the
+        // Retry-After header). The 15-minute fallback is only used if a proxy
+        // or browser hides both; the server still enforces the real time.
         const retryAfterSeconds = Math.max(
           1,
           Number(authError?.retryAfterSeconds) || 15 * 60
         );
 
+        setLockedEmail(submittedEmail);
         setCooldownUntil(Date.now() + retryAfterSeconds * 1000);
         setCooldownSeconds(retryAfterSeconds);
         setError('');
         setInfo('');
+      } else if (code === 'INVALID_CREDENTIALS') {
+        // Same text for a wrong password and for an email that is not registered.
+        setError(t('login.error.invalid'));
       } else if (code === 'ACCOUNT_PENDING_APPROVAL' || data.account_status === 'pending') {
         setInfo(
           data.message ||
@@ -195,15 +202,16 @@ export default function Login() {
               </span>
 
               <span className="auth-lockout-copy">
-                <strong>Login temporarily locked</strong>
-                <span>Too many failed attempts. Try again when the timer ends.</span>
+                <strong>{t('login.lock.title')}</strong>
+                <span>{t('login.lock.text', { time: cooldownText })}</span>
+                <span>{t('login.lock.hint')}</span>
               </span>
 
               <span
                 className="auth-lockout-timer"
-                aria-label={`Try again in ${formatCooldown(cooldownSeconds)}`}
+                aria-label={t('login.lock.timer', { time: cooldownText })}
               >
-                {formatCooldown(cooldownSeconds)}
+                {cooldownText}
               </span>
             </div>
           ) : null}
@@ -218,7 +226,7 @@ export default function Login() {
             {loading
               ? 'Signing in...'
               : loginLocked
-                ? `Login locked · ${formatCooldown(cooldownSeconds)}`
+                ? t('login.lock.button', { time: cooldownText })
                 : 'Login'}
           </button>
 

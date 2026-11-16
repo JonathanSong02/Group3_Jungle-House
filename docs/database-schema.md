@@ -33,7 +33,8 @@ migration (`backend/migrations/0001_baseline.py`) relates to production. How to 
 
 | File · function | When it runs | What it does | Why running it twice is safe |
 |---|---|---|---|
-| `app.py` · `ensure_login_rate_limit_table` | login request | creates `login_rate_limit` | `CREATE TABLE IF NOT EXISTS` |
+| `login_lockout.py` · `ensure_counter_table` | login request | creates `login_rate_limit` (the login failure counters) | `CREATE TABLE IF NOT EXISTS` |
+| `login_lockout.py` · `ensure_known_device_table` | login, `/auth/me`, reset password, change password requests | creates `login_known_devices` (FK → `users`, ON DELETE CASCADE). **Not in production yet**: migration 0003, see section 7 | `IF NOT EXISTS` |
 | `app.py` · `ensure_password_reset_tokens_table` | forgot / validate / reset password requests | creates `password_reset_tokens` (FK → `users`, ON DELETE CASCADE) | `IF NOT EXISTS` |
 | `app.py` · `ensure_declined_registration_history_table` | register request (called before the registration transaction, because DDL commits) | creates `declined_registration_history` | `IF NOT EXISTS` |
 | `app.py` · `ensure_ai_chat_log_table` | chat, chat test, analytics requests | creates `ai_chat_log` + 5 indexes | `IF NOT EXISTS` |
@@ -141,3 +142,23 @@ Smaller things worth knowing:
 `0002_escalation_indexes.py` adds `idx_status` and `idx_created_at` to `escalation` **only if missing**. It is
 not in the baseline because production does not have them. Nothing depends on it. See
 [database-migrations.md](database-migrations.md).
+
+## 7. Added after the baseline: `login_known_devices` (migration 0003)
+
+The device-based login lockout (`backend/src/login_lockout.py`) adds one table, the 37th. It is not part of the
+2026-11-03 production snapshot, so it is in `0003_login_known_devices.py` and not in the baseline.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `known_device_id` | INT, auto-increment, primary key | |
+| `user_id` | INT NOT NULL, FK → `users.user_id` ON DELETE CASCADE | the account |
+| `device_hash` | CHAR(64) NOT NULL | SHA-256 of the random id in the device cookie. The raw id is never stored |
+| `created_at` | TIMESTAMP, default now | |
+| `last_seen_at` | DATETIME NOT NULL | last sign-in or refresh from this device |
+| `expires_at` | DATETIME NOT NULL | the device stops being "known" after this (180 days after `last_seen_at`) |
+
+Indexes: unique `(user_id, device_hash)` and `expires_at` (for the cleanup). The app creates the table at runtime
+with exactly this definition (a test compares the two), so the migration is only needed to record the version.
+The failure counters reuse `login_rate_limit`, whose structure did not change: the new counter keys are hashed
+from a different text, so rows written by the old per-email rule are never read again and are deleted by the
+cleanup.

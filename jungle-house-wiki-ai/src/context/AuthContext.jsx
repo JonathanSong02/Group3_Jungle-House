@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import api from '../services/api';
+import { readRetryAfterSeconds } from '../utils/loginCooldown';
 
 const AuthContext = createContext(null);
 
@@ -19,17 +20,9 @@ function toAuthError(error, fallbackMessage) {
   authError.data = responseData;
   authError.status = error?.response?.status || error?.status || null;
 
-  // Preserve the backend's Retry-After value for login rate-limit UX.
-  // Axios may expose headers either as an object or AxiosHeaders instance.
-  const retryAfterHeader =
-    error?.response?.headers?.['retry-after'] ??
-    error?.response?.headers?.get?.('retry-after');
-  const retryAfterSeconds = Number.parseInt(String(retryAfterHeader || ''), 10);
-
-  authError.retryAfterSeconds =
-    Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
-      ? retryAfterSeconds
-      : null;
+  // Preserve the server's remaining lock time for the login countdown: the
+  // JSON body first (a proxy can drop headers), then the Retry-After header.
+  authError.retryAfterSeconds = readRetryAfterSeconds(responseData, error?.response?.headers);
 
   authError.networkError = networkError;
   authError.originalError = error;
