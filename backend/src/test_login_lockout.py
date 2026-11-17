@@ -426,7 +426,7 @@ class RouteTestCase(LockoutTestCase):
     def logout(self, client):
         return client.post("/api/auth/logout", headers={"X-CSRF-Token": self.csrf(client)})
 
-    def fail(self, client, email, times):
+    def wrong_logins(self, client, email, times):
         return [self.login(client, email, WRONG).status_code for _ in range(times)]
 
     def device_cookie(self, response):
@@ -447,7 +447,7 @@ class LoginRouteTests(RouteTestCase):
         self.logout(owner_phone)
 
         attacker = self.device()
-        self.assertEqual(self.fail(attacker, MANAGER, 5), [401, 401, 401, 401, 429])
+        self.assertEqual(self.wrong_logins(attacker, MANAGER, 5), [401, 401, 401, 401, 429])
         self.assertEqual(self.login(attacker, MANAGER, WRONG).status_code, 429)
         # Every unknown device is locked for this account, even with the right password ...
         self.assertEqual(self.login(self.device(), MANAGER, PASSWORD).status_code, 429)
@@ -463,7 +463,7 @@ class LoginRouteTests(RouteTestCase):
         tablet = self.device()
         self.login(tablet, MANAGER, PASSWORD)
         self.logout(tablet)
-        self.assertEqual(self.fail(tablet, MANAGER, 5), [401, 401, 401, 401, 429])
+        self.assertEqual(self.wrong_logins(tablet, MANAGER, 5), [401, 401, 401, 401, 429])
         self.assertEqual(self.login(tablet, MANAGER, PASSWORD).status_code, 429)        # this device waits
         self.assertEqual(self.login(self.device(), MANAGER, PASSWORD).status_code, 200)   # a new device is fine
         # The tablet is locked for that account only: another person can still sign in on it.
@@ -471,7 +471,7 @@ class LoginRouteTests(RouteTestCase):
 
     def test_lock_response_carries_the_server_countdown_and_ends_on_time(self):
         attacker = self.device()
-        self.fail(attacker, MANAGER, 4)
+        self.wrong_logins(attacker, MANAGER, 4)
         response = self.login(attacker, MANAGER, WRONG)
         body = response.get_json()
         self.assertEqual(response.status_code, 429)
@@ -508,11 +508,11 @@ class LoginRouteTests(RouteTestCase):
         self.login(phone, MANAGER, PASSWORD)
         self.logout(phone)
 
-        self.fail(self.device(), MANAGER, 4)                         # unknown devices: 4 of 5
-        self.assertEqual(self.fail(phone, MANAGER, 4), [401] * 4)    # the phone: 4 of 5
+        self.wrong_logins(self.device(), MANAGER, 4)                         # unknown devices: 4 of 5
+        self.assertEqual(self.wrong_logins(phone, MANAGER, 4), [401] * 4)    # the phone: 4 of 5
         self.assertEqual(self.login(phone, MANAGER, PASSWORD).status_code, 200)        # resets the phone only
         self.logout(phone)
-        self.assertEqual(self.fail(phone, MANAGER, 4), [401] * 4)    # the phone starts from 0 again
+        self.assertEqual(self.wrong_logins(phone, MANAGER, 4), [401] * 4)    # the phone starts from 0 again
         self.assertEqual(self.login(self.device(), MANAGER, WRONG).status_code, 429)   # unknown: this was the 5th
 
     def test_the_device_cookie_never_replaces_the_password(self):
@@ -542,7 +542,7 @@ class LoginRouteTests(RouteTestCase):
         value = cookie.split(";")[0].split("=", 1)[1]
         device_id, device_hash = ll.read_device_cookie(app_module.app.config["SECRET_KEY"], value)
         self.assertEqual(self.db.run("SELECT user_id, device_hash FROM login_known_devices"), [(1, device_hash)])
-        self.fail(self.device(), MANAGER, 5)
+        self.wrong_logins(self.device(), MANAGER, 5)
 
         stored = repr([self.db.run(f"SELECT * FROM {table}") for table in
                        ("login_known_devices", "login_rate_limit", "audit_log", "login_history")])
@@ -554,7 +554,7 @@ class LoginRouteTests(RouteTestCase):
         staff_tablet = self.device()
         staff_cookie, = self.device_cookie(self.login(staff_tablet, STAFF, PASSWORD))     # known for STAFF only
         self.logout(staff_tablet)
-        self.fail(self.device(), MANAGER, 5)                                             # unknown devices locked
+        self.wrong_logins(self.device(), MANAGER, 5)                                             # unknown devices locked
 
         forged = self.device()
         forged.set_cookie(ll.DEVICE_COOKIE_NAME, "not-a-real-cookie", path="/api")
@@ -598,7 +598,7 @@ class LoginRouteTests(RouteTestCase):
             response = self.login(self.device(), MANAGER, PASSWORD)
             self.assertEqual(response.status_code, 200)
             self.assertEqual(self.device_cookie(response), [])
-            self.assertEqual(self.fail(self.device(), MANAGER, 5), [401, 401, 401, 401, 429])
+            self.assertEqual(self.wrong_logins(self.device(), MANAGER, 5), [401, 401, 401, 401, 429])
             self.assertEqual(self.login(self.device(), MANAGER, PASSWORD).status_code, 429)
             self.assertEqual(self.login(self.device(), STAFF, PASSWORD).status_code, 200)
 
@@ -612,7 +612,7 @@ class LoginRouteTests(RouteTestCase):
 
 class KnownDeviceRouteTests(RouteTestCase):
     def lock_unknown_devices(self, email=MANAGER):
-        self.assertEqual(self.fail(self.device(), email, 5)[-1], 429)
+        self.assertEqual(self.wrong_logins(self.device(), email, 5)[-1], 429)
 
     def test_an_existing_session_becomes_a_known_device_on_auth_me(self):
         laptop = self.device()
@@ -679,7 +679,7 @@ class KnownDeviceRouteTests(RouteTestCase):
         phone = self.device()
         self.login(phone, MANAGER, PASSWORD)
         self.logout(phone)
-        self.assertEqual(self.fail(phone, MANAGER, 5)[-1], 429)       # the owner forgot the password on a known device
+        self.assertEqual(self.wrong_logins(phone, MANAGER, 5)[-1], 429)       # the owner forgot the password on a known device
         new_password = "Brand-New-Pass-7"
         phone.post("/api/auth/reset-password", headers={"X-CSRF-Token": self.csrf(phone)},
                    json={"token": self.reset_token(1), "new_password": new_password, "confirm_password": new_password})
@@ -721,8 +721,8 @@ class MonitoringTests(RouteTestCase):
 
     def test_each_lock_is_recorded_once_for_security_monitoring(self):
         attacker = self.device()
-        self.fail(attacker, MANAGER, 5)
-        self.fail(attacker, MANAGER, 3)                                # blocked requests add no more entries
+        self.wrong_logins(attacker, MANAGER, 5)
+        self.wrong_logins(attacker, MANAGER, 3)                                # blocked requests add no more entries
         (actor, action, module, description), = self.events()
         self.assertEqual((actor, action, module), ("System", "Login locked for unknown devices", "Authentication"))
         self.assertIn(MANAGER, description)
@@ -732,8 +732,8 @@ class MonitoringTests(RouteTestCase):
         phone = self.device()
         self.login(phone, STAFF, PASSWORD)
         self.logout(phone)
-        self.fail(phone, STAFF, 5)
-        self.fail(self.device(), GHOST, 5)
+        self.wrong_logins(phone, STAFF, 5)
+        self.wrong_logins(self.device(), GHOST, 5)
         actions = [(action, description) for _, action, _, description in self.events()]
         self.assertEqual([action for action, _ in actions],
                          ["Login locked for unknown devices", "Login locked on a known device",
@@ -744,7 +744,7 @@ class MonitoringTests(RouteTestCase):
             self.assertNotIn(WRONG, description)
 
     def test_the_owner_is_told_once_when_unknown_devices_are_locked(self):
-        self.fail(self.device(), MANAGER, 5)
+        self.wrong_logins(self.device(), MANAGER, 5)
         self.notify.assert_called_once()
         call = self.notify.call_args.kwargs
         self.assertEqual((call["user_id"], call["title"]), (1, "Sign-in attempts blocked"))
@@ -753,20 +753,20 @@ class MonitoringTests(RouteTestCase):
         # A notice from the last 12 hours stops a second one; an older one does not.
         self.db.run("INSERT INTO notification (user_id, title, detail) VALUES (1, 'Sign-in attempts blocked', 'x')")
         self.expire_all_locks()
-        self.fail(self.device(), MANAGER, 5)
+        self.wrong_logins(self.device(), MANAGER, 5)
         self.notify.assert_called_once()
         self.db.run("UPDATE notification SET created_at = datetime('now', '-13 hours')")
         self.expire_all_locks()
-        self.fail(self.device(), MANAGER, 5)
+        self.wrong_logins(self.device(), MANAGER, 5)
         self.assertEqual(self.notify.call_count, 2)
 
     def test_no_owner_notice_for_a_known_device_lock_or_an_unregistered_email(self):
         phone = self.device()
         self.login(phone, MANAGER, PASSWORD)
         self.logout(phone)
-        self.fail(phone, MANAGER, 5)
-        self.fail(self.device(), GHOST, 5)
-        self.fail(self.device(), PENDING, 5)
+        self.wrong_logins(phone, MANAGER, 5)
+        self.wrong_logins(self.device(), GHOST, 5)
+        self.wrong_logins(self.device(), PENDING, 5)
         self.notify.assert_not_called()
 
 

@@ -62,3 +62,15 @@ That is expected.
 Maintainers: to stop broken changes from being merged, require the two checks under
 *Settings → Branches → Branch protection rules → Require status checks to pass* (`Backend tests (Python 3.12)` and
 `Frontend lint, tests and build (Node 22)`).
+
+## Developer-only routes
+
+A few diagnostic routes exist only on a developer computer: `/api/debug/chat-uploads`, `/api/debug/sop-images`,
+`/api/debug/static-files`, `/api/debug/uploads`, `/api/test-db` and `/api/chat/test`. They are registered only when
+the backend is started with `python app.py` **and** no Railway variable is set (see `DEV_ONLY_ROUTES` in
+`backend/src/app.py`). They still need a manager login. On the live site (gunicorn with `wsgi.py`) they do not
+exist and answer like any unknown URL.
+
+`test_dev_only_routes.py` fails if a route with a debug-style name (debug, test, dev, ping, mock, demo, env,
+config, reset …) is registered on the live site. A new developer tool goes into `DEV_ONLY_ROUTES`; a real feature
+whose name happens to match goes into `ALLOWED` in that test, with a reason.

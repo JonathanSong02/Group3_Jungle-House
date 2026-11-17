@@ -1629,7 +1629,8 @@ def serve_article_attachment(filename):
 def serve_chat_upload(filename):
     return send_private_static_file(CHAT_UPLOAD_FOLDER, filename)
 
-@app.route("/api/debug/chat-uploads", methods=["GET"])
+# Developer-only (see register_dev_only_routes at the end of this file): not
+# registered on the live site.
 def debug_chat_uploads():
     files = []
 
@@ -1647,7 +1648,7 @@ def serve_sop_image(filename):
     return send_private_static_file(SOP_IMAGE_FOLDER, filename)
 
 
-@app.route("/api/debug/sop-images", methods=["GET"])
+# Developer-only, see register_dev_only_routes.
 def debug_sop_images():
     files = []
 
@@ -1661,7 +1662,7 @@ def debug_sop_images():
     }), 200
 
 
-@app.route("/api/debug/static-files", methods=["GET"])
+# Developer-only, see register_dev_only_routes.
 def debug_static_files():
     files = []
 
@@ -1674,7 +1675,7 @@ def debug_static_files():
         "files": files
     }), 200
 
-@app.route("/api/debug/uploads", methods=["GET"])
+# Developer-only, see register_dev_only_routes.
 def debug_uploads():
     files = []
 
@@ -5280,7 +5281,7 @@ def health():
     })
 
 
-@app.route("/api/test-db", methods=["GET"])
+# Developer-only, see register_dev_only_routes.
 def test_db():
     conn = None
     cursor = None
@@ -6564,7 +6565,8 @@ def mark_notification_as_read(notification_id):
 
 
 
-@app.route("/api/chat/test", methods=["GET"])
+# Developer-only, see register_dev_only_routes. It runs REAL_JH_TEST_QUESTIONS
+# through the chat engine and writes logs/ai_test_results.csv.
 def chat_test():
     results = []
     correct_count = 0
@@ -13546,14 +13548,6 @@ def save_quiz_to_db(title, questions):
 
     return quiz_id
 
-@app.route("/api/generate-quiz", methods=["POST"])
-def generate_quiz():
-    # Automatic quiz generation is intentionally disabled.
-    # Quiz / Training remains available through manual admin quiz management routes.
-    return jsonify({
-        "message": "Automatic quiz generation is disabled. Please create quizzes manually from Quiz Management."
-    }), 400
-
 _QUIZ_EXTRA_COLUMNS_READY = False
 _QUIZ_TRAINING_MATERIAL_TABLE_READY = False
 _QUIZ_ATTEMPT_ANSWER_TABLE_READY = False
@@ -16969,11 +16963,64 @@ def prevent_private_static_caching(response):
         response.vary.add("Cookie")
     return response
 
+
+# =========================
+# DEVELOPER-ONLY ROUTES
+# =========================
+# Diagnostics for a developer's own computer. They must not exist on the live
+# site: there they are simply not registered, so they answer like any unknown
+# URL (404 "not found"), even for a manager.
+#
+# They are registered only when BOTH of these are true:
+#   1. The backend was started with `python app.py` (the __main__ block below).
+#      The live site starts gunicorn with wsgi.py (Procfile / railway.json),
+#      which never runs that block. `flask run`, gunicorn and test imports
+#      leave them off too.
+#   2. No Railway variable is set (the same variables that switch on the
+#      Secure session cookie in production, plus the public domain Railway
+#      sets for every deployment).
+# If either is unclear, they stay off. Locally they still need a manager login
+# (their names stay in _MANAGER_ENDPOINTS).
+DEV_ONLY_ROUTES = (
+    ("/api/debug/chat-uploads", debug_chat_uploads, ("GET",)),
+    ("/api/debug/sop-images", debug_sop_images, ("GET",)),
+    ("/api/debug/static-files", debug_static_files, ("GET",)),
+    ("/api/debug/uploads", debug_uploads, ("GET",)),
+    ("/api/test-db", test_db, ("GET",)),
+    ("/api/chat/test", chat_test, ("GET",)),
+)
+
+
+def running_on_railway():
+    return any(
+        os.getenv(name)
+        for name in ("RAILWAY_ENVIRONMENT", "RAILWAY_ENVIRONMENT_NAME", "RAILWAY_PUBLIC_DOMAIN")
+    )
+
+
+def register_dev_only_routes(target_app):
+    """Add the developer-only routes. Does nothing on Railway. Returns the paths added."""
+    if running_on_railway():
+        return []
+
+    added = []
+    for path, view, methods in DEV_ONLY_ROUTES:
+        if view.__name__ not in target_app.view_functions:
+            target_app.add_url_rule(path, endpoint=view.__name__, view_func=view, methods=list(methods))
+            added.append(path)
+    return added
+
+
 # =========================
 # RUN APP
 # =========================
 if __name__ == "__main__":
     verify_manager_account()
+
+    # Developer computer only: see "DEVELOPER-ONLY ROUTES" above.
+    dev_routes = register_dev_only_routes(app)
+    if dev_routes:
+        print("Developer-only routes enabled (not on the live site):", ", ".join(dev_routes))
 
     # Railway exposes the container through its assigned PORT.  Binding only
     # to 127.0.0.1 makes the service unreachable from Vercel and results in
