@@ -1481,3 +1481,80 @@
     overscroll-behavior-y: auto;
   }
 }
+
+
+/* ========================================================================== 
+   REAL-TIME-LIKE SEND EXPERIENCE — optimistic local message + silent sync
+   ========================================================================== */
+.messages-page {
+  position: relative;
+}
+
+.messages-toast {
+  position: fixed;
+  z-index: 15000;
+  top: 82px;
+  right: 22px;
+  width: min(390px, calc(100vw - 32px));
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 12px;
+  color: #6f2f29;
+  background: #fff7f5;
+  border: 1px solid #e9c3bc;
+  border-radius: 14px;
+  box-shadow: 0 16px 42px rgba(48, 32, 27, .16);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.messages-toast-icon {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: #b44a3e;
+  border-radius: 50%;
+  font-weight: 900;
+}
+
+.messages-toast > button {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  font-size: 20px;
+  line-height: 1;
+}
+.messages-toast > button:hover { background: rgba(122, 56, 47, .08); }
+
+.messages-send-status {
+  font-size: 10px !important;
+  font-weight: 700;
+  opacity: .82;
+  white-space: nowrap !important;
+}
+
+.staff-workspace .messages-page .messages-reply-bar textarea {
+  resize: none;
+}
+
+.staff-workspace .messages-page .messages-reply-send {
+  align-self: center;
+}
+
+@media (max-width: 640px) {
+  .messages-toast {
+    top: 70px;
+    right: 10px;
+    width: calc(100vw - 20px);
+  }
+}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import PageHeader from '../components/PageHeader';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -102,17 +102,20 @@ export default function Messages() {
   const [showComposer, setShowComposer] = useState(false);
   const [openMenuId, setOpenMenuId] = useState(null);
   const [nowValue, setNowValue] = useState(Date.now());
+  const [toast, setToast] = useState(null);
+  const toastTimerRef = useRef(null);
+  const chatBodyRef = useRef(null);
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async ({ silent = false } = {}) => {
     if (!currentUserId) {
-      setLoading(false);
+      if (!silent) setLoading(false);
       setMessageText(t('msg.err.noUser'));
       return;
     }
 
     try {
-      setLoading(true);
-      setMessageText('');
+      if (!silent) setLoading(true);
+      if (!silent) setMessageText('');
 
       const [usersResponse, threadsResponse] = await Promise.all([
         api.get('/messages/users'),
@@ -123,15 +126,33 @@ export default function Messages() {
       setThreads(Array.isArray(threadsResponse.data) ? threadsResponse.data : []);
     } catch (error) {
       console.error('Fetch messages error:', error);
-      setMessageText(error.response?.data?.message || t('msg.err.load'));
+      if (!silent) setMessageText(error.response?.data?.message || t('msg.err.load'));
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [currentUserId, t]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  const showToast = useCallback((message, type = 'error') => {
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    setToast({ message, type });
+    toastTimerRef.current = window.setTimeout(() => setToast(null), 5200);
+  }, []);
+
+  useEffect(() => () => {
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+  }, []);
+
+  useEffect(() => {
+    if (!chatBodyRef.current || threadLoading) return;
+    chatBodyRef.current.scrollTo({
+      top: chatBodyRef.current.scrollHeight,
+      behavior: 'smooth',
+    });
+  }, [threadMessages, threadLoading]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -224,30 +245,62 @@ export default function Messages() {
       return;
     }
 
+    const receiverId = Number(form.receiver_id);
+    const receiver = receiverOptions.find(
+      (item) => Number(item.user_id) === receiverId
+    );
+    const subject = form.subject.trim();
+    const message = form.message.trim();
+
     try {
       setSending(true);
       setMessageText('');
 
-      await api.post('/messages/send', {
+      const response = await api.post('/messages/send', {
+        receiver_id: receiverId,
+        subject,
+        message,
+      });
+
+      const sentMessage = response.data?.sent_message || {
+        message_id: response.data?.message_id,
+        thread_id: response.data?.thread_id,
         sender_id: currentUserId,
-        receiver_id: Number(form.receiver_id),
-        subject: form.subject.trim(),
-        message: form.message.trim(),
-      });
+        receiver_id: receiverId,
+        subject,
+        message,
+        created_at: new Date().toISOString(),
+        sender_name: user?.full_name || user?.name || t('msg.you'),
+        receiver_name: receiver?.full_name || t('msg.unknownUser'),
+        is_read: false,
+      };
 
-      setForm({
-        receiver_id: '',
-        subject: '',
-        message: '',
-      });
+      const nextThread = {
+        thread_id: sentMessage.thread_id,
+        subject,
+        latest_message: sentMessage.message,
+        latest_created_at: sentMessage.created_at,
+        latest_sender_id: sentMessage.sender_id,
+        latest_receiver_id: sentMessage.receiver_id,
+        other_user_name: receiver?.full_name || sentMessage.receiver_name || t('msg.unknownUser'),
+        unread_count: 0,
+      };
 
+      setThreads((current) => [
+        nextThread,
+        ...current.filter((item) => Number(item.thread_id) !== Number(nextThread.thread_id)),
+      ]);
+      setSelectedThread(nextThread);
+      setThreadMessages([sentMessage]);
+      setForm({ receiver_id: '', subject: '', message: '' });
       setShowComposer(false);
-      setMessageText(t('msg.sentOk'));
       setActiveTab('sent');
-      await fetchData();
     } catch (error) {
       console.error('Send message error:', error);
-      setMessageText(error.response?.data?.message || t('msg.err.send'));
+      const fallback = error.request && !error.response
+        ? tOr('msg.err.network', 'Message not sent. Check your connection and try again.')
+        : error.response?.data?.message || t('msg.err.send');
+      showToast(fallback, 'error');
     } finally {
       setSending(false);
     }
@@ -268,7 +321,7 @@ export default function Messages() {
       );
       setThreadMessages(Array.isArray(response.data) ? response.data : []);
 
-      await fetchData();
+      await fetchData({ silent: true });
     } catch (error) {
       console.error('Open thread error:', error);
       setMessageText(
@@ -300,32 +353,83 @@ export default function Messages() {
     }
 
     const receiverId = getReplyReceiverId();
-
     if (!receiverId) {
       setMessageText(t('msg.err.noReceiver'));
       return;
     }
 
+    const message = replyText.trim();
+    const lastMessage = threadMessages[threadMessages.length - 1];
+    const optimisticId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const optimisticMessage = {
+      message_id: optimisticId,
+      thread_id: selectedThread.thread_id,
+      parent_message_id: lastMessage?.message_id || null,
+      sender_id: currentUserId,
+      receiver_id: receiverId,
+      subject: selectedThread.subject,
+      message,
+      is_read: false,
+      created_at: new Date().toISOString(),
+      edited_at: null,
+      sender_name: user?.full_name || user?.name || t('msg.you'),
+      receiver_name: selectedThread.other_user_name,
+      client_status: 'sending',
+    };
+
+    setReplyText('');
+    setMessageText('');
+    setThreadMessages((current) => [...current, optimisticMessage]);
+
     try {
       setSending(true);
-      setMessageText('');
-
-      const lastMessage = threadMessages[threadMessages.length - 1];
-
-      await api.post('/messages/reply', {
+      const response = await api.post('/messages/reply', {
         thread_id: selectedThread.thread_id,
         parent_message_id: lastMessage?.message_id || null,
-        sender_id: currentUserId,
         receiver_id: receiverId,
         subject: selectedThread.subject,
-        message: replyText.trim(),
+        message,
       });
 
-      setReplyText('');
-      await openThread(selectedThread);
+      const sentMessage = response.data?.sent_message || {
+        ...optimisticMessage,
+        message_id: response.data?.message_id || optimisticId,
+        client_status: 'sent',
+      };
+
+      setThreadMessages((current) =>
+        current.map((item) =>
+          item.message_id === optimisticId ? sentMessage : item
+        )
+      );
+
+      setThreads((current) => {
+        const updated = current.map((item) =>
+          Number(item.thread_id) === Number(selectedThread.thread_id)
+            ? {
+                ...item,
+                latest_message: sentMessage.message,
+                latest_created_at: sentMessage.created_at,
+                latest_sender_id: sentMessage.sender_id,
+                latest_receiver_id: sentMessage.receiver_id,
+                unread_count: 0,
+              }
+            : item
+        );
+        return updated.sort(
+          (a, b) => new Date(b.latest_created_at) - new Date(a.latest_created_at)
+        );
+      });
     } catch (error) {
       console.error('Reply error:', error);
-      setMessageText(error.response?.data?.message || t('msg.err.reply'));
+      setThreadMessages((current) =>
+        current.filter((item) => item.message_id !== optimisticId)
+      );
+      setReplyText((current) => current || message);
+      const fallback = error.request && !error.response
+        ? tOr('msg.err.network', 'Message not sent. Check your connection and try again.')
+        : error.response?.data?.message || t('msg.err.reply');
+      showToast(fallback, 'error');
     } finally {
       setSending(false);
     }
@@ -448,6 +552,14 @@ export default function Messages() {
         subtitle={t('msg.subtitle')}
       />
 
+      {toast ? (
+        <div className={`messages-toast ${toast.type || 'error'}`} role="status" aria-live="polite">
+          <span className="messages-toast-icon" aria-hidden="true">!</span>
+          <span>{toast.message}</span>
+          <button type="button" onClick={() => setToast(null)} aria-label={tOr('common.close', 'Close')}>×</button>
+        </div>
+      ) : null}
+
       {messageText && (
         <div className="messages-global-alert">
           {messageText}
@@ -466,7 +578,7 @@ export default function Messages() {
               <button
                 type="button"
                 className="messages-icon-btn"
-                onClick={fetchData}
+                onClick={() => fetchData()}
                 title={t('msg.refreshConv')}
                 aria-label={t('msg.refreshConv')}
               >
@@ -655,7 +767,7 @@ export default function Messages() {
                 </button>
               </header>
 
-              <div className="messages-chat-body">
+              <div className="messages-chat-body" ref={chatBodyRef}>
                 {threadLoading ? (
                   <div className="messages-inline-empty">
                     {t('msg.loadingThread')}
@@ -702,7 +814,13 @@ export default function Messages() {
                                 ).toLocaleString(locale)}
                               </span>
 
-                              <div className="messages-message-menu">
+                              {item.client_status === 'sending' ? (
+                                <span className="messages-send-status">
+                                  {tOr('msg.sendingStatus', 'Sending…')}
+                                </span>
+                              ) : null}
+
+                              {!item.client_status ? <div className="messages-message-menu">
                                 <button
                                   type="button"
                                   className="messages-message-menu-trigger"
@@ -769,7 +887,7 @@ export default function Messages() {
                                     </button>
                                   </div>
                                 )}
-                              </div>
+                              </div> : null}
                             </div>
                           </div>
 

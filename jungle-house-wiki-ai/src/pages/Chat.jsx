@@ -2985,7 +2985,10 @@ const removeSelectedImage = () => {
                   onClick={handleSend}
                   disabled={!question.trim() && !selectedImage}
                 >
-                  ↑
+                  <svg className="staff-send-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 19V5" />
+                    <path d="m6.5 10.5 5.5-5.5 5.5 5.5" />
+                  </svg>
                 </button>
               )}
             </div>

@@ -16388,6 +16388,31 @@ def test_system_email():
 # Uses existing user_message table
 # =========================
 
+def _message_payload(cursor, message_id):
+    """Return one newly-created message in the same shape as the thread API."""
+    cursor.execute("""
+        SELECT
+            m.message_id,
+            m.thread_id,
+            m.parent_message_id,
+            m.sender_id,
+            m.receiver_id,
+            m.subject,
+            m.message,
+            m.is_read,
+            m.created_at,
+            m.edited_at,
+            sender.full_name AS sender_name,
+            receiver.full_name AS receiver_name
+        FROM user_message m
+        LEFT JOIN users sender ON m.sender_id = sender.user_id
+        LEFT JOIN users receiver ON m.receiver_id = receiver.user_id
+        WHERE m.message_id = %s
+        LIMIT 1
+    """, (message_id,))
+    return cursor.fetchone()
+
+
 @app.route("/api/messages/users", methods=["GET"])
 def get_message_users():
     conn = None
@@ -16462,12 +16487,14 @@ def send_message():
             WHERE message_id = %s
         """, (message_id, message_id))
 
+        sent_message = _message_payload(cursor, message_id)
         conn.commit()
 
         return jsonify({
             "message": "Message sent successfully.",
             "message_id": message_id,
-            "thread_id": message_id
+            "thread_id": message_id,
+            "sent_message": sent_message,
         }), 201
 
     except Exception as error:
@@ -16489,6 +16516,11 @@ def send_message():
 
 @app.route("/api/messages/threads/<int:user_id>", methods=["GET"])
 def get_message_threads(user_id):
+    auth_user_id = current_auth_user_id()
+    if int(user_id) != int(auth_user_id):
+        return jsonify({"message": "You can only access your own conversations."}), 403
+    user_id = auth_user_id
+
     conn = None
     cursor = None
 
@@ -16580,6 +16612,11 @@ def get_message_threads(user_id):
 
 @app.route("/api/messages/thread/<int:thread_id>/<int:user_id>", methods=["GET"])
 def get_thread_messages(thread_id, user_id):
+    auth_user_id = current_auth_user_id()
+    if int(user_id) != int(auth_user_id):
+        return jsonify({"message": "You can only access your own conversation."}), 403
+    user_id = auth_user_id
+
     conn = None
     cursor = None
 
@@ -16697,10 +16734,15 @@ def reply_message():
             message
         ))
 
+        message_id = cursor.lastrowid
+        sent_message = _message_payload(cursor, message_id)
         conn.commit()
 
         return jsonify({
-            "message": "Reply sent successfully."
+            "message": "Reply sent successfully.",
+            "message_id": message_id,
+            "thread_id": thread_id,
+            "sent_message": sent_message,
         }), 201
 
     except Exception as error:
