@@ -3,6 +3,7 @@ import re
 import json
 import time
 import hashlib
+import html as notion_html
 import threading
 import mysql.connector
 import requests
@@ -941,6 +942,40 @@ def fetch_notion_block_children(token, block_id):
 # =========================
 # BLOCK -> HTML CONVERSION
 # =========================
+_SAFE_NOTION_LINK_SCHEMES = {"http", "https", "mailto"}
+
+
+def safe_notion_link_href(link):
+    """
+    The escaped value for href="..." of a Notion link, or None when the link
+    must stay plain text.
+
+    Kept: http:, https:, mailto: and Notion page mentions (a bare relative
+    path like "/21ca360a...", turned into https://www.notion.so/...). Anything
+    else (javascript:, data:, an unknown or missing scheme) is refused.
+    Browsers ignore whitespace and control characters inside a scheme, so
+    they are removed before the scheme is checked. The returned value has
+    & < > " ' escaped, so it cannot end the attribute or add a new one.
+    """
+    value = str(link or "").strip()
+    if not value:
+        return None
+
+    # Links to another page *within the same Notion workspace* (mentions)
+    # come back as a bare relative path like "/21ca360a...", which is
+    # meaningless outside Notion's own app -- turn it into a real, clickable
+    # Notion URL instead.
+    if value.startswith("/"):
+        value = f"https://www.notion.so{value}"
+
+    compact = "".join(ch for ch in value if ord(ch) > 32 and not 127 <= ord(ch) <= 160).lower()
+    scheme = re.match(r"([a-z][a-z0-9+.\-]*):", compact)
+    if not scheme or scheme.group(1) not in _SAFE_NOTION_LINK_SCHEMES:
+        return None
+
+    return notion_html.escape(value, quote=True)
+
+
 def notion_rich_text_to_html(rich_text_array):
     html_parts = []
 
@@ -965,15 +1000,10 @@ def notion_rich_text_to_html(rich_text_array):
         if annotations.get("strikethrough"):
             text = f"<s>{text}</s>"
 
-        link = span.get("href")
-        if link:
-            # Links to another page *within the same Notion workspace*
-            # (mentions) come back as a bare relative path like
-            # "/21ca360a...", which is meaningless outside Notion's own
-            # app -- turn it into a real, clickable Notion URL instead.
-            if link.startswith("/"):
-                link = f"https://www.notion.so{link}"
-            text = f'<a href="{link}" target="_blank" rel="noopener noreferrer">{text}</a>'
+        # A link that is not safe (see safe_notion_link_href) stays plain text.
+        href = safe_notion_link_href(span.get("href"))
+        if href:
+            text = f'<a href="{href}" target="_blank" rel="noopener noreferrer">{text}</a>'
 
         html_parts.append(text)
 
@@ -1130,10 +1160,16 @@ def notion_blocks_to_html(token, blocks, upload_folder, depth=0):
                 )
                 caption = notion_rich_text_to_html(data.get("caption"))
                 if link_url:
-                    label = caption.strip() if caption and caption.strip() else link_url
-                    html_parts.append(
-                        f'<p><a href="{link_url}" target="_blank" rel="noopener noreferrer">{label}</a></p>'
-                    )
+                    # The caption is already escaped HTML; the bare URL used as
+                    # the label is escaped here. An unsafe URL stays plain text.
+                    label = caption.strip() if caption and caption.strip() else notion_html.escape(str(link_url))
+                    href = safe_notion_link_href(link_url)
+                    if href:
+                        html_parts.append(
+                            f'<p><a href="{href}" target="_blank" rel="noopener noreferrer">{label}</a></p>'
+                        )
+                    else:
+                        html_parts.append(f"<p>{label}</p>")
 
             else:
                 # Unsupported block type -- degrade gracefully instead of

@@ -3,6 +3,7 @@ import JoditEditor from 'jodit-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
 import api from '../../services/api';
+import { cleanStoredEditorHtml, removePageLevelTags } from '../../utils/safeHtml';
 
 // 'Notion' = synced from Notion but not categorized yet; listed so such an
 // article shows its real category here instead of appearing as 'SOP'.
@@ -72,6 +73,10 @@ export default function EditArticle() {
       showWordsCounter: false,
       showXPathInStatusbar: false,
       askBeforePasteHTML: false,
+      // Stored or pasted HTML must not add <base>/<meta>/<link>/<style>/<script>
+      // to the page while it is being edited (see utils/safeHtml.js). Jodit's
+      // own cleaning (event attributes, javascript: links) stays on.
+      cleanHTML: { sanitizer: removePageLevelTags },
       askBeforePasteFromWord: false,
       defaultActionOnPaste: 'insert_as_html',
       // Without this, pasting a copied image (e.g. a screenshot) from the
@@ -141,7 +146,11 @@ export default function EditArticle() {
           category: article.category || 'SOP',
           sub_category: article.sub_category || '',
           link: article.link || '',
-          content: article.content || '',
+          // Jodit writes the first value straight into the page before any of
+          // its own cleaning runs, so stored content is cleaned here first
+          // (event attributes, script URLs, page-level tags). Inline styles,
+          // classes and the rest of the authoring HTML are kept.
+          content: cleanStoredEditorHtml(article.content || ''),
         });
 
         let parsedAttachments = [];

@@ -5,6 +5,7 @@ import PageHeader from '../components/PageHeader';
 import api, { API_BASE_URL } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
+import { isSafeUrl, sanitizeHtml } from '../utils/safeHtml';
 import '../styles/Quiz.css';
 import '../styles/QuizProgress.css';
 
@@ -93,61 +94,31 @@ function plainTextToReaderHtml(value) {
     .join('');
 }
 
-function sanitizeQuizReaderHtml(value) {
-  const raw = plainTextToReaderHtml(value);
-
-  if (typeof DOMParser === 'undefined') {
-    return raw;
-  }
-
-  const documentNode = new DOMParser().parseFromString(raw, 'text/html');
-
-  documentNode
-    .querySelectorAll(
-      'script, style, iframe, object, embed, form, input, textarea, select, button, base, meta, link'
-    )
-    .forEach((node) => node.remove());
-
-  documentNode.body.querySelectorAll('*').forEach((element) => {
-    [...element.attributes].forEach((attribute) => {
-      const name = attribute.name.toLowerCase();
-
-      if (
-        name.startsWith('on') ||
-        name === 'srcdoc' ||
-        name === 'style'
-      ) {
-        element.removeAttribute(attribute.name);
-      }
-    });
-
-    if (element.tagName === 'IMG') {
-      const src = rewriteQuizReaderAssetUrl(element.getAttribute('src'));
-      if (src) {
-        element.setAttribute('src', src);
-        element.setAttribute('loading', 'lazy');
-      } else {
-        element.removeAttribute('src');
-      }
-    }
-
-    if (element.tagName === 'A') {
-      const href = String(element.getAttribute('href') || '').trim();
-      const safeHref =
-        href.startsWith('/') ||
-        href.startsWith('#') ||
-        /^(https?:|mailto:|tel:)/i.test(href);
-
-      if (!safeHref) {
-        element.removeAttribute('href');
-      } else {
-        element.setAttribute('target', '_blank');
-        element.setAttribute('rel', 'noopener noreferrer');
-      }
+// Training Material reader: the shared allowlist sanitizer (utils/safeHtml.js)
+// plus this reader's own extras, which run before sanitizing and are checked
+// by the same rules: images point at the current origin and load lazily, and
+// links with a safe address open in a new tab.
+function prepareQuizReaderHtml(root) {
+  root.querySelectorAll('img').forEach((element) => {
+    const src = rewriteQuizReaderAssetUrl(element.getAttribute('src'));
+    if (src) {
+      element.setAttribute('src', src);
+      element.setAttribute('loading', 'lazy');
+    } else {
+      element.removeAttribute('src');
     }
   });
 
-  return documentNode.body.innerHTML;
+  root.querySelectorAll('a[href]').forEach((element) => {
+    if (isSafeUrl(element.getAttribute('href'))) {
+      element.setAttribute('target', '_blank');
+      element.setAttribute('rel', 'noopener noreferrer');
+    }
+  });
+}
+
+function sanitizeQuizReaderHtml(value) {
+  return sanitizeHtml(plainTextToReaderHtml(value), { transform: prepareQuizReaderHtml });
 }
 
 export default function QuizList() {

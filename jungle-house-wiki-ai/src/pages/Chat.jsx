@@ -7,6 +7,7 @@ import { useStaffChat } from '../context/StaffChatContext';
 import '../styles/Chat.css';
 import { buildIssueContext, getClarificationToken, getEscalationQuestion } from '../utils/chatIssueContext';
 import { escalationMetadata, normalizeEscalationResponse, escalationErrorInfo } from '../utils/escalationResponse';
+import { isHtmlContent, rewriteSrcset, sanitizeHtml } from '../utils/safeHtml';
 
 
 const starterMessages = [
@@ -759,72 +760,27 @@ function renderTextWithClickableLinks(text, fallbackLink = '') {
 // text -- the raw tags, comments, and an unusable "arrangement" the user
 // reported. FloatingAIChat.jsx already does this same detect-and-sanitize
 // step; Chat.jsx just never had it.
-const HTML_CONTENT_PATTERN = /<\/?[a-z][\s\S]*>/i;
-
-function isHtmlContent(text) {
-  return HTML_CONTENT_PATTERN.test(String(text || ''));
-}
-
-function sanitizeChatHtml(html) {
-  if (typeof document === 'undefined') return String(html || '');
-
-  const parser = new DOMParser();
-  const parsedDocument = parser.parseFromString(`<div>${String(html || '')}</div>`, 'text/html');
-  const wrapper = parsedDocument.body.firstChild;
-
-  if (!wrapper) return '';
-
-  wrapper
-    .querySelectorAll('script, iframe, object, embed, form, input, button')
-    .forEach((element) => element.remove());
-
-  // Notion sync sometimes loses the actual image URL and leaves an empty
-  // src behind -- that renders as a permanently broken image icon, so drop
-  // those tags entirely instead of showing an error for something the user
-  // can't act on.
-  wrapper.querySelectorAll('img').forEach((element) => {
-    if (!element.getAttribute('src')) {
-      element.remove();
-    }
-  });
-
-  wrapper.querySelectorAll('*').forEach((element) => {
-    Array.from(element.attributes).forEach((attribute) => {
-      const attributeName = attribute.name.toLowerCase();
-      const attributeValue = attribute.value.toLowerCase();
-
-      if (
-        attributeName.startsWith('on') ||
-        attributeName === 'style' ||
-        attributeValue.includes('javascript:')
-      ) {
-        element.removeAttribute(attribute.name);
-      }
-    });
-  });
-
-  // Rich-editor HTML bypasses ChatImage / DocumentLink. Fix its embedded
-  // images and file links too, including old absolute Railway URLs.
-  wrapper.querySelectorAll('img[src], source[src], a[href]').forEach((element) => {
+// Shared allowlist sanitizer (utils/safeHtml.js). Chat keeps its own extra:
+// rich-editor HTML bypasses ChatImage / DocumentLink, so its embedded images
+// and file links are pointed at the current origin first, including old
+// absolute Railway URLs. The rewritten URLs are then checked like any other.
+function rewriteChatStaticUrls(root) {
+  root.querySelectorAll('img[src], source[src], a[href]').forEach((element) => {
     const attribute = element.tagName.toLowerCase() === 'a' ? 'href' : 'src';
     const original = element.getAttribute(attribute);
     const rewritten = rewritePrivateStaticUrl(original);
     if (rewritten !== original) element.setAttribute(attribute, rewritten);
   });
-  wrapper.querySelectorAll('img[srcset], source[srcset]').forEach((element) => {
+  root.querySelectorAll('img[srcset], source[srcset]').forEach((element) => {
     const original = element.getAttribute('srcset');
     if (!original || original.includes('data:') || !original.includes('static/')) return;
-    const rewritten = original.split(',').map((candidate) => {
-      const item = candidate.trim();
-      const boundary = item.search(/\s/);
-      return boundary < 0
-        ? rewritePrivateStaticUrl(item)
-        : `${rewritePrivateStaticUrl(item.slice(0, boundary))}${item.slice(boundary)}`;
-    }).join(', ');
+    const rewritten = rewriteSrcset(original, rewritePrivateStaticUrl);
     if (rewritten !== original) element.setAttribute('srcset', rewritten);
   });
+}
 
-  return wrapper.innerHTML;
+function sanitizeChatHtml(html) {
+  return sanitizeHtml(html, { transform: rewriteChatStaticUrls });
 }
 
 function renderRichKnowledgeContent(text, fallbackLink = '') {
@@ -856,7 +812,7 @@ function renderRichKnowledgeContent(text, fallbackLink = '') {
           overflowX: 'auto',
           marginTop: '8px',
         }}
-        dangerouslySetInnerHTML={{ __html: cleanText }}
+        dangerouslySetInnerHTML={{ __html: sanitizeChatHtml(cleanText) }}
       />
     );
   }

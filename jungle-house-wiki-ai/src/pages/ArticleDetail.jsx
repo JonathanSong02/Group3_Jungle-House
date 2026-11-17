@@ -4,6 +4,7 @@ import PageHeader from "../components/PageHeader";
 import SourceBadge from "../components/SourceBadge";
 import api, { API_BASE_URL } from "../services/api";
 import "../styles/ArticleDetail.css";
+import { rewriteSrcset, sanitizeHtml } from "../utils/safeHtml";
 
 // Article JSON uses the same cookie-aware API client as login and Knowledge Base.
 // Production serves private static uploads through the same-origin Vercel /static
@@ -487,42 +488,13 @@ export default function ArticleDetail() {
     return textarea.value;
   };
 
-  const sanitizeTableHtml = (html) => {
-    const decodedHtml = decodeHtmlEntities(String(html || ""));
-
-    const parser = new DOMParser();
-    const documentHtml = parser.parseFromString(
-      `<div>${decodedHtml}</div>`,
-      "text/html"
-    );
-
-    const wrapper = documentHtml.body.firstChild;
-
-    if (!wrapper) return "";
-
-    wrapper
-      .querySelectorAll("script, iframe, object, embed, form, input, button")
-      .forEach((element) => {
-        element.remove();
-      });
-
-    wrapper.querySelectorAll("*").forEach((element) => {
-      Array.from(element.attributes).forEach((attribute) => {
-        const attributeName = attribute.name.toLowerCase();
-        const attributeValue = attribute.value.toLowerCase();
-
-        if (
-          attributeName.startsWith("on") ||
-          attributeName === "style" ||
-          attributeValue.includes("javascript:")
-        ) {
-          element.removeAttribute(attribute.name);
-        }
-      });
-    });
-
-    // Rich-text/Notion HTML can contain old absolute Railway static URLs.
-    // Rewrite only Jungle House-owned static files through the current origin.
+  // Shared allowlist sanitizer (utils/safeHtml.js). It decodes HTML entities
+  // first (as this page always did), so decoded markup is sanitized too and
+  // nothing decodes again afterwards. This page's own extras run before the
+  // sanitizer and are checked by the same rules: old absolute Railway static
+  // URLs point at the current origin, tables get their class, and raw URLs in
+  // text become links.
+  const prepareArticleHtml = (wrapper) => {
     wrapper.querySelectorAll("img[src], source[src], a[href]").forEach((element) => {
       const attribute = element.tagName.toLowerCase() === "a" ? "href" : "src";
       const original = element.getAttribute(attribute);
@@ -546,17 +518,7 @@ export default function ArticleDetail() {
       const original = element.getAttribute("srcset");
       if (!original || original.includes("data:") || !original.includes("static/")) return;
 
-      const rewritten = original
-        .split(",")
-        .map((candidate) => {
-          const item = candidate.trim();
-          const boundary = item.search(/\s/);
-
-          return boundary < 0
-            ? rewriteInternalStaticUrl(item)
-            : `${rewriteInternalStaticUrl(item.slice(0, boundary))}${item.slice(boundary)}`;
-        })
-        .join(", ");
+      const rewritten = rewriteSrcset(original, rewriteInternalStaticUrl);
 
       if (rewritten !== original) {
         element.setAttribute("srcset", rewritten);
@@ -568,9 +530,10 @@ export default function ArticleDetail() {
     });
 
     autoLinkPlainText(wrapper);
-
-    return wrapper.innerHTML;
   };
+
+  const sanitizeTableHtml = (html) =>
+    sanitizeHtml(html, { decodeEntities: true, transform: prepareArticleHtml });
 
   const renderNormalContentLines = (content) => {
     if (!content) return null;

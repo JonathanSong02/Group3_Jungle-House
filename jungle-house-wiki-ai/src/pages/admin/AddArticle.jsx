@@ -3,6 +3,7 @@ import JoditEditor from 'jodit-react';
 import { useNavigate } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
 import api from '../../services/api';
+import { removePageLevelTags } from '../../utils/safeHtml';
 
 const categories = ['SOP', 'PRODUCT', 'SALES', 'Training', 'Notice'];
 
@@ -68,6 +69,10 @@ export default function AddArticle() {
       showWordsCounter: false,
       showXPathInStatusbar: false,
       askBeforePasteHTML: false,
+      // Stored or pasted HTML must not add <base>/<meta>/<link>/<style>/<script>
+      // to the page while it is being edited (see utils/safeHtml.js). Jodit's
+      // own cleaning (event attributes, javascript: links) stays on.
+      cleanHTML: { sanitizer: removePageLevelTags },
       askBeforePasteFromWord: false,
       defaultActionOnPaste: 'insert_as_html',
       // Without this, pasting a copied image (e.g. a screenshot) from the

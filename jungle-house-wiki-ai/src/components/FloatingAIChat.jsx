@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import api from '../services/api';
 import { useLanguage } from '../i18n/LanguageContext';
+import { isHtmlContent, sanitizeHtml } from '../utils/safeHtml';
 import './FloatingAIChat.css';
 
 // Backend answers sometimes embed raw "Image: /static/..." path lines as
@@ -44,46 +45,11 @@ function buildFloatingChatText(data, fallbackText = 'No usable answer returned f
 
 // Some Knowledge Base articles are authored in the rich HTML editor (real
 // <h1>/<ul>/<img> tags with absolute image URLs already baked in), rather
-// than the legacy plain-text "[IMAGE]"/numbered-step format. Detect that so
-// it can be rendered as real HTML instead of showing literal escaped tags.
-const HTML_CONTENT_PATTERN = /<\/?[a-z][\s\S]*>/i;
-
-function isHtmlContent(text) {
-  return HTML_CONTENT_PATTERN.test(String(text || ''));
-}
-
-// Same sanitize-before-render approach already used in ArticleDetail.jsx:
-// strip dangerous tags/attributes before handing the HTML to
-// dangerouslySetInnerHTML.
+// than the legacy plain-text "[IMAGE]"/numbered-step format. isHtmlContent()
+// detects that so it can be rendered as real HTML instead of showing literal
+// escaped tags, after the shared allowlist sanitizer (utils/safeHtml.js).
 function sanitizeChatHtml(html) {
-  if (typeof document === 'undefined') return String(html || '');
-
-  const parser = new DOMParser();
-  const parsedDocument = parser.parseFromString(`<div>${String(html || '')}</div>`, 'text/html');
-  const wrapper = parsedDocument.body.firstChild;
-
-  if (!wrapper) return '';
-
-  wrapper
-    .querySelectorAll('script, iframe, object, embed, form, input, button')
-    .forEach((element) => element.remove());
-
-  wrapper.querySelectorAll('*').forEach((element) => {
-    Array.from(element.attributes).forEach((attribute) => {
-      const attributeName = attribute.name.toLowerCase();
-      const attributeValue = attribute.value.toLowerCase();
-
-      if (
-        attributeName.startsWith('on') ||
-        attributeName === 'style' ||
-        attributeValue.includes('javascript:')
-      ) {
-        element.removeAttribute(attribute.name);
-      }
-    });
-  });
-
-  return wrapper.innerHTML;
+  return sanitizeHtml(html);
 }
 
 const FLOATING_AI_POSITION_KEY = 'jh_floating_ai_position';

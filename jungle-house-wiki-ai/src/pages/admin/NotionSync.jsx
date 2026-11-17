@@ -41,7 +41,8 @@ function stripExecutableHtml(html) {
   const wrapper = document.implementation.createHTMLDocument('').createElement('div');
   wrapper.innerHTML = String(html || '');
 
-  wrapper.querySelectorAll('script, base, meta, animate, set').forEach((element) => element.remove());
+  // link and style would restyle (or load styles into) the whole page, not just this preview.
+  wrapper.querySelectorAll('script, base, meta, link, style, animate, set').forEach((element) => element.remove());
 
   wrapper.querySelectorAll('*').forEach((element) => {
     Array.from(element.attributes).forEach((attribute) => {
