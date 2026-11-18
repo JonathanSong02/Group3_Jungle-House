@@ -47,6 +47,7 @@ test('standard and Staff composers preserve file selection, preview, image+text 
     .replace(/^import .*;\r?\n/gm, '').replace('export default function Chat()', 'function Chat()');
   const compiled = await transformWithOxc(source, 'Chat.jsx', { jsx: { runtime: 'classic' } });
   const Chat = new Function(...Object.keys(env), `${compiled.code}\nreturn Chat;`)(...Object.values(env));
+  const renderImages = new Function(...Object.keys(env), `${compiled.code}\nreturn renderImages;`)(...Object.values(env));
   for (const staffMode of [false, true]) {
     localStorage.clear();
     calls.length = 0;
@@ -73,11 +74,16 @@ test('standard and Staff composers preserve file selection, preview, image+text 
     await send();
     assert.equal(calls[0].payload.get('attachment'), photo);
     assert.equal(calls[0].payload.get('question'), 'Where should I put this bottle?');
+    const savedImageSelector = '.message-bubble.user img';
+    const savedImageUrl = `/api/chat/attachments/${reference}?chat=main-test`;
+    assert.equal(document.querySelector(savedImageSelector)?.getAttribute('src'), savedImageUrl);
+    assert.equal(document.querySelector('.message-bubble.user a'), null);
     assert.ok(localStorage.getItem('jh_ai_chat_sessions_synthetic-image-test').includes(reference));
     assert.ok(document.body.textContent.includes('Evidence not established'));
     await React.act(async () => root.unmount());
     root = createRoot(document.getElementById('root'));
     await mount();
+    assert.equal(document.querySelector(savedImageSelector)?.getAttribute('src'), savedImageUrl);
     await setText('Where should I put it?');
     await send();
     assert.deepEqual(calls.at(-1).payload.attachment_refs, [reference]);
@@ -98,5 +104,16 @@ test('standard and Staff composers preserve file selection, preview, image+text 
     failImage = false;
     await React.act(async () => root.unmount());
   }
+  const attachmentRoot = createRoot(document.getElementById('root'));
+  await React.act(async () => attachmentRoot.render(renderImages([
+    `/api/chat/attachments/${reference}?chat=main-test`,
+    '/static/uploads/chat/synthetic.pdf',
+    '/static/uploads/chat/synthetic.docx',
+  ])));
+  assert.equal(document.querySelectorAll('img').length, 1);
+  assert.deepEqual([...document.querySelectorAll('a')].map((link) => link.getAttribute('href')), [
+    '/static/uploads/chat/synthetic.pdf', '/static/uploads/chat/synthetic.docx',
+  ]);
+  await React.act(async () => attachmentRoot.unmount());
   dom.window.close();
 });

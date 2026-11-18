@@ -556,6 +556,9 @@ function isLikelyImageUrl(url) {
 
   if (!value) return false;
   if (value.startsWith('blob:') || value.startsWith('data:image')) return true;
+  // Image chat responses use private, extensionless attachment references.
+  // Documents retain their file URLs and must still render as document links.
+  if (/^\/api\/chat\/attachments\/[a-f0-9]{64}(?:\?[^#]*)?$/i.test(value)) return true;
 
   return /\.(png|jpe?g|gif|webp|bmp|svg|heic|heif)(\?.*)?$/i.test(value);
 }
