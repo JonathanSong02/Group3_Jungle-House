@@ -159,6 +159,23 @@ def test_image_only_neutral_clarification_no_clip_or_vision(local, monkeypatch):
     app.analyze_uploaded_image_with_vision.assert_not_called()
 
 
+def test_missing_migration_returns_safe_schema_error_with_stage(local, monkeypatch, caplog):
+    import mysql.connector
+    def missing(*args, **kwargs):
+        raise mysql.connector.ProgrammingError("synthetic-sensitive-db-message", errno=1146)
+    monkeypatch.setattr(attachments, "register_attachment", missing)
+    response = upload(client_for(1))
+    data = response.get_json()
+    assert response.status_code == 503
+    assert data["code"] == "IMAGE_SCHEMA_NOT_READY"
+    assert data["confidence_kind"] == "not_calibrated"
+    assert data["source"] == "image_service_unavailable"
+    assert data["error_id"] in caplog.text
+    assert "attachment_register" in caplog.text
+    assert "synthetic-sensitive-db-message" not in caplog.text
+    assert "synthetic-sensitive-db-message" not in response.get_data(as_text=True)
+
+
 @pytest.mark.parametrize("preferred,expected", [("zh", "你想了解"), ("ms", "Apakah yang anda")])
 def test_image_only_clarification_respects_ui_language(local, preferred, expected):
     response = client_for(1).post("/api/chat", data={"question": "", "language": preferred,

@@ -23,6 +23,7 @@ import zipfile
 import chat_attachment_service
 import hybrid_image_service
 import image_index_service
+from image_service_errors import failure_response as image_failure_response
 
 
 
@@ -9656,7 +9657,8 @@ def chat():
                         mime=uploaded_chat_image_type, analyze=analyze_uploaded_image_with_vision,
                         cancelled=lambda: is_chat_request_cancelled(data.get("request_id")),
                         vision_identity=ai_provider_service.vision_identity if AI_PROVIDER_SERVICE_AVAILABLE else None,
-                        language_hint=data.get("language"))
+                        language_hint=data.get("language"),
+                        stage=lambda value: setattr(g, "image_pipeline_stage", value))
                     g.chat_attachment_refs = refs
                     data["image_query"] = image_query
                     data["context"] = {}
@@ -9682,7 +9684,8 @@ def chat():
                     data["attachment_refs"], analyze=analyze_uploaded_image_with_vision,
                     cancelled=lambda: is_chat_request_cancelled(data.get("request_id")),
                     vision_identity=ai_provider_service.vision_identity if AI_PROVIDER_SERVICE_AVAILABLE else None,
-                    language_hint=data.get("language"))
+                    language_hint=data.get("language"),
+                    stage=lambda value: setattr(g, "image_pipeline_stage", value))
                 g.chat_attachment_refs = refs
                 data["image_query"] = image_query
                 data["context"] = {}
@@ -10518,8 +10521,8 @@ def chat():
         return jsonify({"message": str(error), "answer": str(error), "source": "attachment_unavailable"}), 400
     except Exception as error:
         if getattr(g, "image_request", False):
-            return jsonify({"message": "Image service unavailable. Please retry after checking storage and migration status.",
-                            "source": "image_service_unavailable"}), 503
+            return jsonify(image_failure_response(error, app.logger,
+                getattr(g, "image_pipeline_stage", "unknown"))), 503
         traceback.print_exc()
 
         question = clean_question(data.get("original_staff_question") or data.get("question", ""))

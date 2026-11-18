@@ -9,6 +9,7 @@ import { buildIssueContext, getClarificationToken, getEscalationQuestion } from 
 import { escalationMetadata, normalizeEscalationResponse, escalationErrorInfo } from '../utils/escalationResponse';
 import { isHtmlContent, rewriteSrcset, sanitizeHtml } from '../utils/safeHtml';
 import { imageReferencesForQuestion } from '../utils/imageAttachmentContext';
+import { imageFailureDetails } from '../utils/imageServiceError';
 
 
 const starterMessages = [
@@ -948,6 +949,7 @@ function renderResponseMeta(message, t) {
       {message.confidence_kind === 'not_calibrated' && (
         <span>{t(message.answer_evidence === 'not_established' ? 'chat.evidenceMissing' : 'chat.kbEvidence')}</span>
       )}
+      {message.error_id && <span>{t('chat.errorReference')}: {message.error_id}</span>}
 
       {hasSource ? (
         message.article_id ? (
@@ -2148,7 +2150,13 @@ const removeSelectedImage = () => {
         // thing still showing the user's own image. Revoking it now would
         // break their own just-sent message, not just the aborted answer.
       } else {
-        console.error('Chat request failed:', error);
+        const imageRequest = isImageUploadFile(imageToSend) || attachmentRefs.length > 0;
+        const imageFailure = imageFailureDetails(error, imageRequest);
+        if (imageRequest) {
+          console.error('Image request failed:', { status: error?.response?.status, code: imageFailure.error_code, error_id: imageFailure.error_id });
+        } else {
+          console.error('Chat request failed:', error);
+        }
 
         const errorCode = error?.response?.data?.code;
         const ticketError = escalationErrorInfo(error, t);
@@ -2181,6 +2189,7 @@ const removeSelectedImage = () => {
           fallback: true,
           fallback_message: requestMessage,
           message: requestMessage,
+          ...imageFailure,
         };
 
         const messagesAfterError = [...messagesAfterUserQuestion, errorMessage];

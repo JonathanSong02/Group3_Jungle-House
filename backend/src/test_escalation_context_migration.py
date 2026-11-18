@@ -89,7 +89,7 @@ class MigrationTests(unittest.TestCase):
     def test_railway_runs_migration_before_start(self):
         config = json.loads(Path(__file__).with_name("railway.json").read_text(encoding="utf-8"))
         self.assertEqual(config["deploy"]["preDeployCommand"],
-                         ["python src/migrate_escalation_context.py"])
+                         ["python src/migrate_escalation_context.py", "python src/check_image_schema.py"])
 
 
 class CommandTests(unittest.TestCase):

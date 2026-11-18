@@ -7,6 +7,7 @@ import * as issue from '../utils/chatIssueContext.js';
 import * as escalation from '../utils/escalationResponse.js';
 import * as safe from '../utils/safeHtml.js';
 import { imageReferencesForQuestion } from '../utils/imageAttachmentContext.js';
+import { imageFailureDetails } from '../utils/imageServiceError.js';
 import { translations } from '../i18n/translations.js';
 
 test('standard and Staff composers preserve file selection, preview, image+text and refreshed image references', async () => {
@@ -22,6 +23,7 @@ test('standard and Staff composers preserve file selection, preview, image+text 
   const { createRoot } = await import('react-dom/client');
   const reference = 'a'.repeat(64);
   const calls = [];
+  let failImage = false;
   let staff = null;
   const env = {
     React, useEffect: React.useEffect, useState: React.useState, useRef: React.useRef,
@@ -31,10 +33,15 @@ test('standard and Staff composers preserve file selection, preview, image+text 
     useStaffChat: () => staff, API_BASE_URL: '/api',
     api: { post: async (url, payload) => {
       calls.push({ url, payload });
+      if (failImage) throw { response: { status: 503, data: {
+        message: 'Image storage needs a database update.', source: 'image_service_unavailable',
+        code: 'IMAGE_SCHEMA_NOT_READY', error_id: 'b'.repeat(16),
+      } } };
       return { data: { answer: 'Synthetic image reply', source: 'image_only_clarification',
         confidence_kind: 'not_calibrated', answer_evidence: 'not_established', attachment_refs: [reference],
         uploaded_image_url: `/api/chat/attachments/${reference}?chat=main-test` } };
     } }, ...issue, ...escalation, ...safe, imageReferencesForQuestion,
+    imageFailureDetails,
   };
   const source = (await fs.readFile(new URL('./Chat.jsx', import.meta.url), 'utf8'))
     .replace(/^import .*;\r?\n/gm, '').replace('export default function Chat()', 'function Chat()');
@@ -77,6 +84,18 @@ test('standard and Staff composers preserve file selection, preview, image+text 
     await setText('Attendance policy');
     await send();
     assert.equal(calls.at(-1).payload.attachment_refs, undefined);
+    const beforeFailures = document.body.textContent.match(/Match score \(not probability\)/g)?.length || 0;
+    failImage = true;
+    const retryInput = document.querySelector('input[type=file]');
+    Object.defineProperty(retryInput, 'files', { configurable: true, value: [photo] });
+    await React.act(async () => retryInput.dispatchEvent(new Event('change', { bubbles: true })));
+    await setText('Where should I put this bottle?');
+    await send();
+    assert.ok(document.body.textContent.includes('Image storage needs a database update.'));
+    assert.ok(document.body.textContent.includes('Support reference: ' + 'b'.repeat(16)));
+    assert.ok(document.body.textContent.includes('image_service_unavailable'));
+    assert.equal(document.body.textContent.match(/Match score \(not probability\)/g)?.length || 0, beforeFailures);
+    failImage = false;
     await React.act(async () => root.unmount());
   }
   dom.window.close();

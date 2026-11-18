@@ -163,19 +163,22 @@ def verify_text_result(question, query, result, references):
 
 
 def process(owner, chat, question, folder, references, *, new_path=None, mime=None,
-            analyze=None, cancelled=lambda: False, vision_identity=None, language_hint=None):
+            analyze=None, cancelled=lambda: False, vision_identity=None, language_hint=None, stage=lambda value: None):
     """Return (response or None, search hint, refs). Text chat is not routed here."""
     if new_path is not None:
+        stage("decode")
         try:
             decode_image(new_path)
         except Exception:
             raise attachments.AttachmentError("This image could not be decoded safely. Please use a valid PNG, JPEG or WebP image.") from None
+        stage("attachment_register")
         reference = attachments.register_attachment(owner, chat, new_path, mime)
         references = [reference]
     if not isinstance(references, list) or not 1 <= len(references) <= 4:
         raise attachments.AttachmentError("Invalid attachment selection.")
     references = list(dict.fromkeys(references))
     # Validate every reference before responding, including ambiguous selections.
+    stage("attachment_load")
     records = [attachments.load_attachment(owner, chat, ref, folder) for ref in references]
     if any(not row["mime_type"].startswith("image/") for row in records):
         raise attachments.AttachmentError("Please select an image for visual questions.")
@@ -186,6 +189,7 @@ def process(owner, chat, question, folder, references, *, new_path=None, mime=No
     if cancelled():
         return control("unknown", question, references), question, references
     record = records[0]
+    stage("visual_retrieval")
     candidates = index.visual_candidates(record["path"])
     articles = index.current_articles(candidates)
     # Article-level ambiguity gap. A weak photo cannot make an authoritative match.
@@ -195,6 +199,7 @@ def process(owner, chat, question, folder, references, *, new_path=None, mime=No
     if result:
         return result, question, references
     # An explicit named-object question can already be answerable without Vision.
+    stage("kb_evidence")
     result = grounded_result(question, text_articles(question), references)
     if result:
         return result, question, references
@@ -215,6 +220,7 @@ def process(owner, chat, question, folder, references, *, new_path=None, mime=No
     if observations and observations.get("retry_after", float("inf")) < time.time():
         observations = None
     if observations is None and analyze and not cancelled():
+        stage("vision")
         observations = analyze(record["path"], record["image_hash"])
         if observations is None:
             observations = {"retry_after": time.time() + 600, "unavailable": True}
@@ -224,6 +230,7 @@ def process(owner, chat, question, folder, references, *, new_path=None, mime=No
     # Work-related classification is an observation, never a veto on KB evidence.
     query = f"{question} {terms}".strip()
     if terms:
+        stage("kb_evidence")
         result = grounded_result(query, text_articles(query), references)
         if result:
             result["question"] = question
