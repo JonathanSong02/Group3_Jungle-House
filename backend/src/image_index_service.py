@@ -234,6 +234,39 @@ def _candidate_pages(digest=None):
             break
 
 
+def _exact_kb_candidates(digest):
+    """Read current local article images even when legacy/vector metadata is absent."""
+    last_id = 0
+    while True:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute("""SELECT * FROM wiki_article WHERE COALESCE(is_deleted, 0) = 0
+                AND article_id > %s ORDER BY article_id LIMIT 512""", (last_id,))
+            articles = cursor.fetchall()
+        finally:
+            cursor.close()
+            conn.close()
+        if not articles:
+            break
+        # File reads happen after releasing the DB connection. Never fetch remote URLs.
+        for article in articles:
+            if not published(article):
+                continue
+            for url in article_images(article):
+                file = local_image_path(url)
+                try:
+                    if file and image_sha256(file) == digest:
+                        yield {"source_type": "knowledge_base", "source_id": article["article_id"],
+                               "image_url": url, "source_hash": source_hash(article), "image_hash": digest}
+                        break
+                except OSError:
+                    continue  # A missing/unreadable file cannot establish image identity.
+        last_id = articles[-1]["article_id"]
+        if len(articles) < 512:
+            break
+
+
 def visual_candidates(path, encode=create_image_embedding, similarity=None):
     """Complete keyset scan in bounded pages; no model work holds DB connections."""
     from image_embedding_helper import cosine_similarity_from_json
@@ -253,6 +286,10 @@ def visual_candidates(path, encode=create_image_embedding, similarity=None):
     for rows in _candidate_pages(digest):
         for row in rows:
             keep(row, 1.0, True)
+    for row in _exact_kb_candidates(digest):
+        # Current article membership/revision supersedes stale index metadata.
+        grouped[(row["source_type"], row["source_id"])] = {
+            **row, "image_similarity": 1.0, "exact_image": True}
     if grouped:
         return sorted(grouped.values(), key=lambda row: row["image_similarity"], reverse=True)
     embedding = None

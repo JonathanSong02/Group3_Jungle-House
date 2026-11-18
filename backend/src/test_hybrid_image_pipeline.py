@@ -125,6 +125,12 @@ def png_bytes(color="blue"):
     return output.getvalue()
 
 
+def different_photo(folder):
+    path = folder / "different-query.png"
+    path.write_bytes(png_bytes("red"))
+    return path
+
+
 def upload(client, question="", chat="main-test", content=None, filename="synthetic.png"):
     return client.post("/api/chat", data={"question": question, "chat_session_id": chat,
         "attachment": (io.BytesIO(content or png_bytes()), filename)},
@@ -209,6 +215,75 @@ def test_refresh_followup_references_previous_image(local):
     assert response.get_json()["article_id"] == 1
 
 
+@pytest.mark.parametrize("photo_color", ["blue", "red"])
+def test_hook_usage_returns_both_current_kb_instructions_without_vision(local, monkeypatch, photo_color):
+    db, folder = local
+    instructions = (
+        "Use hook to take down the blind next to the storeroom and place it inside the storeroom. "
+        "Use hook to attach the blind cord to the pillar."
+    )
+    add_article(db, folder, title="Kiosk Opening", content=instructions)
+    if photo_color == "red":
+        monkeypatch.setattr(index, "visual_candidates", lambda path: [])
+    response = upload(client_for(1), "how to use this hook", content=png_bytes(photo_color))
+    data = response.get_json()
+    assert response.status_code == 200, data
+    assert data["source"] == "image_kb_evidence"
+    assert data["article_id"] == 1
+    assert "take down the blind" in data["answer"]
+    assert "attach the blind cord" in data["answer"]
+    assert data["answer_evidence"] == "current_kb_quote"
+    app.analyze_uploaded_image_with_vision.assert_not_called()
+
+
+def test_conflicting_storage_locations_still_require_clarification():
+    article = {"content": "Keep bottles under the shelf. Store bottles inside the cabinet."}
+    assert hybrid.extract_evidence("Where should I keep this bottle?", article) is None
+
+
+@pytest.mark.parametrize("index_state", ["missing", "pending", "old_model", "stale_source"])
+def test_exact_staff_bottle_article_request_does_not_require_clip(local, monkeypatch, index_state):
+    db, folder = local
+    add_article(db, folder, title="Staff belongings Area")
+    if index_state == "missing":
+        db.execute("DELETE FROM image_retrieval")
+    elif index_state == "pending":
+        db.execute("UPDATE image_retrieval SET image_embedding=NULL, image_hash=NULL, embedding_model=NULL")
+    elif index_state == "old_model":
+        db.execute("UPDATE image_retrieval SET embedding_model='old-model'")
+    else:
+        db.execute("UPDATE image_retrieval SET source_hash=NULL")
+    monkeypatch.setattr(index, "create_image_embedding", Mock(side_effect=AssertionError("Exact images need no CLIP")))
+    response = upload(client_for(1), "show me relevant article")
+    data = response.get_json()
+    assert response.status_code == 200, data
+    assert data["source"] == "image_article_match"
+    assert data["article_id"] == 1
+    assert data["title"] == "Staff belongings Area"
+    assert data["answer_evidence"] == "current_kb"
+    app.analyze_uploaded_image_with_vision.assert_not_called()
+
+
+def test_exact_lookup_without_index_excludes_deleted_articles(local):
+    db, folder = local
+    path = add_article(db, folder)
+    db.execute("DELETE FROM image_retrieval")
+    db.execute("UPDATE wiki_article SET is_deleted=1")
+    assert index.visual_candidates(path) == []
+
+
+def test_exact_duplicate_images_keep_all_current_article_sources(local):
+    db, folder = local
+    path = add_article(db, folder)
+    add_article(db, folder, article_id=2, title="Another bottle guide")
+    db.execute("DELETE FROM image_retrieval")
+    encode = Mock(side_effect=AssertionError("Exact images need no CLIP"))
+    articles = index.current_articles(index.visual_candidates(path, encode=encode))
+    assert {article["article_id"] for article in articles} == {1, 2}
+    assert all(article["exact_image"] for article in articles)
+    encode.assert_not_called()
+
+
 @pytest.mark.parametrize("owner,chat", [(2, "main-test"), (1, "main-other")])
 def test_owner_and_chat_isolation(local, owner, chat):
     ref = upload(client_for(1)).get_json()["attachment_refs"][0]
@@ -276,7 +351,7 @@ def test_embedding_model_mismatch_excluded(local):
     db, folder = local
     path = add_article(db, folder)
     db.execute("UPDATE image_retrieval SET embedding_model = 'old-model'")
-    assert index.visual_candidates(path) == []
+    assert index.visual_candidates(different_photo(folder)) == []
 
 
 def test_candidates_beyond_200_and_article_duplicates(local):
@@ -288,7 +363,7 @@ def test_candidates_beyond_200_and_article_duplicates(local):
         db.execute("INSERT INTO image_retrieval (source_type,source_id,image_url,image_embedding,embedding_model,source_hash,image_hash) VALUES ('knowledge_base',1,?,?,?,?,?)",
                    (row["image_url"], "[0,1,0]", embeddings.MODEL_VERSION, row["source_hash"], "other"))
     db.execute("UPDATE image_retrieval SET image_embedding = '[1,0,0]' WHERE image_id = (SELECT MAX(image_id) FROM image_retrieval)")
-    result = index.visual_candidates(path, encode=lambda path: "[1,0,0]")
+    result = index.visual_candidates(different_photo(folder), encode=lambda path: "[1,0,0]")
     assert len(result) == 1
     assert result[0]["image_similarity"] == 1.0
 
@@ -297,7 +372,7 @@ def test_similar_image_uses_real_cosine_and_groups_articles(local):
     db, folder = local
     path = add_article(db, folder)
     db.execute("UPDATE image_retrieval SET image_hash = 'different-bytes', image_embedding = '[0.9,0.1,0]'")
-    result = index.visual_candidates(path, encode=lambda path: "[1,0,0]")
+    result = index.visual_candidates(different_photo(folder), encode=lambda path: "[1,0,0]")
     assert not result[0]["exact_image"]
     assert 0.98 < result[0]["image_similarity"] < 1.0
 
@@ -306,7 +381,7 @@ def test_missing_local_clip_returns_no_fake_match(local):
     db, folder = local
     path = add_article(db, folder)
     db.execute("UPDATE image_retrieval SET image_hash = 'different'")
-    assert index.visual_candidates(path, encode=lambda path: None) == []
+    assert index.visual_candidates(different_photo(folder), encode=lambda path: None) == []
 
 
 def test_unknown_object_and_vision_failure_never_invent_policy(local, monkeypatch):
@@ -520,7 +595,7 @@ def test_clip_failure_is_attempted_once_for_many_candidates(local):
         db.execute("INSERT INTO image_retrieval (source_type,source_id,image_url,image_embedding,embedding_model,source_hash,image_hash) VALUES ('knowledge_base',1,?,?,?,?,?)",
                    (row["image_url"], "[0,1,0]", embeddings.MODEL_VERSION, row["source_hash"], "other"))
     encode = Mock(return_value=None)
-    assert index.visual_candidates(path, encode=encode) == []
+    assert index.visual_candidates(different_photo(folder), encode=encode) == []
     encode.assert_called_once()
 
 

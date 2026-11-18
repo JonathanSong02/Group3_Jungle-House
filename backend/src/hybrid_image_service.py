@@ -99,7 +99,14 @@ def extract_evidence(question, article):
         if action and not subjects:
             continue
         matches.append(sentence)
-    return matches[0] if len(matches) == 1 else None
+    matches = list(dict.fromkeys(matches))
+    if len(matches) == 1:
+        return matches[0]
+    # A usage guide can contain several relevant steps in the same article.
+    # Multiple storage locations still need clarification rather than guessing.
+    if matches and action and not location:
+        return "\n".join(matches)
+    return None
 
 
 def text_articles(query):
@@ -195,6 +202,19 @@ def process(owner, chat, question, folder, references, *, new_path=None, mime=No
     # Article-level ambiguity gap. A weak photo cannot make an authoritative match.
     clear = bool(articles and articles[0]["image_similarity"] >= 0.78 and
                  (len(articles) == 1 or articles[0]["image_similarity"] - articles[1]["image_similarity"] >= 0.04))
+    article_request = bool(re.fullmatch(
+        r"(?:please\s+)?(?:show|find|give)(?:\s+me)?\s+(?:(?:the|a|relevant|related|matching)\s+)*"
+        r"articles?(?:\s+for\s+(?:this|the)\s+(?:image|photo|picture))?[.!?]*",
+        question.strip(), re.I))
+    if clear and articles[0].get("exact_image") and articles[0].get("article_id") and article_request:
+        article = articles[0]
+        return {"type": "text", "answer": article["title"], "reply": article["title"],
+                "title": article["title"], "article_id": article["article_id"],
+                "source": "image_article_match", "answer_evidence": "current_kb",
+                "confidence_kind": "not_calibrated", "confidence": 0.0, "score": 0.0,
+                "image_similarity": article["image_similarity"], "attachment_refs": references,
+                "context": {"title": article["title"], "article_id": article["article_id"]},
+                "fallback": False, "escalation_ready": False, "escalation_required": False}, question, references
     result = grounded_result(question, articles[:1], references) if clear else None
     if result:
         return result, question, references
