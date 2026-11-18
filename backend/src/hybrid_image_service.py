@@ -74,7 +74,7 @@ def plain(value):
 
 
 def question_subjects(question):
-    stop = set("where should would could can do does did i we you my our it its this that these those put keep store place how what when is are to the a an of in on at for with please image photo picture know about explain me tell show use using opening closing open close steps step".split())
+    stop = set("where should would could can do does did i we you my our it its this that these those put keep store place how what when is are to the a an of in on at for with please image photo picture know about explain me tell show find give relevant related matching article articles guide guides information use using opening closing open close steps step".split())
     return {word.rstrip("s") for word in re.findall(r"[a-z]{3,}", question.lower()) if word not in stop}
 
 
@@ -109,10 +109,10 @@ def extract_evidence(question, article):
     return None
 
 
-def text_articles(query):
+def text_articles(query, alternatives=()):
     """No default arbitrary articles: require object/question token evidence."""
-    subjects = question_subjects(query)
-    if not subjects:
+    subject_sets = [subjects for value in [query, *alternatives] if (subjects := question_subjects(value))]
+    if not subject_sets:
         return []
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
@@ -125,10 +125,40 @@ def text_articles(query):
     ranked = []
     for row in rows:
         words = {word.rstrip("s") for word in re.findall(r"[a-z]{3,}", plain(str(row.get("title")) + " " + str(row.get("content"))).lower())}
-        overlap = len(subjects & words) / len(subjects)
+        overlap = max(len(subjects & words) / len(subjects) for subjects in subject_sets)
         if index.published(row) and overlap >= 0.72:
             ranked.append({**row, "retrieval_relevance": overlap})
     return sorted(ranked, key=lambda row: row["retrieval_relevance"], reverse=True)[:5]
+
+
+def article_result(articles, references, language_hint="en", exact=False):
+    """Return article references without presenting a visual guess as a procedure."""
+    articles = [article for article in articles if article.get("article_id") and index.published(article)]
+    if not articles:
+        return None
+    message = {
+        "en": "These Knowledge Base articles match or may be relevant to your image. Open the article to check the instructions.",
+        "zh": "以下知识库文章与图片匹配或可能相关，请打开文章查看操作说明。",
+        "ms": "Artikel Pangkalan Pengetahuan ini sepadan atau mungkin berkaitan dengan gambar anda. Buka artikel untuk menyemak panduan.",
+    }.get(language_hint, "These Knowledge Base articles may be relevant to your image.")
+    result = {"type": "text", "answer": message, "reply": message,
+              "source": "image_article_match" if exact else "image_related_articles",
+              "answer_evidence": "current_kb", "confidence_kind": "not_calibrated",
+              "confidence": 0.0, "score": 0.0, "attachment_refs": references,
+              "fallback": False, "escalation_ready": False, "escalation_required": False}
+    if len(articles) == 1:
+        article = articles[0]
+        result.update(title=article["title"], article_id=article["article_id"],
+                      context={"title": article["title"], "article_id": article["article_id"]},
+                      image_similarity=article.get("image_similarity"))
+    else:
+        result["type"] = "options"
+        result["options"] = [{"title": article["title"], "label": article["title"],
+            "article_id": article["article_id"], "answer": plain(article.get("content"))[:600] or article["title"],
+            "link": f"/knowledge/{article['article_id']}", "source": result["source"],
+            "confidence_kind": "not_calibrated", "answer_evidence": "current_kb", "fallback": False}
+            for article in articles]
+    return result
 
 
 def grounded_result(question, articles, references):
@@ -189,8 +219,6 @@ def process(owner, chat, question, folder, references, *, new_path=None, mime=No
     records = [attachments.load_attachment(owner, chat, ref, folder) for ref in references]
     if any(not row["mime_type"].startswith("image/") for row in records):
         raise attachments.AttachmentError("Please select an image for visual questions.")
-    if not question.strip():
-        return control("clarify", question, references, language_hint), question, references
     if len(records) != 1:
         return control("ambiguous", question, references), question, references
     if cancelled():
@@ -202,27 +230,33 @@ def process(owner, chat, question, folder, references, *, new_path=None, mime=No
     # Article-level ambiguity gap. A weak photo cannot make an authoritative match.
     clear = bool(articles and articles[0]["image_similarity"] >= 0.78 and
                  (len(articles) == 1 or articles[0]["image_similarity"] - articles[1]["image_similarity"] >= 0.04))
-    article_request = bool(re.fullmatch(
+    article_request = not question.strip() or bool(re.fullmatch(
         r"(?:please\s+)?(?:show|find|give)(?:\s+me)?\s+(?:(?:the|a|relevant|related|matching)\s+)*"
         r"articles?(?:\s+for\s+(?:this|the)\s+(?:image|photo|picture))?[.!?]*",
         question.strip(), re.I))
-    if clear and articles[0].get("exact_image") and articles[0].get("article_id") and article_request:
-        article = articles[0]
-        return {"type": "text", "answer": article["title"], "reply": article["title"],
-                "title": article["title"], "article_id": article["article_id"],
-                "source": "image_article_match", "answer_evidence": "current_kb",
-                "confidence_kind": "not_calibrated", "confidence": 0.0, "score": 0.0,
-                "image_similarity": article["image_similarity"], "attachment_refs": references,
-                "context": {"title": article["title"], "article_id": article["article_id"]},
-                "fallback": False, "escalation_ready": False, "escalation_required": False}, question, references
+    selected_language = language(question) if question.strip() else language_hint
+    if articles and article_request:
+        matches = [article for article in articles if article.get("exact_image")]
+        if not matches and clear:
+            matches = articles[:1]
+        if not matches:
+            matches = [article for article in articles if article["image_similarity"] >= 0.78]
+        result = article_result(matches, references, selected_language, exact=bool(matches and matches[0].get("exact_image")))
+        if result:
+            return result, question, references
     result = grounded_result(question, articles[:1], references) if clear else None
     if result:
         return result, question, references
     # An explicit named-object question can already be answerable without Vision.
     stage("kb_evidence")
-    result = grounded_result(question, text_articles(question), references)
+    named_articles = text_articles(question)
+    result = grounded_result(question, named_articles, references)
     if result:
         return result, question, references
+    if named_articles:
+        result = article_result(named_articles, references, selected_language)
+        if result:
+            return result, question, references
     needs_visual = not question_subjects(question) or bool(re.search(
         r"\b(it|its|this|that|image|photo|picture|identify|recognize|recognise|object|ini|itu|dia|gambar)\b|它|这个|這個|这张|這張|识别|識別",
         question, re.I))
@@ -251,9 +285,19 @@ def process(owner, chat, question, folder, references, *, new_path=None, mime=No
     query = f"{question} {terms}".strip()
     if terms:
         stage("kb_evidence")
-        result = grounded_result(query, text_articles(query), references)
+        # Object names and aliases are alternatives, not words every article must contain.
+        observed_articles = text_articles("", alternatives=(observations or {}).get("detectedObjects", []) +
+                                          (observations or {}).get("possibleAliases", []))
+        result = grounded_result(query, observed_articles, references) if question.strip() else None
         if result:
             result["question"] = question
+            return result, query, references
+        result = article_result(observed_articles, references, selected_language)
+        if result:
+            return result, query, references
+    if clear:
+        result = article_result(articles[:1], references, selected_language, exact=articles[0].get("exact_image", False))
+        if result:
             return result, query, references
     if not terms and not clear and not question_subjects(question):
         return control("unknown", question, references), question, references

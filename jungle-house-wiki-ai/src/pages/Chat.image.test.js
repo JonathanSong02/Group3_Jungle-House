@@ -37,8 +37,9 @@ test('standard and Staff composers preserve file selection, preview, image+text 
         message: 'Image storage needs a database update.', source: 'image_service_unavailable',
         code: 'IMAGE_SCHEMA_NOT_READY', error_id: 'b'.repeat(16),
       } } };
-      return { data: { answer: 'Synthetic image reply', source: 'image_only_clarification',
-        confidence_kind: 'not_calibrated', answer_evidence: 'not_established', attachment_refs: [reference],
+      return { data: { answer: 'Synthetic image reply', source: 'image_article_match',
+        title: 'Staff belongings Area', article_id: 123,
+        confidence_kind: 'not_calibrated', answer_evidence: 'current_kb', attachment_refs: [reference],
         uploaded_image_url: `/api/chat/attachments/${reference}?chat=main-test` } };
     } }, ...issue, ...escalation, ...safe, imageReferencesForQuestion,
     imageFailureDetails,
@@ -79,7 +80,8 @@ test('standard and Staff composers preserve file selection, preview, image+text 
     assert.equal(document.querySelector(savedImageSelector)?.getAttribute('src'), savedImageUrl);
     assert.equal(document.querySelector('.message-bubble.user a'), null);
     assert.ok(localStorage.getItem('jh_ai_chat_sessions_synthetic-image-test').includes(reference));
-    assert.ok(document.body.textContent.includes('Evidence not established'));
+    assert.ok(document.querySelector('.message-bubble.ai a[href="/knowledge/123"]'));
+    assert.ok(!document.body.textContent.includes('Fallback'));
     await React.act(async () => root.unmount());
     root = createRoot(document.getElementById('root'));
     await mount();

@@ -152,16 +152,17 @@ def add_article(db, folder, article_id=1, title="Staff belongings Area", content
     return path
 
 
-def test_image_only_neutral_clarification_no_clip_or_vision(local, monkeypatch):
-    encode = Mock(side_effect=AssertionError("No CLIP on image-only"))
-    monkeypatch.setattr(index, "visual_candidates", encode)
+def test_image_only_searches_current_articles_without_vision_when_exact(local):
+    db, folder = local
+    add_article(db, folder)
     response = upload(client_for(1))
     assert response.status_code == 200
     data = response.get_json()
-    assert data["source"] == "image_only_clarification"
+    assert data["source"] == "image_article_match"
+    assert data["article_id"] == 1
+    assert data["fallback"] is False
     assert len(data["attachment_refs"]) == 1
     assert "/static/uploads/chat/" not in response.get_data(as_text=True)
-    encode.assert_not_called()
     app.analyze_uploaded_image_with_vision.assert_not_called()
 
 
@@ -182,13 +183,60 @@ def test_missing_migration_returns_safe_schema_error_with_stage(local, monkeypat
     assert "synthetic-sensitive-db-message" not in response.get_data(as_text=True)
 
 
-@pytest.mark.parametrize("preferred,expected", [("zh", "你想了解"), ("ms", "Apakah yang anda")])
-def test_image_only_clarification_respects_ui_language(local, preferred, expected):
+@pytest.mark.parametrize("preferred,expected", [("zh", "以下知识库文章"), ("ms", "Artikel Pangkalan")])
+def test_image_only_article_match_respects_ui_language(local, preferred, expected):
+    db, folder = local
+    add_article(db, folder)
     response = client_for(1).post("/api/chat", data={"question": "", "language": preferred,
         "chat_session_id": "main-test", "attachment": (io.BytesIO(png_bytes()), "fixture.png")},
         headers={"X-CSRF-Token": "synthetic-csrf"})
     assert response.status_code == 200
     assert expected in response.get_json()["answer"]
+
+
+def test_image_only_vision_aliases_find_bottle_article(local, monkeypatch):
+    db, folder = local
+    add_article(db, folder)
+    monkeypatch.setattr(index, "visual_candidates", lambda path: [])
+    app.analyze_uploaded_image_with_vision.return_value = {"detectedObjects": ["sports hydration flask"],
+        "possibleAliases": ["bottle", "plastic water container"]}
+    data = upload(client_for(1), content=png_bytes("red")).get_json()
+    assert data["source"] == "image_related_articles"
+    assert data["article_id"] == 1
+    assert data["fallback"] is False
+    app.analyze_uploaded_image_with_vision.assert_called_once()
+
+
+def test_image_only_duplicate_matches_offer_article_choices(local):
+    db, folder = local
+    add_article(db, folder)
+    add_article(db, folder, article_id=2, title="Another bottle guide")
+    data = upload(client_for(1)).get_json()
+    assert data["type"] == "options"
+    assert {option["article_id"] for option in data["options"]} == {1, 2}
+    assert all(option["link"].startswith("/knowledge/") for option in data["options"])
+    app.analyze_uploaded_image_with_vision.assert_not_called()
+
+
+def test_image_only_similar_photo_returns_article_without_vision(local, monkeypatch):
+    db, folder = local
+    add_article(db, folder)
+    row = dict(db.execute("SELECT * FROM image_retrieval").fetchone())
+    monkeypatch.setattr(index, "visual_candidates", lambda path: [
+        {**row, "image_similarity": 0.90, "exact_image": False}])
+    data = upload(client_for(1), content=png_bytes("red")).get_json()
+    assert data["source"] == "image_related_articles"
+    assert data["article_id"] == 1
+    app.analyze_uploaded_image_with_vision.assert_not_called()
+
+
+def test_image_only_unknown_does_not_return_an_arbitrary_article(local, monkeypatch):
+    db, folder = local
+    add_article(db, folder)
+    monkeypatch.setattr(index, "visual_candidates", lambda path: [])
+    data = upload(client_for(1), content=png_bytes("red")).get_json()
+    assert data["source"] == "image_unknown"
+    assert not data.get("article_id") and not data.get("options")
 
 
 def test_exact_image_and_text_use_current_quote_without_vision(local):
@@ -216,7 +264,8 @@ def test_refresh_followup_references_previous_image(local):
 
 
 @pytest.mark.parametrize("photo_color", ["blue", "red"])
-def test_hook_usage_returns_both_current_kb_instructions_without_vision(local, monkeypatch, photo_color):
+@pytest.mark.parametrize("question", ["how to use this hook", "what is the use of this hook"])
+def test_hook_usage_returns_both_current_kb_instructions_without_vision(local, monkeypatch, photo_color, question):
     db, folder = local
     instructions = (
         "Use hook to take down the blind next to the storeroom and place it inside the storeroom. "
@@ -225,7 +274,7 @@ def test_hook_usage_returns_both_current_kb_instructions_without_vision(local, m
     add_article(db, folder, title="Kiosk Opening", content=instructions)
     if photo_color == "red":
         monkeypatch.setattr(index, "visual_candidates", lambda path: [])
-    response = upload(client_for(1), "how to use this hook", content=png_bytes(photo_color))
+    response = upload(client_for(1), question, content=png_bytes(photo_color))
     data = response.get_json()
     assert response.status_code == 200, data
     assert data["source"] == "image_kb_evidence"
@@ -326,6 +375,7 @@ def test_expired_and_deleted_attachments_fail_closed(local):
 def test_multiple_images_ask_which_one(local):
     client = client_for(1)
     refs = [upload(client).get_json()["attachment_refs"][0] for _ in range(2)]
+    app.analyze_uploaded_image_with_vision.reset_mock()
     response = client.post("/api/chat", json={"question": "Where should I put it?",
         "chat_session_id": "main-test", "attachment_refs": refs}, headers={"X-CSRF-Token": "synthetic-csrf"})
     assert response.get_json()["source"] == "image_ambiguous"
@@ -399,12 +449,15 @@ def test_unknown_object_and_vision_failure_never_invent_policy(local, monkeypatc
 def test_reupload_same_image_reuses_persistent_observations_in_same_chat(local, monkeypatch):
     _, folder = local
     monkeypatch.setattr(index, "visual_candidates", lambda path: [])
-    analyze = Mock(return_value={"isWorkRelated": True, "detectedObjects": ["synthetic-object"], "possibleAliases": []})
+    analyze = app.analyze_uploaded_image_with_vision
+    analyze.return_value = {"isWorkRelated": True, "detectedObjects": ["synthetic-object"], "possibleAliases": []}
     first = upload(client_for(1)).get_json()["attachment_refs"][0]
-    hybrid.process(1, "main-test", "Where should I put it?", folder, [first], analyze=analyze)
+    hybrid.process(1, "main-test", "Where should I put it?", folder, [first], analyze=analyze,
+                   vision_identity=lambda: "synthetic-model")
     second = upload(client_for(1)).get_json()["attachment_refs"][0]
     assert first != second
-    hybrid.process(1, "main-test", "Where should I put it?", folder, [second], analyze=analyze)
+    hybrid.process(1, "main-test", "Where should I put it?", folder, [second], analyze=analyze,
+                   vision_identity=lambda: "synthetic-model")
     analyze.assert_called_once()
 
 
@@ -575,6 +628,7 @@ def test_authentication_and_csrf_required(local):
 def test_model_initialization_is_singleton_under_concurrency(monkeypatch):
     constructor = Mock(return_value=object())
     monkeypatch.setattr(embeddings, "_model", None)
+    monkeypatch.setattr(embeddings, "_model_failure_until", 0)
     monkeypatch.delenv("DISABLE_IMAGE_EMBEDDING", raising=False)
     monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(set_num_threads=lambda value: None))
     monkeypatch.setitem(sys.modules, "sentence_transformers", types.SimpleNamespace(SentenceTransformer=constructor))
