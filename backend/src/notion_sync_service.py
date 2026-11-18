@@ -12,6 +12,7 @@ from flask import request as flask_request
 # Reuse the exact same encryption approach already built and proven for AI
 # provider keys, instead of inventing a second encryption scheme.
 import ai_provider_service
+import image_index_service
 
 
 def get_public_base_url():
@@ -2234,6 +2235,7 @@ def apply_pending_update(cursor, pending_id, actor_id):
     if cursor.rowcount <= 0:
         return None
 
+    image_index_service.sync_article(cursor, article_id)
     return article_id
 
 

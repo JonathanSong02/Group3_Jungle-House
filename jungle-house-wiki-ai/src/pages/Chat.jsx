@@ -8,6 +8,7 @@ import '../styles/Chat.css';
 import { buildIssueContext, getClarificationToken, getEscalationQuestion } from '../utils/chatIssueContext';
 import { escalationMetadata, normalizeEscalationResponse, escalationErrorInfo } from '../utils/escalationResponse';
 import { isHtmlContent, rewriteSrcset, sanitizeHtml } from '../utils/safeHtml';
+import { imageReferencesForQuestion } from '../utils/imageAttachmentContext';
 
 
 const starterMessages = [
@@ -910,7 +911,7 @@ function renderRichKnowledgeContent(text, fallbackLink = '') {
 function renderResponseMeta(message, t) {
   if (message.sender !== 'ai') return null;
 
-  const hasConfidence = message.confidence !== undefined && message.confidence !== null;
+  const hasConfidence = message.confidence_kind !== 'not_calibrated' && message.confidence !== undefined && message.confidence !== null;
   const hasSource = Boolean(message.source);
   const hasFallback = Boolean(message.fallback || message.escalation_ready || message.escalation_required);
 
@@ -940,9 +941,13 @@ function renderResponseMeta(message, t) {
             border: '1px solid #dee2e6',
           }}
         >
-          {t('chat.confidence')}: {confidencePercent}% {message.confidence_label ? `(${message.confidence_label})` : ''}
+          {t('chat.matchScore')}: {confidencePercent}% {message.confidence_label ? `(${message.confidence_label})` : ''}
         </span>
       ) : null}
+
+      {message.confidence_kind === 'not_calibrated' && (
+        <span>{t(message.answer_evidence === 'not_established' ? 'chat.evidenceMissing' : 'chat.kbEvidence')}</span>
+      )}
 
       {hasSource ? (
         message.article_id ? (
@@ -996,6 +1001,11 @@ function renderResponseMeta(message, t) {
 function buildAiMessage(data, t) {
   data = normalizeEscalationResponse(data, t);
   const messageMetadata = {
+    confidence_kind: data?.confidence_kind,
+    answer_evidence: data?.answer_evidence,
+    image_similarity: data?.image_similarity,
+    retrieval_relevance: data?.retrieval_relevance,
+    attachment_refs: data?.attachment_refs || [],
     ...escalationMetadata(data),
     created_at: new Date().toISOString(),
     clarification_token: data?.clarification_token || '',
@@ -2001,6 +2011,7 @@ const removeSelectedImage = () => {
     const initiatingSessionId = activeSessionId;
     const initiatingMessages = [...messages];
     const historyForRequest = selectedImage ? null : buildConversationHistory(initiatingMessages, trimmedQuestion);
+    const attachmentRefs = selectedImage ? [] : imageReferencesForQuestion(initiatingMessages, trimmedQuestion);
 
     const displayQuestion =
       trimmedQuestion || (isImageUploadFile(selectedImage) ? 'Uploaded an image' : 'Uploaded a file');
@@ -2050,6 +2061,7 @@ const removeSelectedImage = () => {
       if (imageToSend) {
         const formData = new FormData();
         formData.append('question', trimmedQuestion);
+        formData.append('language', language);
         formData.append('context', JSON.stringify(context));
         formData.append('attachment', imageToSend);
         formData.append('request_id', requestId);
@@ -2058,12 +2070,12 @@ const removeSelectedImage = () => {
         formData.append('clarification_token', getClarificationToken(initiatingMessages, issueContextForRequest));
         // Do not set multipart Content-Type by hand: the browser must supply
         // the boundary. The shared client adds credentials and X-CSRF-Token.
-        response = await api.post('/chat', formData, { signal: controller.signal });
+        response = await api.post('/chat', formData, { signal: controller.signal, timeout: 120000 });
       } else {
         response = await api.post(
           '/chat',
-          { question: trimmedQuestion, context, request_id: requestId, history: historyForRequest, chat_session_id: `main-${initiatingSessionId}`, escalation_context: issueContextForRequest, clarification_token: getClarificationToken(initiatingMessages, issueContextForRequest) },
-          { signal: controller.signal }
+          { question: trimmedQuestion, language, context, request_id: requestId, history: historyForRequest, chat_session_id: `main-${initiatingSessionId}`, escalation_context: issueContextForRequest, clarification_token: getClarificationToken(initiatingMessages, issueContextForRequest), ...(attachmentRefs.length ? { attachment_refs: attachmentRefs } : {}) },
+          { signal: controller.signal, ...(attachmentRefs.length ? { timeout: 120000 } : {}) }
         );
       }
 
@@ -2084,8 +2096,8 @@ const removeSelectedImage = () => {
       const permanentImageUrl = data?.uploaded_image_url;
 
       const finalUserMessage = permanentImageUrl
-        ? { ...userMessage, image_files: [permanentImageUrl] }
-        : userMessage;
+        ? { ...userMessage, image_files: [permanentImageUrl], attachment_refs: data.attachment_refs || [] }
+        : { ...userMessage, attachment_refs: data.attachment_refs || [] };
 
       const finalMessagesAfterUserQuestion = permanentImageUrl
         ? [...messages, finalUserMessage]

@@ -29,6 +29,7 @@ jobs:
       # Do not start the Notion background thread when the tests import app.py.
       NOTION_AUTO_SYNC_ENABLED: "false"
       PYTHONDONTWRITEBYTECODE: "1"
+      IMAGE_INDEX_WORKER_ENABLED: "false"
     steps:
       - name: Check out the code
         uses: actions/checkout@v7.0.1
@@ -53,6 +54,10 @@ jobs:
       - name: Run backend tests
         working-directory: backend/src
         run: python -m unittest discover -s . -p "test_*.py" -v -b
+
+      - name: Run image pipeline pytest tests
+        working-directory: backend
+        run: python -m pytest src/test_image_retrieval.py src/test_hybrid_image_pipeline.py -q -p no:cacheprovider
 
   frontend:
     name: Frontend lint, tests and build (Node 22)

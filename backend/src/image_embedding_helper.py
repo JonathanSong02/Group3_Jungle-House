@@ -1,131 +1,112 @@
-import os
-
-# Must be set before numpy/torch are imported. PyTorch's BLAS backend
-# defaults to spawning one thread per CPU core it detects, which on a small
-# container can multiply memory/CPU usage far beyond what a single image
-# embedding actually needs -- this is a common cause of an OOM SIGKILL
-# during inference on constrained hosts like Railway's smaller plans.
-os.environ.setdefault("OMP_NUM_THREADS", "1")
-os.environ.setdefault("MKL_NUM_THREADS", "1")
-os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-
+"""Local CLIP encoding. Importing this module never loads Torch or the model."""
+import hashlib
+import io
 import json
+import logging
+import math
+import os
+import threading
+import time
+import warnings
 from pathlib import Path
 
-import numpy as np
-import torch
-from PIL import Image
-from sentence_transformers import SentenceTransformer
-
-torch.set_num_threads(1)
-
-_model = None
 MODEL_NAME = "clip-ViT-B-32"
-
-# Longest edge to downscale an uploaded photo to before encoding. CLIP
-# resizes to a fixed 224x224 internally either way, but decoding a full
-# 12MP phone photo into a raw RGB array first can itself use tens of MB --
-# shrinking it up front keeps that intermediate memory small on a
-# constrained container.
+MODEL_REVISION = "327ab67"
+MODEL_VERSION = f"{MODEL_NAME}@{MODEL_REVISION}:rgb-exif-768-v1"
 MAX_IMAGE_EDGE_PX = 768
-
-# Emergency kill switch: if the container still can't fit the model in
-# memory even after the thread-count fix, set DISABLE_IMAGE_EMBEDDING=true
-# in Railway's environment variables and restart -- no redeploy needed.
-# Every caller already treats a None return as "skip visual matching, fall
-# back to the existing text-based search," so the rest of the app (normal
-# chat, KB search, escalation) keeps working either way.
-def _image_embedding_disabled():
-    return os.getenv("DISABLE_IMAGE_EMBEDDING", "").strip().lower() in {"1", "true", "yes"}
+MAX_IMAGE_PIXELS = 20_000_000
+MAX_IMAGE_BYTES = 8 * 1024 * 1024
+_model = None
+_model_failure_until = 0.0
+_model_lock = threading.Lock()
+_encode_lock = threading.Lock()
+log = logging.getLogger(__name__)
 
 
 def get_image_model():
-    global _model
-
-    if _image_embedding_disabled():
-        raise RuntimeError("Image embedding is disabled via DISABLE_IMAGE_EMBEDDING.")
-
-    if _model is None:
-        print("Loading image embedding model...")
-        _model = SentenceTransformer(MODEL_NAME)
-        print("Image embedding model loaded.")
+    global _model, _model_failure_until
+    if os.getenv("DISABLE_IMAGE_EMBEDDING", "").lower() in {"true", "1", "yes"}:
+        raise RuntimeError("Local image embedding is disabled")
+    with _model_lock:
+        if _model is None:
+            if time.monotonic() < _model_failure_until:
+                raise RuntimeError("CLIP initialization is cooling down after a failure")
+            try:
+                os.environ.setdefault("OMP_NUM_THREADS", "1")
+                os.environ.setdefault("MKL_NUM_THREADS", "1")
+                os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+                import torch
+                from sentence_transformers import SentenceTransformer
+                torch.set_num_threads(1)
+                started = time.monotonic()
+                _model = SentenceTransformer(MODEL_NAME, revision=MODEL_REVISION, device="cpu",
+                    cache_folder=os.getenv("IMAGE_MODEL_CACHE_DIR") or None)
+                log.info("CLIP initialized model=%s seconds=%.3f", MODEL_VERSION, time.monotonic() - started)
+            except Exception:
+                _model_failure_until = time.monotonic() + 60
+                raise
 
     return _model
 
 
-def _downscale_for_encoding(image):
-    width, height = image.size
-    longest_edge = max(width, height)
+def decode_image(image_path):
+    """Bound decoding before RGB allocation; never trust a filename or MIME alone."""
+    from PIL import Image, ImageOps
+    data = Path(image_path).read_bytes()
+    if not data or len(data) > MAX_IMAGE_BYTES:
+        raise ValueError("Image exceeds decoding byte limit")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", Image.DecompressionBombWarning)
+        with Image.open(io.BytesIO(data)) as original:
+            if original.width * original.height > MAX_IMAGE_PIXELS:
+                raise ValueError("Image exceeds decoding pixel limit")
+            original.seek(0)
+            image = ImageOps.exif_transpose(original).convert("RGB")
+            image.thumbnail((MAX_IMAGE_EDGE_PX, MAX_IMAGE_EDGE_PX), Image.Resampling.LANCZOS)
+            return image
 
-    if longest_edge <= MAX_IMAGE_EDGE_PX:
-        return image
 
-    scale = MAX_IMAGE_EDGE_PX / float(longest_edge)
-    new_size = (max(1, int(width * scale)), max(1, int(height * scale)))
+def vision_image_bytes(image_path):
+    output = io.BytesIO()
+    decode_image(image_path).save(output, format="JPEG", quality=85)
+    return output.getvalue(), "image/jpeg"
 
-    return image.resize(new_size, Image.LANCZOS)
+
+def image_sha256(image_path):
+    return hashlib.sha256(Path(image_path).read_bytes()).hexdigest()
 
 
 def create_image_embedding(image_path):
     try:
-        image_path = Path(image_path)
-
-        if not image_path.exists():
-            print("IMAGE EMBEDDING ERROR: file does not exist:", image_path)
-            return None
-
+        image = decode_image(image_path)
         model = get_image_model()
-        image = Image.open(image_path).convert("RGB")
-        image = _downscale_for_encoding(image)
-
-        with torch.inference_mode():
+        import torch
+        with _encode_lock, torch.inference_mode():
             embedding = model.encode(image, normalize_embeddings=True)
-
         return json.dumps([float(value) for value in embedding.tolist()])
-
     except Exception as error:
-        print("IMAGE EMBEDDING ERROR:", error)
+        log.warning("Image encoding unavailable (%s)", type(error).__name__)
         return None
 
 
 def create_text_embedding(text):
-    """
-    Encode text into the same CLIP embedding space used for images.
-    This lets an uploaded photo be compared directly against KB captions,
-    titles, keywords and answers (not just other stored photos), which is
-    what makes category-level / different-angle matching possible.
-    """
     try:
-        text = str(text or "").strip()
-
-        if not text:
-            return None
-
         model = get_image_model()
-
-        with torch.inference_mode():
-            embedding = model.encode(text, normalize_embeddings=True)
-
+        import torch
+        with _encode_lock, torch.inference_mode():
+            embedding = model.encode(str(text), normalize_embeddings=True)
         return json.dumps([float(value) for value in embedding.tolist()])
-
     except Exception as error:
-        print("TEXT EMBEDDING ERROR:", error)
+        log.warning("Text encoding unavailable (%s)", type(error).__name__)
         return None
 
 
 def cosine_similarity_from_json(a_json, b_json):
     try:
-        if not a_json or not b_json:
+        a, b = json.loads(a_json), json.loads(b_json)
+        if not a or len(a) != len(b) or not all(math.isfinite(float(x)) for x in a + b):
             return 0.0
-
-        a = np.array(json.loads(a_json), dtype=np.float32)
-        b = np.array(json.loads(b_json), dtype=np.float32)
-
-        if a.size == 0 or b.size == 0:
-            return 0.0
-
-        return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
-
-    except Exception as error:
-        print("IMAGE SIMILARITY ERROR:", error)
+        norm = math.sqrt(sum(x*x for x in a) * sum(x*x for x in b))
+        return max(-1.0, min(1.0, sum(x*y for x,y in zip(a,b)) / norm)) if norm else 0.0
+    except (ValueError, TypeError, ZeroDivisionError):
         return 0.0

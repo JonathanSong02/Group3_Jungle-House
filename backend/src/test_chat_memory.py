@@ -226,6 +226,12 @@ class ChatRouteTests(unittest.TestCase):
             get_json=lambda **kwargs:self.payload,remote_addr="local",form={},files={})
         env["current_auth_user_id"]=Mock(return_value=7)
         env["g"]=types.SimpleNamespace()
+        env["chat_attachment_service"]=types.SimpleNamespace(AttachmentError=type("AttachmentError",(ValueError,),{}))
+        env["hybrid_image_service"]=types.SimpleNamespace(process=Mock(return_value=(None,self.payload["question"],[])), verify_text_result=Mock(return_value=None))
+        env["image_index_service"]=types.SimpleNamespace(sync_articles=Mock())
+        env["CHAT_UPLOAD_FOLDER"]="isolated-test-folder"
+        env["get_local_image_path_from_url"]=Mock(return_value="isolated-test-path")
+        env["analyze_uploaded_image_with_vision"]=Mock(return_value=None)
         env["AI_CHAT_MEMORY"].clear()
         env["AI_LAST_ANSWER_MEMORY"]={}
         env["AI_FAIL_MEMORY"]={}
@@ -254,6 +260,7 @@ class ChatRouteTests(unittest.TestCase):
         env["traceback"]=types.SimpleNamespace(print_exc=Mock())
         self.provider.AIProviderNotConfiguredError=type("AIProviderNotConfiguredError",(Exception,),{})
         self.provider.generate_ai_reply=Mock(return_value=json.dumps({"answered":True,"answer":"Mock KB answer","sourceTitle":"Honey"}))
+        self.provider.vision_identity=Mock(return_value="isolated-model")
     def call(self):
         response,status=chat()
         self.assertEqual(status,200,response)
@@ -348,6 +355,7 @@ class ChatRouteTests(unittest.TestCase):
         env["request"].files={"attachment":image}
         env["save_chat_image"]=Mock(return_value=("/mock-image","image/png"))
         env["search_visual_image_match"]=Mock(return_value={"answer":"mock visual answer","confidence":.9,"source":"image_retrieval"})
+        env["hybrid_image_service"].process.return_value=({"answer":"mock current quote","served_by":"image_embedding_retrieval"},q,[])
         result=self.call()
         self.assertEqual(result["served_by"],"image_embedding_retrieval")
         self.provider._call_ai_provider_once.assert_not_called()
@@ -387,6 +395,9 @@ class ChatRouteTests(unittest.TestCase):
         env["get_local_image_path_from_url"]=Mock(return_value="nonexistent-isolated-test-image")
         env["analyze_uploaded_image_with_vision"]=Mock(return_value=vision)
         env["extract_image_search_text"]=Mock(return_value=question)
+        env["hybrid_image_service"].process.return_value=(None,question,[])
+        if not question:
+            env["hybrid_image_service"].process.return_value=({"source":"image_only_clarification","answer":"Mock clarification"},question,[])
     def test_route_successful_image_upload_text_fallback(self):
         self.image_request("Golden Passion honey price")
         self.call()
@@ -400,20 +411,18 @@ class ChatRouteTests(unittest.TestCase):
         self.provider._call_ai_provider_once.assert_not_called()
         self.provider.generate_ai_reply.assert_not_called()
         env["create_escalation"].assert_not_called()
-    def test_route_unrelated_image_rejection(self):
+    def test_route_vision_work_classification_cannot_short_circuit_retrieval(self):
         self.image_request("photo",{"isWorkRelated":False,"confidence":.9})
-        env["build_image_irrelevant_response"]=Mock(return_value={"source":"irrelevant_image","answer":"Mock rejection"})
-        result=self.call()
-        self.assertEqual(result["source"],"irrelevant_image")
-        self.provider._call_ai_provider_once.assert_not_called()
-        self.provider.generate_ai_reply.assert_not_called()
-        env["create_escalation"].assert_not_called()
-    def test_route_related_image_plus_text(self):
+        self.call()
+        env["process_question"].assert_called_once()
+        self.assertEqual(env["process_question"].call_args.kwargs["question"],"photo")
+    def test_route_related_image_plus_text_keeps_original_question(self):
         self.image_request("price",{"isWorkRelated":True,"confidence":.9})
-        env["build_vision_augmented_question"]=Mock(return_value="Golden Passion honey price")
+        env["hybrid_image_service"].process.return_value=(None,"Golden Passion honey price",[])
         self.call()
         self.provider._call_ai_provider_once.assert_not_called()
-        self.assertEqual(env["process_question"].call_args.kwargs["question"],"Golden Passion honey price")
+        self.assertEqual(env["process_question"].call_args.kwargs["question"],"price")
+        self.assertEqual(env["process_question"].call_args.kwargs["search_question"],"Golden Passion honey price")
     def test_route_not_this_keeps_existing_escalation(self):
         self.payload["question"]="not this"
         env["AI_LAST_ANSWER_MEMORY"]["user:7:last_answer"]={"question":"Golden Passion honey price","result":{"answer":"Mock prior answer"}}
@@ -839,6 +848,7 @@ class StandardQuestionWorkflowTests(unittest.TestCase):
         env["save_qa_to_db"]=Mock()
         env["_save_approved_escalation_to_qa_knowledge"]=Mock()
         env["_save_approved_escalation_to_image_retrieval"]=Mock()
+        env["image_index_service"]=types.SimpleNamespace(sync_articles=Mock())
     def test_standard_question_requires_explicit_confirmation(self):
         for confirmation in [False,None,1,"false"]:
             question,error=env["validate_standard_question"]({"standard_question":self.title,"standard_question_confirmed":confirmation})

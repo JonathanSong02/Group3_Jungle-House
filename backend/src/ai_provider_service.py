@@ -2,6 +2,9 @@ import os
 import base64
 import hashlib
 import time
+import json
+import re
+from image_embedding_helper import vision_image_bytes
 
 import mysql.connector
 import requests
@@ -217,11 +220,8 @@ def _call_gemini_vision(prompt, image_path, model_name, api_key, timeout):
     """
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
 
-    with open(image_path, "rb") as file:
-        image_bytes = file.read()
-
+    image_bytes, mime_type = vision_image_bytes(image_path)
     encoded_image = base64.b64encode(image_bytes).decode("utf-8")
-    mime_type = _guess_image_mime_type(image_path)
 
     response = requests.post(
         url,
@@ -236,14 +236,50 @@ def _call_gemini_vision(prompt, image_path, model_name, api_key, timeout):
                     {"inline_data": {"mime_type": mime_type, "data": encoded_image}},
                 ]
             }],
-            "generationConfig": {"temperature": 0.1},
+            "generationConfig": {"temperature": 0.1, "maxOutputTokens": 600,
+                                 "responseMimeType": "application/json"},
         },
         timeout=timeout,
     )
     response.raise_for_status()
     data = response.json()
 
-    return data["candidates"][0]["content"]["parts"][0]["text"]
+    return {"text": data["candidates"][0]["content"]["parts"][0]["text"],
+            "usage": data.get("usageMetadata", {}), "model": model_name}
+
+
+def vision_identity():
+    """Cache namespace changes on provider/model/key rotation; no secret is returned."""
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        config = get_active_ai_provider_config(cursor)
+        if not config or config.get("provider") != "gemini":
+            return None
+        return hashlib.sha256(json.dumps([config.get("id"), config.get("model_name"),
+            config.get("encrypted_api_key")], default=str).encode()).hexdigest()
+    finally:
+        cursor.close()
+        conn.close()
+
+
+_vision_models = {}
+
+
+def validate_vision_model(model_name, api_key, timeout):
+    if not re.fullmatch(r"gemini-[A-Za-z0-9.-]+", model_name or "") or any(
+            word in model_name for word in ("embedding", "image-generation", "tts")):
+        raise AIProviderVisionUnsupportedError("Configured model is not a supported Gemini image-input model")
+    cache_key = hashlib.sha256((model_name + api_key).encode()).hexdigest()
+    if time.monotonic() - _vision_models.get(cache_key, -3601) < 3600:
+        return
+    response = requests.get(f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}",
+                            headers={"x-goog-api-key": api_key}, timeout=min(timeout, 5))
+    response.raise_for_status()
+    if "generateContent" not in response.json().get("supportedGenerationMethods", []):
+        raise AIProviderVisionUnsupportedError("Configured model does not support generateContent")
+    # The subsequent image request remains the definitive capability check.
+    _vision_models[cache_key] = time.monotonic()
 
 
 def _call_openai_compatible(prompt, model_name, api_key, timeout, base_url):
@@ -377,6 +413,7 @@ def generate_ai_vision_reply(prompt, image_path, timeout=45):
         if conn:
             conn.close()
 
+    validate_vision_model(model_name, api_key, timeout)
     return _call_gemini_vision(prompt, image_path, model_name, api_key, timeout=timeout)
 
 

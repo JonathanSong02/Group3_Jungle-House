@@ -297,6 +297,7 @@ def build_image_retrieval_result(row, score=1.0):
         "answer": answer,
         "reply": answer,
         "type": "text",
+        "article_id": row.get("article_id"),
         "source": f"image_retrieval_{row.get('source_type') or 'approved'}",
         "score": 1.0,
         "confidence": 1.0,
@@ -339,23 +340,34 @@ def search_image_retrieval(question, limit=1):
 
         clean_question = normalize_text(question)
 
-        cursor.execute("""
-            SELECT *
-            FROM image_retrieval
-            WHERE approval_status = 'approved'
-            ORDER BY
-                CASE
-                    WHEN source_type = 'knowledge_base' THEN 1
-                    WHEN source_type = 'approved_escalation' THEN 2
-                    ELSE 3
-                END,
-                created_at DESC
-        """)
+        from image_index_service import ELIGIBLE_SOURCES
+        cursor.execute("""SELECT r.* FROM image_retrieval r
+            WHERE r.approval_status = 'approved' AND """ + ELIGIBLE_SOURCES + """
+            ORDER BY CASE WHEN r.source_type = 'knowledge_base' THEN 1 ELSE 2 END, r.created_at DESC""")
 
         rows = cursor.fetchall() or []
         matches = []
 
         for row in rows:
+            if row.get("source_type") == "knowledge_base":
+                # Resolve the live source, not a stale answer copy from the index.
+                from image_index_service import article_images, local_image_url, published, source_hash
+                cursor.execute("SELECT * FROM wiki_article WHERE article_id = %s", (row.get("source_id"),))
+                article = cursor.fetchone()
+                if not published(article) or source_hash(article) != row.get("source_hash") or local_image_url(row.get("image_url")) not in article_images(article):
+                    continue
+                row = {**row, "question": article.get("title"), "answer": article.get("content"),
+                       "article_id": article["article_id"]}
+            elif row.get("source_type") == "approved_escalation":
+                cursor.execute("""SELECT q.question, q.answer, q.status, e.image_url FROM escalation e
+                    JOIN review_queue q ON q.escalation_id = e.escalation_id
+                    WHERE e.escalation_id = %s AND COALESCE(e.is_deleted, 0) = 0
+                    ORDER BY q.review_id DESC LIMIT 1""", (row.get("source_id"),))
+                review = cursor.fetchone()
+                if not review or review["status"] not in {"approved", "published"} or review["image_url"] != row["image_url"]:
+                    continue
+                row = {**row, "question": review["question"], "answer": review["answer"],
+                       "image_caption": review["answer"], "image_keywords": review["question"]}
             searchable_text = " ".join([
                 str(row.get("question") or ""),
                 str(row.get("answer") or ""),

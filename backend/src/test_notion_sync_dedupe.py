@@ -167,6 +167,12 @@ class _Conn:
 
 
 SCHEMA = """
+CREATE TABLE image_retrieval (
+    image_id INTEGER PRIMARY KEY AUTOINCREMENT, source_type TEXT, source_id INTEGER,
+    question TEXT, answer TEXT, image_url TEXT, image_type TEXT, image_caption TEXT,
+    source_hash TEXT, approval_status TEXT, visual_match_enabled INTEGER,
+    image_embedding TEXT, embedding_model TEXT
+);
 CREATE TABLE wiki_article (
     article_id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT, content TEXT, category TEXT, sub_category TEXT, link TEXT,
@@ -310,6 +316,21 @@ class NotionSyncDedupeTests(unittest.TestCase):
         )
 
     # ---- Test 1 / 2: first sync, then repeated sync --------------------
+    def test_image_index_is_created_only_on_approval_and_reconciled_on_update(self):
+        self.set_notion(page("p-image", "Image guide", 1),
+                       p_image='<p>Published guide</p><img src="/static/uploads/articles/synthetic.png">')
+        self.check()
+        self.assertEqual(self.q("SELECT * FROM image_retrieval"), [])
+        article_id = self.apply(self.pendings("pending")[0]["id"])
+        indexed = self.q("SELECT * FROM image_retrieval")
+        self.assertEqual(len(indexed), 1)
+        self.assertEqual(indexed[0]["source_id"], article_id)
+        self.assertIsNone(indexed[0]["image_embedding"], "approval must not run CLIP synchronously")
+        self.set_notion(page("p-image", "Updated guide", 2), p_image="<p>Image removed</p>")
+        self.check()
+        self.apply(self.pendings("pending")[0]["id"])
+        self.assertEqual(self.q("SELECT * FROM image_retrieval"), [])
+
     def test_first_check_stages_one_item_per_page_and_apply_creates_one_article_each(self):
         self.set_notion(page("p-1", "Opening SOP", 1), page("p-2", "Closing SOP", 2),
                         p_1="<p>open</p>", p_2="<p>close</p>")

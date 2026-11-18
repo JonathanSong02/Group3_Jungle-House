@@ -1,0 +1,83 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import { JSDOM } from 'jsdom';
+import { transformWithOxc } from 'vite';
+import * as issue from '../utils/chatIssueContext.js';
+import * as escalation from '../utils/escalationResponse.js';
+import * as safe from '../utils/safeHtml.js';
+import { imageReferencesForQuestion } from '../utils/imageAttachmentContext.js';
+import { translations } from '../i18n/translations.js';
+
+test('standard and Staff composers preserve file selection, preview, image+text and refreshed image references', async () => {
+  const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost:5173' });
+  for (const key of ['window', 'document', 'localStorage', 'HTMLElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'Event', 'File', 'FormData', 'DOMParser']) {
+    globalThis[key] = dom.window[key];
+  }
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+  HTMLElement.prototype.scrollIntoView = () => {};
+  URL.createObjectURL = () => 'blob:synthetic-preview';
+  URL.revokeObjectURL = () => {};
+  const React = await import('react');
+  const { createRoot } = await import('react-dom/client');
+  const reference = 'a'.repeat(64);
+  const calls = [];
+  let staff = null;
+  const env = {
+    React, useEffect: React.useEffect, useState: React.useState, useRef: React.useRef,
+    Link: ({ to, children }) => React.createElement('a', { href: to }, children),
+    useAuth: () => ({ user: { id: 'synthetic-image-test', status: 'active', full_name: 'Synthetic User' } }),
+    useLanguage: () => ({ language: 'en', t: (key) => translations.en[key] || key }),
+    useStaffChat: () => staff, API_BASE_URL: '/api',
+    api: { post: async (url, payload) => {
+      calls.push({ url, payload });
+      return { data: { answer: 'Synthetic image reply', source: 'image_only_clarification',
+        confidence_kind: 'not_calibrated', answer_evidence: 'not_established', attachment_refs: [reference],
+        uploaded_image_url: `/api/chat/attachments/${reference}?chat=main-test` } };
+    } }, ...issue, ...escalation, ...safe, imageReferencesForQuestion,
+  };
+  const source = (await fs.readFile(new URL('./Chat.jsx', import.meta.url), 'utf8'))
+    .replace(/^import .*;\r?\n/gm, '').replace('export default function Chat()', 'function Chat()');
+  const compiled = await transformWithOxc(source, 'Chat.jsx', { jsx: { runtime: 'classic' } });
+  const Chat = new Function(...Object.keys(env), `${compiled.code}\nreturn Chat;`)(...Object.values(env));
+  for (const staffMode of [false, true]) {
+    localStorage.clear();
+    calls.length = 0;
+    staff = staffMode ? { publish: () => {}, command: null } : null;
+    let root = createRoot(document.getElementById('root'));
+    const mount = async () => React.act(async () => root.render(React.createElement(Chat)));
+    const setText = async (value) => React.act(async () => {
+      const element = document.querySelector(staffMode ? 'textarea' : '.ai-chat-input-row > input');
+      const proto = staffMode ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(proto, 'value').set.call(element, value);
+      element.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const send = async () => React.act(async () => document.querySelector(staffMode ? '.staff-send-button' : '.ai-chat-send-btn').click());
+    await mount();
+    assert.equal(document.querySelectorAll('input[type=file]').length, 1);
+    assert.equal(document.querySelector('[capture]'), null);
+    const input = document.querySelector('input[type=file]');
+    const photo = new File(['synthetic'], 'fixture.png', { type: 'image/png' });
+    Object.defineProperty(input, 'files', { configurable: true, value: [photo] });
+    await React.act(async () => input.dispatchEvent(new Event('change', { bubbles: true })));
+    const preview = staffMode ? '.staff-attachment-preview img' : '.chat-upload-preview img';
+    assert.equal(document.querySelector(preview).getAttribute('src'), 'blob:synthetic-preview');
+    await setText('Where should I put this bottle?');
+    await send();
+    assert.equal(calls[0].payload.get('attachment'), photo);
+    assert.equal(calls[0].payload.get('question'), 'Where should I put this bottle?');
+    assert.ok(localStorage.getItem('jh_ai_chat_sessions_synthetic-image-test').includes(reference));
+    assert.ok(document.body.textContent.includes('Evidence not established'));
+    await React.act(async () => root.unmount());
+    root = createRoot(document.getElementById('root'));
+    await mount();
+    await setText('Where should I put it?');
+    await send();
+    assert.deepEqual(calls.at(-1).payload.attachment_refs, [reference]);
+    await setText('Attendance policy');
+    await send();
+    assert.equal(calls.at(-1).payload.attachment_refs, undefined);
+    await React.act(async () => root.unmount());
+  }
+  dom.window.close();
+});
