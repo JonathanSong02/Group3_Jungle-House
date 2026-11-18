@@ -235,7 +235,6 @@
   .staff-chat-home .staff-chat-bottom { padding-bottom:12px; }
   .staff-chat-composer { padding:10px; border-radius:18px; }
   .staff-chat-composer textarea { min-height:48px; font-size:14px; }
-  .staff-camera-action span:last-child { display:none; }
   .staff-knowledge-source { font-size:10px; padding:6px; }
   .staff-suggested-prompts { grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:12px; }
   .staff-prompt-card { min-height:95px; padding:11px 12px; border-radius:14px; }

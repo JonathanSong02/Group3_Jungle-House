@@ -2811,18 +2811,6 @@ const removeSelectedImage = () => {
             />
 
             <label className="chat-image-upload-btn ai-chat-tool-btn">
-              <span>📷</span>
-              <span>{t('chat.camera')}</span>
-              <input
-                type="file"
-                accept="image/*"
-                capture="environment"
-                onChange={handleImageSelect}
-                hidden
-              />
-            </label>
-
-            <label className="chat-image-upload-btn ai-chat-tool-btn">
               <span>📎</span>
               <span>{t('chat.file')}</span>
               <input
@@ -2919,7 +2907,6 @@ const removeSelectedImage = () => {
             <div className="staff-composer-actions">
               <div className="staff-upload-actions">
                 <label className="staff-composer-upload" title={t('chat.uploadTitle')}><span aria-hidden="true">＋</span><span>{t('chat.attachFile')}</span><input type="file" accept="image/*,.pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={handleImageSelect} hidden /></label>
-                <label className="staff-composer-upload staff-camera-action" title={t('chat.takePhoto')}><span aria-hidden="true">◎</span><span>{t('chat.camera')}</span><input type="file" accept="image/*" capture="environment" onChange={handleImageSelect} hidden /></label>
                 <span className="staff-knowledge-source"><span aria-hidden="true">▤</span> {t('chat.knowledgeBaseSource')}</span>
               </div>
               {loading ? (

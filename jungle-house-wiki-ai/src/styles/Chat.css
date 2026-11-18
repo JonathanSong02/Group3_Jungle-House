@@ -577,7 +577,7 @@
 
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) auto auto auto;
+  grid-template-columns: minmax(160px, 1fr) auto auto;
   align-items: center;
   gap: 8px;
 
@@ -960,7 +960,7 @@
   }
 
   .ai-chat-input-row {
-    grid-template-columns: minmax(140px, 1fr) auto auto auto;
+    grid-template-columns: minmax(140px, 1fr) auto auto;
   }
 
   .ai-chat-tool-btn {
@@ -1095,10 +1095,10 @@
   }
 
   .ai-chat-input-row {
-    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas:
-      "input input input"
-      "camera file send";
+      "input input"
+      "file send";
     gap: 7px;
 
     padding: 8px 9px;
@@ -1109,11 +1109,7 @@
     min-height: 42px;
   }
 
-  .ai-chat-tool-btn:nth-of-type(1) {
-    grid-area: camera;
-  }
-
-  .ai-chat-tool-btn:nth-of-type(2) {
+  .ai-chat-tool-btn {
     grid-area: file;
   }
 
