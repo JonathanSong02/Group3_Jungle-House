@@ -24,6 +24,7 @@ test('standard and Staff composers preserve file selection, preview, image+text 
   const reference = 'a'.repeat(64);
   const calls = [];
   let failImage = false;
+  let showOptions = false;
   let staff = null;
   const env = {
     React, useEffect: React.useEffect, useState: React.useState, useRef: React.useRef,
@@ -37,7 +38,14 @@ test('standard and Staff composers preserve file selection, preview, image+text 
         message: 'Image storage needs a database update.', source: 'image_service_unavailable',
         code: 'IMAGE_SCHEMA_NOT_READY', error_id: 'b'.repeat(16),
       } } };
-      return { data: { answer: 'Synthetic image reply', source: 'image_article_match',
+      if (showOptions) return { data: {
+        type: 'options', source: 'image_related_articles', answer: 'Related articles',
+        confidence_kind: 'not_calibrated', answer_evidence: 'current_kb', fallback: false,
+        options: [{ title: 'Staff belongings Area', article_id: 123, answer: 'Keep personal items on the shelf.',
+          source: 'image_related_articles', confidence_kind: 'not_calibrated', answer_evidence: 'current_kb',
+          link: '/knowledge/123' }],
+      } };
+      return { data: { reply: 'Matching article', answer: '<h2>Full article</h2><p>Final opening instruction.</p>', source: 'image_article_match',
         title: 'Staff belongings Area', article_id: 123,
         confidence_kind: 'not_calibrated', answer_evidence: 'current_kb', attachment_refs: [reference],
         uploaded_image_url: `/api/chat/attachments/${reference}?chat=main-test` } };
@@ -71,6 +79,14 @@ test('standard and Staff composers preserve file selection, preview, image+text 
     await React.act(async () => input.dispatchEvent(new Event('change', { bubbles: true })));
     const preview = staffMode ? '.staff-attachment-preview img' : '.chat-upload-preview img';
     assert.equal(document.querySelector(preview).getAttribute('src'), 'blob:synthetic-preview');
+    const questionInput = document.querySelector(staffMode ? 'textarea' : '.ai-chat-input-row > input');
+    const paste = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(paste, 'clipboardData', { value: {
+      items: [{ type: 'image/png', getAsFile: () => photo }],
+    } });
+    await React.act(async () => questionInput.dispatchEvent(paste));
+    assert.equal(paste.defaultPrevented, true);
+    assert.equal(document.querySelector(preview).getAttribute('src'), 'blob:synthetic-preview');
     await setText('Where should I put this bottle?');
     await send();
     assert.equal(calls[0].payload.get('attachment'), photo);
@@ -81,6 +97,7 @@ test('standard and Staff composers preserve file selection, preview, image+text 
     assert.equal(document.querySelector('.message-bubble.user a'), null);
     assert.ok(localStorage.getItem('jh_ai_chat_sessions_synthetic-image-test').includes(reference));
     assert.ok(document.querySelector('.message-bubble.ai a[href="/knowledge/123"]'));
+    assert.ok(document.body.textContent.includes('Final opening instruction.'));
     assert.ok(!document.body.textContent.includes('Fallback'));
     await React.act(async () => root.unmount());
     root = createRoot(document.getElementById('root'));
@@ -92,6 +109,16 @@ test('standard and Staff composers preserve file selection, preview, image+text 
     await setText('Attendance policy');
     await send();
     assert.equal(calls.at(-1).payload.attachment_refs, undefined);
+    showOptions = true;
+    await setText('Show related articles');
+    await send();
+    const optionsMessage = [...document.querySelectorAll('.message-bubble.ai')].at(-1);
+    assert.ok(!optionsMessage.textContent.includes('0%'));
+    await React.act(async () => optionsMessage.querySelector('button').click());
+    const selectedMessage = [...document.querySelectorAll('.message-bubble.ai')].at(-1);
+    assert.ok(!selectedMessage.textContent.includes('0%'));
+    assert.ok(selectedMessage.querySelector('a[href="/knowledge/123"]'));
+    showOptions = false;
     const beforeFailures = document.body.textContent.match(/Match score \(not probability\)/g)?.length || 0;
     failImage = true;
     const retryInput = document.querySelector('input[type=file]');

@@ -74,8 +74,15 @@ def plain(value):
 
 
 def question_subjects(question):
+    # These modifiers describe the same everyday object, not extra required topics.
+    question = re.sub(r"\b(?:drinking|water)\s+bottles?\b", "bottle", question, flags=re.I)
     stop = set("where should would could can do does did i we you my our it its this that these those put keep store place how what when is are to the a an of in on at for with please image photo picture know about explain me tell show find give relevant related matching article articles guide guides information use using opening closing open close steps step".split())
     return {word.rstrip("s") for word in re.findall(r"[a-z]{3,}", question.lower()) if word not in stop}
+
+
+def personal_storage_question(question):
+    return bool(re.search(r"\b(where|put|keep|store|place)\b", question, re.I) and
+                re.search(r"\b(my|personal|own)\b|\b(?:drinking|water)\s+bottle", question, re.I))
 
 
 def extract_evidence(question, article):
@@ -94,7 +101,7 @@ def extract_evidence(question, article):
         words = {word.rstrip("s") for word in re.findall(r"[a-z]{3,}", sentence.lower())}
         if not sentence or (subjects and not subjects.issubset(words)):
             continue
-        if location and not re.search(r"\b(put|keep|store|place|located|area|inside|under|shelf|cabinet)\b", sentence, re.I):
+        if location and not re.search(r"\b(put|keep|kept|store|stored|place|placed|located|area|inside|under|shelf|cabinet)\b", sentence, re.I):
             continue
         if action and not subjects:
             continue
@@ -123,12 +130,24 @@ def text_articles(query, alternatives=()):
         cursor.close()
         conn.close()
     ranked = []
+    personal_storage = personal_storage_question(query)
     for row in rows:
-        words = {word.rstrip("s") for word in re.findall(r"[a-z]{3,}", plain(str(row.get("title")) + " " + str(row.get("content"))).lower())}
+        title = plain(row.get("title"))
+        body = plain(row.get("content"))
+        text = title + " " + body
+        words = question_subjects(text)
         overlap = max(len(subjects & words) / len(subjects) for subjects in subject_sets)
-        if index.published(row) and overlap >= 0.72:
-            ranked.append({**row, "retrieval_relevance": overlap})
-    return sorted(ranked, key=lambda row: row["retrieval_relevance"], reverse=True)[:5]
+        personal_rule = bool(re.search(r"\b(staff|employees?|personal|own|belongings?)\b", text, re.I) and
+                             re.search(r"\b(keep|kept|store|stored|storage|shelf|cabinet|locker|belongings?)\b", text, re.I) and
+                             (overlap >= 0.72 or re.search(r"\bbelongings?\b|\bpersonal\s+(?:items|possessions)\b", text, re.I)))
+        if personal_storage and not personal_rule:
+            continue
+        if index.published(row) and (overlap >= 0.72 or (personal_storage and personal_rule)):
+            title_words = question_subjects(title)
+            title_overlap = max(len(subjects & title_words) / len(subjects) for subjects in subject_sets)
+            ranked.append({**row, "retrieval_relevance": overlap,
+                           "retrieval_rank": overlap + title_overlap + (1 if personal_storage else 0)})
+    return sorted(ranked, key=lambda row: row["retrieval_rank"], reverse=True)[:5]
 
 
 def article_result(articles, references, language_hint="en", exact=False):
@@ -149,12 +168,14 @@ def article_result(articles, references, language_hint="en", exact=False):
     if len(articles) == 1:
         article = articles[0]
         result.update(title=article["title"], article_id=article["article_id"],
+                      answer=article.get("content") or article["title"],
+                      article_link=f"/knowledge/{article['article_id']}",
                       context={"title": article["title"], "article_id": article["article_id"]},
                       image_similarity=article.get("image_similarity"))
     else:
         result["type"] = "options"
         result["options"] = [{"title": article["title"], "label": article["title"],
-            "article_id": article["article_id"], "answer": plain(article.get("content"))[:600] or article["title"],
+            "article_id": article["article_id"], "answer": article.get("content") or article["title"],
             "link": f"/knowledge/{article['article_id']}", "source": result["source"],
             "confidence_kind": "not_calibrated", "answer_evidence": "current_kb", "fallback": False}
             for article in articles]
@@ -263,6 +284,8 @@ def process(owner, chat, question, folder, references, *, new_path=None, mime=No
     if not needs_visual:
         # An independent named text topic should not spend Vision tokens merely
         # because the employee also attached a photo.
+        if personal_storage_question(question):
+            return control("unknown", question, references), question, references
         return None, question, references
     observations = record.get("observations")
     try:
@@ -286,7 +309,7 @@ def process(owner, chat, question, folder, references, *, new_path=None, mime=No
     if terms:
         stage("kb_evidence")
         # Object names and aliases are alternatives, not words every article must contain.
-        observed_articles = text_articles("", alternatives=(observations or {}).get("detectedObjects", []) +
+        observed_articles = text_articles(question, alternatives=(observations or {}).get("detectedObjects", []) +
                                           (observations or {}).get("possibleAliases", []))
         result = grounded_result(query, observed_articles, references) if question.strip() else None
         if result:
@@ -299,6 +322,8 @@ def process(owner, chat, question, folder, references, *, new_path=None, mime=No
         result = article_result(articles[:1], references, selected_language, exact=articles[0].get("exact_image", False))
         if result:
             return result, query, references
+    if personal_storage_question(question):
+        return control("unknown", question, references), question, references
     if not terms and not clear and not question_subjects(question):
         return control("unknown", question, references), question, references
     # Existing text retrieval / grounded provider / escalation handles unresolved questions.

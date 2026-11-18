@@ -5,14 +5,16 @@ import hashlib
 import json
 import logging
 import os
+import re
 import threading
+from functools import lru_cache
 from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from db_helper import get_db_connection
-from image_embedding_helper import MODEL_VERSION, create_image_embedding, image_sha256
+from image_embedding_helper import MODEL_VERSION, create_image_embedding, image_sha256, decode_image
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".heic", ".heif"}
@@ -29,6 +31,8 @@ def local_image_url(value):
     if parsed.scheme and (parsed.scheme not in {"http", "https"} or parsed.hostname not in TRUSTED_HOSTS):
         return None
     path = unquote(parsed.path).replace("\\", "/")
+    if path.startswith(("/uploads/articles/", "uploads/articles/")):
+        path = "/static/" + path.lstrip("/")
     if path.startswith(("sop_images/", "product_images/", "notice_images/")):
         path = "/static/" + path
     if path.startswith("static/"):
@@ -91,7 +95,9 @@ def article_images(article):
     try:
         files = json.loads(files) if isinstance(files, str) else files
     except ValueError:
-        files = []
+        files = re.split(r"[|\n]", files)
+    if isinstance(files, str):
+        files = [files]
     if isinstance(files, dict):
         files = [files]
     if isinstance(files, list):
@@ -234,9 +240,25 @@ def _candidate_pages(digest=None):
             break
 
 
-def _exact_kb_candidates(digest):
+@lru_cache(maxsize=512)
+def _copy_signature(filename, modified_ns, size):
+    """Small RGB signature; file revision keys invalidate edited/replaced images."""
+    from PIL import Image
+    image = decode_image(filename)
+    ratio = image.width / image.height
+    pixels = image.resize((96, 96), Image.Resampling.LANCZOS).tobytes()
+    return image_sha256(filename), ratio, pixels
+
+
+def copy_signature(path):
+    info = path.stat()
+    return _copy_signature(str(path), info.st_mtime_ns, info.st_size)
+
+
+def _exact_kb_candidates(digest, query_path):
     """Read current local article images even when legacy/vector metadata is absent."""
     last_id = 0
+    query_signature = copy_signature(query_path)
     while True:
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
@@ -256,11 +278,25 @@ def _exact_kb_candidates(digest):
             for url in article_images(article):
                 file = local_image_path(url)
                 try:
-                    if file and image_sha256(file) == digest:
+                    if not file:
+                        continue
+                    signature = copy_signature(file)
+                    identical = signature[0] == digest
+                    # Clipboard conversion/recompression changes bytes, not the image.
+                    # Require the same aspect ratio and nearly identical whole-image RGB.
+                    distance = 1.0
+                    outliers = 1.0
+                    if abs(signature[1] / query_signature[1] - 1) <= 0.01:
+                        errors = [abs(a - b) for a, b in zip(signature[2], query_signature[2])]
+                        distance = sum(errors) / (len(errors) * 255)
+                        outliers = sum(error > 24 for error in errors) / len(errors)
+                    if identical or (distance <= 0.015 and outliers <= 0.01):
                         yield {"source_type": "knowledge_base", "source_id": article["article_id"],
-                               "image_url": url, "source_hash": source_hash(article), "image_hash": digest}
+                               "image_url": url, "source_hash": source_hash(article), "image_hash": signature[0],
+                               "image_similarity": 1.0 if identical else 1 - distance,
+                               "exact_image": identical or distance == 0}
                         break
-                except OSError:
+                except (OSError, ValueError):
                     continue  # A missing/unreadable file cannot establish image identity.
         last_id = articles[-1]["article_id"]
         if len(articles) < 512:
@@ -286,10 +322,9 @@ def visual_candidates(path, encode=create_image_embedding, similarity=None):
     for rows in _candidate_pages(digest):
         for row in rows:
             keep(row, 1.0, True)
-    for row in _exact_kb_candidates(digest):
+    for row in _exact_kb_candidates(digest, path):
         # Current article membership/revision supersedes stale index metadata.
-        grouped[(row["source_type"], row["source_id"])] = {
-            **row, "image_similarity": 1.0, "exact_image": True}
+        grouped[(row["source_type"], row["source_id"])] = row
     if grouped:
         return sorted(grouped.values(), key=lambda row: row["image_similarity"], reverse=True)
     embedding = None

@@ -191,7 +191,60 @@ def test_image_only_article_match_respects_ui_language(local, preferred, expecte
         "chat_session_id": "main-test", "attachment": (io.BytesIO(png_bytes()), "fixture.png")},
         headers={"X-CSRF-Token": "synthetic-csrf"})
     assert response.status_code == 200
-    assert expected in response.get_json()["answer"]
+    assert expected in response.get_json()["reply"]
+
+
+KIOSK_PHOTOS = sorted((Path(__file__).parent.parent / "static/sop_images/kiosk_opening").glob("*.jpg"))
+
+
+@pytest.mark.parametrize("photo", KIOSK_PHOTOS, ids=lambda path: path.name)
+@pytest.mark.parametrize("copy_format", ["original", "clipboard_png", "resized_jpeg"])
+def test_every_bundled_kiosk_photo_copy_returns_full_article(local, monkeypatch, photo, copy_format):
+    db, folder = local
+    full_content = "<h2>Kiosk Opening</h2><p>Opening step one.</p><p>Use the hook to operate the blind.</p><p>Final opening step.</p>"
+    article_image = add_article(db, folder, title="Kiosk Opening", content=full_content)
+    article_image.write_bytes(photo.read_bytes())
+    db.execute("DELETE FROM image_retrieval")  # Existing articles need no vector/backfill.
+    if copy_format == "original":
+        with Image.open(photo) as image:
+            suffix = {"JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp"}[image.format]
+        content, filename = photo.read_bytes(), "copied" + suffix
+    else:
+        output = io.BytesIO()
+        with Image.open(photo) as image:
+            image = image.convert("RGB")
+            if copy_format == "resized_jpeg":
+                image.thumbnail((480, 640))
+                image.save(output, format="JPEG", quality=85)
+            else:
+                image.save(output, format="PNG")
+        content = output.getvalue()
+        filename = "copied.png" if copy_format == "clipboard_png" else "copied.jpg"
+    response = upload(client_for(1), content=content, filename=filename)
+    data = response.get_json()
+    assert response.status_code == 200, data
+    assert data["article_id"] == 1, data
+    assert data["title"] == "Kiosk Opening"
+    assert data["answer"] == full_content
+    assert data["article_link"] == "/knowledge/1"
+    app.analyze_uploaded_image_with_vision.assert_not_called()
+
+
+@pytest.mark.parametrize("storage", ["html", "json", "legacy_pipe"])
+def test_article_photo_membership_formats_are_all_searchable(local, storage):
+    db, folder = local
+    path = add_article(db, folder, title="Kiosk Opening")
+    url = f"/static/uploads/articles/{path.name}"
+    if storage == "html":
+        db.execute("UPDATE wiki_article SET image_files=NULL, content=?", (f'<p>Full opening instructions.</p><img src="{url}">',))
+    elif storage == "json":
+        db.execute("UPDATE wiki_article SET image_files=?", (json.dumps(url),))
+    else:
+        db.execute("UPDATE wiki_article SET image_files=?", (f"uploads/articles/{path.name}|/static/uploads/articles/missing.png",))
+    db.execute("DELETE FROM image_retrieval")
+    data = upload(client_for(1)).get_json()
+    assert data["article_id"] == 1
+    assert data["title"] == "Kiosk Opening"
 
 
 def test_image_only_vision_aliases_find_bottle_article(local, monkeypatch):
@@ -235,6 +288,35 @@ def test_image_only_unknown_does_not_return_an_arbitrary_article(local, monkeypa
     add_article(db, folder)
     monkeypatch.setattr(index, "visual_candidates", lambda path: [])
     data = upload(client_for(1), content=png_bytes("red")).get_json()
+    assert data["source"] == "image_unknown"
+    assert not data.get("article_id") and not data.get("options")
+
+
+@pytest.mark.parametrize("staff_content", [
+    "Keep staff water bottles on the belongings shelf.",
+    "Keep your own belongings on your shelf and out of sight.",
+])
+def test_personal_drinking_bottle_storage_does_not_recommend_juice_guides(local, monkeypatch, staff_content):
+    db, folder = local
+    add_article(db, folder, article_id=1, title="Closing Spring Warehouse",
+                content="Record drinking water, juice bottle boxes and bottle caps.")
+    add_article(db, folder, article_id=2, title="How to make Honey Juice?",
+                content="Put the juice bottle on the counter and add honey.")
+    add_article(db, folder, article_id=3, title="Staff belongings Area", content=staff_content)
+    monkeypatch.setattr(index, "visual_candidates", lambda path: [])
+    data = upload(client_for(1), "where should i put my drinking bottle", content=png_bytes("red")).get_json()
+    assert data["article_id"] == 3, data
+    assert data["title"] == "Staff belongings Area"
+    assert not data.get("options")
+    app.analyze_uploaded_image_with_vision.assert_not_called()
+
+
+def test_personal_storage_without_applicable_rule_does_not_fall_back_to_recipes(local, monkeypatch):
+    db, folder = local
+    add_article(db, folder, title="How to make Honey Juice?", content="Put the juice bottle on the counter.")
+    add_article(db, folder, article_id=2, title="Staff record keeping", content="Staff keep sales records in a cabinet.")
+    monkeypatch.setattr(index, "visual_candidates", lambda path: [])
+    data = upload(client_for(1), "where should i put my drinking bottle", content=png_bytes("red")).get_json()
     assert data["source"] == "image_unknown"
     assert not data.get("article_id") and not data.get("options")
 

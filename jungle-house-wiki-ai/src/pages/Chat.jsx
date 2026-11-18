@@ -1547,6 +1547,9 @@ function buildSelectedOptionMessage(option, optionIndex = 0, confirmedByStaff = 
     escalation_required: false,
     confidence: confirmedByStaff ? 1 : Number(option.confidence || 0),
     confidence_label: confirmedByStaff ? 'high' : '',
+    confidence_kind: option.confidence_kind,
+    answer_evidence: option.answer_evidence,
+    article_id: option.article_id || null,
     source: option.source || 'selected_option',
     fallback: false,
     fallback_message: '',
@@ -2354,7 +2357,8 @@ const removeSelectedImage = () => {
                   border: '1px solid #ddd',
                 }}
               >
-                {option.source || '-'} · {Math.round(Number(option.confidence || 0) * 100)}%
+                {option.source || '-'}
+                {option.confidence_kind !== 'not_calibrated' && ` · ${Math.round(Number(option.confidence || 0) * 100)}%`}
               </span>
             </div>
 
