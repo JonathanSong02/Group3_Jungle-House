@@ -95,6 +95,8 @@ from db_helper import (
 
 # Login lockout rules, limits and storage (device based). See login_lockout.py.
 import login_lockout
+# Typed password vs stored hash (login, change password). See password_check.py.
+from password_check import verify_password
 
 # AI provider settings (Gemini/OpenAI/DeepSeek/Claude) are optional --
 # the app must still run even if the cryptography dependency isn't
@@ -5716,18 +5718,21 @@ def login():
 
         stored = str(user.get("password_hash") or "") if user else ""
         if user:
-            try:
-                password_ok = check_password_hash(stored, password)
-            except Exception:
-                password_ok = False
+            # A stored hash is only ever checked with check_password_hash: typing
+            # the hash itself never signs in. Only a stored value that is not a
+            # hash at all (a legacy plain-text password) is compared directly.
+            password_ok, stored_is_plaintext = verify_password(stored, password)
 
-            if not password_ok and hmac.compare_digest(stored, password):
+            if stored_is_plaintext:
+                # Same hashing time as an account with a real hash.
+                check_password_for_unknown_account(password)
+
+            if password_ok and stored_is_plaintext:
                 stored = generate_password_hash(password)  # Upgrade legacy plaintext on login.
                 cursor.execute(
                     "UPDATE users SET password_hash = %s WHERE user_id = %s",
                     (stored, user["user_id"])
                 )
-                password_ok = True
         else:
             password_ok = check_password_for_unknown_account(password)
 
@@ -6040,16 +6045,9 @@ def change_password(user_id):
             conn.rollback()
             return jsonify({"message": "User not found."}), 404
 
-        stored_password = str(user.get("password_hash", "")).strip()
-
-        password_ok = False
-        try:
-            password_ok = check_password_hash(stored_password, current_password)
-        except Exception:
-            password_ok = False
-
-        if not password_ok and stored_password == current_password:
-            password_ok = True
+        # Same rule as login: a stored hash is only checked with
+        # check_password_hash, never compared with the typed text.
+        password_ok, _ = verify_password(user.get("password_hash"), current_password)
 
         if not password_ok:
             conn.rollback()
