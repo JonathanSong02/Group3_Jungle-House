@@ -536,7 +536,7 @@ export default function QuizManagement() {
       requestedQuestionCount < 1 ||
       requestedQuestionCount > 20
     ) {
-      setAiError('Please enter a whole number from 1 to 20 questions.');
+      setAiError(t('qm.err.countRange'));
       return;
     }
 
@@ -967,7 +967,7 @@ export default function QuizManagement() {
                         <p>
                           <strong>{tOr('qm.trainingMaterial', 'Training material')}:</strong>{' '}
                           {selectedQuiz.source_article_title ||
-                            tOr('qm.linkedArticleFallback', `Knowledge Base article #${selectedQuiz.source_article_id}`)}
+                            t('qm.linkedArticleFallback', { id: selectedQuiz.source_article_id })}
                         </p>
                       ) : null}
                     </div>
@@ -1263,7 +1263,7 @@ export default function QuizManagement() {
                       name="category"
                       value={quizForm.category}
                       onChange={handleQuizChange}
-                      placeholder="Training"
+                      placeholder={t('cat.Training')}
                     />
                   </label>
 
@@ -1540,7 +1540,7 @@ export default function QuizManagement() {
                   </div>
                 </section>
 
-                <div className="qm-ai-config-summary" aria-label="Quiz generation summary">
+                <div className="qm-ai-config-summary" aria-label={t('qm.ai.summaryLabel')}>
                   <div>
                     <span>{tOr('qm.ai.summarySource', 'Source')}</span>
                     <strong>
@@ -1568,10 +1568,7 @@ export default function QuizManagement() {
                   <Icon name="sparkles" />
                   {aiLoading
                     ? t('quiz.gen.generating')
-                    : tOr(
-                        'qm.ai.generateCount',
-                        `Generate ${aiForm.questionCount || ''} Questions`
-                      )}
+                    : t('qm.ai.generateCount', { n: aiForm.questionCount || '' })}
                 </button>
               </form>
 
@@ -1712,11 +1709,9 @@ export default function QuizManagement() {
                         <span>{tOr('qm.ai.autoMaterialKicker', 'AUTO-LINKED REVISION MATERIAL')}</span>
                         <strong>
                           {(aiPreview.sourceArticles || []).length > 0
-                            ? tOr(
-                                'qm.ai.autoMaterialReady',
-                                `${(aiPreview.sourceArticles || []).length} Knowledge Base ${
-                                  (aiPreview.sourceArticles || []).length === 1 ? 'article' : 'articles'
-                                } linked automatically`
+                            ? t(
+                                (aiPreview.sourceArticles || []).length === 1 ? 'qm.ai.autoMaterialReadyOne' : 'qm.ai.autoMaterialReady',
+                                { n: (aiPreview.sourceArticles || []).length }
                               )
                             : tOr('qm.ai.autoMaterialNone', 'No exact source article could be linked')}
                         </strong>

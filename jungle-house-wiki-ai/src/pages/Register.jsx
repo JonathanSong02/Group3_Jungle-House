@@ -1,10 +1,14 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../services/api';
+import { useLanguage } from '../i18n/LanguageContext';
+import LanguageSelector from '../i18n/LanguageSelector';
+import { translateServerMessage } from '../i18n/serverMessages';
 import '../styles/AuthSecurity.css';
 
 export default function Register() {
   const navigate = useNavigate();
+  const { t } = useLanguage();
 
   const [form, setForm] = useState({
     full_name: '',
@@ -51,14 +55,12 @@ export default function Register() {
     setError('');
 
     if (form.password !== form.confirm_password) {
-      setError('Passwords do not match.');
+      setError(t('auth.passwordsNoMatch'));
       return;
     }
 
     if (!passwordValid) {
-      setError(
-        'Password must be at least 8 characters and include an uppercase letter and a number.'
-      );
+      setError(t('auth.passwordRule'));
       return;
     }
 
@@ -74,15 +76,14 @@ export default function Register() {
 
       // Show success only for the backend's confirmed pending registration.
       if (response.data?.account_status !== 'pending') {
-        throw new Error('Registration status could not be confirmed. Please contact a Manager before trying again.');
+        throw new Error(t('auth.register.unconfirmed'));
       }
 
       setShowSuccessModal(true);
     } catch (requestError) {
       setError(
-        requestError.response?.data?.message ||
-          requestError.message ||
-          'Registration could not be submitted. Please try again.'
+        translateServerMessage(t, requestError.response?.data?.message || requestError.message) ||
+          t('auth.register.failed')
       );
     } finally {
       setLoading(false);
@@ -97,37 +98,37 @@ export default function Register() {
   return (
     <div className="login-page">
       <div className="login-card card-like auth-card">
+        <LanguageSelector className="jh-lang-auth" placement="down" />
         <div className="auth-brand">
           <span className="auth-brand-mark" aria-hidden="true">
             JH
           </span>
           <div>
             <p className="eyebrow">Jungle House AI Wiki</p>
-            <span>Staff account registration</span>
+            <span>{t('auth.register.subtitle')}</span>
           </div>
         </div>
 
         <div className="auth-heading">
-          <h1>Create your account</h1>
+          <h1>{t('auth.register.title')}</h1>
           <p>
-            Register using your own email. A Manager or Team Leader will review
-            your request before you can sign in.
+            {t('auth.register.intro')}
           </p>
         </div>
 
-        <div className="auth-registration-flow" aria-label="Registration steps">
-          <span className="current">1. Register</span>
-          <span>2. Approval</span>
-          <span>3. Sign In</span>
+        <div className="auth-registration-flow" aria-label={t('auth.register.steps')}>
+          <span className="current">{t('auth.register.step1')}</span>
+          <span>{t('auth.register.step2')}</span>
+          <span>{t('auth.register.step3')}</span>
         </div>
 
         <form onSubmit={handleSubmit} className="form-stack auth-form">
           <label>
-            Full name
+            {t('auth.register.fullName')}
             <input
               type="text"
               name="full_name"
-              placeholder="Enter your full name"
+              placeholder={t('auth.register.fullNamePlaceholder')}
               value={form.full_name}
               onChange={handleChange}
               autoComplete="name"
@@ -136,7 +137,7 @@ export default function Register() {
           </label>
 
           <label>
-            Email address
+            {t('auth.register.email')}
             <input
               type="email"
               name="email"
@@ -149,20 +150,20 @@ export default function Register() {
           </label>
 
           <div className="row-between">
-            <strong className="auth-field-heading">Password</strong>
+            <strong className="auth-field-heading">{t('auth.password')}</strong>
             <button
               type="button"
               className="auth-inline-action"
               onClick={() => setShowPasswords((previous) => !previous)}
             >
-              {showPasswords ? 'Hide' : 'Show'}
+              {showPasswords ? t('auth.hide') : t('auth.show')}
             </button>
           </div>
 
           <input
             type={showPasswords ? 'text' : 'password'}
             name="password"
-            placeholder="Create password"
+            placeholder={t('auth.register.createPassword')}
             value={form.password}
             onChange={handleChange}
             autoComplete="new-password"
@@ -172,7 +173,7 @@ export default function Register() {
           <input
             type={showPasswords ? 'text' : 'password'}
             name="confirm_password"
-            placeholder="Confirm password"
+            placeholder={t('auth.register.confirmPassword')}
             value={form.confirm_password}
             onChange={handleChange}
             autoComplete="new-password"
@@ -181,16 +182,16 @@ export default function Register() {
 
           <div className="auth-password-checks">
             <span className={passwordChecks.length ? 'passed' : ''}>
-              {passwordChecks.length ? '✓' : '○'} 8+ characters
+              {passwordChecks.length ? '✓' : '○'} {t('profile.pw.chars')}
             </span>
             <span className={passwordChecks.uppercase ? 'passed' : ''}>
-              {passwordChecks.uppercase ? '✓' : '○'} Uppercase
+              {passwordChecks.uppercase ? '✓' : '○'} {t('profile.pw.upper')}
             </span>
             <span className={passwordChecks.number ? 'passed' : ''}>
-              {passwordChecks.number ? '✓' : '○'} Number
+              {passwordChecks.number ? '✓' : '○'} {t('profile.pw.number')}
             </span>
             <span className={passwordChecks.match ? 'passed' : ''}>
-              {passwordChecks.match ? '✓' : '○'} Passwords match
+              {passwordChecks.match ? '✓' : '○'} {t('profile.pw.match')}
             </span>
           </div>
 
@@ -205,13 +206,13 @@ export default function Register() {
             type="submit"
             disabled={loading}
           >
-            {loading ? 'Submitting registration...' : 'Submit Registration'}
+            {loading ? t('auth.register.submitting') : t('auth.register.submit')}
           </button>
 
           <div className="auth-footer-row">
-            <span>Already registered?</span>
+            <span>{t('auth.register.already')}</span>
             <Link to="/login" className="text-link">
-              Back to Sign In
+              {t('auth.backToSignIn')}
             </Link>
           </div>
         </form>
@@ -229,26 +230,25 @@ export default function Register() {
               ✓
             </span>
 
-            <p className="eyebrow">Registration submitted</p>
-            <h2 id="registration-success-title">Registration received</h2>
+            <p className="eyebrow">{t('auth.register.submittedEyebrow')}</p>
+            <h2 id="registration-success-title">{t('auth.register.received')}</h2>
 
             <p>
-              Registration submitted. Please allow up to 24 hours for a Manager or
-              Team Leader to review your request.
+              {t('auth.register.successText')}
             </p>
 
             <div className="auth-success-steps">
               <div className="done">
                 <strong>1</strong>
-                <span>Registration submitted</span>
+                <span>{t('auth.register.submittedEyebrow')}</span>
               </div>
               <div>
                 <strong>2</strong>
-                <span>Manager / Team Leader review</span>
+                <span>{t('auth.register.reviewStep')}</span>
               </div>
               <div>
                 <strong>3</strong>
-                <span>Once approved, sign in with your email and password</span>
+                <span>{t('auth.register.signInStep')}</span>
               </div>
             </div>
 
@@ -257,7 +257,7 @@ export default function Register() {
               className="primary-btn auth-primary-action"
               onClick={goToLogin}
             >
-              Go to Sign In
+              {t('auth.register.goToSignIn')}
             </button>
           </div>
         </div>

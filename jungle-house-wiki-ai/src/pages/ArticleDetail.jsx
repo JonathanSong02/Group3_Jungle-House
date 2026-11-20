@@ -5,6 +5,7 @@ import SourceBadge from "../components/SourceBadge";
 import api, { API_BASE_URL } from "../services/api";
 import "../styles/ArticleDetail.css";
 import { rewriteSrcset, sanitizeHtml } from "../utils/safeHtml";
+import { useLanguage } from "../i18n/LanguageContext";
 
 // Article JSON uses the same cookie-aware API client as login and Knowledge Base.
 // Production serves private static uploads through the same-origin Vercel /static
@@ -65,6 +66,7 @@ function rewriteInternalStaticUrl(value) {
 export default function ArticleDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { t } = useLanguage();
   const [article, setArticle] = useState(null);
   const [links, setLinks] = useState([]);
   const [loadedArticleId, setLoadedArticleId] = useState(null);
@@ -121,7 +123,7 @@ export default function ArticleDetail() {
   function getAttachmentFileName(file) {
     if (file?.name) return file.name;
 
-    const rawName = String(file?.url || "").split("/").pop() || "Attached file";
+    const rawName = String(file?.url || "").split("/").pop() || t("article.view.attachedFile");
     // Stored filenames are prefixed with a millisecond timestamp
     // (e.g. "1731999999999_Opening SOP.pdf") to keep them unique on disk.
     return rawName.replace(/^\d+_/, "");
@@ -203,7 +205,7 @@ export default function ArticleDetail() {
       const rawHref = anchor.getAttribute("href") || "";
       const rawUrl = anchor.dataset.fileUrl || (rawHref !== "#" ? rawHref : "");
       const url = getFileUrl(rawUrl);
-      const name = anchor.dataset.fileName || rawUrl.split("/").pop() || "Attached file";
+      const name = anchor.dataset.fileName || rawUrl.split("/").pop() || t("article.view.attachedFile");
       const lowerUrl = url.toLowerCase();
       const isImage = /\.(png|jpe?g|gif|webp)$/.test(lowerUrl);
       const isPdf = lowerUrl.endsWith(".pdf");
@@ -221,7 +223,7 @@ export default function ArticleDetail() {
       const closeBtn = document.createElement("button");
       closeBtn.type = "button";
       closeBtn.className = "text-link";
-      closeBtn.textContent = "Minimise file preview";
+      closeBtn.textContent = t("article.view.minimise");
       closeBtn.addEventListener("click", () => {
         preview.remove();
         anchor.classList.remove("is-open");
@@ -248,7 +250,7 @@ export default function ArticleDetail() {
         card.className = "article-file-download-card";
 
         const message = document.createElement("p");
-        message.textContent = "This file type can't be previewed here.";
+        message.textContent = t("article.view.noPreview");
         card.appendChild(message);
 
         const openLink = document.createElement("a");
@@ -256,7 +258,7 @@ export default function ArticleDetail() {
         openLink.target = "_blank";
         openLink.rel = "noopener noreferrer";
         openLink.className = "secondary-btn";
-        openLink.textContent = "Open / Download";
+        openLink.textContent = t("article.view.openDownload");
         card.appendChild(openLink);
 
         preview.appendChild(card);
@@ -274,7 +276,7 @@ export default function ArticleDetail() {
     // because `loading` is still true. On the second, the div finally
     // mounts, but `article` itself didn't change again -- without `loading`
     // here, this effect would never re-run to bind the listener to it.
-  }, [article, loading]);
+  }, [article, loading, t]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -553,7 +555,7 @@ export default function ArticleDetail() {
           <div key={index} className="sop-image-wrapper">
             <img
               src={finalImgUrl}
-              alt="SOP Visual Reference"
+              alt={t("article.view.visualAlt")}
               className="sop-image"
               loading="lazy"
               onError={(e) => {
@@ -655,8 +657,8 @@ export default function ArticleDetail() {
       <div className="article-detail-page">
         <div className="article-detail-state" aria-live="polite">
           <span className="article-detail-state-spinner" aria-hidden="true" />
-          <strong>Loading article</strong>
-          <p>Please wait while the knowledge article is being prepared.</p>
+          <strong>{t("article.view.loadingTitle")}</strong>
+          <p>{t("article.view.loadingText")}</p>
         </div>
       </div>
     );
@@ -666,10 +668,10 @@ export default function ArticleDetail() {
     return (
       <div className="article-detail-page">
         <div className="article-detail-state article-detail-state-error" role="alert">
-          <strong>Article not found</strong>
-          <p>The requested knowledge article could not be loaded.</p>
+          <strong>{t("article.view.notFoundTitle")}</strong>
+          <p>{t("article.view.notFoundText")}</p>
           <button type="button" className="secondary-btn" onClick={() => navigate(-1)}>
-            Back to Knowledge Base
+            {t("article.view.backToKb")}
           </button>
         </div>
       </div>
@@ -685,7 +687,7 @@ export default function ArticleDetail() {
         className="back-btn article-detail-back"
         onClick={() => navigate(-1)}
       >
-        &larr; Back to Knowledge Base
+        &larr; {t("article.view.backToKb")}
       </button>
 
       <PageHeader
@@ -693,7 +695,7 @@ export default function ArticleDetail() {
         subtitle={
           article.sub_category
             ? `${article.category} > ${article.sub_category}`
-            : `Category: ${article.category}`
+            : t("article.view.category", { name: article.category })
         }
         actions={
           // Same rule as SourceBadge, checked here so PageHeader doesn't
@@ -711,7 +713,7 @@ export default function ArticleDetail() {
 
         {attachments.length > 0 && (
           <div className="article-attachment-section">
-            <h3>Attachments</h3>
+            <h3>{t("article.view.attachments")}</h3>
 
             <ul className="article-attachment-file-list">
               {attachments.map((file, index) => {
@@ -747,7 +749,7 @@ export default function ArticleDetail() {
                             className="text-link"
                             onClick={() => setOpenAttachmentIndex(null)}
                           >
-                            Minimise file preview
+                            {t("article.view.minimise")}
                           </button>
                         </div>
 
@@ -777,7 +779,7 @@ export default function ArticleDetail() {
                         {!isImage && !isPdf && (
                           <div className="article-file-download-card">
                             <p>
-                              This file type can&apos;t be previewed here.
+                              {t("article.view.noPreview")}
                             </p>
                             <a
                               href={fileUrl}
@@ -785,7 +787,7 @@ export default function ArticleDetail() {
                               rel="noopener noreferrer"
                               className="secondary-btn"
                             >
-                              Open / Download
+                              {t("article.view.openDownload")}
                             </a>
                           </div>
                         )}
@@ -800,7 +802,7 @@ export default function ArticleDetail() {
 
         {links.length > 0 && (
           <div className="related-links-section">
-            <h3>Related Links</h3>
+            <h3>{t("article.view.relatedLinks")}</h3>
             <ul>
               {links.map((link) => (
                 <li key={link.link_id}>

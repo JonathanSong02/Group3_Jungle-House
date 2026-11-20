@@ -8,6 +8,7 @@ import * as escalation from '../utils/escalationResponse.js';
 import * as safe from '../utils/safeHtml.js';
 import { imageReferencesForQuestion } from '../utils/imageAttachmentContext.js';
 import { imageFailureDetails } from '../utils/imageServiceError.js';
+import { displayStoredText } from '../utils/storedChatText.js';
 import { translations } from '../i18n/translations.js';
 
 test('standard and Staff composers preserve file selection, preview, image+text and refreshed image references', async () => {
@@ -50,7 +51,7 @@ test('standard and Staff composers preserve file selection, preview, image+text 
         confidence_kind: 'not_calibrated', answer_evidence: 'current_kb', attachment_refs: [reference],
         uploaded_image_url: `/api/chat/attachments/${reference}?chat=main-test` } };
     } }, ...issue, ...escalation, ...safe, imageReferencesForQuestion,
-    imageFailureDetails,
+    imageFailureDetails, displayStoredText,
   };
   const source = (await fs.readFile(new URL('./Chat.jsx', import.meta.url), 'utf8'))
     .replace(/^import .*;\r?\n/gm, '').replace('export default function Chat()', 'function Chat()');

@@ -5,6 +5,7 @@ import PageHeader from '../components/PageHeader';
 import api, { API_BASE_URL } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
+import { translateServerMessage } from '../i18n/serverMessages';
 import { isSafeUrl, sanitizeHtml } from '../utils/safeHtml';
 import '../styles/Quiz.css';
 import '../styles/QuizProgress.css';
@@ -78,9 +79,9 @@ function estimateReadingMinutes(value) {
   return Math.max(1, Math.ceil(words / 200));
 }
 
-function plainTextToReaderHtml(value) {
+function plainTextToReaderHtml(value, emptyText) {
   const raw = String(value || '').trim();
-  if (!raw) return '<p>No article content is available.</p>';
+  if (!raw) return `<p>${emptyText}</p>`;
 
   const looksLikeHtml = /<[a-z][\s\S]*>/i.test(raw);
   if (looksLikeHtml) return raw;
@@ -117,13 +118,13 @@ function prepareQuizReaderHtml(root) {
   });
 }
 
-function sanitizeQuizReaderHtml(value) {
-  return sanitizeHtml(plainTextToReaderHtml(value), { transform: prepareQuizReaderHtml });
+function sanitizeQuizReaderHtml(value, emptyText) {
+  return sanitizeHtml(plainTextToReaderHtml(value, emptyText), { transform: prepareQuizReaderHtml });
 }
 
 export default function QuizList() {
   const { user } = useAuth();
-  const { t, tOr } = useLanguage();
+  const { t, tOr, language, locale } = useLanguage();
   const normalizedRole = String(user?.role || '')
     .trim()
     .toLowerCase()
@@ -324,7 +325,7 @@ export default function QuizList() {
     const parsed = new Date(value);
     if (Number.isNaN(parsed.getTime())) return String(value);
 
-    return parsed.toLocaleString(undefined, {
+    return parsed.toLocaleString(language === 'en' ? undefined : locale, {
       year: 'numeric',
       month: 'short',
       day: 'numeric',
@@ -339,7 +340,7 @@ export default function QuizList() {
   const loadTrainingMaterial = async (material) => {
     const articleId = getMaterialId(material);
     if (!articleId) {
-      throw new Error('Training material is missing an article ID.');
+      throw new Error(t('quiz.prepare.missingArticleId'));
     }
 
     if (materialCache[articleId]) {
@@ -350,12 +351,12 @@ export default function QuizList() {
     const article = response.data;
 
     if (!article?.article_id) {
-      throw new Error('Training material could not be loaded.');
+      throw new Error(t('quiz.prepare.materialLoadFailed'));
     }
 
     const prepared = {
       article,
-      html: sanitizeQuizReaderHtml(article.content),
+      html: sanitizeQuizReaderHtml(article.content, t('quiz.prepare.noContent')),
       minutes: estimateReadingMinutes(article.content),
     };
 
@@ -398,8 +399,7 @@ export default function QuizList() {
         article: null,
         html: '',
         error:
-          error.response?.data?.message ||
-          error.message ||
+          translateServerMessage(t, error.response?.data?.message || error.message) ||
           tOr('quiz.prepare.readerLoadFailed', 'Could not load this training material.'),
       });
     }
@@ -862,8 +862,7 @@ export default function QuizList() {
                       : t('quiz.result.fail')}
                   </h2>
                   <p className="muted" style={{ marginBottom: 0 }}>
-                    {historicalAttempt.score}/{historicalAttempt.total_questions}{' '}
-                    {tOr('quiz.history.correct', 'correct')}
+                    {t('quiz.history.scoreCorrect', { score: historicalAttempt.score, total: historicalAttempt.total_questions })}
                     {historicalAttempt.completed_at
                       ? ` · ${formatAttemptDate(historicalAttempt.completed_at)}`
                       : ''}
@@ -997,7 +996,7 @@ export default function QuizList() {
                         <div className="quiz-material-card-copy">
                           <div className="quiz-material-card-topline">
                             <span className="eyebrow">
-                              {tOr('quiz.prepare.materialNumber', `Material ${index + 1}`)}
+                              {t('quiz.prepare.materialNumber', { n: index + 1 })}
                             </span>
                             <span className={`quiz-material-status ${reviewed ? 'reviewed' : ''}`}>
                               {reviewed
@@ -1020,10 +1019,7 @@ export default function QuizList() {
                             <span aria-hidden="true">•</span>
                             <span>
                               {readingMinutes
-                                ? tOr(
-                                    'quiz.prepare.readingTime',
-                                    `About ${readingMinutes} min read`
-                                  )
+                                ? t('quiz.prepare.readingTime', { n: readingMinutes })
                                 : tOr('quiz.prepare.calculatingTime', 'Calculating reading time…')}
                             </span>
                           </div>
@@ -1085,10 +1081,7 @@ export default function QuizList() {
                       <span aria-hidden="true">•</span>
                       <span>
                         {materialCache[activeQuiz.sourceArticleId]?.minutes
-                          ? tOr(
-                              'quiz.prepare.readingTime',
-                              `About ${materialCache[activeQuiz.sourceArticleId].minutes} min read`
-                            )
+                          ? t('quiz.prepare.readingTime', { n: materialCache[activeQuiz.sourceArticleId].minutes })
                           : tOr('quiz.prepare.calculatingTime', 'Calculating reading time…')}
                       </span>
                     </div>
@@ -1155,10 +1148,7 @@ export default function QuizList() {
 
                   {attemptHistory?.attempt_count > 0 ? (
                     <span className="quiz-history-count">
-                      {attemptHistory.attempt_count}{' '}
-                      {attemptHistory.attempt_count === 1
-                        ? tOr('quiz.history.attempt', 'attempt')
-                        : tOr('quiz.history.attempts', 'attempts')}
+                      {t(attemptHistory.attempt_count === 1 ? 'quiz.history.attemptCountOne' : 'quiz.history.attemptCountMany', { n: attemptHistory.attempt_count })}
                     </span>
                   ) : null}
                 </div>
@@ -1198,10 +1188,7 @@ export default function QuizList() {
                                 <strong>{meta.label}</strong>
                                 {attemptHistory.mastery.recent_average != null ? (
                                   <span>
-                                    {tOr(
-                                      'quiz.mastery.recentAverage',
-                                      `${attemptHistory.mastery.recent_average}% recent average`
-                                    )}
+                                    {t('quiz.mastery.recentAverage', { n: attemptHistory.mastery.recent_average })}
                                   </span>
                                 ) : null}
                               </div>
@@ -1267,7 +1254,7 @@ export default function QuizList() {
                       <div className="quiz-weak-areas">
                         <div className="quiz-weak-areas-head">
                           <div>
-                            <strong>{tOr('quiz.history.revisionFocus', 'Recommended Revision')}</strong>
+                            <strong>{tOr('quiz.history.recommendedRevision', 'Recommended Revision')}</strong>
                             <span>
                               {tOr(
                                 'quiz.history.weakAreasHint',
@@ -1287,9 +1274,9 @@ export default function QuizList() {
                               <div className="quiz-weak-area-copy">
                                 <strong>{area.title}</strong>
                                 <span>
-                                  {area.wrong_count} {area.wrong_count === 1 ? 'mistake' : 'mistakes'}
+                                  {t(area.wrong_count === 1 ? 'quiz.history.mistakesOne' : 'quiz.history.mistakesMany', { n: area.wrong_count })}
                                   {' · '}
-                                  {area.accuracy}% accuracy
+                                  {t('quiz.history.accuracy', { n: area.accuracy })}
                                 </span>
                               </div>
 
@@ -1311,11 +1298,9 @@ export default function QuizList() {
                       <div className="quiz-history-revision-note">
                         <strong>{tOr('quiz.history.revisionFocus', 'Revision focus')}</strong>
                         <span>
-                          {tOr(
-                            'quiz.history.latestMistakes',
-                            `Review the ${attemptHistory.latest_wrong_count} question${
-                              attemptHistory.latest_wrong_count === 1 ? '' : 's'
-                            } you missed in your latest attempt before trying again.`
+                          {t(
+                            attemptHistory.latest_wrong_count === 1 ? 'quiz.history.latestMistakesOne' : 'quiz.history.latestMistakes',
+                            { n: attemptHistory.latest_wrong_count }
                           )}
                         </span>
                       </div>
@@ -1373,8 +1358,7 @@ export default function QuizList() {
                             <div>
                               <strong>{attempt.percentage}%</strong>
                               <small>
-                                {attempt.score}/{attempt.total_questions}{' '}
-                                {tOr('quiz.history.correct', 'correct')}
+                                {t('quiz.history.scoreCorrect', { score: attempt.score, total: attempt.total_questions })}
                                 {attempt.completed_at
                                   ? ` · ${formatAttemptDate(attempt.completed_at)}`
                                   : ''}
@@ -1393,9 +1377,9 @@ export default function QuizList() {
                             }
                             title={
                               attempt.review_available
-                                ? tOr('quiz.history.review', 'Review attempt')
+                                ? tOr('quiz.history.reviewAttempt', 'Review attempt')
                                 : tOr(
-                                    'quiz.history.oldAttemptUnavailable',
+                                    'quiz.history.oldAttemptsNoReview',
                                     'Detailed review is unavailable for attempts completed before history tracking was added.'
                                   )
                             }
@@ -1742,10 +1726,7 @@ export default function QuizList() {
                         </span>
                         <span aria-hidden="true">•</span>
                         <span>
-                          {tOr(
-                            'quiz.prepare.readingTime',
-                            `About ${estimateReadingMinutes(materialReader.article?.content)} min read`
-                          )}
+                          {t('quiz.prepare.readingTime', { n: estimateReadingMinutes(materialReader.article?.content) })}
                         </span>
                         <span className="quiz-reader-recommended">
                           {tOr('quiz.prepare.recommendedBadge', 'Recommended before attempt')}

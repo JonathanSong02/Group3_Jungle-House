@@ -3,6 +3,9 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { StaffChatProvider, useStaffChat } from '../context/StaffChatContext';
 import LanguageSelector from '../i18n/LanguageSelector';
+import { useLanguage } from '../i18n/LanguageContext';
+import { translateServerMessage } from '../i18n/serverMessages';
+import { displayStoredText } from '../utils/storedChatText';
 import { StaffPreferencesDialog, StaffPreferencesProvider, useStaffPreferences } from './StaffPreferences';
 
 function Symbol({ name, size = 20 }) {
@@ -89,6 +92,7 @@ function StaffShell() {
   const location = useLocation();
   const { sessions, activeSessionId, request } = useStaffChat();
   const { settings, effectiveAppearance, effectiveContrast, t } = useStaffPreferences();
+  const { t: appT } = useLanguage();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -100,8 +104,8 @@ function StaffShell() {
   const [logoutPending, setLogoutPending] = useState(false);
   const [logoutError, setLogoutError] = useState('');
   const logoutBusy = useRef(false);
-  const fullName = user?.full_name || user?.name || 'Staff';
-  const firstName = fullName.trim().split(/\s+/)[0] || 'Staff';
+  const fullName = user?.full_name || user?.name || t('role.staff');
+  const firstName = fullName.trim().split(/\s+/)[0] || t('role.staff');
   const initial = firstName[0]?.toUpperCase() || 'S';
   const role = String(user?.role || '').trim().toLowerCase().replace(/[\s_-]/g, '');
   const visibleManagementLinks = managementLinks.filter((link) => link.roles.includes(role));
@@ -134,7 +138,7 @@ function StaffShell() {
     if (logoutBusy.current) return;
     logoutBusy.current = true; setLogoutPending(true); setLogoutError('');
     try { await logout(); navigate('/login', { replace: true }); }
-    catch (error) { setLogoutError(error?.message || t('staff.logoutFailed')); setProfileOpen(true); }
+    catch (error) { setLogoutError(translateServerMessage(appT, error?.message) || t('staff.logoutFailed')); setProfileOpen(true); }
     finally { logoutBusy.current = false; setLogoutPending(false); }
   };
   const visibleSessions = sessions.filter((item) => item.title?.toLowerCase().includes(search.trim().toLowerCase()));
@@ -152,7 +156,7 @@ function StaffShell() {
       lang={settings.language === 'zh' ? 'zh-Hans' : settings.language}
     >
       {mobileOpen && <button type="button" className="staff-overlay" aria-label={t('staff.closeNavigation')} onClick={() => setMobileOpen(false)} />}
-      <aside className="staff-sidebar" aria-label="Staff navigation">
+      <aside className="staff-sidebar" aria-label={t('layout.staffNav')}>
         <div className="staff-brand">
           <BrandMark size={34} className="staff-brand-icon" />
           {!collapsed && <div><strong>Jungle House AI</strong><small>{roleLabel}</small></div>}
@@ -168,14 +172,14 @@ function StaffShell() {
           <button type="button" className="staff-icon-button staff-mobile-close" aria-label={t('staff.closeNavigation')} onClick={() => setMobileOpen(false)}><Symbol name="close"/></button>
         </div>
         <div className="staff-nav-scroll">
-          <nav aria-label="Main features" className="staff-primary-links">
+          <nav aria-label={t('layout.mainFeatures')} className="staff-primary-links">
             <button type="button" className="staff-nav-link staff-new-chat" onClick={startChat} title={t('newChat')}><Symbol name="edit"/><span>{t('newChat')}</span></button>
             <button type="button" className="staff-nav-link" onClick={() => setSearchOpen(true)} title={t('searchChats')}><Symbol name="search"/><span>{t('searchChats')}</span></button>
             {staffLinks.map((link) => <NavLink key={link.to} className={({isActive}) => `staff-nav-link ${isActive ? 'active' : ''}`} to={link.to} title={t(({ '/knowledge': 'knowledge', '/quiz': 'quiz', '/messages': 'messages', '/notifications': 'notifications' })[link.to])} onClick={() => setMobileOpen(false)}><Symbol name={link.icon}/><span>{t(({ '/knowledge': 'knowledge', '/quiz': 'quiz', '/messages': 'messages', '/notifications': 'notifications' })[link.to])}</span></NavLink>)}
             <button type="button" className="staff-nav-link" aria-expanded={moreOpen} onClick={() => setMoreOpen((current) => !current)} title={t('more')}><Symbol name="more"/><span>{t('more')}</span></button>
             {moreOpen && <div className="staff-more-links"><NavLink to="/profile" onClick={() => setMobileOpen(false)} className="staff-nav-link"><Symbol name="user"/><span>{t('profile')}</span></NavLink><NavLink to="/sop-selection" onClick={() => setMobileOpen(false)} className="staff-nav-link"><Symbol name="book"/><span>{t('sop')}</span></NavLink><button type="button" className="staff-nav-link" onClick={openHistory}><Symbol name="search"/><span>{t('history')}</span></button></div>}
             {visibleManagementLinks.length > 0 && (
-              <div className="staff-primary-links staff-management-links" role="group" aria-label="Management tools">
+              <div className="staff-primary-links staff-management-links" role="group" aria-label={t('layout.managementTools')}>
                 <div className="staff-recent-header" aria-hidden="true"><span>{t('nav.management')}</span></div>
                 {visibleManagementLinks.map((link) => (
                   <NavLink key={link.to} to={link.to} title={t(link.text)} onClick={() => setMobileOpen(false)} className={({ isActive }) => `staff-nav-link ${isActive ? 'active' : ''}`}>
@@ -186,13 +190,13 @@ function StaffShell() {
             )}
           </nav>
           <div className="staff-recent-header"><span>{t('recent')}</span><button type="button" aria-label={t('staff.openChatHistory')} title={t('staff.openChatHistory')} onClick={openHistory}><Symbol name="search" size={15}/></button></div>
-          <div className="staff-recent-list" aria-label="Recent conversations">
-            {sessions.length ? sessions.slice(0, 18).map((item) => <div key={item.id} className="staff-recent-row"><button type="button" className={`staff-recent-chat ${String(activeSessionId) === String(item.id) && location.pathname === '/chat' ? 'active' : ''}`} onClick={() => chooseChat(item.id)} title={item.title}><Symbol name="chat" size={16}/><span>{item.title}</span></button><button type="button" className="staff-delete-recent" onClick={() => deleteChat(item.id)} aria-label={`${t('staff.deleteChat')}: ${item.title}`} title={t('staff.deleteChat')}>×</button></div>) : <p className="staff-sidebar-empty">{t('emptyChats')}</p>}
+          <div className="staff-recent-list" aria-label={t('layout.recentConversations')}>
+            {sessions.length ? sessions.slice(0, 18).map((item) => <div key={item.id} className="staff-recent-row"><button type="button" className={`staff-recent-chat ${String(activeSessionId) === String(item.id) && location.pathname === '/chat' ? 'active' : ''}`} onClick={() => chooseChat(item.id)} title={displayStoredText(item.title, appT)}><Symbol name="chat" size={16}/><span>{displayStoredText(item.title, appT)}</span></button><button type="button" className="staff-delete-recent" onClick={() => deleteChat(item.id)} aria-label={`${t('staff.deleteChat')}: ${displayStoredText(item.title, appT)}`} title={t('staff.deleteChat')}>×</button></div>) : <p className="staff-sidebar-empty">{t('emptyChats')}</p>}
             {sessions.length > 18 && <button type="button" className="staff-show-all" onClick={openHistory}>{t('allChats')} →</button>}
           </div>
         </div>
         <div className="staff-profile-area">
-          {profileOpen && <div className="staff-account-menu" role="menu"><div className="staff-account-head"><strong>{fullName}</strong><small>{user?.email || 'Staff'}</small></div><button type="button" role="menuitem" onClick={() => { setProfileOpen(false); setPreferencesOpen(true); }}><Symbol name="leaf" size={18}/>{t('settings')}</button><NavLink to="/profile" role="menuitem" onClick={() => setProfileOpen(false)}><Symbol name="user" size={18}/> {t('account')}</NavLink><button type="button" role="menuitem" disabled={logoutPending} onClick={signOut}><Symbol name="logout" size={18}/>{logoutPending ? t('loggingOut') : t('logout')}</button>{logoutError && <p role="alert" className="staff-logout-error">{logoutError}</p>}</div>}
+          {profileOpen && <div className="staff-account-menu" role="menu"><div className="staff-account-head"><strong>{fullName}</strong><small>{user?.email || t('role.staff')}</small></div><button type="button" role="menuitem" onClick={() => { setProfileOpen(false); setPreferencesOpen(true); }}><Symbol name="leaf" size={18}/>{t('settings')}</button><NavLink to="/profile" role="menuitem" onClick={() => setProfileOpen(false)}><Symbol name="user" size={18}/> {t('account')}</NavLink><button type="button" role="menuitem" disabled={logoutPending} onClick={signOut}><Symbol name="logout" size={18}/>{logoutPending ? t('loggingOut') : t('logout')}</button>{logoutError && <p role="alert" className="staff-logout-error">{logoutError}</p>}</div>}
           <button type="button" className="staff-profile-trigger" aria-haspopup="menu" aria-expanded={profileOpen} onClick={() => setProfileOpen((current) => !current)}><span className="staff-avatar">{initial}</span><span className="staff-profile-identity"><strong>{fullName}</strong><small>{roleLabel}</small></span><Symbol name="more" size={18}/></button>
         </div>
       </aside>
@@ -201,7 +205,7 @@ function StaffShell() {
         <main className={`staff-content ${location.pathname === '/chat' ? 'staff-content-chat' : ''}`} id="staff-content"><Outlet context={{ firstName }}/></main>
       </div>
       {preferencesOpen && <StaffPreferencesDialog onClose={closePreferences} />}
-      {searchOpen && <div className="staff-search-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSearchOpen(false); }}><section className="staff-search-dialog" role="dialog" aria-modal="true" aria-label={t('searchChats')}><div className="staff-search-bar"><Symbol name="search"/><input autoFocus aria-label={t('searchChats')} placeholder={t('searchPlaceholder')} value={search} onChange={(event) => setSearch(event.target.value)}/><button type="button" className="staff-icon-button" aria-label={t('close')} onClick={() => setSearchOpen(false)}><Symbol name="close"/></button></div><div className="staff-search-results">{visibleSessions.length ? visibleSessions.map((item) => <button key={item.id} type="button" onClick={() => chooseChat(item.id)}><Symbol name="chat" size={18}/><span>{item.title}</span><small>{item.updated_at}</small></button>) : <p>{t('noMatches')}</p>}</div><button type="button" className="staff-search-history" onClick={openHistory}>{t('viewHistory')} →</button></section></div>}
+      {searchOpen && <div className="staff-search-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSearchOpen(false); }}><section className="staff-search-dialog" role="dialog" aria-modal="true" aria-label={t('searchChats')}><div className="staff-search-bar"><Symbol name="search"/><input autoFocus aria-label={t('searchChats')} placeholder={t('searchPlaceholder')} value={search} onChange={(event) => setSearch(event.target.value)}/><button type="button" className="staff-icon-button" aria-label={t('close')} onClick={() => setSearchOpen(false)}><Symbol name="close"/></button></div><div className="staff-search-results">{visibleSessions.length ? visibleSessions.map((item) => <button key={item.id} type="button" onClick={() => chooseChat(item.id)}><Symbol name="chat" size={18}/><span>{displayStoredText(item.title, appT)}</span><small>{item.updated_at}</small></button>) : <p>{t('noMatches')}</p>}</div><button type="button" className="staff-search-history" onClick={openHistory}>{t('viewHistory')} →</button></section></div>}
     </div>
   );
 }

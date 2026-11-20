@@ -5,6 +5,7 @@ import PageHeader from '../../components/PageHeader';
 import api from '../../services/api';
 import { cleanStoredEditorHtml, removePageLevelTags } from '../../utils/safeHtml';
 import { useLanguage } from '../../i18n/LanguageContext';
+import { translateServerMessage } from '../../i18n/serverMessages';
 import { buildInlineFileHtml, createArticleImageUploader } from '../../utils/articleImageUpload';
 
 // 'Notion' = synced from Notion but not categorized yet; listed so such an
@@ -13,12 +14,25 @@ const categories = ['SOP', 'PRODUCT', 'SALES', 'Training', 'Notice', 'Notion'];
 const acceptedFileTypes =
   'image/png,image/jpeg,image/jpg,image/gif,image/webp,image/bmp,image/svg+xml,.pdf,.doc,.docx';
 
+// Splits a translated sentence on its {button} placeholder so the button name stays bold.
+function withBoldButton(text, buttonLabel) {
+  const [before, after = ''] = String(text).split('{button}');
+  return (
+    <>
+      {before}
+      <strong>{buttonLabel}</strong>
+      {after}
+    </>
+  );
+}
+
 export default function EditArticle() {
   const { id } = useParams();
   const navigate = useNavigate();
   const editorRef = useRef(null);
   const fileInputRef = useRef(null);
-  const { t, language } = useLanguage();
+  const { t, tOr, language } = useLanguage();
+  const [editorPlaceholder] = useState(() => t('article.form.contentPlaceholder'));
 
   const [form, setForm] = useState({
     title: '',
@@ -81,7 +95,7 @@ export default function EditArticle() {
     () => ({
       readonly: false,
       height: 430,
-      placeholder: 'Write article content here...',
+      placeholder: editorPlaceholder,
       toolbarAdaptive: false,
       toolbarSticky: false,
       showCharsCounter: false,
@@ -129,7 +143,7 @@ export default function EditArticle() {
       // on phones); the upload itself goes through the shared client.
       uploader: imageUploader.joditUploaderOptions(),
     }),
-    [imageUploader]
+    [imageUploader, editorPlaceholder]
   );
 
   useEffect(() => {
@@ -231,7 +245,7 @@ export default function EditArticle() {
   const getAttachmentFileName = (file) => {
     if (file?.name) return file.name;
     const fileUrl = file?.url || file?.file_url || file?.path || file;
-    const rawName = String(fileUrl || '').split('/').pop() || 'Attachment file';
+    const rawName = String(fileUrl || '').split('/').pop() || t('article.form.attachmentFile');
     // Stored filenames are prefixed with a millisecond timestamp
     // (e.g. "1731999999999_Opening SOP.pdf") to keep them unique on disk.
     return rawName.replace(/^\d+_/, '');
@@ -294,7 +308,7 @@ export default function EditArticle() {
       const fileUrl = response.data?.files?.[0];
 
       if (!fileUrl || response.data?.error) {
-        throw new Error(response.data?.msg || 'Failed to upload file.');
+        throw new Error(translateServerMessage(t, response.data?.msg) || t('article.msg.uploadFailed'));
       }
 
       insertHtmlIntoContent(
@@ -305,7 +319,7 @@ export default function EditArticle() {
     } catch (error) {
       console.error('Insert attachment into content error:', error);
       setMessage(
-        error.response?.data?.msg || error.message || 'Failed to insert file into content.'
+        translateServerMessage(t, error.response?.data?.msg || error.message) || t('article.msg.insertFailed')
       );
     } finally {
       setInsertingIndex(null);
@@ -349,7 +363,7 @@ export default function EditArticle() {
 
   const formatFileSize = (bytes) => {
     if (!bytes) {
-      return 'Selected file';
+      return t('article.form.selectedFile');
     }
 
     const sizeInMb = bytes / (1024 * 1024);
@@ -368,7 +382,7 @@ export default function EditArticle() {
     event.preventDefault();
 
     if (!form.title.trim() || !form.content.trim()) {
-      setMessage('Title and content are required.');
+      setMessage(t('article.msg.required'));
       return;
     }
 
@@ -401,7 +415,7 @@ export default function EditArticle() {
       navigate('/admin/content');
     } catch (error) {
       console.error('Update article error:', error);
-      setMessage(error.response?.data?.message || 'Failed to update article.');
+      setMessage(translateServerMessage(t, error.response?.data?.message) || t('article.msg.updateFailed'));
     } finally {
       setSaving(false);
     }
@@ -410,7 +424,7 @@ export default function EditArticle() {
   if (loading) {
     return (
       <section className="card-like">
-        <p className="muted">Loading article...</p>
+        <p className="muted">{t('article.form.loading')}</p>
       </section>
     );
   }
@@ -418,21 +432,21 @@ export default function EditArticle() {
   return (
     <div>
       <PageHeader
-        title="Edit Article"
-        subtitle="Update article details in the knowledge base."
+        title={t('article.form.editTitle')}
+        subtitle={t('article.form.editSubtitle')}
       />
 
       <section className="card-like top-gap-sm">
         <form onSubmit={handleSubmit} className="stack-gap">
           {message && (
             <div className="card-like danger-soft">
-              <p>{message}</p>
+              <p>{translateServerMessage(t, message)}</p>
             </div>
           )}
 
           <div className="form-grid">
             <label>
-              Article Title *
+              {t('article.form.title')}
               <input
                 name="title"
                 value={form.title}
@@ -441,7 +455,7 @@ export default function EditArticle() {
             </label>
 
             <label>
-              Category *
+              {t('article.form.category')}
               <select
                 name="category"
                 value={form.category}
@@ -449,14 +463,14 @@ export default function EditArticle() {
               >
                 {categories.map((category) => (
                   <option key={category} value={category}>
-                    {category}
+                    {language === 'en' ? category : tOr(`cat.${category}`, category)}
                   </option>
                 ))}
               </select>
             </label>
 
             <label>
-              Sub Category
+              {t('article.form.subCategory')}
               <input
                 name="sub_category"
                 value={form.sub_category}
@@ -465,7 +479,7 @@ export default function EditArticle() {
             </label>
 
             <label>
-              Notion / Reference Link
+              {t('article.form.link')}
               <input
                 name="link"
                 value={form.link}
@@ -476,10 +490,9 @@ export default function EditArticle() {
             <div className="full-width article-attachment-panel">
               <div className="article-attachment-top">
                 <div>
-                  <h3>Attach / Replace Image or File</h3>
+                  <h3>{t('article.form.attachReplaceTitle')}</h3>
                   <p>
-                    Click add to select one or more images/files. You can click
-                    the button again to add more before saving the article.
+                    {t('article.form.attachHintSave')}
                   </p>
                 </div>
 
@@ -488,7 +501,7 @@ export default function EditArticle() {
                   className="secondary-btn attachment-add-btn"
                   onClick={openFilePicker}
                 >
-                  + Add Image / File
+                  {t('article.form.addFile')}
                 </button>
               </div>
 
@@ -503,7 +516,7 @@ export default function EditArticle() {
 
               {currentAttachments.length > 0 && (
                 <div className="attachment-group">
-                  <p className="attachment-group-title">Existing files</p>
+                  <p className="attachment-group-title">{t('article.form.existingFiles')}</p>
 
                   <div className="attachment-list">
                     {currentAttachments.map((file, index) => {
@@ -515,12 +528,12 @@ export default function EditArticle() {
                           key={`${fileName}-${index}`}
                         >
                           <span className="attachment-icon">
-                            {isImageFile(fileName) ? 'IMG' : 'FILE'}
+                            {isImageFile(fileName) ? t('article.form.badgeImage') : t('article.form.badgeFile')}
                           </span>
 
                           <div className="attachment-info">
                             <strong>{fileName}</strong>
-                            <span>Existing article file</span>
+                            <span>{t('article.form.existingFile')}</span>
                           </div>
 
                           <a
@@ -529,7 +542,7 @@ export default function EditArticle() {
                             target="_blank"
                             rel="noopener noreferrer"
                           >
-                            View
+                            {t('common.view')}
                           </a>
 
                           <button
@@ -537,7 +550,7 @@ export default function EditArticle() {
                             className="secondary-btn attachment-view-btn"
                             onClick={() => insertExistingAttachmentIntoContent(index)}
                           >
-                            Insert into Content
+                            {t('article.form.insert')}
                           </button>
 
                           <button
@@ -545,7 +558,7 @@ export default function EditArticle() {
                             className="attachment-remove-btn"
                             onClick={() => removeCurrentAttachment(index)}
                           >
-                            Remove
+                            {t('common.remove')}
                           </button>
                         </div>
                       );
@@ -553,9 +566,7 @@ export default function EditArticle() {
                   </div>
 
                   <p className="attachment-hint">
-                    Tip: use <strong>Insert into Content</strong> to move a file
-                    into the article body at your cursor position, instead of
-                    leaving it in this general Attachments list.
+                    {withBoldButton(t('article.form.insertTipExisting'), t('article.form.insert'))}
                   </p>
                 </div>
               )}
@@ -564,7 +575,7 @@ export default function EditArticle() {
                 <div className="attachment-group">
                   <div className="attachment-group-header">
                     <p className="attachment-group-title">
-                      New selected files ({attachments.length})
+                      {t('article.form.newSelectedFiles', { n: attachments.length })}
                     </p>
 
                     <button
@@ -572,7 +583,7 @@ export default function EditArticle() {
                       className="secondary-btn attachment-clear-btn"
                       onClick={() => setAttachments([])}
                     >
-                      Clear All
+                      {t('article.form.clearAll')}
                     </button>
                   </div>
 
@@ -583,7 +594,7 @@ export default function EditArticle() {
                         key={`${file.name}-${file.size}-${index}`}
                       >
                         <span className="attachment-icon">
-                          {isImageFile(file.name) ? 'IMG' : 'FILE'}
+                          {isImageFile(file.name) ? t('article.form.badgeImage') : t('article.form.badgeFile')}
                         </span>
 
                         <div className="attachment-info">
@@ -597,7 +608,7 @@ export default function EditArticle() {
                           disabled={insertingIndex === index}
                           onClick={() => insertAttachmentIntoContent(index)}
                         >
-                          {insertingIndex === index ? 'Inserting...' : 'Insert into Content'}
+                          {insertingIndex === index ? t('article.form.inserting') : t('article.form.insert')}
                         </button>
 
                         <button
@@ -605,7 +616,7 @@ export default function EditArticle() {
                           className="attachment-remove-btn"
                           onClick={() => removeAttachment(index)}
                         >
-                          Remove
+                          {t('common.remove')}
                         </button>
                       </div>
                     ))}
@@ -615,15 +626,13 @@ export default function EditArticle() {
 
               {attachments.length === 0 && currentAttachments.length === 0 && (
                 <div className="empty-attachment-box">
-                  No file selected yet. Click{' '}
-                  <strong>+ Add Image / File</strong> to attach one or more
-                  files.
+                  {withBoldButton(t('article.form.noFile'), t('article.form.addFile'))}
                 </div>
               )}
             </div>
 
             <label className="full-width">
-              Article Content *
+              {t('article.form.content')}
 
               <div
                 className="article-rich-editor"
@@ -688,7 +697,7 @@ export default function EditArticle() {
                 navigate('/admin/content');
               }}
             >
-              Cancel
+              {t('common.cancel')}
             </button>
 
             <button
@@ -696,7 +705,7 @@ export default function EditArticle() {
               className="primary-btn narrow-btn"
               disabled={saving}
             >
-              {saving ? 'Saving...' : 'Save Changes'}
+              {saving ? t('article.form.saving') : t('article.form.saveChanges')}
             </button>
           </div>
         </form>

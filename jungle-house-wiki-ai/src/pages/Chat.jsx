@@ -10,6 +10,7 @@ import { escalationMetadata, normalizeEscalationResponse, escalationErrorInfo } 
 import { isHtmlContent, rewriteSrcset, sanitizeHtml } from '../utils/safeHtml';
 import { imageReferencesForQuestion } from '../utils/imageAttachmentContext';
 import { imageFailureDetails } from '../utils/imageServiceError';
+import { displayStoredText } from '../utils/storedChatText';
 
 
 const starterMessages = [
@@ -476,6 +477,7 @@ function isImageUploadFile(file) {
 }
 
 function ChatImage({ imageUrl, alt, onImageClick }) {
+  const { t } = useLanguage();
   const finalImageUrl = buildImageUrl(imageUrl);
   const safeImageUrl = finalImageUrl ? encodeURI(finalImageUrl).replace(/#/g, '%23') : '';
   const [failed, setFailed] = useState(false);
@@ -499,7 +501,7 @@ function ChatImage({ imageUrl, alt, onImageClick }) {
           overflowWrap: 'anywhere',
         }}
       >
-        <strong>Image could not load</strong>
+        <strong>{t('chat.img.failed')}</strong>
         <div style={{ marginTop: '4px' }}>{safeImageUrl}</div>
         <a
           href={safeImageUrl}
@@ -512,7 +514,7 @@ function ChatImage({ imageUrl, alt, onImageClick }) {
             fontWeight: 700,
           }}
         >
-          Open image URL
+          {t('chat.img.openUrl')}
         </a>
       </div>
     );
@@ -564,11 +566,12 @@ function isLikelyImageUrl(url) {
 }
 
 function DocumentLink({ fileUrl }) {
+  const { t } = useLanguage();
   const finalUrl = buildImageUrl(fileUrl);
 
   if (!finalUrl) return null;
 
-  const fileName = decodeURIComponent(String(fileUrl).split('/').pop() || 'Attachment');
+  const fileName = decodeURIComponent(String(fileUrl).split('/').pop() || t('chat.attachmentFallback'));
 
   return (
     <a
@@ -633,7 +636,7 @@ function renderImages(imageUrls, labelPrefix = 'Image', onImageClick = null) {
   );
 }
 
-function renderKnowledgeLink(link) {
+function renderKnowledgeLink(link, t) {
   const cleanLink = String(link || '').trim();
 
   if (!cleanLink) return null;
@@ -661,7 +664,7 @@ function renderKnowledgeLink(link) {
         textDecoration: 'none',
       }}
     >
-      Open Notion Link ↗
+      {t('chat.openNotion')}
     </a>
   );
 }
@@ -912,6 +915,13 @@ function renderRichKnowledgeContent(text, fallbackLink = '') {
   return output;
 }
 
+// high / medium / low from the server, shown in the selected language; any other value as sent.
+function confidenceLabelText(label, t) {
+  const key = `chat.confidenceLabel.${label}`;
+  const text = t(key);
+  return text === key ? label : text;
+}
+
 function renderResponseMeta(message, t) {
   if (message.sender !== 'ai') return null;
 
@@ -945,7 +955,7 @@ function renderResponseMeta(message, t) {
             border: '1px solid #dee2e6',
           }}
         >
-          {t('chat.matchScore')}: {confidencePercent}% {message.confidence_label ? `(${message.confidence_label})` : ''}
+          {t('chat.matchScore')}: {confidencePercent}% {message.confidence_label ? `(${confidenceLabelText(message.confidence_label, t)})` : ''}
         </span>
       ) : null}
 
@@ -1024,7 +1034,7 @@ function buildAiMessage(data, t) {
       id: Date.now() + 1,
       sender: 'ai',
       type: 'text',
-      text: 'No response returned from backend.',
+      text: t('chat.noResponse'),
       context: {
         unclear_count: 0,
       },
@@ -1035,8 +1045,8 @@ function buildAiMessage(data, t) {
       confidence_label: 'low',
       source: 'frontend_empty_response',
       fallback: true,
-      fallback_message: 'No response returned from backend.',
-      message: 'No response returned from backend.',
+      fallback_message: t('chat.noResponse'),
+      message: t('chat.noResponse'),
     };
   }
 
@@ -1069,7 +1079,7 @@ function buildAiMessage(data, t) {
       text:
         data.reply ||
         data.answer ||
-        'I found more than one possible answer. Please choose the most suitable one.',
+        t('chat.multipleAnswers'),
       reply: data.reply || '',
       answer: data.answer || data.reply || '',
       title: data.title || backendContext.title || '',
@@ -1116,7 +1126,7 @@ function buildAiMessage(data, t) {
       sender: 'ai',
       type: 'sop',
       reply: data.reply || '',
-      title: data.title || 'SOP Response',
+      title: data.title || t('chat.sopResponse'),
       article_id: data.article_id || backendContext.article_id || null,
       category: data.category || backendContext.category || '',
       purpose: data.purpose || '',
@@ -1155,7 +1165,7 @@ function buildAiMessage(data, t) {
       data.answer ||
       data.response ||
       data.message ||
-      'No usable answer returned from backend.',
+      t('chat.noUsableAnswer'),
     answer: data.answer || data.reply || '',
     title: data.title || backendContext.title || '',
     article_id: data.article_id || backendContext.article_id || null,
@@ -1890,7 +1900,7 @@ function ChatContent({ storageKeys }) {
     if (!file) return;
 
     if (!applySelectedFile(file)) {
-      alert('Please upload a supported file only. Supported: image, PDF, DOC, DOCX.');
+      alert(t('upload.unsupportedFile'));
     }
 
     event.target.value = '';
@@ -2132,7 +2142,7 @@ const removeSelectedImage = () => {
           id: Date.now() + 1,
           sender: 'ai',
           type: 'text',
-          text: 'Generation stopped.',
+          text: t('chat.stopped'),
           context: { unclear_count: 0 },
           unclear_count: 0,
           escalation_ready: false,
@@ -2142,7 +2152,7 @@ const removeSelectedImage = () => {
           source: 'user_stopped_generation',
           fallback: false,
           fallback_message: '',
-          message: 'Generation stopped.',
+          message: t('chat.stopped'),
         };
 
         const messagesAfterStop = [...messagesAfterUserQuestion, stoppedMessage];
@@ -2239,13 +2249,13 @@ const removeSelectedImage = () => {
         key={message.id}
         className={`message-bubble ${message.sender === 'user' ? 'user' : 'ai'}`}
       >
-        <strong className="ai-chat-sender-label">{message.sender === 'user' ? 'You' : 'AI'}</strong>
+        <strong className="ai-chat-sender-label">{message.sender === 'user' ? t('msg.you') : 'AI'}</strong>
         {message.clarification_requested ? null : renderResponseMeta(message, t)}
         {message.escalation_context_warning ? (
           <p role="status" className="muted small">{t('chat.contextSaveFailed')}</p>
         ) : null}
         {message.escalation_context_status === 'not_provided' ? <p role="status" className="muted small">{t('chat.contextNotProvided')}</p> : null}
-        {renderKnowledgeLink(message.link || message.article_link)}
+        {renderKnowledgeLink(message.link || message.article_link, t)}
 
         {message.sender === 'ai' &&
         message.fallback_message &&
@@ -2280,7 +2290,7 @@ const removeSelectedImage = () => {
     <div style={{ display: 'grid', gap: '12px' }}>
       {(!Array.isArray(message.options) || message.options.length === 0) ? (
         <p style={{ color: '#b00020', marginTop: '8px' }}>
-          No selectable options were returned from backend.
+          {t('chat.noOptions')}
         </p>
       ) : null}
       {message.options?.map((option, optionIndex) => {
@@ -2348,7 +2358,7 @@ const removeSelectedImage = () => {
               }}
             >
               <h4 style={{ margin: 0 }}>
-                {option.label || option.title || `Option ${optionIndex + 1}`}
+                {option.label || option.title || t('chat.optionN', { n: optionIndex + 1 })}
               </h4>
 
               <span
@@ -2373,7 +2383,7 @@ const removeSelectedImage = () => {
               fontWeight: 600,
             }}
           >
-            View answer →
+            {t('chat.viewAnswer')}
           </p>
 
           </button>
@@ -2437,7 +2447,7 @@ const removeSelectedImage = () => {
                 marginBottom: message.answer ? '10px' : 0,
               }}
             >
-              {renderRichKnowledgeContent(message.text, message.link || message.article_link)}
+              {renderRichKnowledgeContent(message.sender === 'user' ? displayStoredText(message.text, t) : message.text, message.link || message.article_link)}
             </p>
 
             {message.clarification_requested && message.question ? (
@@ -2472,11 +2482,11 @@ const removeSelectedImage = () => {
                     what was scrambling all the step photos together at the
                     bottom instead of keeping them next to their own step. */}
                 {!isHtmlContent(message.answer) &&
-                  renderImages(textImages, 'Answer image', setPreviewImage)}
+                  renderImages(textImages, t('chat.img.answer'), setPreviewImage)}
               </div>
             ) : (
               !isHtmlContent(message.text) &&
-              renderImages(textImages, 'Message image', setPreviewImage)
+              renderImages(textImages, t('chat.img.message'), setPreviewImage)
             )}
 
             {Array.isArray(message.steps) && message.steps.length > 0 ? (
@@ -2496,7 +2506,7 @@ const removeSelectedImage = () => {
                       }}
                     >
                       <h4 style={{ marginBottom: '8px' }}>
-                        Step {step.step_number || index + 1}
+                        {t('chat.stepN', { n: step.step_number || index + 1 })}
                       </h4>
 
                       {step.section ? (
@@ -2507,7 +2517,7 @@ const removeSelectedImage = () => {
                             color: '#7a5c00',
                           }}
                         >
-                          Section: {step.section}
+                          {t('chat.sectionLabel', { name: step.section })}
                         </p>
                       ) : null}
 
@@ -2521,7 +2531,7 @@ const removeSelectedImage = () => {
                       {!isHtmlContent(step.content || step.answer || step.reply) &&
                         renderImages(
                           stepImages,
-                          `Step ${step.step_number || index + 1} image`,
+                          t('chat.img.step', { n: step.step_number || index + 1 }),
                           setPreviewImage
                         )}
                     </div>
@@ -2545,12 +2555,12 @@ const removeSelectedImage = () => {
 
             {message.purpose ? (
               <p style={{ marginBottom: '12px' }}>
-                <strong>Purpose:</strong> {message.purpose}
+                <strong>{t('chat.purposeLabel')}</strong> {message.purpose}
               </p>
             ) : null}
 
             {!isHtmlContent(message.reply) &&
-              renderImages(textImages, 'Article image', setPreviewImage)}
+              renderImages(textImages, t('chat.img.article'), setPreviewImage)}
 
             {message.steps?.map((step, index) => {
               const stepImages = getStepImages(step);
@@ -2567,7 +2577,7 @@ const removeSelectedImage = () => {
                   }}
                 >
                   <h4 style={{ marginBottom: '8px' }}>
-                    Step {step.step_number || index + 1}
+                    {t('chat.stepN', { n: step.step_number || index + 1 })}
                   </h4>
 
                   {step.section ? (
@@ -2578,7 +2588,7 @@ const removeSelectedImage = () => {
                         color: '#7a5c00',
                       }}
                     >
-                      Section: {step.section}
+                      {t('chat.sectionLabel', { name: step.section })}
                     </p>
                   ) : null}
 
@@ -2592,7 +2602,7 @@ const removeSelectedImage = () => {
                   {!isHtmlContent(step.content || step.answer || step.reply) &&
                     renderImages(
                       stepImages,
-                      `Step ${step.step_number || index + 1} image`,
+                      t('chat.img.step', { n: step.step_number || index + 1 }),
                       setPreviewImage
                     )}
                 </div>
@@ -2631,9 +2641,9 @@ const removeSelectedImage = () => {
                 type="button"
                 className="chat-recent-title"
                 onClick={() => handleSelectSession(session.id)}
-                title={session.title}
+                title={displayStoredText(session.title, t)}
               >
-                {session.title}
+                {displayStoredText(session.title, t)}
               </button>
 
               <button
@@ -2724,9 +2734,9 @@ const removeSelectedImage = () => {
                     type="button"
                     className="mobile-ai-chat-recent-title"
                     onClick={() => handleSelectSession(session.id)}
-                    title={session.title}
+                    title={displayStoredText(session.title, t)}
                   >
-                    {session.title}
+                    {displayStoredText(session.title, t)}
                   </button>
 
                   <button
@@ -2755,7 +2765,7 @@ const removeSelectedImage = () => {
         <section className="card-like chat-panel ai-chat-panel">
           <div className="ai-chat-header">
             <div>
-              <h3>{activeSession?.title || t('chat.newChat')}</h3>
+              <h3>{displayStoredText(activeSession?.title, t) || t('chat.newChat')}</h3>
             </div>
 
             <button
@@ -2793,7 +2803,7 @@ const removeSelectedImage = () => {
                     color: '#7a5c00',
                   }}
                 >
-                  FILE
+                  {t('article.form.badgeFile')}
                 </div>
               )}
 
@@ -2803,7 +2813,7 @@ const removeSelectedImage = () => {
                 </p>
 
                 <p style={{ margin: '0 0 6px', fontSize: '12px', color: '#7a5c00' }}>
-                  {selectedImage?.type || 'Selected upload'}
+                  {selectedImage?.type || t('chat.selectedUpload')}
                 </p>
 
                 <button type="button" onClick={removeSelectedImage}>
@@ -2917,7 +2927,7 @@ const removeSelectedImage = () => {
         <div className="staff-chat-bottom">
           <div className="staff-chat-composer" role="group" aria-label={t('chat.askAssistantGroup')}>
             {selectedImage && <div className="staff-attachment-preview">
-              {selectedImagePreview ? <img src={selectedImagePreview} alt={t('chat.selectedFile')}/> : <span className="staff-file-icon">FILE</span>}
+              {selectedImagePreview ? <img src={selectedImagePreview} alt={t('chat.selectedFile')}/> : <span className="staff-file-icon">{t('article.form.badgeFile')}</span>}
               <div><strong>{selectedImage.name || t('chat.attachFile')}</strong><small>{selectedImage.type || t('chat.selectedFile')}</small></div>
               <button type="button" onClick={removeSelectedImage} aria-label={t('chat.removeAttachment')}>×</button>
             </div>}
@@ -3096,7 +3106,7 @@ const removeSelectedImage = () => {
     const modalText = {
       'delete-session': {
         title: t('chat.modal.deleteTitle'),
-        message: t('chat.modal.deleteMessage', { title: confirmModal.sessionTitle || t('chat.modal.thisChat') }),
+        message: t('chat.modal.deleteMessage', { title: displayStoredText(confirmModal.sessionTitle, t) || t('chat.modal.thisChat') }),
         confirm: t('common.delete'),
       },
       'clear-current-chat': {
@@ -3199,7 +3209,7 @@ const removeSelectedImage = () => {
   return staffMode ? (
     <div className="staff-chat-page">
       {activeTab === 'ask' ? renderStaffAskQuestion() : <div className="staff-history-wrap"><div className="staff-history-top"><button type="button" onClick={() => handleTabChange('ask')}>{t('chat.backToChat')}</button><h1>{t('chat.historyTab')}</h1></div>{renderChatHistory()}</div>}
-      {previewImage && <div className="staff-image-overlay" role="dialog" aria-modal="true" aria-label={t('chat.previewImage')} onClick={() => setPreviewImage(null)}><button type="button" onClick={() => setPreviewImage(null)} aria-label={t('chat.closePreview')}>×</button><img src={previewImage} alt="Attachment preview" onClick={(event) => event.stopPropagation()}/></div>}
+      {previewImage && <div className="staff-image-overlay" role="dialog" aria-modal="true" aria-label={t('chat.previewImage')} onClick={() => setPreviewImage(null)}><button type="button" onClick={() => setPreviewImage(null)} aria-label={t('chat.closePreview')}>×</button><img src={previewImage} alt={t('chat.attachmentPreview')} onClick={(event) => event.stopPropagation()}/></div>}
       {renderConfirmModal()}
     </div>
   ) : (
@@ -3282,7 +3292,7 @@ const removeSelectedImage = () => {
 
           <img
             src={previewImage}
-            alt="Preview"
+            alt={t('chat.imagePreview')}
             onClick={(event) => event.stopPropagation()}
             style={{
               maxWidth: '95vw',

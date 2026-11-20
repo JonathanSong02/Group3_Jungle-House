@@ -3,6 +3,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
 import LanguageSelector from '../i18n/LanguageSelector';
+import { translateServerMessage } from '../i18n/serverMessages';
 
 const SHOW_AI_SETTINGS = true;
 
@@ -162,8 +163,9 @@ function SidebarIcon({ name }) {
 }
 
 function SidebarLogo() {
+  const { t } = useLanguage();
   return (
-    <div className="sidebar-logo" aria-label="Jungle House AI Wiki logo">
+    <div className="sidebar-logo" aria-label={t('layout.logo')}>
       <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
         <path
           className="jh-logo-cell jh-logo-cell-main"
@@ -234,7 +236,7 @@ export default function Sidebar() {
       setIsUserMenuOpen(false);
       navigate('/login', { replace: true });
     } catch (error) {
-      setLogoutError(error?.message || t('nav.logoutFailed'));
+      setLogoutError(translateServerMessage(t, error?.message) || t('nav.logoutFailed'));
       setIsUserMenuOpen(true);
     } finally {
       logoutInFlightRef.current = false;

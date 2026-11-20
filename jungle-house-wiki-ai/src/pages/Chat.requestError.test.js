@@ -12,6 +12,7 @@ import * as escalation from '../utils/escalationResponse.js';
 import * as safe from '../utils/safeHtml.js';
 import { imageReferencesForQuestion } from '../utils/imageAttachmentContext.js';
 import { imageFailureDetails } from '../utils/imageServiceError.js';
+import { displayStoredText } from '../utils/storedChatText.js';
 import { translations } from '../i18n/translations.js';
 
 const FAKE_PATH = '/app/backend/src/app.py';
@@ -64,7 +65,7 @@ test('a failed chat request shows a friendly message in en, zh and ms, never the
         .replace(/\{(\w+)\}/g, (match, name) => (name in values ? values[name] : match)) }),
       useStaffChat: () => null, API_BASE_URL: '/api',
       api: { post: async () => { throw nextFailure(); } },
-      ...issue, ...escalation, ...safe, imageReferencesForQuestion, imageFailureDetails,
+      ...issue, ...escalation, ...safe, imageReferencesForQuestion, imageFailureDetails, displayStoredText,
     };
     const source = (await fs.readFile(new URL('./Chat.jsx', import.meta.url), 'utf8'))
       .replace(/^import .*;\r?\n/gm, '').replace('export default function Chat()', 'function Chat()');

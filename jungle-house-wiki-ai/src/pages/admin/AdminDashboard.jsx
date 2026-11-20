@@ -213,7 +213,7 @@ export default function AdminDashboard() {
   ).length;
 
   const confidence = parsePercent(ai.accuracy);
-  const managerName = user?.name || user?.full_name || 'Manager';
+  const managerName = user?.name || user?.full_name || t('role.manager');
   const managerRoleRaw = String(user?.role || 'Manager').replace(/[_-]/g, ' ');
   const managerRole = tOr(`role.${managerRoleRaw.toLowerCase().replace(/\s/g, '')}`, managerRoleRaw);
   const attentionCount = pendingUsers + pendingEscalations;

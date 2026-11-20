@@ -7,11 +7,11 @@ import { useLanguage } from '../i18n/LanguageContext';
 import { translateNotificationTitle, translateNotificationDetail } from '../i18n/notificationText';
 import '../styles/Notifications.css';
 
-function formatNotificationDate(value) {
+function formatNotificationDate(value, dateLocale) {
   if (!value) return null;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
-  return { label: date.toLocaleString(), iso: date.toISOString() };
+  return { label: date.toLocaleString(dateLocale), iso: date.toISOString() };
 }
 
 function getNotificationIcon(type, title = '') {
@@ -32,7 +32,8 @@ function getNotificationIcon(type, title = '') {
 
 export default function Notifications() {
   const { user } = useAuth();
-  const { t, tOr } = useLanguage();
+  const { t, tOr, language, locale } = useLanguage();
+  const dateLocale = language === 'en' ? undefined : locale;
   const userId = user?.id ?? user?.user_id ?? null;
   const role = String(user?.role || user?.role_name || '').toLowerCase().replace(/[\s_-]/g, '');
   const canReviewRegistrations = ['manager', 'admin', 'teamlead'].includes(role);
@@ -282,12 +283,12 @@ export default function Notifications() {
                       </span>
                     </div>
 
-                    {formatNotificationDate(item.created_at) && (
+                    {formatNotificationDate(item.created_at, dateLocale) && (
                       <time
                         className="notification-time"
-                        dateTime={formatNotificationDate(item.created_at).iso}
+                        dateTime={formatNotificationDate(item.created_at, dateLocale).iso}
                       >
-                        {formatNotificationDate(item.created_at).label}
+                        {formatNotificationDate(item.created_at, dateLocale).label}
                       </time>
                     )}
                   </div>

@@ -224,7 +224,7 @@ export default function UserManagement() {
     setApprovalDialog({
       open: true,
       userId: item.user_id,
-      fullName: item.full_name || 'User',
+      fullName: item.full_name || t('nav.user'),
       email: item.email || '',
       role: normalizeRole(item.role_name),
     });

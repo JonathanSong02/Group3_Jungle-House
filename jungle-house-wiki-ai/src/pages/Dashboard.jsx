@@ -86,7 +86,7 @@ const QUICK_ACTIONS = [
   },
 ];
 
-function formatDateTime(value) {
+function formatDateTime(value, dateLocale) {
   if (!value) return '';
 
   const date = new Date(value);
@@ -95,13 +95,13 @@ function formatDateTime(value) {
     return String(value);
   }
 
-  return date.toLocaleString();
+  return date.toLocaleString(dateLocale);
 }
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { t, tOr } = useLanguage();
+  const { t, tOr, language, locale } = useLanguage();
   const role = String(user?.role || '').toLowerCase().replace(/[\s_-]/g, '');
   const viewerId = user?.id ?? user?.user_id ?? null;
   const canSeeManagementMetrics = ['manager', 'admin', 'teamlead'].includes(role);
@@ -453,7 +453,7 @@ export default function Dashboard() {
 
                         {item.created_at ? (
                           <time dateTime={item.created_at}>
-                            {formatDateTime(item.created_at)}
+                            {formatDateTime(item.created_at, language === 'en' ? undefined : locale)}
                           </time>
                         ) : null}
                       </div>

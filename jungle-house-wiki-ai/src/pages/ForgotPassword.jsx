@@ -1,9 +1,13 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../services/api';
+import { useLanguage } from '../i18n/LanguageContext';
+import LanguageSelector from '../i18n/LanguageSelector';
+import { translateServerMessage } from '../i18n/serverMessages';
 import '../styles/AuthSecurity.css';
 
 export default function ForgotPassword() {
+  const { t } = useLanguage();
   const [email, setEmail] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -19,24 +23,16 @@ export default function ForgotPassword() {
       const response = await api.post('/auth/forgot-password', {
         email: email.trim().toLowerCase(),
       });
-      setMessage(
-        response.data?.message ||
-          'If this email belongs to an eligible account, a password reset link will be sent shortly.'
-      );
+      setMessage(translateServerMessage(t, response.data?.message) || t('auth.forgot.generic'));
     } catch (requestError) {
       const data = requestError.response?.data || {};
 
       if (data.code === 'PASSWORD_RECOVERY_UNAVAILABLE') {
-        setError(
-          data.message ||
-            'Password recovery email is not configured yet. Please contact your Manager.'
-        );
+        setError(translateServerMessage(t, data.message) || t('auth.forgot.notConfigured'));
       } else {
         // Keep the response generic so the page does not reveal account existence.
         console.error('FORGOT PASSWORD: Request failed.');
-        setMessage(
-          'If this email belongs to an eligible account, a password reset link will be sent shortly.'
-        );
+        setMessage(t('auth.forgot.generic'));
       }
     } finally {
       setLoading(false);
@@ -46,16 +42,16 @@ export default function ForgotPassword() {
   return (
     <div className="login-page">
       <div className="login-card card-like auth-card">
+        <LanguageSelector className="jh-lang-auth" placement="down" />
         <p className="eyebrow">Jungle House</p>
-        <h1>Forgot Password</h1>
+        <h1>{t('auth.forgot.title')}</h1>
         <p className="muted">
-          Enter your registered email. If the account is eligible, the system
-          will email you a secure password-reset link.
+          {t('auth.forgot.intro')}
         </p>
 
         <form onSubmit={handleSubmit} className="form-stack">
           <label>
-            Email
+            {t('auth.email')}
             <input
               type="email"
               value={email}
@@ -64,7 +60,7 @@ export default function ForgotPassword() {
                 setError('');
                 setMessage('');
               }}
-              placeholder="Enter your registered email"
+              placeholder={t('auth.forgot.placeholder')}
               autoComplete="email"
               required
             />
@@ -74,11 +70,11 @@ export default function ForgotPassword() {
           {error ? <p className="error-text">{error}</p> : null}
 
           <button className="primary-btn" type="submit" disabled={loading}>
-            {loading ? 'Sending...' : 'Send Reset Link'}
+            {loading ? t('auth.forgot.sending') : t('auth.forgot.send')}
           </button>
 
           <div className="auth-footer-row">
-            <Link to="/login" className="text-link">Back to Sign In</Link>
+            <Link to="/login" className="text-link">{t('auth.backToSignIn')}</Link>
           </div>
         </form>
       </div>

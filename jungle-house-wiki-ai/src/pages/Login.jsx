@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
+import LanguageSelector from '../i18n/LanguageSelector';
+import { translateServerMessage } from '../i18n/serverMessages';
 import { formatCooldown, isLockedFor } from '../utils/loginCooldown';
 import '../styles/AuthSecurity.css';
 
@@ -119,26 +121,17 @@ export default function Login() {
         // Same text for a wrong password and for an email that is not registered.
         setError(t('login.error.invalid'));
       } else if (code === 'ACCOUNT_PENDING_APPROVAL' || data.account_status === 'pending') {
-        setInfo(
-          data.message ||
-            'Your registration is awaiting Manager / Team Leader approval. Please allow up to 24 hours.'
-        );
+        setInfo(translateServerMessage(t, data.message) || t('auth.login.pending'));
       } else if (code === 'ACCOUNT_DECLINED' || data.account_status === 'declined') {
-        setError(
-          data.message ||
-            'Your registration was declined. Please contact your Manager or Team Leader.'
-        );
+        setError(translateServerMessage(t, data.message) || t('auth.login.declined'));
       } else if (code === 'ACCOUNT_INACTIVE' || data.account_status === 'inactive') {
-        setError(
-          data.message ||
-            'This account is inactive. Please contact a Manager or Team Leader.'
-        );
+        setError(translateServerMessage(t, data.message) || t('auth.login.inactive'));
       } else if (authError?.networkError) {
-        setError('Unable to reach the authentication server. Please try again.');
+        setError(t('auth.unreachable'));
       } else {
         // Includes invalid credentials, expired/invalid sessions and CSRF errors.
         // AuthContext supplies the backend message when one is available.
-        setError(authError?.message || 'Unable to sign in. Please try again.');
+        setError(translateServerMessage(t, authError?.message) || t('auth.login.failed'));
       }
     } finally {
       setLoading(false);
@@ -148,21 +141,22 @@ export default function Login() {
   return (
     <div className="login-page">
       <div className="login-card card-like auth-card">
+        <LanguageSelector className="jh-lang-auth" placement="down" />
         <p className="eyebrow">Jungle House</p>
-        <h1>Welcome Back</h1>
+        <h1>{t('auth.login.title')}</h1>
         <p className="muted">
-          Sign in with your registered account to access the training assistant.
+          {t('auth.login.subtitle')}
         </p>
 
         <form onSubmit={handleCredentialsSubmit} className="form-stack">
           <label>
-            Email
+            {t('auth.email')}
             <input
               name="email"
               type="email"
               value={form.email}
               onChange={handleChange}
-              placeholder="Enter your email"
+              placeholder={t('auth.login.emailPlaceholder')}
               autoComplete="username"
               required
             />
@@ -170,13 +164,13 @@ export default function Login() {
 
           <label>
             <div className="row-between">
-              <span>Password</span>
+              <span>{t('auth.password')}</span>
               <button
                 type="button"
                 onClick={() => setShowPassword((previous) => !previous)}
                 className="auth-inline-action"
               >
-                {showPassword ? 'Hide' : 'Show'}
+                {showPassword ? t('auth.hide') : t('auth.show')}
               </button>
             </div>
             <input
@@ -184,7 +178,7 @@ export default function Login() {
               type={showPassword ? 'text' : 'password'}
               value={form.password}
               onChange={handleChange}
-              placeholder="Enter your password"
+              placeholder={t('auth.login.passwordPlaceholder')}
               autoComplete="current-password"
               required
             />
@@ -224,15 +218,15 @@ export default function Login() {
             disabled={loading || loginLocked}
           >
             {loading
-              ? 'Signing in...'
+              ? t('auth.login.signingIn')
               : loginLocked
                 ? t('login.lock.button', { time: cooldownText })
-                : 'Login'}
+                : t('auth.login.submit')}
           </button>
 
           <div className="row-between wrap-gap top-gap">
-            <Link to="/register" className="text-link">Register new account</Link>
-            <Link to="/forgot-password" className="text-link">Forgot password?</Link>
+            <Link to="/register" className="text-link">{t('auth.login.register')}</Link>
+            <Link to="/forgot-password" className="text-link">{t('auth.login.forgot')}</Link>
           </div>
         </form>
       </div>

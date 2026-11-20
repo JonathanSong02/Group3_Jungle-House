@@ -93,6 +93,11 @@ body.sidebar-is-collapsed .jh-lang-sidebar .jh-lang-code { display: none; }
 body.sidebar-is-collapsed .jh-lang-sidebar .jh-lang-trigger { justify-content: center; padding: 0; }
 body.sidebar-is-collapsed .jh-lang-sidebar .jh-lang-menu { right: auto; min-width: 190px; }
 
+/* Sign-in, registration and password pages: a small switch in the card's top-right
+   corner. Floated so the heading flows beside it instead of being covered by it. */
+.jh-lang-auth { float: right; margin: -12px -12px 6px 12px; }
+.jh-lang-auth .jh-lang-trigger { padding: 0 10px; font-size: 12px; }
+
 /* Staff top bar: icon + short code, tight enough for 320px next to the hamburger. */
 .staff-topbar .jh-lang-trigger { padding: 0 10px; font-size: 12px; }
 @media (max-width: 420px) {

@@ -1,5 +1,6 @@
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../i18n/LanguageContext';
 
 function normaliseRole(role) {
   // Account roles come from Flask; normalise naming, not permissions.
@@ -8,13 +9,14 @@ function normaliseRole(role) {
 
 export default function RoleRoute({ allowedRoles, children }) {
   const { user, isLoading, loading } = useAuth();
+  const { t } = useLanguage();
   const location = useLocation();
 
   // Refreshing a protected URL must not redirect before /auth/me finishes.
   if (isLoading ?? loading) {
     return (
       <div role="status" aria-live="polite">
-        Checking your session…
+        {t('layout.checkingSession')}
       </div>
     );
   }
@@ -40,7 +42,7 @@ export default function RoleRoute({ allowedRoles, children }) {
     : '/profile';
 
   if (location.pathname === destination) {
-    return <div role="alert">You do not have permission to view this page.</div>;
+    return <div role="alert">{t('layout.noPermission')}</div>;
   }
 
   return <Navigate to={destination} replace />;

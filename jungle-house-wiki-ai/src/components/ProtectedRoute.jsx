@@ -1,8 +1,10 @@
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../i18n/LanguageContext';
 
 export default function ProtectedRoute({ children }) {
   const { user, isLoading, loading } = useAuth();
+  const { t } = useLanguage();
   const location = useLocation();
 
   // Wait for Flask to verify the session before deciding whether to redirect.
@@ -10,7 +12,7 @@ export default function ProtectedRoute({ children }) {
   if (isLoading ?? loading) {
     return (
       <div role="status" aria-live="polite">
-        Checking your session…
+        {t('layout.checkingSession')}
       </div>
     );
   }

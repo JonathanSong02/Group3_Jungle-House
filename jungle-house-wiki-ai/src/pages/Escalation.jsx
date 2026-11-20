@@ -8,6 +8,7 @@ import { QUESTION_LABELS } from '../utils/standardQuestionLabels';
 import api, { API_BASE_URL } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
+import { translateServerMessage } from '../i18n/serverMessages';
 
 // Production serves private files through the same-origin Vercel /static proxy.
 // Local development serves them from the local Flask host selected by api.js.
@@ -107,7 +108,8 @@ function isAllowedEscalationUpload(file) {
   );
 }
 
-function AttachmentPreview({ url, type, label = 'Uploaded attachment' }) {
+function AttachmentPreview({ url, type, label }) {
+  const { t } = useLanguage();
   const finalUrl = buildImageUrl(url);
 
   if (!finalUrl) return null;
@@ -116,7 +118,7 @@ function AttachmentPreview({ url, type, label = 'Uploaded attachment' }) {
     return (
       <img
         src={finalUrl}
-        alt={label}
+        alt={label || t('esc.attachment.uploaded')}
         style={{
           width: '100%',
           maxWidth: '260px',
@@ -143,7 +145,7 @@ function AttachmentPreview({ url, type, label = 'Uploaded attachment' }) {
       className="secondary-btn"
       style={{ display: 'inline-flex', textDecoration: 'none' }}
     >
-      Open uploaded file
+      {t('esc.attachment.open')}
     </a>
   );
 }
@@ -184,8 +186,8 @@ export default function Escalation() {
     null;
 
   const getBackendErrorMessage = (error, fallbackMessage) => {
-    const backendMessage = error?.response?.data?.message;
-    const backendError = error?.response?.data?.error;
+    const backendMessage = translateServerMessage(t, error?.response?.data?.message);
+    const backendError = translateServerMessage(t, error?.response?.data?.error);
 
     if (backendMessage && backendError) {
       return `${backendMessage} ${backendError}`;
@@ -278,7 +280,7 @@ export default function Escalation() {
     }
 
     if (!manualAnswer || !manualAnswer.trim()) {
-      setMessage('Please write a manual answer before submitting.');
+      setMessage(t('esc.msg.answerRequired'));
       return;
     }
 
@@ -297,7 +299,7 @@ export default function Escalation() {
 
       await api.put(`/escalations/${id}/answer`, formData);
 
-      setMessage('Manual answer submitted successfully and sent for admin review.');
+      setMessage(t('esc.msg.answerSubmitted'));
       setActiveTab('resolved');
       setDeleteMode(false);
       setSelectedIds([]);
@@ -312,7 +314,7 @@ export default function Escalation() {
         } catch (error) {
           console.error('Submit manual answer error:', error);
 
-          setMessage(getBackendErrorMessage(error, 'Failed to submit manual answer.'));
+          setMessage(getBackendErrorMessage(error, t('esc.msg.answerFailed')));
         }
   };
 
@@ -361,7 +363,7 @@ export default function Escalation() {
 
   const openBulkDeleteModal = () => {
     if (selectedVisibleIds.length === 0) {
-      setMessage('Please select at least one escalation to delete.');
+      setMessage(t('esc.msg.selectToDelete'));
       return;
     }
 
@@ -393,8 +395,8 @@ export default function Escalation() {
         );
 
         setMessage(
-          response.data?.message ||
-          `${idsToDelete.length} escalation(s) permanently deleted successfully.`
+          translateServerMessage(t, response.data?.message) ||
+          t('esc.msg.bulkDeleted', { n: idsToDelete.length })
         );
       } else {
         const response = await api.post('/escalations/bulk-delete', {
@@ -407,8 +409,8 @@ export default function Escalation() {
         );
 
         setMessage(
-          response.data?.message ||
-          `${idsToDelete.length} escalation(s) moved to Trash Bin successfully.`
+          translateServerMessage(t, response.data?.message) ||
+          t('esc.msg.bulkMoved', { n: idsToDelete.length })
         );
       }
 
@@ -431,9 +433,8 @@ export default function Escalation() {
       console.error('Bulk delete escalation error:', error);
 
       setMessage(
-        error.response?.data?.message ||
-        error.response?.data?.error ||
-        'Failed to delete selected escalations.'
+        translateServerMessage(t, error.response?.data?.message || error.response?.data?.error) ||
+        t('esc.msg.bulkFailed')
       );
     } finally {
       setBulkDeleting(false);
@@ -446,15 +447,14 @@ export default function Escalation() {
 
       await api.put(`/escalations/${id}/restore`);
 
-      setMessage('Escalation restored successfully.');
+      setMessage(t('esc.msg.restored'));
       fetchEscalations();
     } catch (error) {
       console.error('Restore escalation error:', error);
 
       setMessage(
-        error.response?.data?.message ||
-        error.response?.data?.error ||
-        'Failed to restore escalation.'
+        translateServerMessage(t, error.response?.data?.message || error.response?.data?.error) ||
+        t('esc.msg.restoreFailed')
       );
     }
   };
@@ -465,15 +465,14 @@ export default function Escalation() {
 
       await api.delete(`/escalations/${id}/permanent-delete`);
 
-      setMessage('Escalation permanently deleted successfully.');
+      setMessage(t('esc.msg.deletedForever'));
       fetchEscalations();
     } catch (error) {
       console.error('Permanent delete escalation error:', error);
 
       setMessage(
-        error.response?.data?.message ||
-        error.response?.data?.error ||
-        'Failed to permanently delete escalation.'
+        translateServerMessage(t, error.response?.data?.message || error.response?.data?.error) ||
+        t('esc.msg.deleteForeverFailed')
       );
     }
   };
@@ -493,12 +492,12 @@ export default function Escalation() {
         standard_question_confirmed: true,
       });
 
-      setMessage('Escalation answer approved successfully.');
+      setMessage(t('esc.msg.approved'));
       fetchEscalations();
     } catch (error) {
       console.error('Approve escalation answer error:', error);
 
-      setMessage(getBackendErrorMessage(error, 'Failed to approve escalation answer.'));
+      setMessage(getBackendErrorMessage(error, t('esc.msg.approveFailed')));
     } finally {
       setReviewActionLoading((prev) => {
         const updated = { ...prev };
@@ -517,13 +516,13 @@ export default function Escalation() {
         reviewed_by: currentUserId,
       });
 
-      setMessage('Escalation answer rejected. The question has been moved back to pending.');
+      setMessage(t('esc.msg.rejected'));
       setActiveTab('pending');
       fetchEscalations();
     } catch (error) {
       console.error('Reject escalation answer error:', error);
 
-      setMessage(getBackendErrorMessage(error, 'Failed to reject escalation answer.'));
+      setMessage(getBackendErrorMessage(error, t('esc.msg.rejectFailed')));
     } finally {
       setReviewActionLoading((prev) => {
         const updated = { ...prev };
@@ -607,7 +606,7 @@ export default function Escalation() {
 
       {message && (
         <section className="card-like top-gap-sm">
-          <p className="muted">{message}</p>
+          <p className="muted">{translateServerMessage(t, message)}</p>
         </section>
       )}
 
@@ -615,7 +614,7 @@ export default function Escalation() {
         <section className="card-like top-gap-sm escalation-delete-toolbar">
           <div className="row-between wrap-gap">
             <div>
-              <p className="eyebrow">Delete Mode</p>
+              <p className="eyebrow">{t('esc.deleteMode')}</p>
 
               <label className="checkbox-row">
                 <input
@@ -624,7 +623,7 @@ export default function Escalation() {
                   onChange={toggleSelectAll}
                 />
                 <span>
-                  Select all {activeTab} escalations ({filteredItems.length})
+                  {t(`esc.selectAll.${activeTab === 'pending' || activeTab === 'resolved' ? activeTab : 'trash'}`, { n: filteredItems.length })}
                 </span>
               </label>
             </div>
@@ -636,7 +635,7 @@ export default function Escalation() {
                 onClick={() => setSelectedIds([])}
                 disabled={selectedVisibleIds.length === 0}
               >
-                Clear Selected
+                {t('esc.clearSelected')}
               </button>
 
               <button
@@ -645,7 +644,7 @@ export default function Escalation() {
                 onClick={openBulkDeleteModal}
                 disabled={selectedVisibleIds.length === 0}
               >
-                {activeTab === 'trash' ? 'Delete Forever Selected' : 'Delete Selected'} ({selectedVisibleIds.length})
+                {t(activeTab === 'trash' ? 'esc.deleteForeverSelected' : 'esc.deleteSelected', { n: selectedVisibleIds.length })}
               </button>
             </div>
           </div>
@@ -691,7 +690,7 @@ export default function Escalation() {
 
                   <div>
                     <p className="muted small">
-                      Asked by {item.asked_by_name || 'Unknown Staff'}
+                      {t('esc.askedBy', { name: item.asked_by_name || t('esc.unknownStaff') })}
                     </p>
                     <h3>{standardQuestions[item.escalation_id] || item.standard_question || item.question}</h3>
                     <p className="muted small" style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{t('esc.evidence.original')}: {item.question}</p>
@@ -708,7 +707,7 @@ export default function Escalation() {
                         className="secondary-btn"
                         onClick={() => restoreEscalation(item.escalation_id)}
                       >
-                        Restore
+                        {t('esc.restore')}
                       </button>
 
                       <button
@@ -755,16 +754,16 @@ export default function Escalation() {
               <EscalationContext context={item.conversation_context} availability={item.context_availability} loadStatus={item.context_load_status} showReason={false} />
               {item.image_url ? (
                 <div className="card-like top-gap-sm">
-                  <p className="eyebrow">Uploaded Attachment</p>
+                  <p className="eyebrow">{t('esc.attachment.heading')}</p>
 
                   <AttachmentPreview
                     url={item.image_url}
                     type={item.image_type}
-                    label="Escalated upload"
+                    label={t('esc.attachment.escalatedAlt')}
                   />
 
                   <p className="muted small" style={{ marginTop: '0.5rem' }}>
-                    {item.image_type || 'Uploaded attachment'}
+                    {item.image_type || t('esc.attachment.uploaded')}
                   </p>
                 </div>
               ) : null}
@@ -785,12 +784,12 @@ export default function Escalation() {
                     onChange={(event) =>
                       updateAnswer(item.escalation_id, event.target.value)
                     }
-                    placeholder="Write a manual answer for this escalated question"
+                    placeholder={t('esc.answerPlaceholder')}
                   />
 
                   <div className="escalation-answer-image-upload">
                     <label className="escalation-upload-btn">
-                      <span>📷 Take photo</span>
+                      <span>{t('esc.takePhoto')}</span>
 
                       <input
                         type="file"
@@ -801,7 +800,7 @@ export default function Escalation() {
                           const file = event.target.files?.[0];
 
                           if (file && !isAllowedEscalationUpload(file)) {
-                            setMessage('Please upload a supported file only. Supported: image, PDF, DOC, DOCX.');
+                            setMessage(t('upload.unsupportedFile'));
                             event.target.value = '';
                             return;
                           }
@@ -817,7 +816,7 @@ export default function Escalation() {
                     </label>
 
                     <label className="escalation-upload-btn">
-                      <span>📎 Upload file</span>
+                      <span>{t('esc.uploadFile')}</span>
 
                       <input
                         type="file"
@@ -827,7 +826,7 @@ export default function Escalation() {
                           const file = event.target.files?.[0];
 
                           if (file && !isAllowedEscalationUpload(file)) {
-                            setMessage('Please upload a supported file only. Supported: image, PDF, DOC, DOCX.');
+                            setMessage(t('upload.unsupportedFile'));
                             event.target.value = '';
                             return;
                           }
@@ -845,7 +844,7 @@ export default function Escalation() {
                     {answerImages[item.escalation_id] ? (
                       <div className="answer-image-preview-box">
                         <p className="muted small">
-                          Selected file: {answerImages[item.escalation_id].name}
+                          {t('esc.selectedFile', { name: answerImages[item.escalation_id].name })}
                         </p>
 
                         {isImageAttachment(
@@ -854,12 +853,12 @@ export default function Escalation() {
                         ) ? (
                           <img
                             src={URL.createObjectURL(answerImages[item.escalation_id])}
-                            alt="Answer preview"
+                            alt={t('esc.answerPreview')}
                             className="answer-image-preview"
                           />
                         ) : (
                           <p className="muted small">
-                            File will be attached after you submit the manual answer.
+                            {t('esc.fileAfterSubmit')}
                           </p>
                         )}
                       </div>
@@ -868,7 +867,7 @@ export default function Escalation() {
 
                   <div className="row-between wrap-gap top-gap">
                     <p className="muted small">
-                      After submitting, this question will move to the resolved tab and wait for admin approval.
+                      {t('esc.afterSubmitNote')}
                     </p>
 
                     <button
@@ -884,22 +883,22 @@ export default function Escalation() {
                 <>
                   {item.image_url ? (
                     <div className="card-like top-gap-sm">
-                      <p className="eyebrow">Related Attachment</p>
+                      <p className="eyebrow">{t('esc.attachment.related')}</p>
 
                       <AttachmentPreview
                         url={item.image_url}
                         type={item.image_type}
-                        label="Resolved escalation upload"
+                        label={t('esc.attachment.resolvedAlt')}
                       />
 
                       <p className="muted small" style={{ marginTop: '0.5rem' }}>
-                        {item.image_type || 'Uploaded attachment'}
+                        {item.image_type || t('esc.attachment.uploaded')}
                       </p>
                     </div>
                   ) : null}
 
                   <p className="muted small top-gap">
-                    Resolved at: {item.resolved_at || 'Not recorded'}
+                    {t('esc.resolvedAt', { time: item.resolved_at || t('esc.notRecorded') })}
                   </p>
                 </>
               )}
@@ -944,18 +943,18 @@ export default function Escalation() {
             <div className="delete-modal-content">
               <h2>
                 {activeTab === 'trash'
-                  ? 'Delete selected escalations forever?'
-                  : 'Move selected escalations to Trash Bin?'}
+                  ? t('esc.bulk.titleTrash')
+                  : t('esc.bulk.titleMove')}
               </h2>
 
               <p>
                 {activeTab === 'trash'
-                  ? `This will permanently delete ${selectedVisibleIds.length} selected escalation(s). You cannot restore them later.`
-                  : `This will move ${selectedVisibleIds.length} selected escalation(s) to the Trash Bin. You can restore them later if needed.`}
+                  ? t('esc.bulk.textTrash', { n: selectedVisibleIds.length })
+                  : t('esc.bulk.textMove', { n: selectedVisibleIds.length })}
               </p>
 
               <div className="delete-modal-question">
-                <strong>Selected:</strong> {selectedVisibleIds.length} escalation(s)
+                <strong>{t('esc.bulk.selectedLabel')}</strong> {t('esc.bulk.selectedCount', { n: selectedVisibleIds.length })}
               </div>
 
               <div className="delete-modal-actions">
