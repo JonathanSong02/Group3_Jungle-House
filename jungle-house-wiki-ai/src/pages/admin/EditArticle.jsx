@@ -4,19 +4,21 @@ import { useNavigate, useParams } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
 import api from '../../services/api';
 import { cleanStoredEditorHtml, removePageLevelTags } from '../../utils/safeHtml';
+import { useLanguage } from '../../i18n/LanguageContext';
+import { buildInlineFileHtml, createArticleImageUploader } from '../../utils/articleImageUpload';
 
 // 'Notion' = synced from Notion but not categorized yet; listed so such an
 // article shows its real category here instead of appearing as 'SOP'.
 const categories = ['SOP', 'PRODUCT', 'SALES', 'Training', 'Notice', 'Notion'];
 const acceptedFileTypes =
   'image/png,image/jpeg,image/jpg,image/gif,image/webp,image/bmp,image/svg+xml,.pdf,.doc,.docx';
-const API_BASE_URL = 'https://group3jungle-house-production.up.railway.app';
 
 export default function EditArticle() {
   const { id } = useParams();
   const navigate = useNavigate();
   const editorRef = useRef(null);
   const fileInputRef = useRef(null);
+  const { t, language } = useLanguage();
 
   const [form, setForm] = useState({
     title: '',
@@ -62,6 +64,19 @@ export default function EditArticle() {
     };
   }, []);
 
+  // Paste, drag-and-drop and the toolbar's Image -> Upload all use ONE upload
+  // path: the shared API client (relative /api, session cookie and CSRF token
+  // like every other request). See utils/articleImageUpload.js. Its context
+  // (language, editor, where to insert) is refreshed after every render.
+  const uploadContextRef = useRef(null);
+  const imageUploader = useMemo(
+    () => createArticleImageUploader({
+      post: (path, data) => api.post(path, data),
+      getContext: () => uploadContextRef.current,
+    }),
+    []
+  );
+
   const editorConfig = useMemo(
     () => ({
       readonly: false,
@@ -79,9 +94,8 @@ export default function EditArticle() {
       cleanHTML: { sanitizer: removePageLevelTags },
       askBeforePasteFromWord: false,
       defaultActionOnPaste: 'insert_as_html',
-      // Without this, pasting a copied image (e.g. a screenshot) from the
-      // clipboard is silently ignored -- Jodit only routes dropped/pasted
-      // image files through the configured uploader below when this is on.
+      // Keeps the editor a drop target. Dropped and pasted image files are
+      // uploaded by the page's capture handlers (see the editor wrapper).
       enableDragAndDropFileToEditor: true,
       buttons: [
         'source',
@@ -111,25 +125,11 @@ export default function EditArticle() {
         'redo',
         'eraser',
       ],
-      uploader: {
-        url: `${API_BASE_URL}/api/articles/upload-image`,
-        insertImageAsBase64URI: false,
-        filesVariableName: () => 'attachments',
-        withCredentials: false,
-        // Backend returns { files, path, baseurl, error, msg } instead of Jodit's
-        // default { success, data: { files, baseurl, isImages, messages } } shape,
-        // so isSuccess/getMessage/process must be told how to read it.
-        isSuccess: (resp) => !resp.error,
-        getMessage: (resp) => resp.msg || 'Upload failed.',
-        process: (resp) => ({
-          files: resp.files || [],
-          path: resp.path || '',
-          baseurl: resp.baseurl || '',
-          isImages: (resp.files || []).map(() => true),
-        }),
-      },
+      // Toolbar Image -> Upload: Jodit shows its file picker (camera/photos
+      // on phones); the upload itself goes through the shared client.
+      uploader: imageUploader.joditUploaderOptions(),
     }),
-    []
+    [imageUploader]
   );
 
   useEffect(() => {
@@ -243,8 +243,8 @@ export default function EditArticle() {
     if (fileUrl.startsWith('http://') || fileUrl.startsWith('https://')) {
       return fileUrl;
     }
-    // Deliberately left relative, not prefixed with the absolute Railway
-    // API_BASE_URL. The backend now requires a logged-in session for
+    // Deliberately left relative, never an absolute backend URL. The
+    // backend now requires a logged-in session for
     // /static/ files, and that session cookie is SameSite=Lax -- it's only
     // sent for same-origin requests. A relative path resolves against this
     // page's own Vercel origin, which Vercel's rewrite forwards to Railway
@@ -252,26 +252,6 @@ export default function EditArticle() {
     // different origin, so the cookie never attaches and the image request
     // comes back 401 instead of the file.
     return fileUrl.startsWith('/') ? fileUrl : `/${fileUrl}`;
-  };
-
-  const escapeHtml = (value = '') =>
-    String(value)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
-
-  const buildInlineFileHtml = (url, name, isImage) => {
-    if (isImage) {
-      return `<p><img src="${url}" alt="${escapeHtml(name)}" /></p>`;
-    }
-
-    // href is deliberately "#", not the real file URL: some browser
-    // extensions (e.g. Adobe Acrobat) auto-intercept navigation to links
-    // that look like PDF URLs before our own click handler gets a chance
-    // to run. The real URL lives in data-file-url and is only ever read
-    // by our own JS, so there's nothing for an extension to hijack.
-    return `<p><a href="#" class="article-inline-file" data-file-url="${url}" data-file-name="${escapeHtml(name)}">📄 ${escapeHtml(name)} <span class="article-inline-file-caret">▾</span></a></p>`;
   };
 
   // Places the given HTML at the editor's current cursor position so staff
@@ -346,57 +326,26 @@ export default function EditArticle() {
     removeCurrentAttachment(index);
   };
 
-  // Jodit's own built-in clipboard-image handling is unreliable in practice
-  // (depends on internal event ordering that can silently do nothing for
-  // some screenshot/clipboard sources) -- intercepting the paste ourselves
-  // at the capture phase, before Jodit's own listeners run, guarantees a
-  // pasted image is always uploaded and inserted the same way "Insert into
-  // Content" already does. Non-image pastes (plain text, copied HTML) are
-  // left completely alone and fall through to Jodit's normal handling.
-  const handleEditorPasteCapture = async (event) => {
-    const items = event.clipboardData?.items;
-    if (!items) return;
-
-    const imageItem = Array.from(items).find(
-      (item) => item.kind === 'file' && item.type.startsWith('image/')
-    );
-    if (!imageItem) return;
-
-    event.preventDefault();
-    event.stopPropagation();
-
-    const file = imageItem.getAsFile();
-    if (!file) return;
-
-    try {
-      setMessage('');
-
-      const uploadData = new FormData();
-      uploadData.append('attachments', file, file.name || `pasted-image-${Date.now()}.png`);
-
-      // Deliberately no explicit Content-Type header -- axios/the browser
-      // must generate it themselves for FormData, since it has to include
-      // a unique multipart boundary string. Setting it manually here
-      // (as this used to) silently corrupts every uploaded file, because
-      // the server can no longer tell where one field/file ends and the
-      // next begins.
-      const response = await api.post('/articles/upload-image', uploadData);
-
-      const fileUrl = response.data?.files?.[0];
-
-      if (!fileUrl || response.data?.error) {
-        throw new Error(response.data?.msg || 'Failed to upload pasted image.');
-      }
-
-      insertHtmlIntoContent(buildInlineFileHtml(fileUrl, file.name || 'pasted-image.png', true));
-      sessionUploadedUrlsRef.current.push(fileUrl);
-    } catch (error) {
-      console.error('Paste image upload error:', error);
-      setMessage(
-        error.response?.data?.msg || error.message || 'Failed to paste image.'
-      );
-    }
+  // Upload errors: the page's message box and the editor's own message.
+  const showUploadError = (text) => {
+    setMessage(text);
+    editorRef.current?.message?.error?.(text, 6000);
   };
+
+  // What the shared upload helper reads at the moment of an upload.
+  useEffect(() => {
+    uploadContextRef.current = {
+      t,
+      language,
+      get editor() {
+        return editorRef.current;
+      },
+      insertHtml: insertHtmlIntoContent,
+      onStart: () => setMessage(''),
+      onUploaded: (url) => sessionUploadedUrlsRef.current.push(url),
+      onError: showUploadError,
+    };
+  });
 
   const formatFileSize = (bytes) => {
     if (!bytes) {
@@ -676,7 +625,15 @@ export default function EditArticle() {
             <label className="full-width">
               Article Content *
 
-              <div className="article-rich-editor" onPasteCapture={handleEditorPasteCapture}>
+              <div
+                className="article-rich-editor"
+                // Captured here, before Jodit's own listeners, so a pasted or
+                // dropped image is uploaded exactly once through the shared
+                // helper. Text and HTML pastes/drags still go to Jodit.
+                onPasteCapture={imageUploader.handlePasteCapture}
+                onDragOverCapture={imageUploader.handleDragOverCapture}
+                onDropCapture={imageUploader.handleDropCapture}
+              >
                 <JoditEditor
                   ref={editorRef}
                   value={form.content}
