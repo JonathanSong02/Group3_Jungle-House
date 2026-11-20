@@ -4829,6 +4829,76 @@ def search_related_knowledge_base_articles(question, limit=3, min_score=CONFIDEN
     return scored_results[:limit]
 
 
+# Fixed, friendly AI Chat failure text. Staff never see an exception message: it can hold a file
+# path, SQL, a provider response or a secret. The server log gets only the error type and where it
+# happened (log_chat_failure). zh and ms use the same team-lead wording as the chat page.
+CHAT_FAILURE_MESSAGES = {
+    "unavailable": {
+        "en": "Sorry, I can't answer right now. Please try again in a moment.",
+        "zh": "抱歉，我现在无法回答。请稍后再试。",
+        "ms": "Maaf, saya tidak dapat menjawab sekarang. Sila cuba lagi sebentar lagi.",
+    },
+    "escalated": {
+        "en": "Sorry, something went wrong while answering. Your question has been sent to a team lead.",
+        "zh": "抱歉，回答时出现问题。你的问题已转交给 Team Lead。",
+        "ms": "Maaf, berlaku masalah semasa menjawab. Soalan anda telah dihantar kepada ketua pasukan.",
+    },
+    "ticket_not_saved": {
+        "en": "Sorry, your question could not be sent to a team lead. Please try again or contact a team lead directly.",
+        "zh": "抱歉，你的问题未能转交给 Team Lead。请重试，或直接联系 Team Lead。",
+        "ms": "Maaf, soalan anda tidak dapat dihantar kepada ketua pasukan. Sila cuba lagi atau hubungi ketua pasukan secara terus.",
+    },
+    "attachment_chat_required": {
+        "en": "A valid chat is required for image uploads.",
+        "zh": "请在有效的聊天中上传图片。",
+        "ms": "Sembang yang sah diperlukan untuk memuat naik imej.",
+    },
+    "attachment_unavailable": {
+        "en": "Attachment unavailable. Please attach the image again.",
+        "zh": "附件无法使用。请重新附加图片。",
+        "ms": "Lampiran tidak tersedia. Sila lampirkan imej sekali lagi.",
+    },
+}
+# The fixed AttachmentError texts in chat_attachment_service; any other text gets the generic one.
+ATTACHMENT_ERROR_KINDS = {"A valid chat is required for image uploads.": "attachment_chat_required"}
+
+
+def chat_failure_language(question="", language_hint=None):
+    """The chat's usual rule: reply in the language of the staff question. An image-only message has
+    no text, so use the language the chat page sent. Anything else falls back to English."""
+    if str(question or "").strip():
+        return detect_question_language(question)
+    hint = str(language_hint or "").strip().lower()
+    return hint if hint in ("en", "zh", "ms") else "en"
+
+
+def chat_failure_message(kind, question="", language_hint=None):
+    messages = CHAT_FAILURE_MESSAGES[kind]
+    return messages.get(chat_failure_language(question, language_hint), messages["en"])
+
+
+def attachment_error_message(error, question="", language_hint=None):
+    kind = ATTACHMENT_ERROR_KINDS.get(str(error), "attachment_unavailable")
+    return chat_failure_message(kind, question, language_hint)
+
+
+def log_chat_failure(where, error):
+    """One server log line for an AI Chat failure: the error type and the code line it came from
+    (the deepest line in this backend, plus the library file if it was raised there). Never the
+    error message or a stack trace, which can carry a file path, SQL, a provider response, a staff
+    question or a secret."""
+    frames = traceback.extract_tb(error.__traceback__) if error.__traceback__ else []
+    own = [frame for frame in frames if Path(frame.filename).resolve().parent == BASE_DIR]
+    location = ""
+    if own:
+        location = f" at {Path(own[-1].filename).name}:{own[-1].lineno} in {own[-1].name}"
+    if frames and (not own or frames[-1] is not own[-1]):
+        location += f" (raised in {Path(frames[-1].filename).name})"
+    status = getattr(getattr(error, "response", None), "status_code", None)
+    status_text = f" HTTP {status}" if isinstance(status, int) else ""
+    print(f"{where}: {type(error).__name__}{status_text}{location}", flush=True)
+
+
 def process_question(question, context=None, search_question=None):
     """
     `search_question` optionally overrides what drives KB/database/model
@@ -4897,13 +4967,15 @@ def process_question(question, context=None, search_question=None):
                 default_source="pytorch_model"
             )
         except Exception as error:
+            log_chat_failure("INTENT MODEL ERROR", error)
+            failure_text = chat_failure_message("unavailable", question)
             model_result = standardize_ai_response({
                 "type": "text",
                 "category": None,
                 "title": None,
                 "section": None,
-                "reply": f"Model prediction failed: {error}",
-                "answer": f"Model prediction failed: {error}",
+                "reply": failure_text,
+                "answer": failure_text,
                 "purpose": None,
                 "steps": [],
                 "notes": [],
@@ -4911,7 +4983,7 @@ def process_question(question, context=None, search_question=None):
                 "confidence": 0.0,
                 "source": "pytorch_model_error",
                 "fallback": True,
-                "fallback_message": "There was a problem while generating the answer.",
+                "fallback_message": failure_text,
                 "escalation_ready": True,
                 "escalation_required": True,
             })
@@ -6595,8 +6667,8 @@ def chat_test():
                 "remarks": remarks,
             })
         except Exception as error:
-            traceback.print_exc()
-            log_request(question, error=str(error))
+            log_chat_failure("CHAT TEST ERROR", error)
+            log_request(question, error=type(error).__name__)
             error_count += 1
             add_summary(category_summary, test_case.get("category"), "Error")
             add_summary(test_type_summary, test_case.get("test_type"), "Error")
@@ -10384,7 +10456,7 @@ def chat():
             except ai_provider_service.AIProviderNotConfiguredError:
                 ai_answer = None
             except Exception as error:
-                print("AI CHAT PROVIDER FALLBACK ERROR:", error)
+                log_chat_failure("AI CHAT PROVIDER FALLBACK ERROR", error)
                 ai_answer = None
 
             if ai_answer:
@@ -10493,7 +10565,7 @@ def chat():
             result["served_by"] = "escalation_queue"
 
             if escalation_id is None:
-                result["reply"] = "Escalation failed to save. Please check backend terminal for CREATE ESCALATION ERROR."
+                result["reply"] = chat_failure_message("ticket_not_saved", question, data.get("language"))
                 result["answer"] = result["reply"]
                 result["source"] = "escalation_save_failed"
 
@@ -10517,18 +10589,21 @@ def chat():
         return jsonify(result), 200
 
     except chat_attachment_service.AttachmentError as error:
-        return jsonify({"message": str(error), "answer": str(error), "source": "attachment_unavailable"}), 400
+        message = attachment_error_message(error, data.get("original_staff_question") or data.get("question", ""),
+                                           data.get("language"))
+        return jsonify({"message": message, "answer": message, "source": "attachment_unavailable"}), 400
     except Exception as error:
         if getattr(g, "image_request", False):
             return jsonify(image_failure_response(error, app.logger,
                 getattr(g, "image_pipeline_stage", "unknown"))), 503
-        traceback.print_exc()
+        log_chat_failure("AI CHAT ERROR", error)
 
         question = clean_question(data.get("original_staff_question") or data.get("question", ""))
 
         log_request(
             question,
-            error=str(error),
+            # Analytics keeps only the error type, never its message.
+            error=type(error).__name__,
             user_id=data.get("user_id") or data.get("userId")
         )
 
@@ -10545,7 +10620,7 @@ def chat():
         )
 
         return jsonify({
-            "reply": "System error. Escalated to team lead.",
+            "reply": chat_failure_message("escalated", question, data.get("language")),
             "confidence": 0,
             "fallback": True,
             "escalation": True,

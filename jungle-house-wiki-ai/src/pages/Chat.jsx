@@ -2166,16 +2166,19 @@ const removeSelectedImage = () => {
 
         const errorCode = error?.response?.data?.code;
         const ticketError = escalationErrorInfo(error, t);
+        // Never show the browser's raw request error (e.g. "Network Error" or
+        // "Request failed with status code 500"); the server's own message is
+        // fixed, friendly text. No response at all means the server was not reached.
+        const serverMessage = error?.response?.data?.message;
         const requestMessage = ticketError?.text || (
           error?.response?.status === 401 ||
           errorCode === 'SESSION_EXPIRED' ||
           errorCode === 'ACCOUNT_INACTIVE'
-            ? 'Your session has expired or your account is inactive. Please sign in again.'
+            ? t('chat.error.session')
             : errorCode === 'CSRF_INVALID'
-              ? 'Security verification failed. Refresh the page and try again.'
-              : error?.response?.data?.message ||
-                error?.message ||
-                'Failed to connect to backend. Please check whether Flask is running.');
+              ? t('chat.error.security')
+              : (typeof serverMessage === 'string' && serverMessage.trim()) ||
+                (error?.response ? t('chat.error.unavailable') : t('chat.error.connection')));
 
         const errorMessage = {
           ...ticketError,

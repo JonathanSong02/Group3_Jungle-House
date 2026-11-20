@@ -15,14 +15,15 @@ names = {"clean_question", "is_nonsense", "normalize_context", "get_chat_memory_
          "prepare_chat_context", "remember_chat_context", "get_last_answer_key", "get_chat_session_id",
          "get_ai_fail_key", "is_staff_not_satisfied", "validate_conversation_history",
          "needs_conversation_context", "resolve_conversation_search_query", "is_explicit_answer_rejection",
-         "make_clarification_token", "read_clarification_token", "get_escalation_issue_question"}
+         "make_clarification_token", "read_clarification_token", "get_escalation_issue_question",
+         "chat_failure_language", "chat_failure_message", "attachment_error_message"}
 env = {"re": re, "json": json, "CJK_CHAR_RE": re.compile(r"[\u3400-\u9fff]"),
        "datetime": datetime, "timezone": timezone, "request": types.SimpleNamespace(remote_addr="local", is_json=True),
        "AI_CHAT_MEMORY": {}, "base64": base64, "hashlib": hashlib, "hmac": hmac, "time": time,
        "app": types.SimpleNamespace(secret_key="isolated-test-only")}
 nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
 for n in tree.body:
-    if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id in {"_MALAY_GREETINGS", "_PINYIN_GREETINGS"} for t in n.targets):
+    if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id in {"_MALAY_GREETINGS", "_PINYIN_GREETINGS", "CHAT_FAILURE_MESSAGES", "ATTACHMENT_ERROR_KINDS"} for t in n.targets):
         nodes.append(n)
 exec(compile(ast.Module(body=nodes, type_ignores=[]), "selected_app_helpers.py", "exec"), env)
 chat = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "chat")
@@ -258,6 +259,7 @@ class ChatRouteTests(unittest.TestCase):
         env["standardize_ai_response"]=Mock(side_effect=lambda x:x)
         env["normalize_result"]=Mock(side_effect=lambda x,*args:x)
         env["traceback"]=types.SimpleNamespace(print_exc=Mock())
+        env["log_chat_failure"]=Mock()
         self.provider.AIProviderNotConfiguredError=type("AIProviderNotConfiguredError",(Exception,),{})
         self.provider.generate_ai_reply=Mock(return_value=json.dumps({"answered":True,"answer":"Mock KB answer","sourceTitle":"Honey"}))
         self.provider.vision_identity=Mock(return_value="isolated-model")
@@ -265,6 +267,7 @@ class ChatRouteTests(unittest.TestCase):
         response,status=chat()
         self.assertEqual(status,200,response)
         self.assertFalse(env["traceback"].print_exc.called)
+        self.assertNotIn("AI CHAT ERROR",[c.args[0] for c in env["log_chat_failure"].call_args_list])
         return response
     def test_route_context_reaches_retrieval_answer_and_raw_log(self):
         result=self.call()
