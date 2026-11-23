@@ -176,8 +176,11 @@ GUIDE_SECTIONS = [
         "roles": {"manager"},
         "keywords": ["ai settings", "ai model", "api key", "change model", "gemini", "claude", "openai", "deepseek",
                      "模型设置", "换模型", "tetapan model"],
-        "text": "Choose which AI provider and model the chat uses, and enter its API key. Lightweight models (such as "
-                "Gemini Flash or Claude Haiku) are faster and cheaper.",
+        "text": "Choose which AI provider and model the chat uses. The Model list comes live from the provider: "
+                "a star marks recommended models; preview models may be shut down; some models are not for chat. "
+                "\"Other (type manually)\" lets you type a name. The saved API key is shown hidden; press \"Edit\" to "
+                "enter a new one. Press \"Test Connection\" first; \"Save Settings\" works only after a successful "
+                "test. Lightweight models (such as Gemini Flash or Claude Haiku) are faster and cheaper.",
     },
     {
         "key": "notion_sync", "nav_key": "nav.notionSync",

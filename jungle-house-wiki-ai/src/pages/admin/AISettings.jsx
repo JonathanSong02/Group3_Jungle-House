@@ -40,6 +40,21 @@ const getProviderLabel = (providerValue, fallback = 'AI Provider') =>
   providerValue ||
   fallback;
 
+// "⭐ gemini-3.8-flash · Recommended · Stable" -- labels help pick a model
+// that can chat and will not be shut down.
+const modelOptionLabel = (model, currentConfig, provider, t) => {
+  const tags = [];
+  // "Recommended" already means a stable chat model, so it replaces "Stable".
+  if (model.recommended) tags.push(t('ai.tag.recommended'));
+  else if (model.chat && !model.preview) tags.push(t('ai.tag.stable'));
+  if (model.preview) tags.push(t('ai.tag.preview'));
+  if (!model.chat) tags.push(t('ai.tag.notChat'));
+  if (currentConfig?.provider === provider && currentConfig?.modelName === model.id) {
+    tags.push(t('ai.tag.current'));
+  }
+  return `${model.recommended ? '⭐ ' : ''}${model.id}${tags.length ? ` · ${tags.join(' · ')}` : ''}`;
+};
+
 export default function AISettings() {
   const { user } = useAuth();
   const { t } = useLanguage();
@@ -58,8 +73,44 @@ export default function AISettings() {
   const [testing, setTesting] = useState(false);
   const [message, setMessage] = useState('');
   const [testResult, setTestResult] = useState(null);
+  // Live model list from the provider (labelled), manual typing as fallback.
+  const [models, setModels] = useState([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [manualModel, setManualModel] = useState(false);
+  // The saved key is shown masked; Edit opens an empty box for a new one.
+  const [editingKey, setEditingKey] = useState(false);
+  // Save is allowed only after a successful test of exactly what is on screen.
+  const [testedSignature, setTestedSignature] = useState('');
 
-  const fetchSettings = async () => {
+  const usingSavedKey =
+    Boolean(currentConfig) && currentConfig.provider === form.provider && !editingKey;
+  const formSignature = `${form.provider}|${form.model_name.trim()}|${
+    usingSavedKey ? 'saved-key' : form.api_key.trim()
+  }`;
+  const canSave = Boolean(testedSignature) && testedSignature === formSignature;
+
+  const fetchModels = async (provider, apiKey = '') => {
+    try {
+      setModelsLoading(true);
+      const response = await api.post(
+        '/ai-settings/models',
+        { provider, api_key: apiKey },
+        { timeout: 30000 }
+      );
+      setModels(Array.isArray(response.data?.models) ? response.data.models : []);
+    } catch (error) {
+      console.error('Load AI models error:', error);
+      setModels([]);
+      setManualModel(true);
+      setMessage(
+        translateServerMessage(t, error.response?.data?.message) || t('ai.err.models')
+      );
+    } finally {
+      setModelsLoading(false);
+    }
+  };
+
+  const fetchSettings = async (applyToForm = true) => {
     try {
       setLoading(true);
 
@@ -68,12 +119,13 @@ export default function AISettings() {
 
       setCurrentConfig(config);
 
-      if (config) {
+      if (config && applyToForm) {
         setForm((prev) => ({
           ...prev,
           provider: config.provider || prev.provider,
           model_name: config.modelName || prev.model_name,
         }));
+        fetchModels(config.provider || 'gemini');
       }
     } catch (error) {
       console.error('Fetch AI settings error:', error);
@@ -90,13 +142,58 @@ export default function AISettings() {
   const handleProviderChange = (event) => {
     const provider = event.target.value;
     const suggestions = getModelSuggestions(provider);
+    const backToSaved = Boolean(currentConfig) && currentConfig.provider === provider;
 
     setForm((prev) => ({
       ...prev,
       provider,
-      model_name: suggestions[0] || '',
+      api_key: '',
+      model_name: backToSaved ? currentConfig.modelName : suggestions[0] || '',
     }));
 
+    setTestResult(null);
+    setModels([]);
+    setManualModel(!backToSaved);
+    // Another provider always needs its own key.
+    setEditingKey(!backToSaved);
+
+    if (backToSaved) {
+      fetchModels(provider);
+    }
+  };
+
+  const handleModelSelect = (event) => {
+    const { value } = event.target;
+
+    if (value === '__manual__') {
+      setManualModel(true);
+      return;
+    }
+
+    setForm((prev) => ({ ...prev, model_name: value }));
+    setTestResult(null);
+  };
+
+  const handleRefreshModels = () => {
+    if (!usingSavedKey && !form.api_key.trim()) {
+      setMessage(t('ai.err.keyForProvider'));
+      return;
+    }
+
+    setMessage('');
+    setManualModel(false);
+    fetchModels(form.provider, usingSavedKey ? '' : form.api_key.trim());
+  };
+
+  const handleEditKey = () => {
+    setEditingKey(true);
+    setForm((prev) => ({ ...prev, api_key: '' }));
+    setTestResult(null);
+  };
+
+  const handleCancelKeyEdit = () => {
+    setEditingKey(false);
+    setForm((prev) => ({ ...prev, api_key: '' }));
     setTestResult(null);
   };
 
@@ -117,15 +214,20 @@ export default function AISettings() {
       return;
     }
 
-    if (!form.api_key.trim() && !currentConfig) {
+    if (!usingSavedKey && !form.api_key.trim()) {
       setMessage(t('ai.err.keyBeforeTest'));
       return;
     }
+
+    const signatureAtTest = formSignature;
+    const testsSavedModel =
+      usingSavedKey && form.model_name.trim() === (currentConfig?.modelName || '');
 
     try {
       setTesting(true);
       setMessage('');
       setTestResult(null);
+      setTestedSignature('');
 
       // The backend's own wait for the AI provider can take up to ~90s
       // (a slow/hanging provider, not just a fast reject), so this call
@@ -136,18 +238,25 @@ export default function AISettings() {
           user_id: actorId,
           provider: form.provider,
           model_name: form.model_name.trim(),
-          api_key: form.api_key.trim(),
+          api_key: usingSavedKey ? '' : form.api_key.trim(),
         },
         { timeout: 150000 }
       );
 
+      const success = Boolean(response.data?.success);
       setTestResult({
-        success: Boolean(response.data?.success),
+        success,
         message: translateServerMessage(t, response.data?.message) || t('ai.testDone'),
       });
 
-      if (!form.api_key.trim()) {
-        fetchSettings();
+      if (success) {
+        setTestedSignature(signatureAtTest);
+      }
+
+      // Refresh the "last tested" card only when the saved model was tested,
+      // without resetting what is chosen in the form.
+      if (testsSavedModel) {
+        fetchSettings(false);
       }
     } catch (error) {
       console.error('Test AI connection error:', error);
@@ -158,8 +267,8 @@ export default function AISettings() {
           t('ai.err.connection'),
       });
 
-      if (!form.api_key.trim()) {
-        fetchSettings();
+      if (testsSavedModel) {
+        fetchSettings(false);
       }
     } finally {
       setTesting(false);
@@ -174,8 +283,13 @@ export default function AISettings() {
       return;
     }
 
-    if (!form.api_key.trim()) {
+    if (!usingSavedKey && !form.api_key.trim()) {
       setMessage(t('ai.err.keyRequired'));
+      return;
+    }
+
+    if (!canSave) {
+      setMessage(t('ai.testFirst'));
       return;
     }
 
@@ -187,19 +301,21 @@ export default function AISettings() {
         updated_by: actorId,
         provider: form.provider,
         model_name: form.model_name.trim(),
-        api_key: form.api_key.trim(),
+        api_key: usingSavedKey ? '' : form.api_key.trim(),
       });
 
       setMessage(t('ai.ok.saved'));
       setCurrentConfig(response.data?.config || null);
       setTestResult(null);
+      setTestedSignature('');
+      setEditingKey(false);
 
       // Never keep the raw key sitting in state longer than needed.
       setForm((prev) => ({ ...prev, api_key: '' }));
     } catch (error) {
       console.error('Save AI settings error:', error);
       setMessage(
-        error.response?.data?.message || t('ai.err.save')
+        translateServerMessage(t, error.response?.data?.message) || t('ai.err.save')
       );
     } finally {
       setSaving(false);
@@ -326,42 +442,101 @@ export default function AISettings() {
                 </select>
               </label>
 
-              <label className="ais-field">
+              <div className="ais-field">
                 <span>{t('ai.model')}</span>
-                <input
-                  list="ai-model-suggestions"
-                  name="model_name"
-                  value={form.model_name}
-                  onChange={handleChange}
-                  placeholder={t('ai.modelName')}
-                />
+                <div className="ais-inline-row">
+                  {!manualModel && models.length > 0 ? (
+                    <select
+                      name="model_name"
+                      aria-label={t('ai.model')}
+                      value={form.model_name}
+                      onChange={handleModelSelect}
+                    >
+                      {form.model_name && !models.some((model) => model.id === form.model_name) ? (
+                        <option value={form.model_name}>
+                          {form.model_name} · {t('ai.tag.current')}
+                        </option>
+                      ) : null}
+                      {models.map((model) => (
+                        <option key={model.id} value={model.id}>
+                          {modelOptionLabel(model, currentConfig, form.provider, t)}
+                        </option>
+                      ))}
+                      <option value="__manual__">{t('ai.manualModel')}</option>
+                    </select>
+                  ) : (
+                    <input
+                      list="ai-model-suggestions"
+                      name="model_name"
+                      aria-label={t('ai.model')}
+                      value={form.model_name}
+                      onChange={handleChange}
+                      placeholder={modelsLoading ? t('ai.loadingModels') : t('ai.modelName')}
+                    />
+                  )}
+
+                  <button
+                    type="button"
+                    className="ais-btn secondary"
+                    onClick={handleRefreshModels}
+                    disabled={modelsLoading}
+                    title={t('ai.refreshModels')}
+                    aria-label={t('ai.refreshModels')}
+                  >
+                    {modelsLoading ? '…' : '⟳'}
+                  </button>
+                </div>
 
                 <datalist id="ai-model-suggestions">
                   {getModelSuggestions(form.provider).map((modelName) => (
                     <option key={modelName} value={modelName} />
                   ))}
                 </datalist>
-              </label>
+              </div>
             </div>
 
-            <label className="ais-field ais-field-full">
+            <div className="ais-field ais-field-full">
               <span>{t('ai.apiKey')}</span>
-              <div className="ais-key-input">
-                <input
-                  type="password"
-                  name="api_key"
-                  value={form.api_key}
-                  onChange={handleChange}
-                  placeholder={
-                    currentConfig
-                      ? t('ai.replaceKey')
-                      : t('ai.pasteKey')
-                  }
-                  autoComplete="off"
-                />
-                <span>{t('ai.encrypted')}</span>
+              <div className="ais-inline-row">
+                <div className="ais-key-input">
+                  {usingSavedKey ? (
+                    <input
+                      type="text"
+                      name="api_key"
+                      aria-label={t('ai.apiKey')}
+                      value={currentConfig.keyHint || '********'}
+                      disabled
+                      readOnly
+                    />
+                  ) : (
+                    <input
+                      type="password"
+                      name="api_key"
+                      aria-label={t('ai.apiKey')}
+                      value={form.api_key}
+                      onChange={handleChange}
+                      placeholder={
+                        currentConfig
+                          ? t('ai.replaceKey')
+                          : t('ai.pasteKey')
+                      }
+                      autoComplete="off"
+                    />
+                  )}
+                  <span>{t('ai.encrypted')}</span>
+                </div>
+
+                {usingSavedKey ? (
+                  <button type="button" className="ais-btn secondary" onClick={handleEditKey}>
+                    {t('ai.edit')}
+                  </button>
+                ) : currentConfig && currentConfig.provider === form.provider ? (
+                  <button type="button" className="ais-btn secondary" onClick={handleCancelKeyEdit}>
+                    {t('ai.cancel')}
+                  </button>
+                ) : null}
               </div>
-            </label>
+            </div>
 
             {testResult ? (
               <div
@@ -387,7 +562,8 @@ export default function AISettings() {
               <button
                 className="ais-btn primary"
                 type="submit"
-                disabled={saving}
+                disabled={saving || !canSave}
+                title={canSave ? undefined : t('ai.testFirst')}
               >
                 {saving ? t('ai.saving') : t('ai.save')}
               </button>

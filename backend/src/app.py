@@ -2032,7 +2032,7 @@ _APPROVER_ENDPOINTS = {
     "cleanup_unused_uploads", "bulk_bin_articles", "bulk_restore_articles",
 }
 _MANAGER_ENDPOINTS = {
-    "get_ai_settings", "save_ai_settings", "test_ai_settings",
+    "get_ai_settings", "save_ai_settings", "test_ai_settings", "list_ai_models",
 
     # Notion Sync admin workspace. The OAuth callback is intentionally not
     # listed here because Notion redirects the browser to it directly; it is
@@ -7012,9 +7012,6 @@ def save_ai_settings():
     if not model_name:
         return jsonify({"success": False, "message": "Model name is required."}), 400
 
-    if not api_key:
-        return jsonify({"success": False, "message": "API key is required."}), 400
-
     conn = None
     cursor = None
 
@@ -7031,6 +7028,15 @@ def save_ai_settings():
                 "success": False,
                 "message": "Only managers can update AI settings."
             }), 403
+
+        # Key box left as is: keep using the saved key, but only for the same
+        # provider (another provider always needs its own key).
+        if not api_key:
+            existing = ai_provider_service.get_active_ai_provider_config(cursor)
+            if not existing or existing.get("provider") != provider:
+                conn.rollback()
+                return jsonify({"success": False, "message": "API key is required."}), 400
+            api_key = ai_provider_service.decrypt_api_key(existing["encrypted_api_key"])
 
         ai_provider_service.save_ai_provider_config(
             cursor, provider, model_name, api_key, actor_id
@@ -7081,6 +7087,89 @@ def save_ai_settings():
             conn.close()
 
 
+@app.route("/api/ai-settings/models", methods=["POST"])
+def list_ai_models():
+    """Models the provider offers for this key, for the AI Settings dropdown.
+
+    POST so a newly typed key travels in the body, never in a URL. With no
+    key typed, the saved key is used (same provider only). The key itself is
+    never returned.
+    """
+    if not AI_PROVIDER_SERVICE_AVAILABLE:
+        return jsonify({
+            "success": False,
+            "message": "AI provider service is not available on this server."
+        }), 500
+
+    data = request.get_json(silent=True) or {}
+    actor_id = current_auth_user_id()
+    provider = str(data.get("provider", "")).strip().lower()
+    api_key = str(data.get("api_key", "")).strip()
+
+    if provider not in ai_provider_service.SUPPORTED_PROVIDERS:
+        return jsonify({"success": False, "message": "Unsupported AI provider."}), 400
+
+    conn = None
+    cursor = None
+    saved_model = None
+
+    try:
+        conn = ai_provider_service.get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        ai_provider_service.ensure_ai_provider_configs_table(cursor)
+
+        if not is_ai_settings_manager(cursor, actor_id):
+            return jsonify({
+                "success": False,
+                "message": "Only managers can update AI settings."
+            }), 403
+
+        existing = ai_provider_service.get_active_ai_provider_config(cursor)
+        same_provider = bool(existing) and existing.get("provider") == provider
+        if same_provider:
+            saved_model = existing.get("model_name")
+
+        if not api_key:
+            if not same_provider:
+                return jsonify({
+                    "success": False,
+                    "message": "Enter the API key for this provider first."
+                }), 400
+            api_key = ai_provider_service.decrypt_api_key(existing["encrypted_api_key"])
+    except Exception as error:
+        print("LIST AI MODELS ERROR:", type(error).__name__)
+        return jsonify({"success": False, "message": "Failed to load AI settings."}), 500
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+    # The provider call runs with no database connection held open.
+    try:
+        models = ai_provider_service.list_models(provider, api_key)
+    except requests.exceptions.HTTPError as error:
+        status_code = error.response.status_code if error.response is not None else None
+        print("LIST AI MODELS PROVIDER ERROR:", status_code)
+        if status_code in (401, 403):
+            return jsonify({
+                "success": False,
+                "message": f"AI provider rejected the API key (HTTP {status_code}). Please check the key is correct and active."
+            }), 400
+        return jsonify({
+            "success": False,
+            "message": "Could not load the model list. You can still type the model name."
+        }), 502
+    except Exception as error:
+        print("LIST AI MODELS PROVIDER ERROR:", type(error).__name__)
+        return jsonify({
+            "success": False,
+            "message": "Could not load the model list. You can still type the model name."
+        }), 502
+
+    return jsonify({"success": True, "models": models, "savedModel": saved_model}), 200
+
+
 @app.route("/api/ai-settings/test", methods=["POST"])
 def test_ai_settings():
     if not AI_PROVIDER_SERVICE_AVAILABLE:
@@ -7118,11 +7207,12 @@ def test_ai_settings():
                 "message": "Only managers can test AI settings."
             }), 403
 
-        # If the manager hasn't typed a provider/key in the form yet, fall
-        # back to testing whatever is already saved.
-        testing_saved_config = not provider or not api_key
+        # No key typed: test the model chosen in the form with the SAVED key
+        # (same provider only). Previously this silently tested the saved
+        # model instead of the newly chosen one.
+        record_saved_status = False
 
-        if testing_saved_config:
+        if not api_key:
             existing = ai_provider_service.get_active_ai_provider_config(cursor)
 
             if not existing:
@@ -7131,9 +7221,17 @@ def test_ai_settings():
                     "message": "No AI provider is configured yet."
                 }), 400
 
+            if provider and provider != existing["provider"]:
+                return jsonify({
+                    "success": False,
+                    "message": "Enter the API key for this provider first."
+                }), 400
+
             provider = existing["provider"]
-            model_name = existing["model_name"]
+            model_name = model_name or existing["model_name"]
             api_key = ai_provider_service.decrypt_api_key(existing["encrypted_api_key"])
+            # Only a test of the saved model says anything about the saved config.
+            record_saved_status = model_name == existing["model_name"]
 
     except Exception as error:
         print("TEST AI SETTINGS ERROR:", error)
@@ -7185,7 +7283,7 @@ def test_ai_settings():
     # Step 3: a fresh, short-lived DB connection just to record the result.
     # If this part fails, the manager still sees the real test result above
     # -- only the "last tested" record-keeping is affected.
-    if testing_saved_config:
+    if record_saved_status:
         write_conn = None
         write_cursor = None
 

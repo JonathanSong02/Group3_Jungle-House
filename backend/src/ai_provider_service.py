@@ -339,6 +339,119 @@ def _call_anthropic(prompt, model_name, api_key, timeout):
     return data["content"][0]["text"]
 
 
+# ---------------------------------------------------------------------------
+# Live model list for the AI Settings dropdown
+# ---------------------------------------------------------------------------
+# Each provider publishes which models a key can use. The list is shown in
+# full, with labels: "recommended" (stable, fast chat model), "preview" (may
+# be shut down) and not-for-chat (image, audio, embedding, ...).
+_NOT_FOR_CHAT = re.compile(
+    r"image|imagen|tts|transcrib|embed|audio|speech|whisper|dall-e|moderation|veo|"
+    r"live|realtime|translate|robotics|computer-use|aqa|lyria|music|nano-banana|sora",
+    re.IGNORECASE,
+)
+_PREVIEW = re.compile(r"preview|(?:^|-)exp(?:erimental)?(?:-|$)", re.IGNORECASE)
+_FAST_CHAT = re.compile(r"flash(?!-lite)|haiku|(?:^|-)mini(?:-|$)|^deepseek-chat$", re.IGNORECASE)
+MAX_MODEL_LIST_PAGES = 10
+
+
+def _natural_key(model_id):
+    return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", model_id)]
+
+
+def _labelled_model(model_id, label=None, supports_chat=True):
+    chat = bool(supports_chat) and not _NOT_FOR_CHAT.search(model_id)
+    preview = bool(_PREVIEW.search(model_id))
+    return {
+        "id": model_id,
+        "label": label or model_id,
+        "chat": chat,
+        "preview": preview,
+        "recommended": chat and not preview and bool(_FAST_CHAT.search(model_id)),
+    }
+
+
+def _sort_models(models):
+    def group(model):
+        if model["recommended"]:
+            return 0
+        if model["chat"] and not model["preview"]:
+            return 1
+        if model["chat"]:
+            return 2
+        return 3
+
+    ordered = []
+    for number in range(4):
+        members = [model for model in models if group(model) == number]
+        # Newest version first for usable models; alphabetical for the rest.
+        members.sort(key=lambda model: _natural_key(model["id"]), reverse=number < 3)
+        ordered.extend(members)
+    return ordered
+
+
+def list_models(provider, api_key, timeout=15):
+    """[{id, label, chat, preview, recommended}] the key can use, best first.
+
+    Raises requests errors (e.g. HTTPError 401 for a bad key) and ValueError
+    for an unknown provider.
+    """
+    provider = str(provider or "").strip().lower()
+    models = {}
+
+    if provider == "gemini":
+        params = {"pageSize": 1000}
+        for _ in range(MAX_MODEL_LIST_PAGES):
+            response = requests.get(
+                "https://generativelanguage.googleapis.com/v1beta/models",
+                headers={"x-goog-api-key": api_key}, params=params, timeout=timeout,
+            )
+            response.raise_for_status()
+            data = response.json() or {}
+            for item in data.get("models") or []:
+                model_id = str(item.get("name") or "").removeprefix("models/")
+                if model_id:
+                    models[model_id] = _labelled_model(
+                        model_id, item.get("displayName"),
+                        "generateContent" in (item.get("supportedGenerationMethods") or []),
+                    )
+            if not data.get("nextPageToken"):
+                break
+            params = {"pageSize": 1000, "pageToken": data["nextPageToken"]}
+
+    elif provider in ("openai", "deepseek"):
+        url = "https://api.openai.com/v1/models" if provider == "openai" else "https://api.deepseek.com/models"
+        response = requests.get(url, headers={"Authorization": f"Bearer {api_key}"}, timeout=timeout)
+        response.raise_for_status()
+        for item in (response.json() or {}).get("data") or []:
+            model_id = str(item.get("id") or "")
+            if model_id:
+                models[model_id] = _labelled_model(model_id)
+
+    elif provider == "anthropic":
+        params = {"limit": 1000}
+        for _ in range(MAX_MODEL_LIST_PAGES):
+            response = requests.get(
+                "https://api.anthropic.com/v1/models",
+                headers={"x-api-key": api_key, "anthropic-version": "2023-06-01"},
+                params=params, timeout=timeout,
+            )
+            response.raise_for_status()
+            data = response.json() or {}
+            for item in data.get("data") or []:
+                model_id = str(item.get("id") or "")
+                if model_id:
+                    models[model_id] = _labelled_model(model_id, item.get("display_name"))
+            if not data.get("has_more") or not data.get("last_id"):
+                break
+            params = {"limit": 1000, "after_id": data["last_id"]}
+
+    else:
+        raise ValueError("Unsupported AI provider.")
+
+    return _sort_models(list(models.values()))
+
+
 TRANSIENT_HTTP_STATUS = {429, 500, 502, 503, 504}
 
 

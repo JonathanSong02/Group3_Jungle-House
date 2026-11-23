@@ -497,6 +497,25 @@
   position: relative;
 }
 
+/* A field with a small button beside it (model list refresh, key Edit).
+   Layout only: the field and button keep their existing look. */
+.ais-inline-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.ais-inline-row > select,
+.ais-inline-row > input,
+.ais-inline-row > .ais-key-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.ais-inline-row > .ais-btn {
+  flex-shrink: 0;
+}
+
 .ais-key-input input {
   padding-right: 85px;
 }
