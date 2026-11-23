@@ -30,6 +30,8 @@ jobs:
       NOTION_AUTO_SYNC_ENABLED: "false"
       PYTHONDONTWRITEBYTECODE: "1"
       IMAGE_INDEX_WORKER_ENABLED: "false"
+      # Do not start the PDF / Word text backfill thread when the tests import app.py.
+      DOCUMENT_TEXT_BACKFILL: "false"
     steps:
       - name: Check out the code
         uses: actions/checkout@v7.0.1

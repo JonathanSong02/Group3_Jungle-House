@@ -21,6 +21,8 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import os  # noqa: E402
+os.environ.setdefault("DOCUMENT_TEXT_BACKFILL", "false")
 import app as app_module  # noqa: E402
 
 

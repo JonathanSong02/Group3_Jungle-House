@@ -15,6 +15,7 @@ from unittest.mock import Mock
 import pytest
 from PIL import Image
 
+os.environ.setdefault("DOCUMENT_TEXT_BACKFILL", "false")
 import app
 import chat_attachment_service as attachments
 import hybrid_image_service as hybrid

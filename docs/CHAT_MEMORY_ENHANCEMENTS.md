@@ -83,3 +83,25 @@ lint 仍有既有 36 errors / 10 warnings。三个修改的页面与 HEAD 的诊
 ## 提交前范围
 
 仅提交本次相关源文件、测试、本文档和新的独立 SQL。保留既有 `.claude/`、本地配置、缓存和用户其他文件，不执行 `git add .`；不提交临时 Python 运行目录、环境或凭据。
+
+## 2026-11-23 更新：所有文字追问都检查对话（LIONG1934）
+
+经用户批准，改变了上面“独立问题不增加记忆调用”这一条：
+
+- `needs_conversation_context` 不再要求“它 / 这个的 / that one”等指代词。除问候、无效输入、不满意、Step N / next / 下一步 等控制词外，只要有合法历史，就交给 `resolve_conversation_search_query` 判断。解析提示新增一句：问题本身已完整时返回 `{}`，检索词保持不变。目的是支持“你刚才说 A……”这类没有固定字眼的回指。
+- 代价：聊天中第二题起，每题多一次最多 8 秒、不重试的 provider 调用；失败或超时仍恢复原检索词。
+- `answer_question_with_ai_provider` 新增可选 `conversation_history`：AI 兜底回答的提示里附上最近对话（最多 8 条、4,000 字符，保留最新），明确标为不可信上下文，不能作为事实或政策来源。图片、附件、强制升级和无历史请求的提示与之前逐字相同。
+- 测试：`test_chat_memory.py` 改了 4 个原本断言“独立问题不调用”的测试，新增 9 个（三语回指、新话题保留自身检索词、解析失败保留原流程、提示有界与不可信标注、图片/无历史提示不含对话）。全部后端测试 386 项通过（临时环境）。真实 provider 未联调。
+
+## 2026-11-23 更新：聪明模式 Smart chat（LIONG1934）
+
+经用户批准：AI 不再只是找不到答案时的后备，而是为每个普通文字工作问题写答案。
+
+- 新增 `smart_chat_enabled()`：默认开启；Railway 环境变量 `SMART_CHAT_ENABLED=0/false/off/no` 立即恢复旧行为（旧提示逐字相同，已比对）。
+- 适用：`needs_conversation_context` 为真（排除问候、无效输入、不满意、Step N / next / 下一步），且不是图片 / `image_query`。Team Lead 批准答案、强制升级等提前返回的路径不受影响。
+- `answer_question_with_ai_provider(..., smart=True)`：去掉“一到两句”限制，改为自然回答（先直接答，再解释，约 150 字内，可合并多篇文章）；问题有多个可能时返回 `{"answered": false, "clarify": true, "question": "..."}`，只问一个短问题。
+- 合并规则：
+  - 已找到 SOP 步骤或选项按钮时，只替换上方文字，步骤、图片、链接、选项不动；SOP 只有在 AI 引用的是同一篇文章时才替换文字，否则保留原文字；SOP 上的反问会被忽略。
+  - 其他情况：回答 → `ai_provider_answer`；反问 → `ai_provider_clarify`（不升级）；找不到 → 原升级流程。
+  - AI 出错 / 超时 / 未设定：结果与检索原样相同。
+- 测试：`test_chat_memory.py` 新增 13 个 smart 测试；后端全部测试通过（临时环境）。真实 provider 未联调。

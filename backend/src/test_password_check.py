@@ -20,6 +20,7 @@ sys.path.insert(0, str(SRC_DIR))
 sys.path.insert(0, str(SRC_DIR.parent / "tools"))
 os.environ.setdefault("FLASK_SECRET_KEY", "dummy-test-only-key-not-a-secret-0123456789")
 os.environ.setdefault("NOTION_AUTO_SYNC_ENABLED", "false")
+os.environ.setdefault("DOCUMENT_TEXT_BACKFILL", "false")
 
 from werkzeug.security import generate_password_hash  # noqa: E402
 

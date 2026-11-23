@@ -24,6 +24,7 @@ SRC_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SRC_DIR))
 os.environ.setdefault("FLASK_SECRET_KEY", "dummy-test-only-key-not-a-secret-0123456789")
 os.environ.setdefault("NOTION_AUTO_SYNC_ENABLED", "false")
+os.environ.setdefault("DOCUMENT_TEXT_BACKFILL", "false")
 
 import test_login_lockout as lockout_tests  # noqa: E402  (SQLite stand-in database and sign-in helpers)
 import app as app_module  # noqa: E402
@@ -238,6 +239,7 @@ class DevelopmentModeTests(unittest.TestCase):
         env = {key: value for key, value in os.environ.items() if not key.startswith("RAILWAY_")}
         env.setdefault("FLASK_SECRET_KEY", "dummy-test-only-key-not-a-secret-0123456789")
         env["NOTION_AUTO_SYNC_ENABLED"] = "false"
+        env["DOCUMENT_TEXT_BACKFILL"] = "false"
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         completed = subprocess.run([sys.executable, "-c", DEVELOPMENT_SCRIPT], cwd=SRC_DIR, env=env,
                                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)

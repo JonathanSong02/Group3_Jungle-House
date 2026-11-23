@@ -12,6 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 os.environ.setdefault("NOTION_AUTO_SYNC_ENABLED", "false")
+os.environ.setdefault("DOCUMENT_TEXT_BACKFILL", "false")
 
 import notion_sync_service as svc  # noqa: E402
 

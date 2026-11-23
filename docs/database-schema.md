@@ -35,6 +35,7 @@ migration (`backend/migrations/0001_baseline.py`) relates to production. How to 
 |---|---|---|---|
 | `login_lockout.py` · `ensure_counter_table` | login request | creates `login_rate_limit` (the login failure counters) | `CREATE TABLE IF NOT EXISTS` |
 | `login_lockout.py` · `ensure_known_device_table` | login, `/auth/me`, reset password, change password requests | creates `login_known_devices` (FK → `users`, ON DELETE CASCADE). **Not in production yet**: migration 0003, see section 7 | `IF NOT EXISTS` |
+| `document_text_service.py` · `ensure_table` | after an article is added or edited, and once 30 s after the app starts (background thread; off with `DOCUMENT_TEXT_BACKFILL=0`) | creates `article_attachment_text` (FK → `wiki_article`, ON DELETE CASCADE). **Not in production yet**: migration 0005, see section 8 | `IF NOT EXISTS` |
 | `app.py` · `ensure_password_reset_tokens_table` | forgot / validate / reset password requests | creates `password_reset_tokens` (FK → `users`, ON DELETE CASCADE) | `IF NOT EXISTS` |
 | `app.py` · `ensure_declined_registration_history_table` | register request (called before the registration transaction, because DDL commits) | creates `declined_registration_history` | `IF NOT EXISTS` |
 | `app.py` · `ensure_ai_chat_log_table` | chat, chat test, analytics requests | creates `ai_chat_log` + 5 indexes | `IF NOT EXISTS` |
@@ -162,3 +163,23 @@ with exactly this definition (a test compares the two), so the migration is only
 The failure counters reuse `login_rate_limit`, whose structure did not change: the new counter keys are hashed
 from a different text, so rows written by the old per-email rule are never read again and are deleted by the
 cleanup.
+
+## 8. Added after the baseline: `article_attachment_text` (migration 0005)
+
+Text of PDF and Word (.docx) article attachments, so the AI chat can read them. It is extracted on the server with
+free libraries (pypdf, python-docx), never by an AI call: when an article is added or edited, and once for older
+articles 30 s after the app starts (unchanged files are skipped by their hash). Code: `backend/src/document_text_service.py`.
+Old `.doc` files, images and scanned PDFs are not read.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `attachment_text_id` | INT, auto-increment, primary key | |
+| `article_id` | INT NOT NULL, FK → `wiki_article.article_id` ON DELETE CASCADE | the article |
+| `file_url` | VARCHAR(512) NOT NULL | `/static/uploads/articles/...` URL of the attached file |
+| `file_hash` | CHAR(64) NOT NULL, default '' | SHA-256 of the file when extracted; '' when the file was missing |
+| `status` | VARCHAR(20) NOT NULL | `ok`, `empty` (no text, e.g. scanned), `missing`, `error`, `unsupported` |
+| `text` | MEDIUMTEXT | extracted text, at most 300,000 characters |
+| `extracted_at` | DATETIME NOT NULL | |
+
+Unique `(article_id, file_url)`. The app creates the table at runtime, so the site works whether or not 0005 has
+been applied. The table can be emptied at any time; it is rebuilt from the files on the next start.

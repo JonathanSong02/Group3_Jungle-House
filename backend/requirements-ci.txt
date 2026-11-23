@@ -18,3 +18,5 @@ resend
 cryptography
 pytest
 Pillow
+pypdf
+python-docx

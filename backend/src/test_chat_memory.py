@@ -77,11 +77,22 @@ class MemoryTests(unittest.TestCase):
         for q in ["And its benefits?", "How about opening?", "那它呢？", "那开店呢？",
                   "Kalau buka kedai?", "Khasiat dia?", "Correction, I mean ST3."]:
             with self.subTest(q=q): self.assertTrue(env["needs_conversation_context"](q,q,q))
-    def test_controls_and_standalone_skipped(self):
+    def test_controls_skipped(self):
         for q in ["hi","hello","你好","selamat pagi","asdfgh","Step 4","next","not this",
-                  "show me step 4","下一步","kiosk opening","Golden Passion honey price",
-                  "What is Golden Passion honey and its benefits?", "Honey shelf life"]:
+                  "show me step 4","下一步"]:
             with self.subTest(q=q): self.assertFalse(env["needs_conversation_context"](q,q,q))
+    def test_standalone_now_checked(self):
+        # Any real question after the first may refer back; the resolver decides.
+        for q in ["kiosk opening","Golden Passion honey price","Honey shelf life"]:
+            with self.subTest(q=q): self.assertTrue(env["needs_conversation_context"](q,q,q))
+    def test_refer_back_phrases(self):
+        for q in ["你刚才说开店第二步是开收银机，那密码是什么？",
+                  "You said earlier step 2 is the cash register, what is its password?",
+                  "Tadi awak cakap langkah 2, apa kata laluan?"]:
+            with self.subTest(q=q): self.assertTrue(env["needs_conversation_context"](q,q,q))
+    def test_resolver_prompt_allows_standalone(self):
+        self.resolve()
+        self.assertIn("complete on its own", self.provider._call_ai_provider_once.call_args.args[0])
     def test_product_followup_one_call(self):
         self.assertEqual(self.resolve(), ("Golden Passion honey benefits",False))
         self.provider._call_ai_provider_once.assert_called_once()
@@ -147,10 +158,11 @@ class MemoryTests(unittest.TestCase):
         env["is_chat_request_cancelled"].side_effect=[False,False,True]
         self.provider._call_ai_provider_once.side_effect=TimeoutError("mock")
         self.assertEqual(self.resolve(),("And its benefits?",True))
-    def test_gate_standalone_no_call(self):
-        q="Golden Passion honey price"
+    def test_new_topic_with_history_keeps_own_search(self):
+        self.provider._call_ai_provider_once.return_value="{}"
+        q="kiosk opening"
         self.assertEqual(env["run_gate"]({"history":self.history},q,q,q),(q,False))
-        self.provider._call_ai_provider_once.assert_not_called()
+        self.provider._call_ai_provider_once.assert_called_once()
     def test_gate_missing_invalid_history_image_force_no_call(self):
         q="And its benefits?"
         for data,image in [({},None),({"history":"bad"},None),({"history":self.history},object()),
@@ -211,7 +223,9 @@ class MemoryTests(unittest.TestCase):
 
 import copy
 selected=[]
-for name in ["chat","answer_question_with_ai_provider","validate_escalation_context","create_chat_escalation","attach_escalation_context_status"]:
+import os
+env["os"]=os
+for name in ["chat","answer_question_with_ai_provider","validate_escalation_context","create_chat_escalation","attach_escalation_context_status","smart_chat_enabled"]:
     node=copy.deepcopy(next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name==name))
     node.decorator_list=[]
     selected.append(node)
@@ -286,10 +300,11 @@ class ChatRouteTests(unittest.TestCase):
         env["create_escalation"].assert_not_called()
         self.provider._call_ai_provider_once.assert_called_once()
         self.provider.generate_ai_reply.assert_called_once()
-    def test_route_standalone_no_memory_call(self):
+    def test_route_standalone_resolver_failure_keeps_pipeline(self):
+        self.provider._call_ai_provider_once.side_effect=TimeoutError("mock")
         self.payload["question"]="Golden Passion honey price"
         self.call()
-        self.provider._call_ai_provider_once.assert_not_called()
+        self.provider._call_ai_provider_once.assert_called_once()
         self.assertEqual(env["process_question"].call_args.kwargs["search_question"],self.payload["question"])
     def test_route_force_escalation_raw_no_ai(self):
         self.payload["force_escalate"]=True
@@ -401,6 +416,129 @@ class ChatRouteTests(unittest.TestCase):
         env["hybrid_image_service"].process.return_value=(None,question,[])
         if not question:
             env["hybrid_image_service"].process.return_value=({"source":"image_only_clarification","answer":"Mock clarification"},question,[])
+    def answer_prompt(self):
+        return self.provider.generate_ai_reply.call_args.args[0]
+
+    # ---- Smart chat (AI writes every eligible answer) ----
+    def test_smart_prompt_allows_natural_answer(self):
+        env["answer_question_with_ai_provider"]("How do I open the kiosk?", smart=True)
+        prompt=self.answer_prompt()
+        self.assertNotIn("one or two sentences maximum", prompt)
+        self.assertIn('"clarify": true', prompt)
+        self.assertIn("ONLY the provided Knowledge Base context", prompt)
+    def test_non_smart_prompt_unchanged(self):
+        env["answer_question_with_ai_provider"]("How do I open the kiosk?")
+        prompt=self.answer_prompt()
+        self.assertIn("one or two sentences maximum", prompt)
+        self.assertNotIn('"clarify": true', prompt)
+    def test_smart_clarify_parsed(self):
+        self.provider.generate_ai_reply.return_value=json.dumps({"answered":False,"clarify":True,"question":"Which store, ST3 or Spring?"})
+        result=env["answer_question_with_ai_provider"]("How do I open?", smart=True)
+        self.assertTrue(result["clarify"])
+        self.assertEqual(result["answer"],"Which store, ST3 or Spring?")
+    def confident_sop(self):
+        del self.payload["history"]
+        self.payload["question"]="How do I open the kiosk?"
+        env["process_question"]=Mock(return_value=({"type":"sop","source":"matched_title","confidence":.95,
+            "title":"Kiosk Opening","steps":[{"step_number":1,"text":"Turn on lights"}],"article_id":5,
+            "reply":"Here are the steps","answer":"Here are the steps","context":{"title":"Kiosk Opening"}},200))
+        env["build_ai_chat_context"]=Mock(return_value=("### Kiosk Opening\nTurn on lights.",[{"title":"Kiosk Opening","article_id":5}]))
+        self.provider.generate_ai_reply.return_value=json.dumps({"answered":True,"answer":"Mock KB answer","sourceTitle":"Kiosk Opening"})
+    def test_smart_sop_keeps_steps(self):
+        self.confident_sop()
+        result=self.call()
+        self.assertEqual(result["type"],"sop")
+        self.assertEqual(result["steps"],[{"step_number":1,"text":"Turn on lights"}])
+        self.assertEqual(result["article_id"],5)
+        self.assertEqual(result["reply"],"Mock KB answer")
+        self.assertIn('"clarify": true', self.answer_prompt())
+        env["create_escalation"].assert_not_called()
+    def test_smart_sop_mismatched_source_keeps_reply(self):
+        self.confident_sop()
+        self.provider.generate_ai_reply.return_value=json.dumps({"answered":True,"answer":"About honey","sourceTitle":"Honey"})
+        result=self.call()
+        self.assertEqual(result["reply"],"Here are the steps")
+        self.assertEqual(result["type"],"sop")
+    def test_smart_sop_ignores_clarify(self):
+        self.confident_sop()
+        self.provider.generate_ai_reply.return_value=json.dumps({"answered":False,"clarify":True,"question":"Which kiosk?"})
+        result=self.call()
+        self.assertEqual(result["reply"],"Here are the steps")
+        self.assertEqual(result["type"],"sop")
+    def test_smart_failure_keeps_result(self):
+        self.confident_sop()
+        self.provider.generate_ai_reply.side_effect=TimeoutError("mock")
+        result=self.call()
+        self.assertEqual(result["reply"],"Here are the steps")
+        self.assertEqual(result["steps"],[{"step_number":1,"text":"Turn on lights"}])
+        env["create_escalation"].assert_not_called()
+    def test_smart_off_no_call(self):
+        self.confident_sop()
+        with patch.dict(os.environ,{"SMART_CHAT_ENABLED":"0"}):
+            result=self.call()
+        self.provider.generate_ai_reply.assert_not_called()
+        self.assertEqual(result["reply"],"Here are the steps")
+    def test_smart_skips_step_control(self):
+        del self.payload["history"]
+        self.payload["question"]="Step 4"
+        env["process_question"]=Mock(return_value=({"source":"context_step","confidence":.95,"answer":"A mock step","context":{}},200))
+        self.call()
+        self.provider.generate_ai_reply.assert_not_called()
+    def test_smart_clarify_on_fallback_no_escalation(self):
+        del self.payload["history"]
+        self.payload["question"]="How do I open the shop?"
+        self.provider.generate_ai_reply.return_value=json.dumps({"answered":False,"clarify":True,"question":"Which store, ST3 or Spring?"})
+        result=self.call()
+        self.assertEqual(result["source"],"ai_provider_clarify")
+        self.assertEqual(result["reply"],"Which store, ST3 or Spring?")
+        self.assertFalse(result["escalation_ready"])
+        env["create_escalation"].assert_not_called()
+    def test_smart_confident_text_rewritten(self):
+        del self.payload["history"]
+        self.payload["question"]="What is the honey price?"
+        env["process_question"]=Mock(return_value=({"type":"text","source":"matched_title","confidence":.9,
+            "reply":"Old","answer":"Old","context":{}},200))
+        result=self.call()
+        self.assertEqual(result["reply"],"Mock KB answer")
+        self.assertEqual(result["source"],"ai_provider_answer")
+    def test_smart_options_keep_buttons(self):
+        del self.payload["history"]
+        self.payload["question"]="kiosk"
+        options=[{"label":"Kiosk Opening"},{"label":"Kiosk Closing"}]
+        env["process_question"]=Mock(return_value=({"type":"multiple_choice","source":"suggestion_options","confidence":.5,
+            "options":options,"reply":"Pick one","answer":"Pick one","context":{}},200))
+        self.provider.generate_ai_reply.return_value=json.dumps({"answered":False,"clarify":True,"question":"Opening or closing?"})
+        result=self.call()
+        self.assertEqual(result["options"],options)
+        self.assertEqual(result["type"],"multiple_choice")
+        self.assertEqual(result["reply"],"Opening or closing?")
+    def test_clarify_ignored_when_not_smart(self):
+        self.provider.generate_ai_reply.return_value=json.dumps({"answered":False,"clarify":True,"question":"Which store?"})
+        self.assertIsNone(env["answer_question_with_ai_provider"]("How do I open?"))
+    def test_route_answer_prompt_includes_history(self):
+        self.call()
+        self.assertIn("Recent conversation", self.answer_prompt())
+        self.assertIn("Golden Passion honey price", self.answer_prompt())
+    def test_answer_prompt_marks_history_untrusted(self):
+        self.call()
+        self.assertIn("never a source of facts", self.answer_prompt())
+    def test_answer_prompt_history_bounded(self):
+        history=[{"role":"user" if i%2==0 else "assistant","content":f"m{i} "+"x"*900} for i in range(16)]
+        history[14]["content"]="LAST-USER "+"y"*890
+        env["answer_question_with_ai_provider"]("And its benefits?", conversation_history=history)
+        block=self.answer_prompt().split("Recent conversation",1)[1]
+        self.assertIn("LAST-USER", block)
+        self.assertNotIn("m0 ", block)
+        self.assertLessEqual(len(block), 4400)
+    def test_route_image_prompt_has_no_history(self):
+        self.image_request("Golden Passion honey price")
+        self.call()
+        self.provider.generate_ai_reply.assert_called()
+        self.assertNotIn("Recent conversation", self.answer_prompt())
+    def test_route_no_history_prompt_unchanged(self):
+        del self.payload["history"]
+        self.call()
+        self.assertNotIn("Recent conversation", self.answer_prompt())
     def test_route_successful_image_upload_text_fallback(self):
         self.image_request("Golden Passion honey price")
         self.call()
@@ -440,10 +578,11 @@ class ChatRouteTests(unittest.TestCase):
         self.call()
         self.assertEqual(env["process_question"].call_args.kwargs["search_question"],"Golden Passion honey benefits")
         self.assertEqual(env["log_request"].call_args.args[0],"its benfits?")
-    def test_route_standalone_topic_change_no_memory(self):
+    def test_route_standalone_topic_change_keeps_own_search(self):
+        self.provider._call_ai_provider_once.return_value="{}"
         self.payload["question"]="ST3 kiosk opening"
         self.call()
-        self.provider._call_ai_provider_once.assert_not_called()
+        self.provider._call_ai_provider_once.assert_called_once()
         self.assertEqual(env["process_question"].call_args.kwargs["search_question"],"ST3 kiosk opening")
     def test_route_correction_preserves_raw_and_uses_new_location(self):
         self.payload["question"]="Correction, I mean ST3."

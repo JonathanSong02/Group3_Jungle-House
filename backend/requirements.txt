@@ -33,3 +33,5 @@ sentence-transformers
 cryptography
 requests
 resend
+pypdf
+python-docx
