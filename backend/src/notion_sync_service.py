@@ -1034,6 +1034,16 @@ def download_and_host_notion_file(url, upload_folder):
             extension = "pdf"
         elif "png" in content_type:
             extension = "png"
+        elif "wordprocessingml" in content_type:
+            extension = "docx"
+        elif "msword" in content_type:
+            extension = "doc"
+        else:
+            # Notion often serves files as a generic type; keep a document's
+            # own extension (from the URL path) so it can be read later.
+            path_extension = os.path.splitext(requests.utils.urlparse(url).path)[1].lower().lstrip(".")
+            if path_extension in {"pdf", "docx", "doc"}:
+                extension = path_extension
 
         unique_filename = f"{int(time.time() * 1000)}_notion_import.{extension}"
         file_path = upload_folder / unique_filename

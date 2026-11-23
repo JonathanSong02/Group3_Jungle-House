@@ -46,19 +46,27 @@ def make_docx(path, paragraphs, table_cell=None):
 
 
 class FakeCursor:
-    """Answers the three statements sync_article uses and records writes."""
-    def __init__(self, existing=None):
-        self.existing = dict(existing or {})  # file_url -> file_hash
+    """Answers the statements sync_article uses and records writes."""
+    def __init__(self, existing=None, stored_text="Stored text"):
+        # file_url -> file_hash, or file_url -> (file_hash, status, needs_summary)
+        self.existing = {url: (v if isinstance(v, tuple) else (v, "ok", 0)) for url, v in dict(existing or {}).items()}
+        self.stored_text = stored_text
         self.upserts = []
         self.deletes = []
+        self.summary_updates = []
         self._rows = []
 
     def execute(self, sql, params=()):
         text = " ".join(sql.split())
-        if text.startswith("SELECT file_url, file_hash FROM article_attachment_text"):
-            self._rows = [{"file_url": url, "file_hash": h} for url, h in self.existing.items()]
+        if text.startswith("SELECT file_url, file_hash"):
+            self._rows = [{"file_url": url, "file_hash": h, "status": st, "needs_summary": ns}
+                          for url, (h, st, ns) in self.existing.items()]
+        elif text.startswith("SELECT text FROM article_attachment_text"):
+            self._rows = [{"text": self.stored_text}]
         elif text.startswith("INSERT INTO article_attachment_text"):
             self.upserts.append(params)
+        elif text.startswith("UPDATE article_attachment_text SET summary"):
+            self.summary_updates.append(params)
         elif text.startswith("DELETE FROM article_attachment_text"):
             self.deletes.append(params)
         else:
@@ -139,6 +147,20 @@ class DocumentTextTests(unittest.TestCase):
         article = {"image_files": None, "attachment_url": "/static/uploads/articles/9_x_manual.pdf"}
         self.assertEqual(dts.document_files(article), ["/static/uploads/articles/9_x_manual.pdf"])
 
+    def test_document_files_from_article_content_links(self):
+        # Notion-synced files are linked inside the article HTML with an absolute URL.
+        article = {"image_files": json.dumps([{"url": "/static/uploads/articles/1_a_guide.pdf"}]),
+                   "attachment_url": None,
+                   "content": '<p><a href="https://api.example.app/static/uploads/articles/99_notion_import.pdf" '
+                              'target="_blank">Attached file</a></p><a href="/static/uploads/articles/5_x_rules.docx">r</a>'
+                              '<img src="https://api.example.app/static/uploads/articles/7_notion_import.png">'
+                              '<a href="/static/uploads/articles/1_a_guide.pdf">dup</a>'}
+        self.assertEqual(dts.document_files(article), [
+            "/static/uploads/articles/1_a_guide.pdf",
+            "/static/uploads/articles/99_notion_import.pdf",
+            "/static/uploads/articles/5_x_rules.docx",
+        ])
+
     def test_document_files_bad_json(self):
         self.assertEqual(dts.document_files({"image_files": "{not json", "attachment_url": None}), [])
 
@@ -160,7 +182,7 @@ class DocumentTextTests(unittest.TestCase):
         cursor = FakeCursor(existing={"/static/uploads/articles/old.pdf": "abc"})
         dts.sync_article(cursor, article, self.folder)
         self.assertEqual(len(cursor.upserts), 1)
-        article_id, url, file_hash, status, text = cursor.upserts[0]
+        article_id, url, file_hash, status, text, summary = cursor.upserts[0]
         self.assertEqual((article_id, url, status), (7, "/static/uploads/articles/1_a_guide.pdf", "ok"))
         self.assertEqual(file_hash, hashlib.sha256(pdf.read_bytes()).hexdigest())
         self.assertIn("Closing checklist", text)
@@ -174,6 +196,53 @@ class DocumentTextTests(unittest.TestCase):
         dts.sync_article(cursor, article, self.folder)
         self.assertEqual(cursor.upserts, [])
         self.assertEqual(cursor.deletes, [])
+
+    def test_new_file_summarised_once(self):
+        self.write("1_a_guide.pdf", make_pdf("Lab ten covers resistors"))
+        calls = []
+        def summarize(text):
+            calls.append(text)
+            return "  A lab manual about resistors.  "
+        cursor = FakeCursor()
+        dts.sync_article(cursor, {"article_id": 7, "attachment_url": "/static/uploads/articles/1_a_guide.pdf",
+                                  "image_files": None}, self.folder, summarize=summarize)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("resistors", calls[0])
+        self.assertEqual(cursor.upserts[0][5], "A lab manual about resistors.")
+
+    def test_unchanged_file_without_summary_gets_one(self):
+        pdf = self.write("1_a_guide.pdf", make_pdf("Closing checklist"))
+        url = "/static/uploads/articles/1_a_guide.pdf"
+        cursor = FakeCursor(existing={url: (hashlib.sha256(pdf.read_bytes()).hexdigest(), "ok", 1)})
+        dts.sync_article(cursor, {"article_id": 7, "attachment_url": url, "image_files": None},
+                         self.folder, summarize=lambda text: "Summary of " + text)
+        self.assertEqual(cursor.upserts, [])
+        self.assertEqual(cursor.summary_updates, [("Summary of Stored text", 7, url)])
+
+    def test_unchanged_file_with_summary_not_resummarised(self):
+        pdf = self.write("1_a_guide.pdf", make_pdf("Closing checklist"))
+        url = "/static/uploads/articles/1_a_guide.pdf"
+        cursor = FakeCursor(existing={url: (hashlib.sha256(pdf.read_bytes()).hexdigest(), "ok", 0)})
+        dts.sync_article(cursor, {"article_id": 7, "attachment_url": url, "image_files": None},
+                         self.folder, summarize=lambda text: self.fail("should not summarise"))
+        self.assertEqual(cursor.summary_updates, [])
+
+    def test_summary_failure_keeps_text(self):
+        self.write("1_a_guide.pdf", make_pdf("Closing checklist"))
+        def summarize(text):
+            raise RuntimeError("AI down")
+        cursor = FakeCursor()
+        dts.sync_article(cursor, {"article_id": 7, "attachment_url": "/static/uploads/articles/1_a_guide.pdf",
+                                  "image_files": None}, self.folder, summarize=summarize)
+        self.assertEqual(cursor.upserts[0][3], "ok")
+        self.assertIsNone(cursor.upserts[0][5])
+
+    def test_no_summary_for_empty_or_missing(self):
+        self.write("1_scan.pdf", make_pdf(""))
+        cursor = FakeCursor()
+        dts.sync_article(cursor, {"article_id": 7, "attachment_url": "/static/uploads/articles/1_scan.pdf",
+                                  "image_files": None}, self.folder, summarize=lambda text: self.fail("no text"))
+        self.assertIsNone(cursor.upserts[0][5])
 
     def test_sync_records_missing_file(self):
         url = "/static/uploads/articles/1_gone.pdf"
@@ -208,6 +277,22 @@ class LoadCacheTests(unittest.TestCase):
                                        "image_files": None}, Path(tempfile.gettempdir()))
         cursor.rows = [{"article_id": 1, "text": "new"}]
         self.assertEqual(dts.load_texts(cursor), {1: "new"})
+
+    def test_load_documents_lists_files_with_names_and_summaries(self):
+        cursor = self.Cursor([
+            {"article_id": 1, "file_url": "/static/uploads/articles/1700000000000_a1b2c3_Lab_10_Manual.pdf",
+             "status": "ok", "text": "lab text", "summary": "A lab manual."},
+            {"article_id": 1, "file_url": "/static/uploads/articles/1700000000001_notion_import.pdf",
+             "status": "empty", "text": "", "summary": None},
+            {"article_id": 2, "file_url": "/static/uploads/articles/1700000000002_abc123_rules.docx",
+             "status": "ok", "text": "rules", "summary": None},
+        ])
+        docs = dts.load_documents(cursor)
+        self.assertEqual(docs[1]["text"], "lab text")
+        self.assertEqual([f["name"] for f in docs[1]["files"]], ["Lab_10_Manual.pdf", "notion_import.pdf"])
+        self.assertEqual(docs[1]["files"][0]["summary"], "A lab manual.")
+        self.assertEqual(docs[1]["files"][1]["status"], "empty")
+        self.assertEqual(docs[2]["files"][0]["name"], "rules.docx")
 
     def test_max_age_zero_always_reads(self):
         cursor = self.Cursor([])

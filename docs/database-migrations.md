@@ -10,7 +10,7 @@ old SQL scripts, is in [database-schema.md](database-schema.md).
 
 | Piece | Where |
 |---|---|
-| Migration files (numbered) | `backend/migrations/0001_baseline.py` (production as it is), `0002_escalation_indexes.py` (optional), `0003_login_known_devices.py` (table for the device-based login lockout), `0004_image_pipeline.py`, `0005_article_attachment_text.py` (PDF / Word attachment text for the AI chat) |
+| Migration files (numbered) | `backend/migrations/0001_baseline.py` (production as it is), `0002_escalation_indexes.py` (optional), `0003_login_known_devices.py` (table for the device-based login lockout), `0004_image_pipeline.py`, `0005_article_attachment_text.py` (PDF / Word attachment text for the AI chat), `0006_article_attachment_summary.py` (one-time AI summary per attachment) |
 | Command line tool | `backend/tools/migrate.py` (`status`, `check`, `apply`, `baseline`, `generate-baseline`) |
 | Read-only snapshot tool | `backend/tools/schema_snapshot.py` |
 | Shared code | `backend/tools/migration_lib.py`, `backend/tools/schema_lib.py` |

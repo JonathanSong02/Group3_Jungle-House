@@ -180,6 +180,7 @@ Old `.doc` files, images and scanned PDFs are not read.
 | `status` | VARCHAR(20) NOT NULL | `ok`, `empty` (no text, e.g. scanned), `missing`, `error`, `unsupported` |
 | `text` | MEDIUMTEXT | extracted text, at most 300,000 characters |
 | `extracted_at` | DATETIME NOT NULL | |
+| `summary` | TEXT | one-time AI summary of the whole document (about 120 words), reused for every question. Added by migration 0006; the app adds it at runtime if missing |
 
-Unique `(article_id, file_url)`. The app creates the table at runtime, so the site works whether or not 0005 has
+Files linked inside the article content (for example Notion-synced attachments) are read too. Unique `(article_id, file_url)`. The app creates the table at runtime, so the site works whether or not 0005 has
 been applied. The table can be emptied at any time; it is rebuilt from the files on the next start.

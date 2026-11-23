@@ -23,6 +23,7 @@ SUPPORTED_EXTENSIONS = {".pdf": "pdf", ".docx": "docx"}
 MAX_PDF_PAGES = 300
 MAX_TEXT_CHARS = 300_000
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
+_CONTENT_LINK = re.compile(r"(/static/uploads/articles/[A-Za-z0-9._-]+\.(?:pdf|docx))(?![A-Za-z0-9._-])", re.IGNORECASE)
 
 
 def _normalise(text):
@@ -91,6 +92,9 @@ def document_files(article):
             urls = [item.get("url") for item in items if isinstance(item, dict)]
     elif article.get("attachment_url"):
         urls = [article.get("attachment_url")]
+    # Files linked inside the article text (e.g. Notion-synced attachments,
+    # which are linked with an absolute URL).
+    urls = list(urls) + [match.group(1) for match in _CONTENT_LINK.finditer(str(article.get("content") or ""))]
 
     result = []
     for url in urls:
@@ -116,37 +120,74 @@ def ensure_table(cursor):
                 REFERENCES wiki_article (article_id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """)
+    # Added after the first release (migration 0006): a one-time AI summary.
+    cursor.execute("SHOW COLUMNS FROM article_attachment_text LIKE 'summary'")
+    if not cursor.fetchall():
+        cursor.execute("ALTER TABLE article_attachment_text ADD COLUMN summary TEXT")
 
 
-def sync_article(cursor, article, upload_folder):
+MAX_SUMMARY_INPUT_CHARS = 40_000
+MAX_SUMMARY_CHARS = 1500
+
+
+def _safe_summary(summarize, text):
+    """Run the summarizer once; any failure or empty result gives None."""
+    if not summarize or not text:
+        return None
+    try:
+        summary = summarize(text[:MAX_SUMMARY_INPUT_CHARS])
+    except Exception:
+        return None
+    summary = _normalise(summary)[:MAX_SUMMARY_CHARS]
+    return summary or None
+
+
+def sync_article(cursor, article, upload_folder, summarize=None):
     """Bring the stored text for one article in line with its current files.
 
-    New or changed files are extracted, unchanged ones (same SHA-256) skipped,
-    rows for files no longer attached deleted. Returns the number of files
-    extracted.
+    New or changed files are extracted (and summarised once when
+    `summarize` is given), unchanged ones (same SHA-256) skipped -- except
+    that a readable file still without a summary gets one -- and rows for
+    files no longer attached deleted. Returns the number of files extracted.
     """
     article_id = article["article_id"]
-    cursor.execute(
-        "SELECT file_url, file_hash FROM article_attachment_text WHERE article_id = %s",
-        (article_id,),
-    )
-    existing = {row["file_url"]: row["file_hash"] for row in (cursor.fetchall() or [])}
+    cursor.execute("""
+        SELECT file_url, file_hash, status, (summary IS NULL) AS needs_summary
+        FROM article_attachment_text WHERE article_id = %s
+    """, (article_id,))
+    existing = {row["file_url"]: row for row in (cursor.fetchall() or [])}
     wanted = document_files(article)
 
     extracted = 0
+    summarised = 0
     for url in wanted:
         path = Path(upload_folder) / _local_name(url)
         file_hash = file_sha256(path) if path.is_file() else ""
-        if url in existing and existing[url] == file_hash:
+        row = existing.get(url)
+        if row and row["file_hash"] == file_hash:
+            if summarize and row.get("status") == "ok" and row.get("needs_summary"):
+                cursor.execute(
+                    "SELECT text FROM article_attachment_text WHERE article_id = %s AND file_url = %s",
+                    (article_id, url),
+                )
+                stored = (cursor.fetchall() or [{}])[0].get("text")
+                summary = _safe_summary(summarize, stored)
+                if summary:
+                    cursor.execute(
+                        "UPDATE article_attachment_text SET summary = %s WHERE article_id = %s AND file_url = %s",
+                        (summary, article_id, url),
+                    )
+                    summarised += 1
             continue
         status, text = extract_text(path)
+        summary = _safe_summary(summarize, text) if status == "ok" else None
         cursor.execute("""
             INSERT INTO article_attachment_text
-                (article_id, file_url, file_hash, status, text, extracted_at)
-            VALUES (%s, %s, %s, %s, %s, NOW())
+                (article_id, file_url, file_hash, status, text, extracted_at, summary)
+            VALUES (%s, %s, %s, %s, %s, NOW(), %s)
             ON DUPLICATE KEY UPDATE file_hash = VALUES(file_hash), status = VALUES(status),
-                text = VALUES(text), extracted_at = VALUES(extracted_at)
-        """, (article_id, url, file_hash, status, text))
+                text = VALUES(text), extracted_at = VALUES(extracted_at), summary = VALUES(summary)
+        """, (article_id, url, file_hash, status, text, summary))
         extracted += 1
 
     removed = 0
@@ -157,42 +198,61 @@ def sync_article(cursor, article, upload_folder):
                 (article_id, url),
             )
             removed += 1
-    if extracted or removed:
+    if extracted or removed or summarised:
         invalidate_cache()
     return extracted
 
 
-_cache = {"texts": None, "loaded_at": 0.0}
+_cache = {"documents": None, "loaded_at": 0.0}
 _cache_lock = threading.Lock()
+_UPLOAD_PREFIX = re.compile(r"^\d+_(?:[0-9a-f]{6}_)?")
 
 
 def invalidate_cache():
     with _cache_lock:
-        _cache["texts"] = None
+        _cache["documents"] = None
+
+
+def display_name(url):
+    """'1700000000000_a1b2c3_Lab_10_Manual.pdf' -> 'Lab_10_Manual.pdf'."""
+    name = str(url or "").rsplit("/", 1)[-1]
+    return _UPLOAD_PREFIX.sub("", name) or name
+
+
+def load_documents(cursor, max_age=300):
+    """{article_id: {"text": joined readable text, "files": [{url, name, status, summary}]}}.
+
+    Missing and unsupported files are left out. Kept in memory for
+    `max_age` seconds so every chat question does not re-read all document
+    text; any sync clears it at once.
+    """
+    with _cache_lock:
+        if _cache["documents"] is not None and max_age > 0 and time.monotonic() - _cache["loaded_at"] < max_age:
+            return _cache["documents"]
+    cursor.execute("""
+        SELECT article_id, file_url, status, text, summary FROM article_attachment_text
+        WHERE status IN ('ok', 'empty', 'error') ORDER BY article_id, attachment_text_id
+    """)
+    documents = {}
+    for row in cursor.fetchall() or []:
+        entry = documents.setdefault(row["article_id"], {"texts": [], "files": []})
+        if row.get("file_url"):
+            entry["files"].append({"url": row["file_url"], "name": display_name(row["file_url"]),
+                                   "status": row.get("status") or "ok", "summary": row.get("summary")})
+        if (row.get("status") or "ok") == "ok" and row.get("text"):
+            entry["texts"].append(row["text"])
+    result = {article_id: {"text": " ".join(entry["texts"]), "files": entry["files"]}
+              for article_id, entry in documents.items()}
+    with _cache_lock:
+        _cache["documents"] = result
+        _cache["loaded_at"] = time.monotonic()
+    return result
 
 
 def load_texts(cursor, max_age=300):
-    """{article_id: text} for every successfully extracted attachment.
-
-    Kept in memory for `max_age` seconds so every chat question does not
-    re-read all document text; any sync clears it at once.
-    """
-    with _cache_lock:
-        if _cache["texts"] is not None and max_age > 0 and time.monotonic() - _cache["loaded_at"] < max_age:
-            return _cache["texts"]
-    cursor.execute("""
-        SELECT article_id, text FROM article_attachment_text
-        WHERE status = 'ok' ORDER BY article_id, attachment_text_id
-    """)
-    texts = {}
-    for row in cursor.fetchall() or []:
-        if row.get("text"):
-            texts.setdefault(row["article_id"], []).append(row["text"])
-    result = {article_id: " ".join(parts) for article_id, parts in texts.items()}
-    with _cache_lock:
-        _cache["texts"] = result
-        _cache["loaded_at"] = time.monotonic()
-    return result
+    """{article_id: text} for every successfully extracted attachment."""
+    return {article_id: entry["text"]
+            for article_id, entry in load_documents(cursor, max_age).items() if entry["text"]}
 
 
 def _default_tokens(text):

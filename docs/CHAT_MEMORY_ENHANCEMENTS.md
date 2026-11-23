@@ -105,3 +105,11 @@ lint 仍有既有 36 errors / 10 warnings。三个修改的页面与 HEAD 的诊
   - 其他情况：回答 → `ai_provider_answer`；反问 → `ai_provider_clarify`（不升级）；找不到 → 原升级流程。
   - AI 出错 / 超时 / 未设定：结果与检索原样相同。
 - 测试：`test_chat_memory.py` 新增 13 个 smart 测试；后端全部测试通过（临时环境）。真实 provider 未联调。
+
+## 2026-11-23 更新：文件总结、系统资料与系统使用说明（LIONG1934）
+
+- 文件来源：除附件栏外，也读取文章内容里链接的 `/static/uploads/articles/*.pdf|docx`（Notion 同步的文件）。`notion_sync_service.download_and_host_notion_file` 现在把 Word 存成 `.docx` / `.doc`（之前错存成 `.png`），类型不明时按网址后缀判断；图片与 PDF 行为不变。
+- 每份文件抽字后请 AI 总结一次（约 120 字，存在 `article_attachment_text.summary`，迁移 0006），之后重复使用；AI 未设定时跳过，下次同步补上。
+- 新模块 `backend/src/system_knowledge.py`：问题涉及时才加入 AI 上下文（总上限 3,500 字，排在文章前面）——文章数量与分类、附件清单（含总结、所属文章）、有效 quiz 清单、提问者**自己的** quiz 成绩与未做清单；以及内建系统使用说明（每个左侧选单项与几个常见操作，含中英马名称、可用角色；无权限时说明谁能做、该找谁）。
+- 一般工作问题不会触发（有测试，例如 "test strips" 不会被当成 quiz）。`Sidebar.jsx` 新增选单项而说明未更新、或名称与 `translations.js` 不一致时，`test_system_knowledge.py` 会失败。
+- 测试：新增 `test_system_knowledge.py`、`test_notion_file_download.py`，扩充文件相关测试；后端全部 463 项通过（临时环境）。真实 provider 与资料库未联调。

@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 
 import document_text_service
+import system_knowledge
 
 source = Path(__file__).with_name("app.py").read_text(encoding="utf-8")
 tree = ast.parse(source)
@@ -38,10 +39,13 @@ class Cursor:
         pass
 
 
-def build(articles, doc_rows, question, fail_docs=False, max_chars=6000):
+def build(articles, doc_rows, question, fail_docs=False, max_chars=6000, auth_user=None):
     document_text_service.invalidate_cache()
     cursor = Cursor(articles, doc_rows, fail_docs)
     env = {
+        "system_knowledge": system_knowledge,
+        "SYSTEM_CONTEXT_LIMIT": 3500,
+        "g": types.SimpleNamespace(get=lambda key, default=None: auth_user if key == "auth_user" else default),
         "re": re,
         "get_db_connection": lambda: types.SimpleNamespace(cursor=lambda **k: cursor, close=lambda: None),
         "tokenize_for_knowledge_match": lambda text: set(re.findall(r"[a-z0-9]+", str(text).lower())),
@@ -87,6 +91,33 @@ class DocumentContextTests(unittest.TestCase):
         self.assertEqual(text, "### Kiosk Opening\nTurn on the lights.\n")
 
 
+class SystemContextTests(unittest.TestCase):
+    def test_count_question_gets_statistics_first(self):
+        text, _ = build(ARTICLES, [], "how many articles are there?")
+        self.assertTrue(text.startswith("### Knowledge Base statistics"))
+        self.assertIn("2 articles", text)
+
+    def test_guide_uses_the_signed_in_role(self):
+        text, _ = build(ARTICLES, [], "how do I add a new article?", auth_user={"user_id": 7, "role_name": "Staff"})
+        self.assertIn("### System guide: Content Management", text)
+        self.assertIn("cannot use this", text)
+
+    def test_document_summary_reaches_the_context(self):
+        rows = [{"article_id": 2, "file_url": "/static/uploads/articles/1_abc123_Lab_10_Manual.pdf",
+                 "status": "ok", "text": HANDBOOK, "summary": "Lab 10 covers resistors."}]
+        text, _ = build(ARTICLES, rows, "what is the lab 10 manual about?")
+        self.assertIn("Lab 10 covers resistors.", text)
+        self.assertIn('attached to "Staff Handbook"', text)
+
+    def test_system_part_never_crowds_out_everything(self):
+        text, _ = build(ARTICLES, [], "how many articles are there? kiosk opening lights", max_chars=6000)
+        self.assertIn("### Kiosk Opening", text)
+
+    def test_ordinary_question_unchanged(self):
+        text, _ = build(ARTICLES, [], "kiosk opening lights")
+        self.assertEqual(text, "### Kiosk Opening\nTurn on the lights.\n")
+
+
 class SyncHookTests(unittest.TestCase):
     def load_sync(self, articles, sync_article):
         fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_sync_document_texts")
@@ -104,13 +135,13 @@ class SyncHookTests(unittest.TestCase):
         fake_service = types.SimpleNamespace(ensure_table=lambda c: None, sync_article=sync_article,
                                              invalidate_cache=invalidate)
         env = {"get_db_connection": lambda: self.conn, "document_text_service": fake_service,
-               "UPLOAD_FOLDER": Path("uploads")}
+               "UPLOAD_FOLDER": Path("uploads"), "_summarize_document_text": lambda text: None}
         exec(compile(ast.Module(body=[fn], type_ignores=[]), "sync.py", "exec"), env)
         return env["_sync_document_texts"], cursor
 
     def test_each_article_synced_and_one_failure_does_not_stop_others(self):
         seen = []
-        def sync_article(cursor, article, folder):
+        def sync_article(cursor, article, folder, summarize=None):
             seen.append(article["article_id"])
             if article["article_id"] == 1:
                 raise ValueError("bad file")
@@ -123,9 +154,34 @@ class SyncHookTests(unittest.TestCase):
         self.assertIn((1, 2), [params for _, params in cursor.executed])
 
     def test_backfill_reads_all_live_articles(self):
-        sync, cursor = self.load_sync([], lambda *a: 0)
+        sync, cursor = self.load_sync([], lambda *a, **k: 0)
         sync(None)
         self.assertIn("is_deleted", cursor.executed[0][0])
+        self.assertIn("content", cursor.executed[0][0])   # Notion files are linked inside the content
+
+    def load_summarizer(self, service, available=True):
+        fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_summarize_document_text")
+        env = {"AI_PROVIDER_SERVICE_AVAILABLE": available, "ai_provider_service": service}
+        exec(compile(ast.Module(body=[fn], type_ignores=[]), "summary.py", "exec"), env)
+        return env["_summarize_document_text"]
+
+    def test_summary_uses_ai_once_and_treats_document_as_data(self):
+        prompts = []
+        service = types.SimpleNamespace(generate_ai_reply=lambda p, timeout=0: prompts.append(p) or "Short summary")
+        self.assertEqual(self.load_summarizer(service)("Lab manual text"), "Short summary")
+        self.assertEqual(len(prompts), 1)
+        self.assertIn("not instructions", prompts[0])
+        self.assertIn("Lab manual text", prompts[0])
+
+    def test_summary_none_without_ai_or_on_error(self):
+        self.assertIsNone(self.load_summarizer(None, available=False)("text"))
+        def boom(p, timeout=0):
+            raise RuntimeError("down")
+        self.assertIsNone(self.load_summarizer(types.SimpleNamespace(generate_ai_reply=boom))("text"))
+
+    def test_sync_passes_the_summarizer(self):
+        fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_sync_document_texts")
+        self.assertIn("summarize=_summarize_document_text", ast.unparse(fn))
 
     def test_create_and_edit_routes_start_sync_after_commit(self):
         routes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in ("add_article", "edit_article")]
