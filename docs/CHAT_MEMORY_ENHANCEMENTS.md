@@ -120,3 +120,11 @@ lint 仍有既有 36 errors / 10 warnings。三个修改的页面与 HEAD 的诊
 - 反问选项：智能模式的反问 JSON 可带 `options`（2–4 个短答案，后端清理为最多 4 个、每个 ≤ 80 字）；回应字段 `clarify_options`。`Chat.jsx` 在 AI 文字消息下显示按钮（沿用金色选项卡片样式），点击等同输入该文字并送出。测试：`Chat.clarify.test.js`（标准与 Staff 两种布局）。
 - 更多细节：`wants_details()` 识别 more details / in detail / tell me more / 详细 / 细节 / terperinci 等；此时 `build_ai_chat_context(detail=True)` 上限 14,000 字，第一份相关文件给 9,000 字（无匹配段落时从文件开头取），提示允许约 400 字。一般问题不变。
 - 系统说明的 AI Chat 段落已补上这两项。后端 474 项、前端 117 项测试通过。
+
+## 2026-11-23 更新：加速与“更多细节”追问（LIONG1934）
+
+- 慢的主因：Gemini 3/4 默认先思考（3.8 Flash 默认 medium，3 Flash Preview 默认 high），一题追问要叫 AI 两次（中文再加翻译一次），常超过 30 秒，8 秒的追问解析也常超时。
+- `ai_provider_service._call_gemini`：模型名为 `gemini-3*` / `gemini-4*` 时送 `generationConfig.thinkingConfig.thinkingLevel = "low"`（Google 文档写法）；若该模型回 400，去掉设定再送一次；只取非 thought 的文字部分。旧型号请求不变。测试：`test_ai_provider_gemini.py`。
+- 提示要求纯文字、不用 Markdown（网页不显示粗体，`**` 会直接露出）。
+- “更多细节”追问若解析失败，检索时带上上一题用户问题；详细回答时限 40 秒（一般仍 25 秒）。
+- AI Settings 已由用户改为正式版 `gemini-3.8-flash`（原 `gemini-3-flash-preview` 为预览版，同代其他预览版已被 Google 关闭）。

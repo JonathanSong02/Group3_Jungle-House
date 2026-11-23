@@ -561,6 +561,30 @@ class ChatRouteTests(unittest.TestCase):
         for q in ["How do I open the kiosk?", "what is the honey price", "怎么开店"]:
             with self.subTest(q=q):
                 self.assertFalse(env["wants_details"](q))
+    def test_smart_prompt_asks_for_plain_text(self):
+        env["answer_question_with_ai_provider"]("How do I open?", smart=True)
+        self.assertIn("no Markdown", self.answer_prompt())
+    def test_detail_follow_up_uses_previous_question_when_not_resolved(self):
+        self.payload["question"]="我还要more details"
+        self.payload["history"]=[{"role":"user","content":"lab 10 manual 在讲什么"},
+                                 {"role":"assistant","content":"It covers malware analysis."}]
+        self.provider._call_ai_provider_once.return_value="{}"   # follow-up could not be resolved
+        self.call()
+        search=env["build_ai_chat_context"].call_args.kwargs["search_question"]
+        self.assertIn("lab 10 manual", search)
+        self.assertIn("more details", search)
+        self.assertEqual(self.provider.generate_ai_reply.call_args.kwargs["timeout"],40)
+    def test_detail_follow_up_keeps_resolved_query(self):
+        self.payload["question"]="give me more details about it"
+        self.provider._call_ai_provider_once.return_value=json.dumps({"query":"Golden Passion honey details",
+            "subject":"Golden Passion honey","evidence_index":0,"topic_index":0})
+        self.call()
+        self.assertEqual(env["build_ai_chat_context"].call_args.kwargs["search_question"],"Golden Passion honey details")
+    def test_normal_answer_keeps_25s_limit(self):
+        del self.payload["history"]
+        self.payload["question"]="What is the honey price?"
+        self.call()
+        self.assertEqual(self.provider.generate_ai_reply.call_args.kwargs["timeout"],25)
     def test_ordinary_question_has_no_detail_flag(self):
         del self.payload["history"]
         self.payload["question"]="What is the honey price?"

@@ -9626,7 +9626,8 @@ def answer_question_with_ai_provider(question, timeout=25, search_question=None,
                "everything relevant in the context. " if detail else
                "Stay\nunder about 150 words unless the question needs more. ")
             + "Every fact must\n"
-            "come from the Knowledge Base context.\n\n"
+            "come from the Knowledge Base context. Write plain text with no Markdown\n"
+            "(no ** or # symbols); use simple numbered or dash lists.\n\n"
             "Questions about using this AI Wiki system itself (menus, pages, quizzes,\n"
             "how many articles or documents it has) are work questions: answer them\n"
             "from the \"System guide\", statistics, document and quiz sections of the\n"
@@ -10694,15 +10695,27 @@ def chat():
         )
 
         if (should_escalate or try_ai_instead_of_clarifying or smart_eligible) and AI_PROVIDER_SERVICE_AVAILABLE:
+            # "More details" right after a topic ("我还要 more details"): if the
+            # follow-up could not be resolved, search with the previous user
+            # question too, so the same document is found. Detailed answers
+            # are longer, so they get more time (still under the 60 s page limit).
+            detail_request = smart_eligible and wants_details(question)
+            answer_search_question = question_for_search
+            if detail_request and conversation_history and not conversation_query_was_resolved:
+                previous_user_question = next(
+                    (item["content"] for item in reversed(conversation_history) if item["role"] == "user"), "")
+                if previous_user_question:
+                    answer_search_question = f"{previous_user_question} {question_for_search}"
             try:
                 ai_answer = answer_question_with_ai_provider(
                     question,
-                    search_question=question_for_search,
+                    timeout=40 if detail_request else 25,
+                    search_question=answer_search_question,
                     user_language=detected_language,
                     conversation_reference=conversation_query_was_resolved,
                     conversation_history=conversation_history,
                     smart=smart_eligible,
-                    detail=smart_eligible and wants_details(question),
+                    detail=detail_request,
                 )
             except ai_provider_service.AIProviderNotConfiguredError:
                 ai_answer = None

@@ -180,19 +180,39 @@ def _call_gemini(prompt, model_name, api_key, timeout):
     # the older ?key= query-parameter method returns a bare 404 instead of
     # a clear auth error for these keys, which is what made this so hard
     # to diagnose.
-    response = requests.post(
-        url,
-        headers={
-            "x-goog-api-key": api_key,
-            "Content-Type": "application/json",
-        },
-        json={"contents": [{"parts": [{"text": prompt}]}]},
-        timeout=timeout,
-    )
+    headers = {
+        "x-goog-api-key": api_key,
+        "Content-Type": "application/json",
+    }
+    # Gemini 3 / 4 "think" before answering by default (medium or high),
+    # which made chat answers take 30 s+. Answering from given articles needs
+    # little reasoning, so ask for low thinking (Google's documented
+    # generationConfig.thinkingConfig.thinkingLevel). Older models do not
+    # accept it and get the plain request as before.
+    low_thinking = bool(_GEMINI_LOW_THINKING_MODELS.match(str(model_name or "")))
+    response = requests.post(url, headers=headers, json=_gemini_payload(prompt, low_thinking), timeout=timeout)
+    if low_thinking and response.status_code == 400:
+        # A model that rejects the setting: ask once more without it.
+        response = requests.post(url, headers=headers, json=_gemini_payload(prompt, False), timeout=timeout)
     response.raise_for_status()
     data = response.json()
 
-    return data["candidates"][0]["content"]["parts"][0]["text"]
+    # Use only answer text: skip any thought parts.
+    parts = data["candidates"][0]["content"]["parts"]
+    texts = [part["text"] for part in parts if isinstance(part, dict) and part.get("text") and not part.get("thought")]
+    if not texts:
+        raise KeyError("text")
+    return "".join(texts)
+
+
+_GEMINI_LOW_THINKING_MODELS = re.compile(r"^gemini-[34](?:[.-]|$)", re.IGNORECASE)
+
+
+def _gemini_payload(prompt, low_thinking):
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+    if low_thinking:
+        payload["generationConfig"] = {"thinkingConfig": {"thinkingLevel": "low"}}
+    return payload
 
 
 _IMAGE_MIME_TYPES = {
