@@ -1014,18 +1014,52 @@ function renderResponseMeta(message, t) {
 }
 
 // Same look as the existing knowledge option cards (gold border, warm white).
+// Clarifying-question choices, shown like Claude's: one numbered row each.
 const CLARIFY_OPTION_STYLE = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '12px',
+  width: '100%',
+  textAlign: 'left',
   border: '1px solid #e8c56b',
-  borderRadius: '18px',
-  padding: '10px 18px',
+  borderRadius: '16px',
+  padding: '12px 16px',
   background: 'linear-gradient(135deg, #ffffff 0%, #fffdf7 100%)',
   color: 'inherit',
   font: 'inherit',
   fontWeight: 600,
   cursor: 'pointer',
   boxShadow: '0 6px 16px rgba(122, 92, 0, 0.08)',
-  transition: 'transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease',
+  transition: 'transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease, opacity 0.15s ease',
 };
+// After answering, the chosen row stays bright (overriding the site-wide
+// faded look of disabled buttons) and the others fade.
+const CLARIFY_OPTION_CHOSEN_STYLE = {
+  opacity: 1,
+  cursor: 'default',
+  border: '2px solid #d89b00',
+  background: 'linear-gradient(135deg, #fff8e8 0%, #ffffff 100%)',
+};
+const CLARIFY_OPTION_LOCKED_STYLE = { opacity: 0.45, cursor: 'default', boxShadow: 'none' };
+const CLARIFY_NUMBER_STYLE = {
+  flexShrink: 0,
+  width: '26px',
+  height: '26px',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  borderRadius: '8px',
+  border: '1px solid #e8c56b',
+  background: '#fff8e8',
+  fontWeight: 700,
+};
+
+// Options of the newest message when it is an unanswered clarifying question,
+// so typing "2" answers with option 2.
+function pendingClarifyOptions(messages) {
+  const last = messages[messages.length - 1];
+  return last && last.sender === 'ai' && Array.isArray(last.clarify_options) ? last.clarify_options : [];
+}
 
 function buildAiMessage(data, t) {
   data = normalizeEscalationResponse(data, t);
@@ -2040,7 +2074,13 @@ const removeSelectedImage = () => {
 
   // `overrideText`: a clicked clarifying-question option, sent exactly as if typed.
   const handleSend = async (overrideText) => {
-    const trimmedQuestion = cleanQuestionInput(typeof overrideText === 'string' ? overrideText : question);
+    const typedText = cleanQuestionInput(typeof overrideText === 'string' ? overrideText : question);
+    // Just the number of a waiting option ("2") answers with that option.
+    const waitingOptions = pendingClarifyOptions(messages);
+    const trimmedQuestion =
+      /^\d{1,2}$/.test(typedText) && waitingOptions[Number(typedText) - 1]
+        ? waitingOptions[Number(typedText) - 1]
+        : typedText;
 
     if ((!trimmedQuestion && !selectedImage) || loading) return;
 
@@ -2468,32 +2508,59 @@ const removeSelectedImage = () => {
               {renderRichKnowledgeContent(message.sender === 'user' ? displayStoredText(message.text, t) : message.text, message.link || message.article_link)}
             </p>
 
-            {message.sender === 'ai' && Array.isArray(message.clarify_options) && message.clarify_options.length > 0 ? (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '12px' }}>
-                {message.clarify_options.map((option) => (
-                  <button
-                    key={option}
-                    type="button"
-                    className="clarify-option-btn"
-                    disabled={loading}
-                    onClick={() => handleSend(option)}
-                    style={CLARIFY_OPTION_STYLE}
-                    onMouseEnter={(event) => {
-                      event.currentTarget.style.transform = 'translateY(-2px)';
-                      event.currentTarget.style.boxShadow = '0 10px 22px rgba(122, 92, 0, 0.14)';
-                      event.currentTarget.style.borderColor = '#d89b00';
-                    }}
-                    onMouseLeave={(event) => {
-                      event.currentTarget.style.transform = 'none';
-                      event.currentTarget.style.boxShadow = CLARIFY_OPTION_STYLE.boxShadow;
-                      event.currentTarget.style.borderColor = '#e8c56b';
-                    }}
-                  >
-                    {option}
-                  </button>
-                ))}
-              </div>
-            ) : null}
+            {message.sender === 'ai' && Array.isArray(message.clarify_options) && message.clarify_options.length > 0 ? (() => {
+              // Answered once a later user message exists; mark the chosen option.
+              const position = messages.indexOf(message);
+              const reply = position >= 0 ? messages.slice(position + 1).find((item) => item.sender === 'user') : null;
+              const answered = Boolean(reply);
+              const chosen = reply ? String(reply.text || '').trim() : '';
+
+              return (
+                <div style={{ marginTop: '14px' }}>
+                  <p style={{ margin: '0 0 8px', fontSize: '0.9em', fontWeight: 600, opacity: 0.8 }}>
+                    {t(answered ? 'chat.clarify.answered' : 'chat.clarify.choose')}
+                  </p>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {message.clarify_options.map((option, optionIndex) => {
+                      const isChosen = answered && option === chosen;
+                      return (
+                        <button
+                          key={option}
+                          type="button"
+                          className="clarify-option-btn"
+                          disabled={loading || answered}
+                          aria-pressed={isChosen}
+                          onClick={() => handleSend(option)}
+                          style={{
+                            ...CLARIFY_OPTION_STYLE,
+                            ...(isChosen ? CLARIFY_OPTION_CHOSEN_STYLE : {}),
+                            ...(answered && !isChosen ? CLARIFY_OPTION_LOCKED_STYLE : {}),
+                          }}
+                          onMouseEnter={(event) => {
+                            if (answered) return;
+                            event.currentTarget.style.transform = 'translateY(-2px)';
+                            event.currentTarget.style.boxShadow = '0 10px 22px rgba(122, 92, 0, 0.14)';
+                            event.currentTarget.style.borderColor = '#d89b00';
+                          }}
+                          onMouseLeave={(event) => {
+                            if (answered) return;
+                            event.currentTarget.style.transform = 'none';
+                            event.currentTarget.style.boxShadow = CLARIFY_OPTION_STYLE.boxShadow;
+                            event.currentTarget.style.borderColor = '#e8c56b';
+                          }}
+                        >
+                          <span className="clarify-option-number" style={CLARIFY_NUMBER_STYLE}>{optionIndex + 1}</span>
+                          <span className="clarify-option-label" style={{ flex: 1 }}>{option}</span>
+                          <span aria-hidden="true" style={isChosen ? { color: '#d89b00', fontWeight: 800 } : { opacity: 0.55 }}>
+                            {isChosen ? '✓' : '›'}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })() : null}
 
             {message.clarification_requested && message.question ? (
               <button type="button" className="secondary-btn" disabled={loading} onClick={() => handleEscalationOffer(message, true)}>
