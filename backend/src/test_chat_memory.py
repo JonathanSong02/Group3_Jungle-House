@@ -23,7 +23,7 @@ env = {"re": re, "json": json, "CJK_CHAR_RE": re.compile(r"[\u3400-\u9fff]"),
        "app": types.SimpleNamespace(secret_key="isolated-test-only")}
 nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
 for n in tree.body:
-    if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id in {"_MALAY_GREETINGS", "_PINYIN_GREETINGS", "CHAT_FAILURE_MESSAGES", "ATTACHMENT_ERROR_KINDS"} for t in n.targets):
+    if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id in {"_MALAY_GREETINGS", "_PINYIN_GREETINGS", "CHAT_FAILURE_MESSAGES", "ATTACHMENT_ERROR_KINDS", "_DETAIL_REQUEST"} for t in n.targets):
         nodes.append(n)
 exec(compile(ast.Module(body=nodes, type_ignores=[]), "selected_app_helpers.py", "exec"), env)
 chat = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "chat")
@@ -225,7 +225,7 @@ import copy
 selected=[]
 import os
 env["os"]=os
-for name in ["chat","answer_question_with_ai_provider","validate_escalation_context","create_chat_escalation","attach_escalation_context_status","smart_chat_enabled"]:
+for name in ["chat","answer_question_with_ai_provider","validate_escalation_context","create_chat_escalation","attach_escalation_context_status","smart_chat_enabled","wants_details"]:
     node=copy.deepcopy(next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name==name))
     node.decorator_list=[]
     selected.append(node)
@@ -512,6 +512,61 @@ class ChatRouteTests(unittest.TestCase):
         self.assertEqual(result["options"],options)
         self.assertEqual(result["type"],"multiple_choice")
         self.assertEqual(result["reply"],"Opening or closing?")
+    def test_answer_with_line_breaks_is_accepted(self):
+        # A list answer often comes back with raw line breaks inside the JSON
+        # string; it must not be thrown away as "invalid JSON".
+        self.provider.generate_ai_reply.return_value = (
+            '{"answered": true, "answer": "There are 2 PDFs:\n- Staff_Handbook.pdf\n- Lab_10_Manual.pdf", '
+            '"sourceTitle": "Attached documents"}')
+        result = env["answer_question_with_ai_provider"]("any pdf in knowledge base?", smart=True)
+        self.assertEqual(result["answer"].splitlines(), ["There are 2 PDFs:", "- Staff_Handbook.pdf", "- Lab_10_Manual.pdf"])
+    def test_answer_with_line_breaks_and_extra_prose_is_accepted(self):
+        self.provider.generate_ai_reply.return_value = (
+            'Here you go:\n{"answered": true, "answer": "Line one\nLine two", "sourceTitle": "Honey"}')
+        result = env["answer_question_with_ai_provider"]("honey?", smart=True)
+        self.assertEqual(result["answer"], "Line one\nLine two")
+    # ---- Clarifying question with clickable options ----
+    def test_clarify_options_parsed_and_cleaned(self):
+        self.provider.generate_ai_reply.return_value=json.dumps({"answered":False,"clarify":True,
+            "question":"Which store?","options":["ST3"," Spring ","", "x"*200, 5, "ST3", "Mall", "Kiosk", "Extra"]})
+        result=env["answer_question_with_ai_provider"]("How do I open?", smart=True)
+        self.assertEqual(result["options"],["ST3","Spring","Mall","Kiosk"])
+    def test_clarify_without_options_still_works(self):
+        self.provider.generate_ai_reply.return_value=json.dumps({"answered":False,"clarify":True,"question":"Which store?"})
+        self.assertEqual(env["answer_question_with_ai_provider"]("How do I open?", smart=True)["options"],[])
+    def test_smart_prompt_asks_for_options(self):
+        env["answer_question_with_ai_provider"]("How do I open?", smart=True)
+        self.assertIn('"options"', self.answer_prompt())
+    def test_route_clarify_returns_options(self):
+        del self.payload["history"]
+        self.payload["question"]="How do I open the shop?"
+        self.provider.generate_ai_reply.return_value=json.dumps({"answered":False,"clarify":True,
+            "question":"Which store?","options":["ST3","Spring"]})
+        result=self.call()
+        self.assertEqual(result["clarify_options"],["ST3","Spring"])
+        self.assertEqual(result["type"],"text")
+
+    # ---- "More details" ----
+    def test_detail_question_gets_bigger_context_and_longer_answer(self):
+        del self.payload["history"]
+        self.payload["question"]="Give me more details of the lab 10 manual"
+        self.call()
+        self.assertTrue(env["build_ai_chat_context"].call_args.kwargs.get("detail"))
+        self.assertIn("asked for details", self.answer_prompt())
+    def test_detail_words_in_three_languages(self):
+        for q in ["explain the lab manual in detail", "lab 10 manual 详细一点", "给我更多细节", "terangkan dengan terperinci",
+                  "tell me more about the handbook", "elaborate on the refund policy"]:
+            with self.subTest(q=q):
+                self.assertTrue(env["wants_details"](q))
+        for q in ["How do I open the kiosk?", "what is the honey price", "怎么开店"]:
+            with self.subTest(q=q):
+                self.assertFalse(env["wants_details"](q))
+    def test_ordinary_question_has_no_detail_flag(self):
+        del self.payload["history"]
+        self.payload["question"]="What is the honey price?"
+        self.call()
+        self.assertNotIn("detail", env["build_ai_chat_context"].call_args.kwargs)
+        self.assertNotIn("asked for details", self.answer_prompt())
     def test_clarify_ignored_when_not_smart(self):
         self.provider.generate_ai_reply.return_value=json.dumps({"answered":False,"clarify":True,"question":"Which store?"})
         self.assertIsNone(env["answer_question_with_ai_provider"]("How do I open?"))

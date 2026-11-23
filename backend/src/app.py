@@ -9361,9 +9361,11 @@ if NOTION_SYNC_SERVICE_AVAILABLE and os.getenv("NOTION_AUTO_SYNC_ENABLED", "true
 # behavior.
 # =========================
 SYSTEM_CONTEXT_LIMIT = 3500
+DETAIL_EXCERPT_CHARS = 9000
+DETAIL_MAX_CHARS = 14000
 
 
-def build_ai_chat_context(question, limit=5, max_chars=6000, search_question=None):
+def build_ai_chat_context(question, limit=5, max_chars=6000, search_question=None, detail=False):
     """
     `search_question` optionally overrides what's used to SCORE/select
     articles (e.g. the English keywords derived from a Chinese/Malay
@@ -9458,6 +9460,10 @@ def build_ai_chat_context(question, limit=5, max_chars=6000, search_question=Non
         text = re.sub(r"\s+", " ", text).strip()
         return text
 
+    if detail:
+        max_chars = max(max_chars, DETAIL_MAX_CHARS)
+    detail_document_used = False
+
     chunks = []
     total_len = 0
 
@@ -9475,10 +9481,16 @@ def build_ai_chat_context(question, limit=5, max_chars=6000, search_question=Non
         entry = f"### {title}\n{body}\n"
         document_text = document_texts.get(article.get("article_id"))
         if document_text:
+            # "More details": the first matching document gets a much bigger
+            # share (from its start when no passage matches the words).
+            big_share = detail and not detail_document_used
             excerpt = document_text_service.best_passages(
-                document_text, question_tokens, limit=1500,
+                document_text, question_tokens, limit=DETAIL_EXCERPT_CHARS if big_share else 1500,
                 tokenize=lambda text: light_stem(tokenize_for_knowledge_match(text)),
             )
+            if big_share:
+                excerpt = excerpt or document_text[:DETAIL_EXCERPT_CHARS]
+                detail_document_used = True
             if excerpt:
                 entry += f"Attached document (excerpt): {excerpt}\n"
 
@@ -9505,12 +9517,25 @@ def build_ai_chat_context(question, limit=5, max_chars=6000, search_question=Non
     return "\n".join(chunks), candidate_articles
 
 
+_DETAIL_REQUEST = re.compile(
+    r"more details?|in detail|detailed|full details|details? (?:of|about|on)|tell me more|elaborate"
+    r"|explain (?:fully|more|everything|in full)|everything about"
+    r"|详细|细节|具体|展开|全部内容|terperinci|lebih lanjut|butiran",
+    re.IGNORECASE,
+)
+
+
+def wants_details(question):
+    """True when the staff member asks for a fuller answer ("more details", 详细, terperinci)."""
+    return bool(_DETAIL_REQUEST.search(str(question or "")))
+
+
 def smart_chat_enabled():
     """Smart chat is on unless SMART_CHAT_ENABLED is 0/false/off/no (emergency off switch)."""
     return os.environ.get("SMART_CHAT_ENABLED", "1").strip().lower() not in ("0", "false", "off", "no")
 
 
-def answer_question_with_ai_provider(question, timeout=25, search_question=None, user_language="en", conversation_reference=False, conversation_history=None, smart=False):
+def answer_question_with_ai_provider(question, timeout=25, search_question=None, user_language="en", conversation_reference=False, conversation_history=None, smart=False, detail=False):
     """
     Returns {"answer": str, "sourceTitle": str, "article_id": int|None,
     "off_topic": bool} if the AI provider produced a usable reply (either a
@@ -9538,7 +9563,9 @@ def answer_question_with_ai_provider(question, timeout=25, search_question=None,
     (a manager clicking a button, not a live conversation) keeps the
     longer default since waiting there is far less disruptive.
     """
-    context_text, candidate_articles = build_ai_chat_context(question, search_question=search_question)
+    # "More details" questions get a much bigger part of the matching document.
+    context_options = {"detail": True} if detail else {}
+    context_text, candidate_articles = build_ai_chat_context(question, search_question=search_question, **context_options)
 
     # English behavior is unchanged from before: no KB context at all means
     # there's nothing to ground an answer in, so skip the AI call and let
@@ -9593,8 +9620,12 @@ def answer_question_with_ai_provider(question, timeout=25, search_question=None,
         answer_style = (
             "Answer naturally, like a helpful colleague: give the direct answer\n"
             "first, then the relevant steps or explanation in plain sentences or a\n"
-            "short list. Combine several articles when they are relevant. Stay\n"
-            "under about 150 words unless the question needs more. Every fact must\n"
+            "short list. Combine several articles when they are relevant. "
+            + ("The staff member asked for details: give a thorough answer of up to\n"
+               "about 400 words, organised with short headings or lists, covering\n"
+               "everything relevant in the context. " if detail else
+               "Stay\nunder about 150 words unless the question needs more. ")
+            + "Every fact must\n"
             "come from the Knowledge Base context.\n\n"
             "Questions about using this AI Wiki system itself (menus, pages, quizzes,\n"
             "how many articles or documents it has) are work questions: answer them\n"
@@ -9603,8 +9634,10 @@ def answer_question_with_ai_provider(question, timeout=25, search_question=None,
             "If the context contains several plausible answers (for example two\n"
             "stores, products or procedures) and the question does not say which\n"
             "one, do not guess. Respond with ONLY this exact JSON:\n"
-            '{"answered": false, "clarify": true, "question": "..."}\n'
-            f'("question" is ONE short clarifying question written in {language_label}.)\n\n'
+            '{"answered": false, "clarify": true, "question": "...", "options": ["...", "..."]}\n'
+            f'("question" is ONE short clarifying question written in {language_label}; '
+            f'"options" are 2 to 4 short possible answers the staff member can click, '
+            f'also in {language_label}.)\n\n'
             + source_title_rule
         )
     else:
@@ -9658,8 +9691,10 @@ Knowledge Base context:
     json_text = re.sub(r"^```(?:json)?\s*", "", json_text)
     json_text = re.sub(r"\s*```$", "", json_text)
 
+    # strict=False: list answers often contain raw line breaks inside the
+    # JSON string, which strict parsing rejects (the answer was then lost).
     try:
-        parsed = json.loads(json_text)
+        parsed = json.loads(json_text, strict=False)
     except ValueError:
         # Some models wrap the JSON in extra prose; pull out the outermost
         # {...} block instead of giving up and escalating a fine answer.
@@ -9668,7 +9703,7 @@ Knowledge Base context:
             print("AI PROVIDER REPLY WAS NOT JSON:", json_text[:200])
             return None
         try:
-            parsed = json.loads(json_match.group(0))
+            parsed = json.loads(json_match.group(0), strict=False)
         except ValueError:
             print("AI PROVIDER REPLY WAS NOT VALID JSON:", json_text[:200])
             return None
@@ -9679,12 +9714,23 @@ Knowledge Base context:
     if smart and not parsed.get("answered") and parsed.get("clarify"):
         clarify_question = str(parsed.get("question") or "").strip()
         if clarify_question and len(clarify_question) <= 300:
+            # Up to 4 short, distinct options the staff member can click.
+            options = []
+            raw_options = parsed.get("options")
+            for option in raw_options if isinstance(raw_options, list) else []:
+                if isinstance(option, str):
+                    option = option.strip()
+                    if option and len(option) <= 80 and option not in options:
+                        options.append(option)
+                if len(options) == 4:
+                    break
             return {
                 "answer": clarify_question,
                 "sourceTitle": "",
                 "article_id": None,
                 "off_topic": False,
                 "clarify": True,
+                "options": options,
             }
         return None
 
@@ -10656,6 +10702,7 @@ def chat():
                     conversation_reference=conversation_query_was_resolved,
                     conversation_history=conversation_history,
                     smart=smart_eligible,
+                    detail=smart_eligible and wants_details(question),
                 )
             except ai_provider_service.AIProviderNotConfiguredError:
                 ai_answer = None
@@ -10682,6 +10729,8 @@ def chat():
                         result["type"] = "text"
                         result["options"] = []
                         result["steps"] = []
+                        # Clickable answers to the question (sent as the next question).
+                        result["clarify_options"] = ai_answer.get("options") or []
                     result["source"] = "ai_provider_clarify"
                     result["fallback"] = False
                     result["fallback_message"] = ""

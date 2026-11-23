@@ -1013,6 +1013,20 @@ function renderResponseMeta(message, t) {
   );
 }
 
+// Same look as the existing knowledge option cards (gold border, warm white).
+const CLARIFY_OPTION_STYLE = {
+  border: '1px solid #e8c56b',
+  borderRadius: '18px',
+  padding: '10px 18px',
+  background: 'linear-gradient(135deg, #ffffff 0%, #fffdf7 100%)',
+  color: 'inherit',
+  font: 'inherit',
+  fontWeight: 600,
+  cursor: 'pointer',
+  boxShadow: '0 6px 16px rgba(122, 92, 0, 0.08)',
+  transition: 'transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease',
+};
+
 function buildAiMessage(data, t) {
   data = normalizeEscalationResponse(data, t);
   const messageMetadata = {
@@ -1173,6 +1187,9 @@ function buildAiMessage(data, t) {
     section: data.section || backendContext.section || '',
     notes: data.notes || [],
     steps: Array.isArray(data.steps) ? data.steps : [],
+    clarify_options: Array.isArray(data.clarify_options)
+      ? data.clarify_options.filter((option) => typeof option === 'string' && option.trim()).slice(0, 4)
+      : [],
     context: backendContext,
     unclear_count: unclearCount,
     escalation_ready: escalationReady,
@@ -2021,8 +2038,9 @@ const removeSelectedImage = () => {
     }
   };
 
-  const handleSend = async () => {
-    const trimmedQuestion = cleanQuestionInput(question);
+  // `overrideText`: a clicked clarifying-question option, sent exactly as if typed.
+  const handleSend = async (overrideText) => {
+    const trimmedQuestion = cleanQuestionInput(typeof overrideText === 'string' ? overrideText : question);
 
     if ((!trimmedQuestion && !selectedImage) || loading) return;
 
@@ -2449,6 +2467,33 @@ const removeSelectedImage = () => {
             >
               {renderRichKnowledgeContent(message.sender === 'user' ? displayStoredText(message.text, t) : message.text, message.link || message.article_link)}
             </p>
+
+            {message.sender === 'ai' && Array.isArray(message.clarify_options) && message.clarify_options.length > 0 ? (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '12px' }}>
+                {message.clarify_options.map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    className="clarify-option-btn"
+                    disabled={loading}
+                    onClick={() => handleSend(option)}
+                    style={CLARIFY_OPTION_STYLE}
+                    onMouseEnter={(event) => {
+                      event.currentTarget.style.transform = 'translateY(-2px)';
+                      event.currentTarget.style.boxShadow = '0 10px 22px rgba(122, 92, 0, 0.14)';
+                      event.currentTarget.style.borderColor = '#d89b00';
+                    }}
+                    onMouseLeave={(event) => {
+                      event.currentTarget.style.transform = 'none';
+                      event.currentTarget.style.boxShadow = CLARIFY_OPTION_STYLE.boxShadow;
+                      event.currentTarget.style.borderColor = '#e8c56b';
+                    }}
+                  >
+                    {option}
+                  </button>
+                ))}
+              </div>
+            ) : null}
 
             {message.clarification_requested && message.question ? (
               <button type="button" className="secondary-btn" disabled={loading} onClick={() => handleEscalationOffer(message, true)}>

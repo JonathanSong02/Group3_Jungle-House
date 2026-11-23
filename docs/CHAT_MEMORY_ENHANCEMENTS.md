@@ -113,3 +113,10 @@ lint 仍有既有 36 errors / 10 warnings。三个修改的页面与 HEAD 的诊
 - 新模块 `backend/src/system_knowledge.py`：问题涉及时才加入 AI 上下文（总上限 3,500 字，排在文章前面）——文章数量与分类、附件清单（含总结、所属文章）、有效 quiz 清单、提问者**自己的** quiz 成绩与未做清单；以及内建系统使用说明（每个左侧选单项与几个常见操作，含中英马名称、可用角色；无权限时说明谁能做、该找谁）。
 - 一般工作问题不会触发（有测试，例如 "test strips" 不会被当成 quiz）。`Sidebar.jsx` 新增选单项而说明未更新、或名称与 `translations.js` 不一致时，`test_system_knowledge.py` 会失败。
 - 测试：新增 `test_system_knowledge.py`、`test_notion_file_download.py`，扩充文件相关测试；后端全部 463 项通过（临时环境）。真实 provider 与资料库未联调。
+
+## 2026-11-23 更新：修正列表答案被丢弃、反问选项、“更多细节”（LIONG1934）
+
+- 修正：AI 答案字符串内含换行（列清单时常见）时，`json.loads` 严格模式会判为无效 JSON，答案被丢弃并退回相关文章列表。现在用 `strict=False` 解析。
+- 反问选项：智能模式的反问 JSON 可带 `options`（2–4 个短答案，后端清理为最多 4 个、每个 ≤ 80 字）；回应字段 `clarify_options`。`Chat.jsx` 在 AI 文字消息下显示按钮（沿用金色选项卡片样式），点击等同输入该文字并送出。测试：`Chat.clarify.test.js`（标准与 Staff 两种布局）。
+- 更多细节：`wants_details()` 识别 more details / in detail / tell me more / 详细 / 细节 / terperinci 等；此时 `build_ai_chat_context(detail=True)` 上限 14,000 字，第一份相关文件给 9,000 字（无匹配段落时从文件开头取），提示允许约 400 字。一般问题不变。
+- 系统说明的 AI Chat 段落已补上这两项。后端 474 项、前端 117 项测试通过。

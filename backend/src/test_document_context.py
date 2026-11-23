@@ -39,12 +39,12 @@ class Cursor:
         pass
 
 
-def build(articles, doc_rows, question, fail_docs=False, max_chars=6000, auth_user=None):
+def build(articles, doc_rows, question, fail_docs=False, max_chars=6000, auth_user=None, **kwargs):
     document_text_service.invalidate_cache()
     cursor = Cursor(articles, doc_rows, fail_docs)
     env = {
         "system_knowledge": system_knowledge,
-        "SYSTEM_CONTEXT_LIMIT": 3500,
+        "SYSTEM_CONTEXT_LIMIT": 3500, "DETAIL_EXCERPT_CHARS": 9000, "DETAIL_MAX_CHARS": 14000,
         "g": types.SimpleNamespace(get=lambda key, default=None: auth_user if key == "auth_user" else default),
         "re": re,
         "get_db_connection": lambda: types.SimpleNamespace(cursor=lambda **k: cursor, close=lambda: None),
@@ -55,7 +55,7 @@ def build(articles, doc_rows, question, fail_docs=False, max_chars=6000, auth_us
         "document_text_service": document_text_service,
     }
     exec(compile(ast.Module(body=[node], type_ignores=[]), "build_ai_chat_context.py", "exec"), env)
-    return env["build_ai_chat_context"](question, max_chars=max_chars)
+    return env["build_ai_chat_context"](question, max_chars=max_chars, **kwargs)
 
 
 ARTICLES = [
@@ -116,6 +116,22 @@ class SystemContextTests(unittest.TestCase):
     def test_ordinary_question_unchanged(self):
         text, _ = build(ARTICLES, [], "kiosk opening lights")
         self.assertEqual(text, "### Kiosk Opening\nTurn on the lights.\n")
+
+
+class DetailModeTests(unittest.TestCase):
+    LONG = " ".join(f"Lab step {i}: connect resistor {i} to the breadboard row {i}." for i in range(400))
+
+    def test_detail_gives_a_much_longer_excerpt(self):
+        rows = [{"article_id": 2, "text": self.LONG}]
+        normal, _ = build(ARTICLES, rows, "lab resistor breadboard steps")
+        detailed, _ = build(ARTICLES, rows, "lab resistor breadboard steps", detail=True)
+        self.assertLess(len(normal), 2200)
+        self.assertGreater(len(detailed), 6000)
+        self.assertLessEqual(len(detailed), 14000)
+
+    def test_detail_without_documents_is_unchanged(self):
+        self.assertEqual(build(ARTICLES, [], "kiosk opening lights", detail=True),
+                         build(ARTICLES, [], "kiosk opening lights"))
 
 
 class SyncHookTests(unittest.TestCase):
