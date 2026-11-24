@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import PageHeader from '../components/PageHeader';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
@@ -30,6 +29,44 @@ const formatThreadTime = (value, locale = 'en-GB') => {
     : date.toLocaleDateString(locale, { day: '2-digit', month: 'short' });
 };
 
+
+const formatMessageTime = (value, locale = 'en-GB') => {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+};
+
+const dayKey = (value) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+};
+
+const formatDayLabel = (
+  value,
+  locale = 'en-GB',
+  todayLabel = 'Today',
+  yesterdayLabel = 'Yesterday'
+) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+
+  const now = new Date();
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+
+  if (dayKey(date) === dayKey(now)) return todayLabel;
+  if (dayKey(date) === dayKey(yesterday)) return yesterdayLabel;
+
+  return date.toLocaleDateString(locale, {
+    weekday: 'short',
+    day: '2-digit',
+    month: 'short',
+    year: date.getFullYear() === now.getFullYear() ? undefined : 'numeric',
+  });
+};
+
 const isWithinMessageActionWindow = (createdAt, nowValue = Date.now()) => {
   const createdTime = new Date(createdAt).getTime();
 
@@ -38,25 +75,6 @@ const isWithinMessageActionWindow = (createdAt, nowValue = Date.now()) => {
   const elapsed = nowValue - createdTime;
   return elapsed >= 0 && elapsed <= MESSAGE_ACTION_WINDOW_MS;
 };
-
-function RefreshIcon() {
-  return (
-    <svg
-      className="messages-action-icon"
-      viewBox="0 0 24 24"
-      aria-hidden="true"
-    >
-      <path
-        d="M20 6v5h-5M4 18v-5h5M18.5 9A7 7 0 0 0 6.7 6.7L4 9M5.5 15A7 7 0 0 0 17.3 17.3L20 15"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.9"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
 
 function MoreIcon() {
   return (
@@ -72,6 +90,73 @@ function MoreIcon() {
   );
 }
 
+
+function SearchIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="11" cy="11" r="6.5" />
+      <path d="m16 16 4.5 4.5" />
+    </svg>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+
+function BackIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="m15 18-6-6 6-6" />
+    </svg>
+  );
+}
+
+function SendIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 4.5 20 12 4 19.5l2.1-6.1L14 12l-7.9-1.4L4 4.5Z" />
+    </svg>
+  );
+}
+
+function ClockIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="8" />
+      <path d="M12 7v5l3 2" />
+    </svg>
+  );
+}
+
+function CheckIcon({ double = false }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      {double ? (
+        <>
+          <path d="m3.8 12.5 3.4 3.4 6.5-7" />
+          <path d="m9.6 12.5 3.4 3.4 7.2-8" />
+        </>
+      ) : (
+        <path d="m5 12.5 4 4 10-10" />
+      )}
+    </svg>
+  );
+}
+
+function ErrorIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="8" />
+      <path d="M12 7.5v6M12 16.8h.01" />
+    </svg>
+  );
+}
+
 export default function Messages() {
   const { user } = useAuth();
   const { t, tOr, locale } = useLanguage();
@@ -81,7 +166,6 @@ export default function Messages() {
   const [threads, setThreads] = useState([]);
   const [threadMessages, setThreadMessages] = useState([]);
   const [selectedThread, setSelectedThread] = useState(null);
-  const [activeTab, setActiveTab] = useState('inbox');
 
   const [form, setForm] = useState({
     receiver_id: '',
@@ -99,12 +183,14 @@ export default function Messages() {
   const [messageText, setMessageText] = useState('');
 
   const [threadSearch, setThreadSearch] = useState('');
+  const [newChatSearch, setNewChatSearch] = useState('');
   const [showComposer, setShowComposer] = useState(false);
   const [openMenuId, setOpenMenuId] = useState(null);
   const [nowValue, setNowValue] = useState(Date.now());
   const [toast, setToast] = useState(null);
   const toastTimerRef = useRef(null);
   const chatBodyRef = useRef(null);
+  const replyInputRef = useRef(null);
 
   const fetchData = useCallback(async ({ silent = false } = {}) => {
     if (!currentUserId) {
@@ -188,28 +274,12 @@ export default function Messages() {
     return users.filter((item) => Number(item.user_id) !== Number(currentUserId));
   }, [users, currentUserId]);
 
-  const inboxThreads = useMemo(() => {
-    return threads.filter(
-      (item) =>
-        Number(item.latest_sender_id) !== Number(currentUserId) ||
-        item.unread_count > 0
-    );
-  }, [threads, currentUserId]);
-
-  const sentThreads = useMemo(() => {
-    return threads.filter(
-      (item) => Number(item.latest_sender_id) === Number(currentUserId)
-    );
-  }, [threads, currentUserId]);
-
-  const filteredByTab = activeTab === 'inbox' ? inboxThreads : sentThreads;
-
   const filteredThreads = useMemo(() => {
     const keyword = threadSearch.trim().toLowerCase();
 
-    if (!keyword) return filteredByTab;
+    if (!keyword) return threads;
 
-    return filteredByTab.filter((item) => {
+    return threads.filter((item) => {
       const haystack = [
         item.other_user_name,
         item.subject,
@@ -221,11 +291,38 @@ export default function Messages() {
 
       return haystack.includes(keyword);
     });
-  }, [filteredByTab, threadSearch]);
+  }, [threads, threadSearch]);
+
+  const filteredNewChatUsers = useMemo(() => {
+    const keyword = newChatSearch.trim().toLowerCase();
+
+    if (!keyword) return receiverOptions;
+
+    return receiverOptions.filter((item) => {
+      const haystack = [item.full_name, item.email, item.role_name]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+
+      return haystack.includes(keyword);
+    });
+  }, [receiverOptions, newChatSearch]);
 
   const unreadCount = threads.reduce(
     (total, item) => total + Number(item.unread_count || 0),
     0
+  );
+
+  const getOtherUserId = (thread) => {
+    if (!thread) return null;
+
+    return Number(thread.latest_sender_id) === Number(currentUserId)
+      ? Number(thread.latest_receiver_id)
+      : Number(thread.latest_sender_id);
+  };
+
+  const selectedNewChatUser = receiverOptions.find(
+    (item) => Number(item.user_id) === Number(form.receiver_id)
   );
 
   const handleChange = (event) => {
@@ -240,8 +337,13 @@ export default function Messages() {
   const sendMessage = async (event) => {
     event.preventDefault();
 
-    if (!form.receiver_id || !form.subject.trim() || !form.message.trim()) {
-      setMessageText(t('msg.err.fillAll'));
+    if (!form.receiver_id || !form.message.trim()) {
+      setMessageText(
+        tOr(
+          'msg.err.receiverMessageRequired',
+          'Choose a person and write a message first.'
+        )
+      );
       return;
     }
 
@@ -249,7 +351,7 @@ export default function Messages() {
     const receiver = receiverOptions.find(
       (item) => Number(item.user_id) === receiverId
     );
-    const subject = form.subject.trim();
+    const subject = form.subject.trim() || 'Direct message';
     const message = form.message.trim();
 
     try {
@@ -293,8 +395,8 @@ export default function Messages() {
       setSelectedThread(nextThread);
       setThreadMessages([sentMessage]);
       setForm({ receiver_id: '', subject: '', message: '' });
+      setNewChatSearch('');
       setShowComposer(false);
-      setActiveTab('sent');
     } catch (error) {
       console.error('Send message error:', error);
       const fallback = error.request && !error.response
@@ -332,6 +434,98 @@ export default function Messages() {
     }
   };
 
+
+  const syncOpenThread = useCallback(async () => {
+    if (!selectedThread?.thread_id || !currentUserId) return;
+
+    try {
+      const response = await api.get(
+        `/messages/thread/${selectedThread.thread_id}/${currentUserId}`
+      );
+      const serverMessages = Array.isArray(response.data) ? response.data : [];
+
+      setThreadMessages((current) => {
+        const localPending = current.filter(
+          (item) =>
+            item.client_status === 'sending' ||
+            item.client_status === 'failed'
+        );
+
+        if (localPending.length === 0) return serverMessages;
+
+        const serverIds = new Set(
+          serverMessages.map((item) => String(item.message_id))
+        );
+
+        const unmatchedLocal = localPending.filter((localItem) => {
+          if (serverIds.has(String(localItem.message_id))) return false;
+
+          return !serverMessages.some((serverItem) => {
+            if (
+              Number(serverItem.sender_id) !== Number(localItem.sender_id) ||
+              String(serverItem.message || '') !== String(localItem.message || '')
+            ) {
+              return false;
+            }
+
+            const serverTime = new Date(serverItem.created_at).getTime();
+            const localTime = new Date(localItem.created_at).getTime();
+
+            return (
+              Number.isFinite(serverTime) &&
+              Number.isFinite(localTime) &&
+              Math.abs(serverTime - localTime) <= 30000
+            );
+          });
+        });
+
+        return [...serverMessages, ...unmatchedLocal].sort(
+          (a, b) => new Date(a.created_at) - new Date(b.created_at)
+        );
+      });
+    } catch (error) {
+      console.debug('Silent message sync skipped:', error?.message);
+    }
+  }, [selectedThread?.thread_id, currentUserId]);
+
+  useEffect(() => {
+    if (!currentUserId) return undefined;
+
+    const sync = () => {
+      if (document.visibilityState !== 'visible') return;
+      fetchData({ silent: true });
+      syncOpenThread();
+    };
+
+    const timer = window.setInterval(sync, 5000);
+    document.addEventListener('visibilitychange', sync);
+
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', sync);
+    };
+  }, [currentUserId, fetchData, syncOpenThread]);
+
+  const chooseNewChatUser = async (person) => {
+    const existingThread = threads.find(
+      (thread) => getOtherUserId(thread) === Number(person.user_id)
+    );
+
+    if (existingThread) {
+      setShowComposer(false);
+      setNewChatSearch('');
+      setForm({ receiver_id: '', subject: '', message: '' });
+      await openThread(existingThread);
+      return;
+    }
+
+    setForm({
+      receiver_id: String(person.user_id),
+      subject: 'Direct message',
+      message: '',
+    });
+  };
+
   const getReplyReceiverId = () => {
     if (!selectedThread || threadMessages.length === 0) return null;
 
@@ -344,30 +538,119 @@ export default function Messages() {
     return lastMessage.sender_id;
   };
 
+  const postReplyMessage = async (optimisticMessage) => {
+    const optimisticId = optimisticMessage.message_id;
+
+    setThreadMessages((current) =>
+      current.map((item) =>
+        item.message_id === optimisticId
+          ? { ...item, client_status: 'sending' }
+          : item
+      )
+    );
+
+    try {
+      setSending(true);
+
+      const response = await api.post('/messages/reply', {
+        thread_id: optimisticMessage.thread_id,
+        parent_message_id: optimisticMessage.parent_message_id || null,
+        receiver_id: optimisticMessage.receiver_id,
+        subject: optimisticMessage.subject || 'Direct message',
+        message: optimisticMessage.message,
+      });
+
+      const sentMessage = response.data?.sent_message || {
+        ...optimisticMessage,
+        message_id: response.data?.message_id || optimisticId,
+        client_status: undefined,
+      };
+
+      setThreadMessages((current) => {
+        let replaced = false;
+        const next = current.map((item) => {
+          if (item.message_id !== optimisticId) return item;
+          replaced = true;
+          return sentMessage;
+        });
+
+        return replaced ? next : [...next, sentMessage];
+      });
+
+      setThreads((current) => {
+        const updated = current.map((item) =>
+          Number(item.thread_id) === Number(optimisticMessage.thread_id)
+            ? {
+                ...item,
+                latest_message: sentMessage.message,
+                latest_created_at: sentMessage.created_at,
+                latest_sender_id: sentMessage.sender_id,
+                latest_receiver_id: sentMessage.receiver_id,
+                unread_count: 0,
+              }
+            : item
+        );
+
+        return updated.sort(
+          (a, b) =>
+            new Date(b.latest_created_at) - new Date(a.latest_created_at)
+        );
+      });
+    } catch (error) {
+      console.error('Reply error:', error);
+
+      setThreadMessages((current) =>
+        current.map((item) =>
+          item.message_id === optimisticId
+            ? { ...item, client_status: 'failed' }
+            : item
+        )
+      );
+
+      const fallback =
+        error.request && !error.response
+          ? tOr(
+              'msg.err.network',
+              'Message not sent. Check your connection and try again.'
+            )
+          : error.response?.data?.message || t('msg.err.reply');
+
+      showToast(fallback, 'error');
+    } finally {
+      setSending(false);
+    }
+  };
+
   const sendReply = async (event) => {
     event.preventDefault();
 
-    if (!selectedThread || !replyText.trim()) {
-      setMessageText(t('msg.err.replyFirst'));
+    if (!selectedThread || !replyText.trim() || sending) {
+      if (!replyText.trim()) setMessageText(t('msg.err.replyFirst'));
       return;
     }
 
     const receiverId = getReplyReceiverId();
+
     if (!receiverId) {
       setMessageText(t('msg.err.noReceiver'));
       return;
     }
 
     const message = replyText.trim();
-    const lastMessage = threadMessages[threadMessages.length - 1];
-    const optimisticId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const lastPersistedMessage = [...threadMessages]
+      .reverse()
+      .find((item) => !item.client_status);
+    const optimisticId = `local-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
+
     const optimisticMessage = {
       message_id: optimisticId,
       thread_id: selectedThread.thread_id,
-      parent_message_id: lastMessage?.message_id || null,
+      parent_message_id: lastPersistedMessage?.message_id || null,
       sender_id: currentUserId,
       receiver_id: receiverId,
-      subject: selectedThread.subject,
+      subject: selectedThread.subject || 'Direct message',
       message,
       is_read: false,
       created_at: new Date().toISOString(),
@@ -379,60 +662,18 @@ export default function Messages() {
 
     setReplyText('');
     setMessageText('');
-    setThreadMessages((current) => [...current, optimisticMessage]);
 
-    try {
-      setSending(true);
-      const response = await api.post('/messages/reply', {
-        thread_id: selectedThread.thread_id,
-        parent_message_id: lastMessage?.message_id || null,
-        receiver_id: receiverId,
-        subject: selectedThread.subject,
-        message,
-      });
-
-      const sentMessage = response.data?.sent_message || {
-        ...optimisticMessage,
-        message_id: response.data?.message_id || optimisticId,
-        client_status: 'sent',
-      };
-
-      setThreadMessages((current) =>
-        current.map((item) =>
-          item.message_id === optimisticId ? sentMessage : item
-        )
-      );
-
-      setThreads((current) => {
-        const updated = current.map((item) =>
-          Number(item.thread_id) === Number(selectedThread.thread_id)
-            ? {
-                ...item,
-                latest_message: sentMessage.message,
-                latest_created_at: sentMessage.created_at,
-                latest_sender_id: sentMessage.sender_id,
-                latest_receiver_id: sentMessage.receiver_id,
-                unread_count: 0,
-              }
-            : item
-        );
-        return updated.sort(
-          (a, b) => new Date(b.latest_created_at) - new Date(a.latest_created_at)
-        );
-      });
-    } catch (error) {
-      console.error('Reply error:', error);
-      setThreadMessages((current) =>
-        current.filter((item) => item.message_id !== optimisticId)
-      );
-      setReplyText((current) => current || message);
-      const fallback = error.request && !error.response
-        ? tOr('msg.err.network', 'Message not sent. Check your connection and try again.')
-        : error.response?.data?.message || t('msg.err.reply');
-      showToast(fallback, 'error');
-    } finally {
-      setSending(false);
+    if (replyInputRef.current) {
+      replyInputRef.current.style.height = '';
     }
+
+    setThreadMessages((current) => [...current, optimisticMessage]);
+    await postReplyMessage(optimisticMessage);
+  };
+
+  const retryFailedMessage = async (item) => {
+    if (sending || item.client_status !== 'failed') return;
+    await postReplyMessage({ ...item, client_status: 'sending' });
   };
 
   const startEdit = (item) => {
@@ -466,12 +707,23 @@ export default function Messages() {
         message: editingText.trim(),
       });
 
+      const updatedText = editingText.trim();
+
+      setThreadMessages((current) =>
+        current.map((item) =>
+          Number(item.message_id) === Number(messageId)
+            ? {
+                ...item,
+                message: updatedText,
+                edited_at: new Date().toISOString(),
+              }
+            : item
+        )
+      );
+
       setEditingId(null);
       setEditingText('');
-
-      if (selectedThread) {
-        await openThread(selectedThread);
-      }
+      await fetchData({ silent: true });
     } catch (error) {
       console.error('Edit message error:', error);
       setMessageText(
@@ -493,11 +745,13 @@ export default function Messages() {
         user_id: currentUserId,
       });
 
-      if (selectedThread) {
-        await openThread(selectedThread);
-      }
+      setThreadMessages((current) =>
+        current.filter(
+          (item) => Number(item.message_id) !== Number(messageId)
+        )
+      );
 
-      await fetchData();
+      await fetchData({ silent: true });
     } catch (error) {
       console.error('Delete message error:', error);
       setMessageText(
@@ -531,11 +785,13 @@ export default function Messages() {
       // both participants and enforces sender ownership and the 5-minute limit.
       await api.put(`/messages/delete-for-everyone/${item.message_id}`);
 
-      if (selectedThread) {
-        await openThread(selectedThread);
-      }
+      setThreadMessages((current) =>
+        current.filter(
+          (message) => Number(message.message_id) !== Number(item.message_id)
+        )
+      );
 
-      await fetchData();
+      await fetchData({ silent: true });
     } catch (error) {
       console.error('Delete for everyone error:', error);
       setMessageText(
@@ -547,229 +803,341 @@ export default function Messages() {
 
   return (
     <div className="messages-page">
-      <PageHeader
-        title={t('msg.title')}
-        subtitle={t('msg.subtitle')}
-      />
+      <h1 className="messages-sr-only">{t('msg.title')}</h1>
 
       {toast ? (
-        <div className={`messages-toast ${toast.type || 'error'}`} role="status" aria-live="polite">
+        <div
+          className={`messages-toast ${toast.type || 'error'}`}
+          role="status"
+          aria-live="polite"
+        >
           <span className="messages-toast-icon" aria-hidden="true">!</span>
           <span>{toast.message}</span>
-          <button type="button" onClick={() => setToast(null)} aria-label={tOr('common.close', 'Close')}>×</button>
+          <button
+            type="button"
+            onClick={() => setToast(null)}
+            aria-label={tOr('common.close', 'Close')}
+          >
+            ×
+          </button>
         </div>
       ) : null}
 
-      {messageText && (
-        <div className="messages-global-alert">
+      {messageText ? (
+        <div className="messages-global-alert" role="alert">
           {messageText}
         </div>
-      )}
+      ) : null}
 
-      <section className="messages-chat-shell">
-        <aside className="messages-sidebar">
+      <section
+        className={`messages-chat-shell ${selectedThread ? 'has-thread' : ''}`}
+      >
+        <aside
+          className={`messages-sidebar ${showComposer ? 'is-composing' : ''}`}
+        >
           <div className="messages-sidebar-top">
-            <div>
-              <p className="messages-overline">{t('msg.overline')}</p>
-              <h3>{t('msg.conversations')}</h3>
+            <div className="messages-sidebar-title">
+              <h2>
+                {showComposer
+                  ? tOr('msg.newChat', 'New chat')
+                  : tOr('msg.chats', 'Chats')}
+              </h2>
+
+              {!showComposer && unreadCount > 0 ? (
+                <span
+                  className="messages-header-unread"
+                  title={t('msg.unreadN', { n: unreadCount })}
+                >
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              ) : null}
             </div>
-
-            <div className="messages-sidebar-actions">
-              <button
-                type="button"
-                className="messages-icon-btn"
-                onClick={() => fetchData()}
-                title={t('msg.refreshConv')}
-                aria-label={t('msg.refreshConv')}
-              >
-                <RefreshIcon />
-              </button>
-
-              <button
-                type="button"
-                className="messages-primary-pill"
-                onClick={() => setShowComposer((prev) => !prev)}
-              >
-                {showComposer ? t('common.close') : t('msg.new')}
-              </button>
-            </div>
-          </div>
-
-          <div className="messages-search-wrap">
-            <input
-              type="text"
-              value={threadSearch}
-              onChange={(event) => setThreadSearch(event.target.value)}
-              placeholder={t('msg.searchChats')}
-            />
-          </div>
-
-          <div className="messages-tabbar">
-            <button
-              type="button"
-              className={activeTab === 'inbox' ? 'active' : ''}
-              onClick={() => setActiveTab('inbox')}
-            >
-              {t('msg.inbox')}
-              {inboxThreads.length > 0 && <span>{inboxThreads.length}</span>}
-            </button>
 
             <button
               type="button"
-              className={activeTab === 'sent' ? 'active' : ''}
-              onClick={() => setActiveTab('sent')}
+              className="messages-top-action"
+              onClick={() => {
+                setShowComposer((current) => !current);
+                setMessageText('');
+                setNewChatSearch('');
+                setForm({ receiver_id: '', subject: '', message: '' });
+              }}
+              aria-label={
+                showComposer
+                  ? tOr('common.back', 'Back')
+                  : tOr('msg.newChat', 'New chat')
+              }
+              title={
+                showComposer
+                  ? tOr('common.back', 'Back')
+                  : tOr('msg.newChat', 'New chat')
+              }
             >
-              {t('msg.sent')}
-              {sentThreads.length > 0 && <span>{sentThreads.length}</span>}
+              {showComposer ? <BackIcon /> : <PlusIcon />}
             </button>
           </div>
 
-          {showComposer && (
-            <form className="messages-composer-card" onSubmit={sendMessage}>
-              <div className="messages-form-grid">
-                <label>
-                  <span>{t('msg.receiver')}</span>
-                  <select
-                    name="receiver_id"
-                    value={form.receiver_id}
-                    onChange={handleChange}
-                  >
-                    <option value="">{t('msg.selectReceiver')}</option>
-                    {receiverOptions.map((item) => (
-                      <option key={item.user_id} value={item.user_id}>
-                        {item.full_name} ({tOr(`role.${String(item.role_name || 'user').toLowerCase().replace(/[\s_-]/g, '')}`, item.role_name || 'User')})
-                      </option>
-                    ))}
-                  </select>
-                </label>
+          {showComposer ? (
+            <div className="messages-new-chat-panel">
+              {!form.receiver_id ? (
+                <>
+                  <label className="messages-search-box">
+                    <SearchIcon />
+                    <input
+                      type="search"
+                      value={newChatSearch}
+                      onChange={(event) => setNewChatSearch(event.target.value)}
+                      placeholder={tOr('msg.searchPeople', 'Search people')}
+                      autoFocus
+                    />
+                  </label>
 
-                <label>
-                  <span>{t('msg.subject')}</span>
-                  <input
-                    name="subject"
-                    value={form.subject}
-                    onChange={handleChange}
-                    placeholder={t('msg.subject')}
-                  />
-                </label>
-
-                <label className="messages-full-width">
-                  <span>{t('msg.message')}</span>
-                  <textarea
-                    name="message"
-                    rows="4"
-                    value={form.message}
-                    onChange={handleChange}
-                    placeholder={t('msg.writeMessage')}
-                  />
-                </label>
-              </div>
-
-              <button
-                type="submit"
-                className="messages-send-new-btn"
-                disabled={sending}
-              >
-                {sending ? t('msg.sending') : t('msg.send')}
-              </button>
-            </form>
-          )}
-
-          <div className="messages-thread-list">
-            {loading ? (
-              <div className="messages-empty-card">{t('msg.loadingConv')}</div>
-            ) : filteredThreads.length === 0 ? (
-              <div className="messages-empty-card">
-                {t('msg.noConv')}
-              </div>
-            ) : (
-              filteredThreads.map((thread) => {
-                const isActive =
-                  selectedThread?.thread_id === thread.thread_id;
-                const isUnread = Number(thread.unread_count || 0) > 0;
-
-                return (
-                  <button
-                    key={thread.thread_id}
-                    type="button"
-                    className={`messages-thread-item ${
-                      isActive ? 'active' : ''
-                    } ${isUnread ? 'unread' : ''}`}
-                    onClick={() => openThread(thread)}
-                  >
-                    <div className="messages-thread-avatar">
-                      {getInitials(thread.other_user_name || 'U')}
-                    </div>
-
-                    <div className="messages-thread-content">
-                      <div className="messages-thread-row">
-                        <h4>{thread.other_user_name || t('msg.unknown')}</h4>
-                        <span className="messages-thread-time">
-                          {formatThreadTime(thread.latest_created_at, locale)}
-                        </span>
+                  <div className="messages-new-chat-users">
+                    {filteredNewChatUsers.length === 0 ? (
+                      <div className="messages-empty-card">
+                        {tOr('msg.noPeople', 'No matching people found.')}
                       </div>
+                    ) : (
+                      filteredNewChatUsers.map((person) => (
+                        <button
+                          type="button"
+                          key={person.user_id}
+                          className="messages-person-row"
+                          onClick={() => chooseNewChatUser(person)}
+                        >
+                          <span className="messages-thread-avatar">
+                            {getInitials(person.full_name || 'U')}
+                          </span>
 
-                      <p className="messages-thread-subject">
-                        {thread.subject}
-                      </p>
-                      <p className="messages-thread-preview">
-                        {thread.latest_message}
-                      </p>
-                    </div>
-
-                    {isUnread && (
-                      <span className="messages-thread-badge">
-                        {thread.unread_count}
-                      </span>
+                          <span className="messages-person-copy">
+                            <strong>
+                              {person.full_name || t('msg.unknownUser')}
+                            </strong>
+                            <small>
+                              {tOr(
+                                `role.${String(person.role_name || 'user')
+                                  .toLowerCase()
+                                  .replace(/[\s_-]/g, '')}`,
+                                person.role_name || 'User'
+                              )}
+                            </small>
+                          </span>
+                        </button>
+                      ))
                     )}
-                  </button>
-                );
-              })
-            )}
-          </div>
+                  </div>
+                </>
+              ) : (
+                <form
+                  className="messages-first-message-form"
+                  onSubmit={sendMessage}
+                >
+                  <button
+                    type="button"
+                    className="messages-new-recipient"
+                    onClick={() =>
+                      setForm({
+                        receiver_id: '',
+                        subject: '',
+                        message: '',
+                      })
+                    }
+                  >
+                    <BackIcon />
 
-          <div className="messages-sidebar-footer">
-            <span>{t('msg.unreadN', { n: unreadCount })}</span>
-            <span>{t('msg.totalN', { n: threads.length })}</span>
-          </div>
+                    <span className="messages-thread-avatar">
+                      {getInitials(selectedNewChatUser?.full_name || 'U')}
+                    </span>
+
+                    <span>
+                      <strong>
+                        {selectedNewChatUser?.full_name ||
+                          t('msg.unknownUser')}
+                      </strong>
+                      <small>
+                        {tOr('msg.changeRecipient', 'Choose another person')}
+                      </small>
+                    </span>
+                  </button>
+
+                  <label className="messages-first-message-field">
+                    <span>{tOr('msg.firstMessage', 'First message')}</span>
+                    <textarea
+                      name="message"
+                      rows="5"
+                      value={form.message}
+                      onChange={handleChange}
+                      placeholder={t('msg.writeMessage')}
+                      autoFocus
+                    />
+                  </label>
+
+                  <button
+                    type="submit"
+                    className="messages-send-new-btn"
+                    disabled={sending || !form.message.trim()}
+                  >
+                    <SendIcon />
+                    <span>
+                      {sending
+                        ? t('msg.sending')
+                        : tOr('msg.startChat', 'Start chat')}
+                    </span>
+                  </button>
+                </form>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className="messages-search-wrap">
+                <label className="messages-search-box">
+                  <SearchIcon />
+                  <input
+                    type="search"
+                    value={threadSearch}
+                    onChange={(event) => setThreadSearch(event.target.value)}
+                    placeholder={t('msg.searchChats')}
+                  />
+                </label>
+              </div>
+
+              <div className="messages-thread-list">
+                {loading ? (
+                  <div className="messages-empty-card">
+                    {t('msg.loadingConv')}
+                  </div>
+                ) : filteredThreads.length === 0 ? (
+                  <div className="messages-empty-card">{t('msg.noConv')}</div>
+                ) : (
+                  filteredThreads.map((thread) => {
+                    const isActive =
+                      Number(selectedThread?.thread_id) ===
+                      Number(thread.thread_id);
+                    const isUnread =
+                      Number(thread.unread_count || 0) > 0;
+                    const latestIsMine =
+                      Number(thread.latest_sender_id) ===
+                      Number(currentUserId);
+
+                    return (
+                      <button
+                        key={thread.thread_id}
+                        type="button"
+                        className={`messages-thread-item ${
+                          isActive ? 'active' : ''
+                        } ${isUnread ? 'unread' : ''}`}
+                        onClick={() => openThread(thread)}
+                      >
+                        <span className="messages-thread-avatar">
+                          {getInitials(thread.other_user_name || 'U')}
+                        </span>
+
+                        <span className="messages-thread-content">
+                          <span className="messages-thread-row">
+                            <strong>
+                              {thread.other_user_name || t('msg.unknown')}
+                            </strong>
+                            <time className="messages-thread-time">
+                              {formatThreadTime(
+                                thread.latest_created_at,
+                                locale
+                              )}
+                            </time>
+                          </span>
+
+                          <span className="messages-thread-preview-row">
+                            <span className="messages-thread-preview">
+                              {latestIsMine ? `${t('msg.you')}: ` : ''}
+                              {thread.latest_message}
+                            </span>
+
+                            {isUnread ? (
+                              <span className="messages-thread-badge">
+                                {Number(thread.unread_count) > 99
+                                  ? '99+'
+                                  : thread.unread_count}
+                              </span>
+                            ) : null}
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </>
+          )}
         </aside>
 
         <section className="messages-chat-main">
           {!selectedThread ? (
             <div className="messages-chat-empty">
-              <div className="messages-chat-empty-icon">✉</div>
-              <h3>{t('msg.selectConv')}</h3>
-              <p>{t('msg.selectConvHint')}</p>
+              <div className="messages-chat-empty-icon" aria-hidden="true">
+                ✦
+              </div>
+              <h3>
+                {tOr('msg.privateMessaging', 'Jungle House Messages')}
+              </h3>
+              <p>
+                {tOr(
+                  'msg.privateMessagingHint',
+                  'Select a chat to start messaging your team.'
+                )}
+              </p>
             </div>
           ) : (
             <>
               <header className="messages-chat-header">
+                <button
+                  type="button"
+                  className="messages-mobile-back"
+                  onClick={() => {
+                    setSelectedThread(null);
+                    setThreadMessages([]);
+                    setMessageText('');
+                  }}
+                  aria-label={tOr('common.back', 'Back')}
+                >
+                  <BackIcon />
+                </button>
+
                 <div className="messages-chat-person">
                   <div className="messages-chat-avatar">
-                    {getInitials(selectedThread.other_user_name || 'U')}
+                    {getInitials(
+                      selectedThread.other_user_name || 'U'
+                    )}
                   </div>
 
                   <div>
                     <h3>
-                      {selectedThread.other_user_name || t('msg.unknownUser')}
+                      {selectedThread.other_user_name ||
+                        t('msg.unknownUser')}
                     </h3>
-                    <p>{selectedThread.subject}</p>
+                    <p>
+                      {tOr(
+                        'msg.internalConversation',
+                        'Internal conversation'
+                      )}
+                    </p>
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  className="messages-light-btn messages-header-refresh"
-                  onClick={() => openThread(selectedThread)}
-                >
-                  <RefreshIcon />
-                  <span>{t('msg.refresh')}</span>
-                </button>
+                <div className="messages-chat-header-status">
+                  <span
+                    className="messages-sync-dot"
+                    aria-hidden="true"
+                  />
+                  <span>{tOr('msg.autoSync', 'Auto-sync')}</span>
+                </div>
               </header>
 
               <div className="messages-chat-body" ref={chatBodyRef}>
                 {threadLoading ? (
                   <div className="messages-inline-empty">
+                    <span
+                      className="messages-loading-spinner"
+                      aria-hidden="true"
+                    />
                     {t('msg.loadingThread')}
                   </div>
                 ) : threadMessages.length === 0 ? (
@@ -777,50 +1145,55 @@ export default function Messages() {
                     {t('msg.noMessages')}
                   </div>
                 ) : (
-                  threadMessages.map((item) => {
+                  threadMessages.map((item, index) => {
                     const isMine =
                       Number(item.sender_id) === Number(currentUserId);
                     const withinFiveMinutes =
                       isMine &&
-                      isWithinMessageActionWindow(item.created_at, nowValue);
+                      !item.client_status &&
+                      isWithinMessageActionWindow(
+                        item.created_at,
+                        nowValue
+                      );
+                    const previousItem = threadMessages[index - 1];
+                    const showDay =
+                      index === 0 ||
+                      dayKey(previousItem?.created_at) !==
+                        dayKey(item.created_at);
 
                     return (
                       <div
+                        className="messages-message-stack"
                         key={item.message_id}
-                        className={`messages-bubble-row ${
-                          isMine ? 'mine' : ''
-                        }`}
                       >
-                        {!isMine && (
-                          <div className="messages-bubble-avatar">
-                            {getInitials(item.sender_name || 'U')}
+                        {showDay ? (
+                          <div className="messages-day-separator">
+                            <span>
+                              {formatDayLabel(
+                                item.created_at,
+                                locale,
+                                tOr('common.today', 'Today'),
+                                tOr(
+                                  'common.yesterday',
+                                  'Yesterday'
+                                )
+                              )}
+                            </span>
                           </div>
-                        )}
+                        ) : null}
 
                         <div
-                          className={`messages-bubble ${
-                            isMine ? 'mine' : 'other'
+                          className={`messages-bubble-row ${
+                            isMine ? 'mine' : ''
                           }`}
                         >
-                          <div className="messages-bubble-meta">
-                            <strong>
-                              {isMine ? t('msg.you') : item.sender_name}
-                            </strong>
-
-                            <div className="messages-bubble-meta-right">
-                              <span>
-                                {new Date(
-                                  item.created_at
-                                ).toLocaleString(locale)}
-                              </span>
-
-                              {item.client_status === 'sending' ? (
-                                <span className="messages-send-status">
-                                  {tOr('msg.sendingStatus', 'Sending…')}
-                                </span>
-                              ) : null}
-
-                              {!item.client_status ? <div className="messages-message-menu">
+                          <div
+                            className={`messages-bubble ${
+                              isMine ? 'mine' : 'other'
+                            } ${item.client_status || ''}`}
+                          >
+                            {!item.client_status ? (
+                              <div className="messages-message-menu">
                                 <button
                                   type="button"
                                   className="messages-message-menu-trigger"
@@ -840,13 +1213,15 @@ export default function Messages() {
                                   <MoreIcon />
                                 </button>
 
-                                {openMenuId === item.message_id && (
+                                {openMenuId === item.message_id ? (
                                   <div
                                     className={`messages-message-menu-popover ${
-                                      isMine ? 'align-right' : 'align-left'
+                                      isMine
+                                        ? 'align-right'
+                                        : 'align-left'
                                     }`}
                                   >
-                                    {withinFiveMinutes && (
+                                    {withinFiveMinutes ? (
                                       <button
                                         type="button"
                                         onClick={() => startEdit(item)}
@@ -856,14 +1231,16 @@ export default function Messages() {
                                         </span>
                                         {t('msg.edit')}
                                       </button>
-                                    )}
+                                    ) : null}
 
-                                    {withinFiveMinutes && (
+                                    {withinFiveMinutes ? (
                                       <button
                                         type="button"
                                         className="danger"
                                         onClick={() =>
-                                          deleteMessageForEveryone(item)
+                                          deleteMessageForEveryone(
+                                            item
+                                          )
                                         }
                                       >
                                         <span className="messages-menu-icon">
@@ -871,13 +1248,15 @@ export default function Messages() {
                                         </span>
                                         {t('msg.deleteEveryone')}
                                       </button>
-                                    )}
+                                    ) : null}
 
                                     <button
                                       type="button"
                                       className="danger"
                                       onClick={() =>
-                                        deleteMessageForMe(item.message_id)
+                                        deleteMessageForMe(
+                                          item.message_id
+                                        )
                                       }
                                     >
                                       <span className="messages-menu-icon">
@@ -886,50 +1265,118 @@ export default function Messages() {
                                       {t('msg.deleteMe')}
                                     </button>
                                   </div>
+                                ) : null}
+                              </div>
+                            ) : null}
+
+                            {editingId === item.message_id ? (
+                              <div className="messages-edit-box">
+                                <textarea
+                                  rows="3"
+                                  value={editingText}
+                                  onChange={(event) =>
+                                    setEditingText(event.target.value)
+                                  }
+                                />
+
+                                <div className="messages-bubble-actions">
+                                  <button
+                                    type="button"
+                                    className="messages-primary-pill small"
+                                    onClick={() =>
+                                      saveEdit(item.message_id)
+                                    }
+                                  >
+                                    {t('msg.save')}
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    className="messages-light-btn small"
+                                    onClick={cancelEdit}
+                                  >
+                                    {t('msg.cancel')}
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <p>{item.message}</p>
+                            )}
+
+                            <div className="messages-bubble-footer">
+                              {item.edited_at ? (
+                                <span className="messages-edited-tag">
+                                  {t('msg.edited')}
+                                </span>
+                              ) : null}
+
+                              <time>
+                                {formatMessageTime(
+                                  item.created_at,
+                                  locale
                                 )}
-                              </div> : null}
+                              </time>
+
+                              {isMine ? (
+                                <span
+                                  className={`messages-delivery-status ${
+                                    item.client_status === 'failed'
+                                      ? 'failed'
+                                      : item.is_read
+                                        ? 'read'
+                                        : ''
+                                  }`}
+                                >
+                                  {item.client_status === 'sending' ? (
+                                    <span
+                                      title={tOr(
+                                        'msg.sendingStatus',
+                                        'Sending'
+                                      )}
+                                    >
+                                      <ClockIcon />
+                                    </span>
+                                  ) : item.client_status ===
+                                    'failed' ? (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        retryFailedMessage(item)
+                                      }
+                                      title={tOr(
+                                        'msg.retrySend',
+                                        'Retry sending'
+                                      )}
+                                      aria-label={tOr(
+                                        'msg.retrySend',
+                                        'Retry sending'
+                                      )}
+                                    >
+                                      <ErrorIcon />
+                                    </button>
+                                  ) : item.is_read ? (
+                                    <span
+                                      title={tOr(
+                                        'msg.readStatus',
+                                        'Read'
+                                      )}
+                                    >
+                                      <CheckIcon double />
+                                    </span>
+                                  ) : (
+                                    <span
+                                      title={tOr(
+                                        'msg.sentStatus',
+                                        'Sent'
+                                      )}
+                                    >
+                                      <CheckIcon />
+                                    </span>
+                                  )}
+                                </span>
+                              ) : null}
                             </div>
                           </div>
-
-                          {editingId === item.message_id ? (
-                            <div className="messages-edit-box">
-                              <textarea
-                                rows="4"
-                                value={editingText}
-                                onChange={(event) =>
-                                  setEditingText(event.target.value)
-                                }
-                              />
-
-                              <div className="messages-bubble-actions">
-                                <button
-                                  type="button"
-                                  className="messages-primary-pill small"
-                                  onClick={() =>
-                                    saveEdit(item.message_id)
-                                  }
-                                >
-                                  {t('msg.save')}
-                                </button>
-
-                                <button
-                                  type="button"
-                                  className="messages-light-btn small"
-                                  onClick={cancelEdit}
-                                >
-                                  {t('msg.cancel')}
-                                </button>
-                              </div>
-                            </div>
-                          ) : (
-                            <p>{item.message}</p>
-                          )}
-
-                          {item.edited_at && (
-                            <small className="messages-edited-tag">
-                              {t('msg.edited')}
-                            </small>
-                          )}
                         </div>
                       </div>
                     );
@@ -937,20 +1384,46 @@ export default function Messages() {
                 )}
               </div>
 
-              <form className="messages-reply-bar" onSubmit={sendReply}>
+              <form
+                className="messages-reply-bar"
+                onSubmit={sendReply}
+              >
                 <textarea
-                  rows="2"
+                  ref={replyInputRef}
+                  rows="1"
                   value={replyText}
-                  onChange={(event) => setReplyText(event.target.value)}
+                  onChange={(event) => {
+                    setReplyText(event.target.value);
+                    event.target.style.height = 'auto';
+                    event.target.style.height = `${Math.min(
+                      event.target.scrollHeight,
+                      120
+                    )}px`;
+                  }}
+                  onKeyDown={(event) => {
+                    if (
+                      event.key === 'Enter' &&
+                      !event.shiftKey &&
+                      !event.nativeEvent.isComposing
+                    ) {
+                      event.preventDefault();
+                      event.currentTarget.form?.requestSubmit();
+                    }
+                  }}
                   placeholder={t('msg.writeReply')}
+                  aria-label={t('msg.writeReply')}
                 />
 
                 <button
                   type="submit"
                   className="messages-reply-send"
-                  disabled={sending}
+                  disabled={sending || !replyText.trim()}
+                  aria-label={
+                    sending ? t('msg.sending') : t('msg.send')
+                  }
+                  title={sending ? t('msg.sending') : t('msg.send')}
                 >
-                  {sending ? t('msg.sending') : t('msg.send')}
+                  <SendIcon />
                 </button>
               </form>
             </>
