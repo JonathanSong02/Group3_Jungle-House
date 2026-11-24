@@ -348,22 +348,42 @@ def search_image_retrieval(question, limit=1):
         rows = cursor.fetchall() or []
         matches = []
 
+        # Speed: look up every linked article / escalation in one query each,
+        # instead of one query per image row (same rows, same rules below).
+        def ids_of(source_type):
+            return sorted({row.get("source_id") for row in rows
+                           if row.get("source_type") == source_type and row.get("source_id") is not None})
+
+        articles_by_id = {}
+        article_ids = ids_of("knowledge_base")
+        if article_ids:
+            cursor.execute("SELECT * FROM wiki_article WHERE article_id IN ("
+                           + ", ".join(["%s"] * len(article_ids)) + ")", tuple(article_ids))
+            articles_by_id = {article["article_id"]: article for article in cursor.fetchall() or []}
+
+        reviews_by_escalation = {}
+        escalation_ids = ids_of("approved_escalation")
+        if escalation_ids:
+            # Newest review per escalation, as ORDER BY review_id DESC LIMIT 1 did.
+            cursor.execute("""SELECT e.escalation_id, q.question, q.answer, q.status, e.image_url FROM escalation e
+                JOIN review_queue q ON q.escalation_id = e.escalation_id
+                WHERE e.escalation_id IN (""" + ", ".join(["%s"] * len(escalation_ids)) + """)
+                  AND COALESCE(e.is_deleted, 0) = 0
+                ORDER BY q.review_id DESC""", tuple(escalation_ids))
+            for review in cursor.fetchall() or []:
+                reviews_by_escalation.setdefault(review["escalation_id"], review)
+
         for row in rows:
             if row.get("source_type") == "knowledge_base":
                 # Resolve the live source, not a stale answer copy from the index.
                 from image_index_service import article_images, local_image_url, published, source_hash
-                cursor.execute("SELECT * FROM wiki_article WHERE article_id = %s", (row.get("source_id"),))
-                article = cursor.fetchone()
+                article = articles_by_id.get(row.get("source_id"))
                 if not published(article) or source_hash(article) != row.get("source_hash") or local_image_url(row.get("image_url")) not in article_images(article):
                     continue
                 row = {**row, "question": article.get("title"), "answer": article.get("content"),
                        "article_id": article["article_id"]}
             elif row.get("source_type") == "approved_escalation":
-                cursor.execute("""SELECT q.question, q.answer, q.status, e.image_url FROM escalation e
-                    JOIN review_queue q ON q.escalation_id = e.escalation_id
-                    WHERE e.escalation_id = %s AND COALESCE(e.is_deleted, 0) = 0
-                    ORDER BY q.review_id DESC LIMIT 1""", (row.get("source_id"),))
-                review = cursor.fetchone()
+                review = reviews_by_escalation.get(row.get("source_id"))
                 if not review or review["status"] not in {"approved", "published"} or review["image_url"] != row["image_url"]:
                     continue
                 row = {**row, "question": review["question"], "answer": review["answer"],

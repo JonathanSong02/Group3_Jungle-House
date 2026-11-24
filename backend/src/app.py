@@ -168,6 +168,42 @@ def record_chat_stage(stage, started):
         pass
 
 
+class EarlyCall:
+    """Run one function in a background thread now; collect its result later.
+
+    The thread sees the same Flask request and `g` (Flask keeps them in
+    context variables, which are copied), so stopwatch marks and the
+    signed-in user work as usual. `result()` returns the value or re-raises
+    the function's own exception, exactly as a direct call would.
+    """
+
+    def __init__(self, function, **kwargs):
+        import contextvars
+        import threading
+        self.kwargs = kwargs
+        self._value = None
+        self._error = None
+        self._thread = threading.Thread(target=contextvars.copy_context().run,
+                                        args=(self._run, function), daemon=True)
+        self._thread.start()
+
+    def _run(self, function):
+        started = time.monotonic()
+        try:
+            self._value = function(**self.kwargs)
+        except BaseException as error:  # handed to the caller in result()
+            self._error = error
+        self.seconds = time.monotonic() - started
+
+    def result(self, wait=120):
+        self._thread.join(wait)
+        if self._thread.is_alive():
+            raise TimeoutError("early call did not finish")
+        if self._error is not None:
+            raise self._error
+        return self._value
+
+
 _TITLE_WORDS_CACHE = {"words": None, "loaded_at": 0.0}
 
 
@@ -5010,12 +5046,15 @@ def process_question(question, context=None, search_question=None):
     record_chat_stage("rules_articles", stage_started)
 
     stage_started = time.monotonic()
-    image_retrieval_result = search_image_retrieval(search_term, limit=1)
+    # One search: the best match (limit=1) is the first of the top 10 -- the
+    # same sorted list -- so the second identical database search is skipped.
+    image_retrieval_options = search_image_retrieval(search_term, limit=10) or []
+    import copy
+    image_retrieval_result = copy.deepcopy(image_retrieval_options[0]) if image_retrieval_options else None
 
     if image_retrieval_result:
         image_retrieval_result = normalize_result(image_retrieval_result, "image_retrieval")
 
-    image_retrieval_options = search_image_retrieval(search_term, limit=10)
     image_retrieval_options = [
         normalize_result(item, "image_retrieval")
         for item in image_retrieval_options
@@ -10747,6 +10786,54 @@ def chat():
 
                 return jsonify(result), 200
 
+        def ai_answer_arguments(smart_eligible):
+            """Everything the AI answer call below is given (one place, so the
+            early start and the normal call can be compared exactly)."""
+            # "More details" right after a topic ("我还要 more details"): if the
+            # follow-up could not be resolved, search with the previous user
+            # question too, so the same document is found. Detailed answers
+            # are longer, so they get more time (still under the 60 s page limit).
+            detail_request = smart_eligible and wants_details(question)
+            # A follow-up keeps the article of the previous answer in view.
+            focus_title = ""
+            if smart_eligible and conversation_history:
+                focus_title = prepare_chat_context(data).get("title") or ""
+            answer_search_question = question_for_search
+            if detail_request and conversation_history and not conversation_query_was_resolved:
+                previous_user_question = next(
+                    (item["content"] for item in reversed(conversation_history) if item["role"] == "user"), "")
+                if previous_user_question:
+                    answer_search_question = f"{previous_user_question} {question_for_search}"
+            return {
+                "question": question,
+                "timeout": 40 if detail_request else 25,
+                "search_question": answer_search_question,
+                "user_language": detected_language,
+                "conversation_reference": conversation_query_was_resolved,
+                "conversation_history": conversation_history,
+                "smart": smart_eligible,
+                "detail": detail_request,
+                "focus_title": focus_title,
+            }
+
+        # Speed: when the AI will write the answer anyway (smart chat), start
+        # it now so it runs while the old rule engine works instead of after
+        # it. Only when its inputs cannot change in between: a first question,
+        # or the page sent the previous answer's article (that title wins over
+        # anything the rule engine remembers). The result is used only if the
+        # inputs below turn out identical; otherwise the AI is asked as before.
+        early_ai = None
+        if (AI_PROVIDER_SERVICE_AVAILABLE and smart_chat_enabled()
+                and "image_query" not in data and not uploaded_chat_image
+                and needs_conversation_context(question, question, question)
+                and (not conversation_history or normalize_context(data.get("context") or {}).get("title"))
+                and not (chat_request_id and is_chat_request_cancelled(chat_request_id))):
+            try:
+                early_ai = EarlyCall(answer_question_with_ai_provider, **ai_answer_arguments(True))
+            except Exception as error:
+                log_chat_failure("EARLY AI START ERROR", error)
+                early_ai = None
+
         # =========================
         # ✅ STEP 3: CALL AI
         # =========================
@@ -11014,35 +11101,20 @@ def chat():
         )
 
         if (should_escalate or try_ai_instead_of_clarifying or smart_eligible) and AI_PROVIDER_SERVICE_AVAILABLE:
-            # "More details" right after a topic ("我还要 more details"): if the
-            # follow-up could not be resolved, search with the previous user
-            # question too, so the same document is found. Detailed answers
-            # are longer, so they get more time (still under the 60 s page limit).
-            detail_request = smart_eligible and wants_details(question)
-            # A follow-up keeps the article of the previous answer in view.
-            focus_title = ""
-            if smart_eligible and conversation_history:
-                focus_title = prepare_chat_context(data).get("title") or ""
-            answer_search_question = question_for_search
-            if detail_request and conversation_history and not conversation_query_was_resolved:
-                previous_user_question = next(
-                    (item["content"] for item in reversed(conversation_history) if item["role"] == "user"), "")
-                if previous_user_question:
-                    answer_search_question = f"{previous_user_question} {question_for_search}"
+            ai_arguments = ai_answer_arguments(smart_eligible)
+            detail_request = ai_arguments["detail"]
             try:
                 stage_started = time.monotonic()
-                ai_answer = answer_question_with_ai_provider(
-                    question,
-                    timeout=40 if detail_request else 25,
-                    search_question=answer_search_question,
-                    user_language=detected_language,
-                    conversation_reference=conversation_query_was_resolved,
-                    conversation_history=conversation_history,
-                    smart=smart_eligible,
-                    detail=detail_request,
-                    focus_title=focus_title,
-                )
-                record_chat_stage("ai_answer", stage_started)
+                if early_ai is not None and early_ai.kwargs == ai_arguments:
+                    # Started before the rule engine with exactly these inputs.
+                    ai_answer = early_ai.result()
+                    # ai_answer = how long the AI took; ai_wait = how much of
+                    # it was still left after the rule engine finished.
+                    record_chat_stage("ai_answer", time.monotonic() - early_ai.seconds)
+                    record_chat_stage("ai_wait", stage_started)
+                else:
+                    ai_answer = answer_question_with_ai_provider(**ai_arguments)
+                    record_chat_stage("ai_answer", stage_started)
             except ai_provider_service.AIProviderNotConfiguredError:
                 ai_answer = None
             except Exception as error:

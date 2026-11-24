@@ -165,3 +165,10 @@ lint 仍有既有 36 errors / 10 warnings。三个修改的页面与 HEAD 的诊
   - 搜索选到另一篇讲同一件事的文章也算找到（`same_info_in`：该句至少 60%、且至少 3 个字，要在上下文里靠在一起出现；整段上下文零散出现不算），另计 `foundElsewhere`。用 CSV 随机配对测过，误判 2/499（两句本来就在两份 roadshow 清单里都有）。
   - 报告新增重复的文章（`duplicate_articles`：同标题，或标题不同但内容完全相同），附文章编号与分类，方便在内容管理清掉多余的。
   - “开始检查”按钮固定一行（不再被说明文字挤成两行）。
+
+## 2026-11-24 更新：聊天加速（AI 与旧规则同时跑、图片搜索少查数据库）（LIONG1934）
+
+- 计时：聊天回应附 `X-Chat-Timing` / `Server-Timing` 标头（与 `CHAT TIMING` 记录相同），没有 Railway 权限也可在浏览器 DevTools → Network → chat → Headers 看到。新增细项：`team_lead`、`rules_articles`、`rules_images`、`rules_similar`、`rules_model`、`ai_context`、`ai_wait`。
+- 实测（正式站，改前）：普通问题 9.6–14 秒；Gemini 本身约 4.7 秒、准备资料 1.9 秒，旧规则 1.6–5.4 秒（图片搜索 0.2–2.7 秒），追问理解出现时 5.5 秒。
+- A：智能模式下，AI 回答在旧规则**之前**就在背景开始（`EarlyCall`，用 contextvars 让背景线程看到同一个 request 与 `g`），旧规则同时进行。AI 的输入由 `ai_answer_arguments()` 统一产生；只有第一题、或页面送来上一题文章标题时才提早开始（此时输入不会被旧规则改变），而且使用前比对输入完全相同，否则照旧在旧规则之后再问。结果与原本一样；员工按停止时，已开始的 AI 呼叫会用掉少量额度。测试：`test_chat_parallel_ai.py`。
+- B：`db_helper.search_image_retrieval`（Alan）由每张图各查一次文章／升级单，改为每种来源一次查完（约 20 次 → 3 次查询），比对规则不变；`process_question` 的图片搜索由两次（limit 1 与 10）改为一次，取第一个当最佳结果。与旧版随机比对 600 次（228 次有找到图片）结果完全相同。测试：`test_image_search_speed.py`。
