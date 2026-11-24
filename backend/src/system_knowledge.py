@@ -177,12 +177,17 @@ GUIDE_SECTIONS = [
         "labels": {"en": "AI Model Settings", "zh": "AI 模型设置", "ms": "Tetapan Model AI"},
         "roles": {"manager"},
         "keywords": ["ai settings", "ai model", "api key", "change model", "gemini", "claude", "openai", "deepseek",
-                     "模型设置", "换模型", "tetapan model"],
+                     "模型设置", "换模型", "tetapan model",
+                     "search accuracy", "check search", "搜索准确率", "检查搜索", "ketepatan carian"],
         "text": "Choose which AI provider and model the chat uses. The Model list comes live from the provider: "
                 "a star marks recommended models; preview models may be shut down; some models are not for chat. "
                 "\"Other (type manually)\" lets you type a name. The saved API key is shown hidden; press \"Edit\" to "
                 "enter a new one. Press \"Test Connection\" first; \"Save Settings\" works only after a successful "
-                "test. Lightweight models (such as Gemini Flash or Claude Haiku) are faster and cheaper.",
+                "test. Lightweight models (such as Gemini Flash or Claude Haiku) are faster and cheaper. "
+                "\"Check search accuracy\" (below) asks the chat search a few questions about every article and shows "
+                "the percentage that found their answer, plus each missed question with its cause (wrong article "
+                "picked, or right article but the line cut off). It uses no AI and costs nothing; press \"Start "
+                "check\" now and then, especially after adding many articles.",
     },
     {
         "key": "notion_sync", "nav_key": "nav.notionSync",

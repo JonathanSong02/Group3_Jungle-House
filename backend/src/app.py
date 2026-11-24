@@ -25,6 +25,7 @@ import hybrid_image_service
 import image_index_service
 import document_text_service
 import system_knowledge
+import retrieval_audit
 from image_service_errors import failure_response as image_failure_response
 
 
@@ -2100,6 +2101,7 @@ _APPROVER_ENDPOINTS = {
 }
 _MANAGER_ENDPOINTS = {
     "get_ai_settings", "save_ai_settings", "test_ai_settings", "list_ai_models",
+    "start_retrieval_audit", "get_retrieval_audit",
 
     # Notion Sync admin workspace. The OAuth callback is intentionally not
     # listed here because Notion redirects the browser to it directly; it is
@@ -7370,6 +7372,24 @@ def test_ai_settings():
     return jsonify({"success": success, "message": message}), (200 if success else 400)
 
 
+# Search accuracy check on the live articles (AI Model Settings page,
+# managers only via _MANAGER_ENDPOINTS). No AI call; runs in the background.
+def _audit_build_context(question, preloaded):
+    return build_ai_chat_context(question, search_question=question, preloaded=preloaded)
+
+
+@app.route("/api/ai-settings/retrieval-audit", methods=["POST"])
+def start_retrieval_audit():
+    if not retrieval_audit.start(load_chat_search_data, _audit_build_context):
+        return jsonify({"success": False, "message": "A check is already running."}), 409
+    return jsonify({"success": True, "audit": retrieval_audit.status()}), 202
+
+
+@app.route("/api/ai-settings/retrieval-audit", methods=["GET"])
+def get_retrieval_audit():
+    return jsonify({"success": True, "audit": retrieval_audit.status()}), 200
+
+
 # =========================
 # NOTION SYNC ROUTES (OAuth "Connect Notion" flow)
 #
@@ -9526,59 +9546,93 @@ if NOTION_SYNC_SERVICE_AVAILABLE and os.getenv("NOTION_AUTO_SYNC_ENABLED", "true
 # behavior.
 # =========================
 SYSTEM_CONTEXT_LIMIT = 3500
+# How much more a question word counts when it is in an article title or
+# category than in its text (tuned with the retrieval audit).
+TITLE_WORD_WEIGHT = 3
 DETAIL_EXCERPT_CHARS = 9000
 DETAIL_MAX_CHARS = 14000
 
 
-def build_ai_chat_context(question, limit=5, max_chars=6000, search_question=None, detail=False, focus_title=""):
-    """
-    `search_question` optionally overrides what's used to SCORE/select
-    articles (e.g. the English keywords derived from a Chinese/Malay
-    question by translate_query_to_english_keywords()), while `question`
-    stays whatever the caller wants echoed/logged. Defaults to `question`
-    when not given, so existing callers are unaffected.
-    """
-    conn = None
-    cursor = None
-
+def load_chat_search_data():
+    """(articles, documents) exactly as the chat search reads them from the database."""
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-
         cursor.execute("""
             SELECT article_id, title, content, category, sub_category
             FROM wiki_article
             WHERE COALESCE(is_deleted, 0) = 0
         """)
         articles = cursor.fetchall() or []
-
-        # Text of PDF / Word attachments (extracted once at upload). Optional:
-        # if the table is missing or unreadable, behave exactly as before.
         try:
             documents = document_text_service.load_documents(cursor)
         except Exception:
             documents = {}
-        document_texts = {article_id: entry["text"] for article_id, entry in documents.items() if entry.get("text")}
-
-        # Questions about the system itself ("how many quizzes?", "where is
-        # the quiz?", "what is in the lab manual?"): add short facts and the
-        # built-in guide. Only when the question is about them; never fatal.
-        try:
-            auth_user = g.get("auth_user") or {}
-        except Exception:
-            auth_user = {}
-        try:
-            system_entries = system_knowledge.context_entries(
-                cursor, f"{question} {search_question or ''}", articles, documents,
-                user_id=auth_user.get("user_id"), role=auth_user.get("role_name"),
-            )
-        except Exception:
-            system_entries = []
+        return articles, documents
     finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
+        cursor.close()
+        conn.close()
+
+
+def build_ai_chat_context(question, limit=7, max_chars=6000, search_question=None, detail=False, focus_title="",
+                          preloaded=None):
+    """
+    `search_question` optionally overrides what's used to SCORE/select
+    articles (e.g. the English keywords derived from a Chinese/Malay
+    question by translate_query_to_english_keywords()), while `question`
+    stays whatever the caller wants echoed/logged. Defaults to `question`
+    when not given, so existing callers are unaffected.
+
+    `preloaded` = (articles, documents) from load_chat_search_data() skips
+    the database and the system facts; the retrieval accuracy check uses it
+    to ask hundreds of questions quickly. Chat never passes it.
+    """
+    conn = None
+    cursor = None
+
+    if preloaded is not None:
+        articles, documents = preloaded
+        document_texts = {article_id: entry["text"] for article_id, entry in documents.items() if entry.get("text")}
+        system_entries = []
+    else:
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor(dictionary=True)
+
+            cursor.execute("""
+                SELECT article_id, title, content, category, sub_category
+                FROM wiki_article
+                WHERE COALESCE(is_deleted, 0) = 0
+            """)
+            articles = cursor.fetchall() or []
+
+            # Text of PDF / Word attachments (extracted once at upload). Optional:
+            # if the table is missing or unreadable, behave exactly as before.
+            try:
+                documents = document_text_service.load_documents(cursor)
+            except Exception:
+                documents = {}
+            document_texts = {article_id: entry["text"] for article_id, entry in documents.items() if entry.get("text")}
+
+            # Questions about the system itself ("how many quizzes?", "where is
+            # the quiz?", "what is in the lab manual?"): add short facts and the
+            # built-in guide. Only when the question is about them; never fatal.
+            try:
+                auth_user = g.get("auth_user") or {}
+            except Exception:
+                auth_user = {}
+            try:
+                system_entries = system_knowledge.context_entries(
+                    cursor, f"{question} {search_question or ''}", articles, documents,
+                    user_id=auth_user.get("user_id"), role=auth_user.get("role_name"),
+                )
+            except Exception:
+                system_entries = []
+        finally:
+            if cursor:
+                cursor.close()
+            if conn:
+                conn.close()
 
     scoring_question = search_question if search_question else question
 
@@ -9602,17 +9656,33 @@ def build_ai_chat_context(question, limit=5, max_chars=6000, search_question=Non
 
     question_tokens = light_stem(tokenize_for_knowledge_match(scoring_question) - filler_words)
 
+    # Tokens of every article (title/category, and content + attached documents).
+    article_tokens = []
     for article in articles:
-        score = calculate_article_match_score(scoring_question, article)
-
         meta_text = f"{article.get('title') or ''} {article.get('category') or ''} {article.get('sub_category') or ''}"
-        meta_hits = len(question_tokens & light_stem(tokenize_for_knowledge_match(meta_text)))
+        meta_tokens = light_stem(tokenize_for_knowledge_match(meta_text))
         content_tokens = light_stem(tokenize_for_knowledge_match(clean_question(article.get("content") or "")))
         document_text = document_texts.get(article.get("article_id"))
         if document_text:
             content_tokens |= light_stem(tokenize_for_knowledge_match(document_text[:50000]))
-        content_hits = len(question_tokens & content_tokens)
-        overlap_rank = 3 * meta_hits + content_hits
+        article_tokens.append((meta_tokens, content_tokens))
+
+    # Rare words decide more than common ones: "timetec" or "maybank" pins
+    # down an article, "check" or "using" appears almost everywhere
+    # (inverse document frequency, as search engines do).
+    import math
+    article_count = max(len(articles), 1)
+    word_weights = {}
+    for token in question_tokens:
+        containing = sum(1 for meta_tokens, content_tokens in article_tokens
+                         if token in meta_tokens or token in content_tokens)
+        word_weights[token] = 1.0 + math.log((article_count + 1) / (containing + 1))
+
+    for article, (meta_tokens, content_tokens) in zip(articles, article_tokens):
+        score = calculate_article_match_score(scoring_question, article)
+        meta_hits = sum(word_weights[token] for token in question_tokens & meta_tokens)
+        content_hits = sum(word_weights[token] for token in question_tokens & content_tokens)
+        overlap_rank = TITLE_WORD_WEIGHT * meta_hits + content_hits
 
         if score > 0 or overlap_rank > 0:
             scored_articles.append(((1 if score >= CONFIDENCE_DIRECT_ANSWER else 0, overlap_rank, score), article))
@@ -9653,24 +9723,44 @@ def build_ai_chat_context(question, limit=5, max_chars=6000, search_question=Non
         chunks.append(entry)
         total_len += len(entry)
 
-    for article in top_articles:
+    # Every chosen article gets a fair share of the space. A long article is
+    # cut down to the passages that match the question (in their original
+    # order), so one long checklist can no longer push the article with the
+    # answer out ("how many cabinet ... opening" lost the JHKC cabinet line).
+    passage_tokenize = lambda text: light_stem(tokenize_for_knowledge_match(text))
+    # The best match (first) gets about 40% of the room, the others share the
+    # rest, so a long top article (e.g. "Promotion") keeps more of its lines.
+    room = max_chars - total_len
+    top_share = max(600, int(room * 0.4))
+    article_share = max(600, (room - top_share) // max(len(top_articles) - 1, 1))
+
+    for article_index, article in enumerate(top_articles):
         title = article.get("title") or ""
         body = clean_text(article.get("content"))
-        entry = f"### {title}\n{body}\n"
         document_text = document_texts.get(article.get("article_id"))
+        excerpt = ""
         if document_text:
             # "More details": the first matching document gets a much bigger
             # share (from its start when no passage matches the words).
             big_share = detail and not detail_document_used
             excerpt = document_text_service.best_passages(
                 document_text, question_tokens, limit=DETAIL_EXCERPT_CHARS if big_share else 1500,
-                tokenize=lambda text: light_stem(tokenize_for_knowledge_match(text)),
+                tokenize=passage_tokenize, weights=word_weights,
             )
             if big_share:
                 excerpt = excerpt or document_text[:DETAIL_EXCERPT_CHARS]
                 detail_document_used = True
-            if excerpt:
-                entry += f"Attached document (excerpt): {excerpt}\n"
+
+        # "More details" lets the first article keep much more of its text.
+        share = top_share if article_index == 0 else article_share
+        body_share = max_chars // 2 if (detail and article_index == 0) else max(400, share - len(excerpt))
+        if len(body) > body_share:
+            body = (document_text_service.best_passages(body, question_tokens, limit=body_share, weights=word_weights,
+                                                        tokenize=passage_tokenize)
+                    or body[:body_share])
+        entry = f"### {title}\n{body}\n"
+        if excerpt:
+            entry += f"Attached document (excerpt): {excerpt}\n"
 
         if total_len + len(entry) > max_chars:
             remaining = max_chars - total_len

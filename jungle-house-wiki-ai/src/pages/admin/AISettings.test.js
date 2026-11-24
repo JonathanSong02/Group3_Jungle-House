@@ -40,6 +40,7 @@ test('model dropdown, masked key and test-before-save', async () => {
     api, useAuth: () => ({ user: { id: 1 } }),
     useLanguage: () => ({ t: (key) => translations.en[key] || key }),
     translateServerMessage,
+    RetrievalAuditCard: () => null, // tested in RetrievalAuditCard.test.js
   };
   const source = (await fs.readFile(new URL('./AISettings.jsx', import.meta.url), 'utf8'))
     .replace(/^import .*;\r?\n/gm, '').replace('export default function AISettings()', 'function AISettings()');

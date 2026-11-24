@@ -4,6 +4,7 @@ import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../i18n/LanguageContext';
 import { translateServerMessage } from '../../i18n/serverMessages';
+import RetrievalAuditCard from './RetrievalAuditCard';
 import './styles/AISettings.css';
 
 const PROVIDER_OPTIONS = [
@@ -571,6 +572,8 @@ export default function AISettings() {
           </form>
         </section>
       </div>
+
+      <RetrievalAuditCard />
     </div>
   );
 }

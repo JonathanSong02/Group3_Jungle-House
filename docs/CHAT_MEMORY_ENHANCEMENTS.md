@@ -142,3 +142,22 @@ lint 仍有既有 36 errors / 10 warnings。三个修改的页面与 HEAD 的诊
 - 计时器：`record_chat_stage()` 记录 translate / follow_up / rules / ai_answer 秒数，`log_chat_timing` 每题印一行 `CHAT TIMING total=…`（不含问题内容）。刻意不包装函数，以免 `log_chat_failure` 的错误位置变成包装函数。
 - 翻译与追问理解**未**并行：并行会让中文追问时 Alan 的“关键词必须来自用户原话”检查更常失败，影响准确率；先看计时数据再决定。
 - 前端：`ArticleDetail.jsx` 的内容、附件、相关链接拆成共用元件 `components/ArticleBody.jsx`（改前改后 HTML 完全相同、截图逐像素相同）；`components/ChatArticleDetails.jsx` 在聊天答案下提供可展开的 Show more details（同一元件、同一样式，不跳页）；Related articles 用编号按钮，点选即以该标题提问。测试：`Chat.details.test.js`。
+
+## 2026-11-24 更新：找文章与段落的准确率（LIONG1934）
+
+- 问题：“how many cabinet i need to open when opening” 找不到 JHKC 的 cabinet 那一句。原因是每篇文章从开头整篇放入，6,000 字被前面的长文章用完。
+- `build_ai_chat_context`：
+  - 每篇只放与问题相关的段落（`best_passages`，保持原顺序）；最相关的一篇约占 40%，其余平分；短文章照旧整篇。
+  - 罕见词加权（IDF，例如 timetec、maybank 比 check、using 重要），用于排序与段落挑选；标题词权重为常数 `TITLE_WORD_WEIGHT = 3`。
+  - 交给 AI 的文章由 5 篇改为 7 篇。
+- 新测试 `test_retrieval_audit.py`：用 `backend/data/cleaned_knowledge.csv` 的每个步骤自动出题，检查答案那句有没有进入 AI 的上下文（无 AI、无数据库、约 5 秒）。2026-11-24 实测：带主题词 99%（433/436）、只有关键词 95%（414/436）；另钉住真实失败的问题。
+- 限制：CSV 只有 4 月的 48 篇；正式数据库约 500 篇，真正的准确率需要用正式数据检查。
+
+## 2026-11-24 更新：正式数据的搜索准确率检查（AI Model Settings）（LIONG1934）
+
+- 新卡片“检查搜索准确率”（`pages/admin/RetrievalAuditCard.jsx`，放在 AI Model Settings 页下方，沿用 `ais-*` 样式）：经理按“开始检查”，后台用网站上现在的每一篇文章出题（每篇约 3 句，最多 1,500 题；中间那题不带标题词，像员工常常不打主题），走真正的聊天搜索，检查那一句有没有交到 AI 手上。不叫 AI、不花钱；每 2 秒更新进度。
+- 报告：找到答案的百分比、选错文章（`wrong_article`）与文章对但那一句被切掉（`line_cut`）的数量、每题的问题／答案所在文章／原句／搜索选了哪几篇（最多列 200 题）。
+- 后端：`retrieval_audit.py`（出题、判定、同一步骤出现在别篇也算找到、后台线程与内存状态；一台 worker，重启即清空）；`load_chat_search_data()`；`build_ai_chat_context(preloaded=(articles, documents))` 让检查只读一次数据库（聊天不传，行为不变；有测试证明结果与读数据库时完全相同）。路由 `POST/GET /api/ai-settings/retrieval-audit`，列入 `_MANAGER_ENDPOINTS`（只限经理），已在跑时回 409。
+- 用 CSV 的 48 篇试跑：119 题对 118 题（99%），约 3 秒；以 500 篇长文章估计约 3–4 分钟。
+- 速度：用 500 篇长文章实测 `build_ai_chat_context` 每题约 0.15 秒，所以聊天慢不是找文章造成，没有加缓存。
+- 测试：`test_retrieval_audit_live.py`、`test_retrieval_audit.py::LiveCheckTests`、`RetrievalAuditCard.test.js`；系统使用说明（`system_knowledge.GUIDE_SECTIONS` 的 AI Model Settings）已加入此功能。

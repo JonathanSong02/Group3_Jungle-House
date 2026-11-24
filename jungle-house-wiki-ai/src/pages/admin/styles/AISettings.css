@@ -1117,3 +1117,132 @@
     width: 100%;
   }
 }
+
+/* Search accuracy check card (RetrievalAuditCard) -----------------------
+   Same card, buttons and colours as the settings card above. */
+
+.ais-audit-card {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.ais-audit-hint,
+.ais-audit-meta {
+  margin: 6px 0 0;
+  color: var(--ais-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ais-audit-stats {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.ais-audit-stats > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 13px 14px;
+  background: #fffaf0;
+  border: 1px solid rgba(171, 130, 73, 0.2);
+  border-radius: 13px;
+}
+
+.ais-audit-stats span {
+  color: #62523f;
+  font-size: 11.5px;
+  font-weight: 800;
+}
+
+.ais-audit-stats strong {
+  color: var(--ais-ink);
+  font-size: 22px;
+}
+
+.ais-audit-score strong {
+  color: var(--ais-honey-dark);
+  font-size: 28px;
+}
+
+.ais-audit-stats small {
+  color: var(--ais-muted);
+  font-size: 11.5px;
+}
+
+.ais-audit-subtitle {
+  margin: 4px 0 0;
+  color: var(--ais-ink);
+  font-size: 15px;
+}
+
+.ais-audit-misses {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 22px;
+  color: var(--ais-ink);
+  font-size: 12px;
+}
+
+.ais-audit-misses li {
+  padding: 10px 12px;
+  background: #fffaf0;
+  border: 1px solid rgba(171, 130, 73, 0.18);
+  border-radius: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.ais-audit-misses li span {
+  color: var(--ais-muted);
+  font-weight: 800;
+}
+
+.ais-audit-miss-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+
+.ais-audit-misses .ais-audit-cause {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 850;
+  color: var(--ais-red);
+  background: var(--ais-red-soft);
+  border: 1px solid #ebc8c1;
+}
+
+.ais-audit-misses .ais-audit-cause.line_cut {
+  color: var(--ais-honey-dark);
+  background: var(--ais-honey-soft);
+  border-color: #e8c982;
+}
+
+.ais-audit-line {
+  margin: 3px 0;
+  color: #62523f;
+  font-style: italic;
+}
+
+.ais-audit-card > .ais-btn {
+  justify-self: start;
+}
+
+@media (max-width: 620px) {
+  .ais-audit-card .ais-section-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ais-audit-stats {
+    grid-template-columns: 1fr;
+  }
+}

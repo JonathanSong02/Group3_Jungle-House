@@ -263,8 +263,12 @@ def _default_tokens(text):
     return tokens
 
 
-def best_passages(text, question_tokens, limit=1500, tokenize=_default_tokens):
-    """The passages that share the most words with the question, in document order, <= limit chars."""
+def best_passages(text, question_tokens, limit=1500, tokenize=_default_tokens, weights=None):
+    """The passages that share the most words with the question, in document order, <= limit chars.
+
+    `weights` (word -> weight) lets rare words count more; without it every
+    shared word counts 1.
+    """
     if not text or not question_tokens or limit <= 0:
         return ""
     size = min(600, limit)
@@ -287,7 +291,8 @@ def best_passages(text, question_tokens, limit=1500, tokenize=_default_tokens):
 
     scored = []
     for position, passage in enumerate(passages):
-        hits = len(set(question_tokens) & tokenize(passage))
+        shared = set(question_tokens) & tokenize(passage)
+        hits = sum((weights or {}).get(word, 1.0) for word in shared)
         if hits:
             scored.append((hits, position, passage))
     scored.sort(key=lambda item: (-item[0], item[1]))

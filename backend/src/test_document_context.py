@@ -44,7 +44,7 @@ def build(articles, doc_rows, question, fail_docs=False, max_chars=6000, auth_us
     cursor = Cursor(articles, doc_rows, fail_docs)
     env = {
         "system_knowledge": system_knowledge,
-        "SYSTEM_CONTEXT_LIMIT": 3500, "DETAIL_EXCERPT_CHARS": 9000, "DETAIL_MAX_CHARS": 14000,
+        "SYSTEM_CONTEXT_LIMIT": 3500, "DETAIL_EXCERPT_CHARS": 9000, "DETAIL_MAX_CHARS": 14000, "TITLE_WORD_WEIGHT": 3,
         "g": types.SimpleNamespace(get=lambda key, default=None: auth_user if key == "auth_user" else default),
         "re": re,
         "get_db_connection": lambda: types.SimpleNamespace(cursor=lambda **k: cursor, close=lambda: None),
@@ -116,6 +116,54 @@ class SystemContextTests(unittest.TestCase):
     def test_ordinary_question_unchanged(self):
         text, _ = build(ARTICLES, [], "kiosk opening lights")
         self.assertEqual(text, "### Kiosk Opening\nTurn on the lights.\n")
+
+
+class LongArticleTests(unittest.TestCase):
+    """Long articles must not crowd out the line that answers the question."""
+    CLOSING = {"article_id": 11, "title": "Kiosk Closing Check List", "category": "SOP", "sub_category": "",
+               "content": " ".join(f"Step {i}: wipe the counter and count stock in drawer {i} and record it in the sheet." for i in range(150))}
+    OPENING = {"article_id": 12, "title": "JHKC Kiosk Opening", "category": "SOP", "sub_category": "",
+               "content": " ".join(f"Step {i}: switch on light {i} near the entrance." for i in range(40))
+               + " Step 41: Unlock all cabinet doors from B, C, E, F, K and L. Step 42: Keep the locks inside."}
+
+    # Ranked above JHKC (more question words, long), like the real roadshow lists.
+    SPRING = {"article_id": 13, "title": "Spring Roadshow Opening List", "category": "SOP", "sub_category": "",
+              "content": " ".join(f"Step {i}: how many testers you need to open the roadshow booth {i}." for i in range(150))}
+
+    def test_answer_line_reaches_the_ai_even_at_the_end_of_a_long_article(self):
+        text, candidates = build([self.SPRING, self.CLOSING, self.OPENING], [], "how many cabinet i need to open when opening")
+        self.assertIn(12, [c["article_id"] for c in candidates])
+        self.assertIn("Unlock all cabinet doors from B, C, E, F, K and L", text)
+        self.assertLessEqual(len(text), 6000)
+
+    def test_every_chosen_article_gets_a_share(self):
+        text, candidates = build([self.CLOSING, self.OPENING], [], "kiosk step counter cabinet opening")
+        for candidate in candidates:
+            self.assertIn(f"### {candidate['title']}", text)
+
+    def test_short_articles_are_passed_in_full(self):
+        text, _ = build(ARTICLES, [], "kiosk opening lights")
+        self.assertEqual(text, "### Kiosk Opening\nTurn on the lights.\n")
+
+
+class RareWordRankingTests(unittest.TestCase):
+    """A rare, specific word (TimeTec) must outweigh words that are everywhere."""
+    COMMON = [{"article_id": 20 + i, "title": f"Closing List {i}", "category": "SOP", "sub_category": "",
+               "content": "Using the iPad, check the terminal and clock the stock before closing. " * 3}
+              for i in range(6)]
+    RARE = {"article_id": 30, "title": "Staff Attendance", "category": "Notice", "sub_category": "",
+            "content": "Clock out using TimeTec before you leave."}
+
+    def test_rare_word_article_is_chosen(self):
+        _, candidates = build(self.COMMON + [self.RARE], [], "clock out using timetec check terminal")
+        self.assertEqual(candidates[0]["article_id"], 30)
+
+    def test_rare_word_passage_is_chosen_inside_a_long_article(self):
+        long_article = {"article_id": 31, "title": "Kiosk Opening", "category": "SOP", "sub_category": "",
+                        "content": ("Check the area and check the stock. " * 120) + "Check Maybank app is logged in. "
+                        + ("Check the area again. " * 120)}
+        text, _ = build([long_article], [], "check maybank app logged")
+        self.assertIn("Check Maybank app is logged in.", text)
 
 
 class FocusArticleTests(unittest.TestCase):
