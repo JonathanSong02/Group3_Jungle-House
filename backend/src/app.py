@@ -16949,14 +16949,38 @@ def serve_static(filename):
     return send_private_static_file(STATIC_DIR, filename)
 
 
+# Article / Knowledge Base images and files may be kept by the signed-in
+# browser for this many seconds (2026-11-25, speed): pages with many images
+# no longer download every image again, each with its own session check.
+# "private" = only that browser, never Vercel or another shared cache. Kept
+# short on purpose: on a shared shop computer, files stay in that browser at
+# most this long after logout. Chat uploads (personal) and every error or
+# access-denied response are still never stored. 0 = never store (old way).
+STATIC_BROWSER_CACHE_SECONDS = 600
+
+
 @app.after_request
 def prevent_private_static_caching(response):
     """Do not cache internal files (or access-denied responses) in shared proxies."""
     if request.path.startswith("/static/"):
-        response.headers["Cache-Control"] = "private, no-store, max-age=0"
-        response.headers["Pragma"] = "no-cache"
+        browser_may_keep = (
+            STATIC_BROWSER_CACHE_SECONDS > 0
+            and request.method == "GET"
+            and response.status_code == 200
+            and not request.path.startswith("/static/uploads/chat/")
+        )
+        if browser_may_keep:
+            # No "Vary: Cookie" here: the session cookie is re-signed on every
+            # request (8-hour sliding login), so it would make the browser
+            # skip its copy every time. "private" already keeps shared caches
+            # out, and these files are the same for every signed-in user.
+            response.headers["Cache-Control"] = f"private, max-age={STATIC_BROWSER_CACHE_SECONDS}"
+            response.headers.pop("Pragma", None)
+        else:
+            response.headers["Cache-Control"] = "private, no-store, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            response.vary.add("Cookie")
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.vary.add("Cookie")
     return response
 
 
