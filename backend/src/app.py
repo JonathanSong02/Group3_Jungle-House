@@ -5003,9 +5003,13 @@ def process_question(question, context=None, search_question=None):
             "escalation_required": False,
         }), 400
 
+    # Stopwatch marks only (shown in the chat reply's X-Chat-Timing).
+    stage_started = time.monotonic()
     kb_result = search_knowledge_base_articles(search_term, limit=1)
     kb_options = search_knowledge_base_articles(search_term, limit=10)
+    record_chat_stage("rules_articles", stage_started)
 
+    stage_started = time.monotonic()
     image_retrieval_result = search_image_retrieval(search_term, limit=1)
 
     if image_retrieval_result:
@@ -5017,6 +5021,9 @@ def process_question(question, context=None, search_question=None):
         for item in image_retrieval_options
     ]
 
+    record_chat_stage("rules_images", stage_started)
+
+    stage_started = time.monotonic()
     retrieval_result = search_similar_question(search_term)
 
     if retrieval_result:
@@ -5027,15 +5034,18 @@ def process_question(question, context=None, search_question=None):
         normalize_result(item, "database")
         for item in retrieval_options
     ]
+    record_chat_stage("rules_similar", stage_started)
 
     model_result = None
 
     if MODEL_AVAILABLE and get_model_answer is not None:
         try:
+            stage_started = time.monotonic()
             model_result = normalize_result(
                 call_model_answer(search_term, context=context),
                 default_source="pytorch_model"
             )
+            record_chat_stage("rules_model", stage_started)
         except Exception as error:
             log_chat_failure("INTENT MODEL ERROR", error)
             failure_text = chat_failure_message("unavailable", question)
@@ -9844,7 +9854,9 @@ def answer_question_with_ai_provider(question, timeout=25, search_question=None,
     if focus_title:
         # Follow-up: keep the previous answer's article in the context.
         context_options["focus_title"] = focus_title
+    stage_started = time.monotonic()
     context_text, candidate_articles = build_ai_chat_context(question, search_question=search_question, **context_options)
+    record_chat_stage("ai_context", stage_started)
 
     # English behavior is unchanged from before: no KB context at all means
     # there's nothing to ground an answer in, so skip the AI call and let
@@ -10712,9 +10724,11 @@ def chat():
         skip_team_lead_first = is_broad_topic_question(question)
 
         if not skip_team_lead_first:
+            stage_started = time.monotonic()
             team_lead_result = search_similar_question(
                 question_for_search if conversation_query_was_resolved else question,
                 team_lead_only=True)
+            record_chat_stage("team_lead", stage_started)
 
             if team_lead_result:
                 result = normalize_result(team_lead_result, "team_lead")
