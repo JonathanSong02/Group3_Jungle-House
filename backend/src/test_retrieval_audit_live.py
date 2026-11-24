@@ -63,7 +63,7 @@ class RunTests(unittest.TestCase):
     def test_pass_wrong_article_and_line_cut(self):
         articles = [OPENING, CLOSING, SHIFT]
 
-        def build_context(question, preloaded):
+        def build_context(question, preloaded, meaning=False):
             self.assertIs(preloaded[0], articles)
             # Always picks the closing article and shows only its first line.
             return "### JHKC Closing Checklist\n" + audit.article_sentences(CLOSING)[0], \
@@ -104,7 +104,7 @@ class SameInfoTests(unittest.TestCase):
     def test_run_counts_it_as_found_elsewhere(self):
         article = {"article_id": 5, "title": "Aeon Roadshow Opening List", "content": f"<p>{self.SENTENCE}</p>"}
         context = "### Shopify POS app Opening\nOpen the Shopify POS app on the iPad and start a new session."
-        report = audit.run_audit([article], {}, lambda q, p: (context, [{"article_id": 9, "title": "Shopify"}]))
+        report = audit.run_audit([article], {}, lambda q, p, m=False: (context, [{"article_id": 9, "title": "Shopify"}]))
         self.assertEqual((report["passed"], report["foundElsewhere"], report["misses"]), (1, 1, []))
 
 
@@ -125,7 +125,7 @@ class DuplicateTests(unittest.TestCase):
         self.assertEqual(len(groups), 2)
 
     def test_report_includes_duplicates(self):
-        report = audit.run_audit([OPENING, dict(OPENING, article_id=7)], {}, lambda q, p: ("", []))
+        report = audit.run_audit([OPENING, dict(OPENING, article_id=7)], {}, lambda q, p, m=False: ("", []))
         self.assertEqual(len(report["duplicates"]), 1)
 
 
@@ -136,7 +136,7 @@ class BackgroundTests(unittest.TestCase):
     def test_runs_in_the_background_and_reports_progress(self):
         release = threading.Event()
 
-        def build_context(question, preloaded):
+        def build_context(question, preloaded, meaning=False):
             release.wait(2)
             return "", []
 
@@ -154,7 +154,7 @@ class BackgroundTests(unittest.TestCase):
         def broken():
             raise RuntimeError("database down")
 
-        self.assertTrue(audit.start(broken, lambda q, p: ("", [])))
+        self.assertTrue(audit.start(broken, lambda q, p, m=False: ("", [])))
         state = wait_until_finished()
         self.assertEqual(state["status"], "failed")
         self.assertTrue(state["error"])
@@ -172,22 +172,24 @@ class RouteTests(unittest.TestCase):
             node.decorator_list = []
         self.calls = []
         self.fake = types.SimpleNamespace(
-            start=lambda load, build: self.calls.append((load, build)) or self.allowed,
+            start=lambda load, build, prepare=None: self.calls.append((load, build, prepare)) or self.allowed,
             status=lambda: {"status": "running"},
         )
         self.allowed = True
         self.env = {"jsonify": lambda value: value, "retrieval_audit": self.fake,
-                    "load_chat_search_data": "LOADER",
+                    "load_chat_search_data": "LOADER", "_audit_prepare": "PREPARE",
                     "build_ai_chat_context": lambda q, **kw: (q, kw)}
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "audit_routes.py", "exec"), self.env)
 
     def test_start_and_status(self):
         result, status = self.env["start_retrieval_audit"]()
         self.assertEqual((status, result["audit"]["status"]), (202, "running"))
-        load, build = self.calls[0]
-        self.assertEqual(load, "LOADER")
-        self.assertEqual(build("aeon opening", "DATA"),
-                         ("aeon opening", {"search_question": "aeon opening", "preloaded": "DATA"}))
+        load, build, prepare = self.calls[0]
+        self.assertEqual((load, prepare), ("LOADER", "PREPARE"))
+        for meaning in (False, True):
+            self.assertEqual(build("aeon opening", "DATA", meaning),
+                             ("aeon opening", {"search_question": "aeon opening", "preloaded": "DATA",
+                                               "semantic_search_on": meaning}))
         result, status = self.env["get_retrieval_audit"]()
         self.assertEqual(status, 200)
 

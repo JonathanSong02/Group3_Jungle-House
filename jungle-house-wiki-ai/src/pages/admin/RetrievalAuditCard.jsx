@@ -55,6 +55,8 @@ export default function RetrievalAuditCard() {
   const result = audit?.result;
   const misses = result?.misses || [];
   const duplicates = result?.duplicates || [];
+  const comparison = result?.comparison || null;
+  const asPercent = (rate) => (rate == null ? '-' : `${(rate * 100).toFixed(1)}%`);
   const shownMisses = showAll ? misses : misses.slice(0, MISSES_PREVIEW);
   const percent = result?.rate == null ? '-' : `${(result.rate * 100).toFixed(1)}%`;
   const failed = audit?.status === 'failed';
@@ -81,9 +83,11 @@ export default function RetrievalAuditCard() {
       {running ? (
         <div className="ais-test-result success" role="status">
           <span className="ais-result-dot" />
-          {audit.total
-            ? t('ai.audit.progress', { done: audit.done, total: audit.total })
-            : t('ai.audit.preparing')}
+          {!audit.total
+            ? t('ai.audit.preparing')
+            : audit.phase === 'questions'
+            ? t('ai.audit.writingQuestions', { done: audit.done, total: audit.total })
+            : t('ai.audit.progress', { done: audit.done, total: audit.total })}
         </div>
       ) : null}
 
@@ -120,6 +124,40 @@ export default function RetrievalAuditCard() {
               <strong>{result.lineCut}</strong>
             </div>
           </div>
+
+          {comparison ? (
+            <div className="ais-audit-compare">
+              <h3 className="ais-audit-subtitle">{t('ai.audit.compareTitle')}</h3>
+              <table>
+                <thead>
+                  <tr>
+                    <th />
+                    <th>{t('ai.audit.wordsOnly')}</th>
+                    <th>{t('ai.audit.wordsAndMeaning')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {['own', 'other'].map((name) =>
+                    comparison[name]?.total ? (
+                      <tr key={name}>
+                        <th>
+                          {t(name === 'own' ? 'ai.audit.ownWords' : 'ai.audit.otherWords')}
+                          <small>{t('ai.audit.questionCount', { count: comparison[name].total })}</small>
+                        </th>
+                        <td>{asPercent(comparison[name].words)}</td>
+                        <td>{result.meaning ? <strong>{asPercent(comparison[name].meaning)}</strong> : '-'}</td>
+                      </tr>
+                    ) : null
+                  )}
+                </tbody>
+              </table>
+              <p className="ais-audit-hint">
+                {result.meaning
+                  ? t('ai.audit.meaningReady', { count: result.meaningArticles ?? '-' })
+                  : t('ai.audit.meaningOff')}
+              </p>
+            </div>
+          ) : null}
 
           <p className="ais-audit-meta">
             {t('ai.audit.lastRun', {
@@ -165,7 +203,12 @@ export default function RetrievalAuditCard() {
                 {shownMisses.map((miss, index) => (
                   <li key={`${miss.article_id}-${index}`}>
                     <div className="ais-audit-miss-head">
-                      <strong>“{miss.question}”</strong>
+                      <strong>
+                        “{miss.question}”
+                        {miss.set === 'other' ? (
+                          <span className="ais-audit-set">{t('ai.audit.otherWordsTag')}</span>
+                        ) : null}
+                      </strong>
                       <span className={`ais-audit-cause ${miss.cause}`}>
                         {miss.cause === 'line_cut' ? t('ai.audit.lineCut') : t('ai.audit.wrongArticle')}
                       </span>

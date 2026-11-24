@@ -17,7 +17,8 @@ import re
 import unittest
 from collections import Counter, defaultdict
 from pathlib import Path
-from unittest.mock import patch
+import types
+from unittest.mock import Mock, patch
 
 os.environ.setdefault("FLASK_SECRET_KEY", "dummy-test-only-key-not-a-secret-0123456789")
 os.environ.setdefault("NOTION_AUTO_SYNC_ENABLED", "false")
@@ -161,6 +162,58 @@ class LiveCheckTests(unittest.TestCase):
         self.assertEqual(report["passed"] + report["wrongArticle"] + report["lineCut"], report["total"])
         # Measured 2026-11-24, see the check's own report in AI Model Settings.
         self.assertGreaterEqual(report["rate"], 0.95)
+
+
+class MeaningSearchFallbackTests(unittest.TestCase):
+    """Meaning search is only used with a Gemini key; anything else = word search only."""
+
+    def setUp(self):
+        app._semantic_embedder.update(value=None, checked_at=0.0)
+        self.addCleanup(app._semantic_embedder.update, value=None, checked_at=0.0)
+        app.semantic_search.invalidate_index()
+        self.addCleanup(app.semantic_search.invalidate_index)
+
+    def service(self, provider, fail=False):
+        class Conn:
+            def cursor(self, **kwargs):
+                return types.SimpleNamespace(close=lambda: None)
+
+            def close(self):
+                pass
+
+        def config(cursor):
+            if fail:
+                raise RuntimeError("db down")
+            return {"provider": provider, "encrypted_api_key": "enc"}
+
+        return types.SimpleNamespace(get_db_connection=Conn, get_active_ai_provider_config=config,
+                                     decrypt_api_key=lambda value: "gemini-key")
+
+    def test_only_a_gemini_key_turns_it_on(self):
+        with patch.object(app, "AI_PROVIDER_SERVICE_AVAILABLE", True):
+            with patch.object(app, "ai_provider_service", self.service("anthropic")):
+                self.assertIsNone(app.semantic_embedder(max_age=0))
+                self.assertIsNone(app.semantic_article_matches("how to make ice"))
+            with patch.object(app, "ai_provider_service", self.service("gemini")):
+                self.assertEqual(app.semantic_embedder(max_age=0).api_key, "gemini-key")
+            with patch.object(app, "ai_provider_service", self.service("gemini", fail=True)):
+                self.assertIsNone(app.semantic_embedder(max_age=0))
+
+    def test_emergency_switch(self):
+        with patch.dict(os.environ, {"SEMANTIC_SEARCH_ENABLED": "0"}), \
+                patch.object(app, "ai_provider_service", self.service("gemini")):
+            self.assertIsNone(app.semantic_embedder(max_age=0))
+
+    def test_google_error_falls_back_to_words(self):
+        broken = types.SimpleNamespace(model=None, embed=Mock(side_effect=RuntimeError("timeout")))
+        index = types.SimpleNamespace(entries=[(1, "article", "x")], model="gemini-embedding-2")
+        with patch.object(app, "semantic_embedder", lambda: broken), \
+                patch.object(app, "get_db_connection", lambda: _Conn()), \
+                patch.object(app.semantic_search, "load_index", lambda cursor, **kwargs: index):
+            self.assertIsNone(app.semantic_article_matches("how many cabinet i need to open"))
+            text, _ = app.build_ai_chat_context("how many cabinet i need to open when opening",
+                                                preloaded=(ARTICLES, {}))
+        self.assertIn(RealQuestionsTests.CABINET, text.lower(), "word search still works")
 
 
 class ChatTimingHeaderTests(unittest.TestCase):

@@ -172,3 +172,12 @@ lint 仍有既有 36 errors / 10 warnings。三个修改的页面与 HEAD 的诊
 - 实测（正式站，改前）：普通问题 9.6–14 秒；Gemini 本身约 4.7 秒、准备资料 1.9 秒，旧规则 1.6–5.4 秒（图片搜索 0.2–2.7 秒），追问理解出现时 5.5 秒。
 - A：智能模式下，AI 回答在旧规则**之前**就在背景开始（`EarlyCall`，用 contextvars 让背景线程看到同一个 request 与 `g`），旧规则同时进行。AI 的输入由 `ai_answer_arguments()` 统一产生；只有第一题、或页面送来上一题文章标题时才提早开始（此时输入不会被旧规则改变），而且使用前比对输入完全相同，否则照旧在旧规则之后再问。结果与原本一样；员工按停止时，已开始的 AI 呼叫会用掉少量额度。测试：`test_chat_parallel_ai.py`。
 - B：`db_helper.search_image_retrieval`（Alan）由每张图各查一次文章／升级单，改为每种来源一次查完（约 20 次 → 3 次查询），比对规则不变；`process_question` 的图片搜索由两次（limit 1 与 10）改为一次，取第一个当最佳结果。与旧版随机比对 600 次（228 次有找到图片）结果完全相同。测试：`test_image_search_speed.py`。
+
+## 2026-11-24 更新：看意思搜索（semantic search）（LIONG1934）
+
+- 用户选择：用 Google（同一把 Gemini key）、不是 Gemini 时自动只看字、用 AI 写换字考题证明效果、AI Settings 不加开关（紧急关闭：环境变量 `SEMANTIC_SEARCH_ENABLED=0`）。
+- `semantic_search.py`：每篇文章（加 PDF/Word 附件文字，最多 40 段）切成约 900 字的段落（是 clean 文字的原样片段），用 `gemini-embedding-2`（不行时 `gemini-embedding-001`）转成 768 个数字，存在 `article_chunk_embedding`（migration 0007）。背景每 5 分钟检查，只重做内容 hash 有变的文章；多篇共用一次 Google 呼叫（每次最多 100 段）。索引放在记忆体，只在背景同步时重读数据库，员工提问时不读。
+- `build_ai_chat_context`：问题也转成数字（每题一次，有缓存），找出意思最接近的段落；看字的排名与看意思的排名用 reciprocal rank fusion 合并（`FUSION_RANK_OFFSET = 20`、`SEMANTIC_WEIGHT = 1.0`），完全确定的标题命中仍排第一；每篇被选文章，意思最接近的那段一定放进给 AI 的内容（`with_section`）。没有 Gemini key、出错、超时（4 秒）都回到只看字，结果与以前完全相同（有测试）。
+- 检查搜索准确率：新增「换字题」——AI 为每篇写 1 题员工口吻、用不同字的问题，加上文章里回答它的原句（原句必须真的在文章里才收），存在 `retrieval_audit_question`，文章改了才重写；第一次约 80 次 AI 呼叫（几分钱）。报告新增对照表：原字题／换字题 × 只看字／看字+看意思；错题标示「换字题」。题目的「意思」先分批一次取得。
+- 测试：`test_semantic_search.py`（段落、Google 请求格式与换型号、批次、只重做有变的文章、合并排名、换字题验证与对照）、`test_retrieval_audit.py::MeaningSearchFallbackTests`、`RetrievalAuditCard.test.js`；`test_schema_migrations.py` 加入 0007。
+- 本地无法用真的 Google 测试（没有 key）；上线后由「检查搜索准确率」的对照表看实际效果，再调整 `FUSION_RANK_OFFSET` / `SEMANTIC_WEIGHT`。

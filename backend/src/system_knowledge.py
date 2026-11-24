@@ -188,7 +188,9 @@ GUIDE_SECTIONS = [
                 "the percentage that found their answer, plus each missed question with its cause (wrong article "
                 "picked, or right article but the line cut off). An answer found in another article that says the "
                 "same thing counts as found. It also lists duplicate articles (same title, or same text) so one "
-                "can be moved to the bin in Content Management. It uses no AI and costs nothing; press \"Start "
+                "can be moved to the bin in Content Management. It also asks AI-written questions in other words and "
+                "compares \"words only\" with \"words + meaning\" (the chat also finds articles by meaning when the "
+                "AI provider is Gemini). The first run writes those questions once (a few cents); press \"Start "
                 "check\" now and then, especially after adding many articles.",
     },
     {

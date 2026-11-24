@@ -26,6 +26,7 @@ import image_index_service
 import document_text_service
 import system_knowledge
 import retrieval_audit
+import semantic_search
 from image_service_errors import failure_response as image_failure_response
 
 
@@ -7431,13 +7432,55 @@ def test_ai_settings():
 
 # Search accuracy check on the live articles (AI Model Settings page,
 # managers only via _MANAGER_ENDPOINTS). No AI call; runs in the background.
-def _audit_build_context(question, preloaded):
-    return build_ai_chat_context(question, search_question=question, preloaded=preloaded)
+def _audit_build_context(question, preloaded, meaning=False):
+    return build_ai_chat_context(question, search_question=question, preloaded=preloaded,
+                                 semantic_search_on=meaning)
+
+
+def _audit_prepare(articles, progress):
+    """(AI-written "other words" questions, number of articles the meaning search knows).
+
+    Questions are written once per article and stored; the meaning of every
+    check question is fetched in a few batch calls up front.
+    """
+    other, meaning = [], 0
+    conn = cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        try:
+            ask = ((lambda prompt: ai_provider_service.generate_ai_reply(prompt, timeout=60))
+                   if AI_PROVIDER_SERVICE_AVAILABLE else None)
+            other = retrieval_audit.other_word_questions(cursor, conn.commit, articles, ask, progress)
+        except Exception as error:
+            print("RETRIEVAL AUDIT QUESTIONS ERROR:", type(error).__name__)
+        try:
+            embedder = semantic_embedder(max_age=0)
+            if embedder is not None:
+                index = semantic_search.load_index(cursor, max_age=0)
+                if index.entries:
+                    embedder.model = embedder.model or index.model
+                    own, _ = retrieval_audit.make_questions(articles)
+                    semantic_search.warm_queries(embedder, [item["question"] for item in own + other])
+                    meaning = len({article_id for article_id, _, _ in index.entries})
+        except Exception as error:
+            print("RETRIEVAL AUDIT MEANING ERROR:", type(error).__name__)
+            meaning = 0
+    except Exception as error:
+        print("RETRIEVAL AUDIT PREPARE ERROR:", type(error).__name__)
+    finally:
+        for resource in (cursor, conn):
+            if resource:
+                try:
+                    resource.close()
+                except Exception:
+                    pass
+    return other, meaning
 
 
 @app.route("/api/ai-settings/retrieval-audit", methods=["POST"])
 def start_retrieval_audit():
-    if not retrieval_audit.start(load_chat_search_data, _audit_build_context):
+    if not retrieval_audit.start(load_chat_search_data, _audit_build_context, _audit_prepare):
         return jsonify({"success": False, "message": "A check is already running."}), 409
     return jsonify({"success": True, "audit": retrieval_audit.status()}), 202
 
@@ -9610,6 +9653,120 @@ DETAIL_EXCERPT_CHARS = 9000
 DETAIL_MAX_CHARS = 14000
 
 
+# Meaning search ("看意思") next to the word search; see semantic_search.py.
+# Ranks of both lists are merged: 1 / (offset + rank) each.
+FUSION_RANK_OFFSET = 20
+SEMANTIC_WEIGHT = 1.0
+_semantic_embedder = {"value": None, "checked_at": 0.0}
+
+
+def semantic_embedder(max_age=60):
+    """An Embedder using the saved Gemini key, or None (other provider / no key)."""
+    if not (semantic_search.enabled() and AI_PROVIDER_SERVICE_AVAILABLE):
+        return None
+    if time.monotonic() - _semantic_embedder["checked_at"] < max_age:
+        return _semantic_embedder["value"]
+    embedder = None
+    conn = cursor = None
+    try:
+        conn = ai_provider_service.get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        config = ai_provider_service.get_active_ai_provider_config(cursor)
+        if config and config.get("provider") == "gemini":
+            key = ai_provider_service.decrypt_api_key(config["encrypted_api_key"])
+            previous = _semantic_embedder["value"]
+            embedder = previous if previous is not None and previous.api_key == key else semantic_search.Embedder(key)
+    except Exception as error:
+        print("SEMANTIC SEARCH KEY ERROR:", type(error).__name__)
+    finally:
+        for resource in (cursor, conn):
+            if resource:
+                try:
+                    resource.close()
+                except Exception:
+                    pass
+    _semantic_embedder.update(value=embedder, checked_at=time.monotonic())
+    return embedder
+
+
+def semantic_article_matches(question):
+    """{article_id: (similarity, source, section)} by meaning, or None (use words only)."""
+    started = time.monotonic()
+    try:
+        embedder = semantic_embedder()
+        if embedder is None or not str(question or "").strip():
+            return None
+        # The background sync keeps the index in memory; the database is read
+        # here only once after a restart.
+        index = semantic_search.cached_index()
+        if index is None:
+            conn = get_db_connection()
+            cursor = conn.cursor(dictionary=True)
+            try:
+                index = semantic_search.load_index(cursor, max_age=0)
+            finally:
+                cursor.close()
+                conn.close()
+        if not index.entries:
+            return None
+        if embedder.model is None:
+            embedder.model = index.model
+        vector = semantic_search.query_vector(embedder, str(question))
+        if embedder.model != index.model:
+            return None  # stored sections are from another model: wait for the re-sync
+        return index.article_matches(vector)
+    except Exception as error:
+        print("SEMANTIC SEARCH ERROR:", type(error).__name__)
+        return None
+    finally:
+        record_chat_stage("semantic", started)
+
+
+def sync_semantic_index():
+    """Embed new / changed articles (runs in the background, never in a request)."""
+    embedder = semantic_embedder(max_age=0)
+    if embedder is None:
+        return 0
+    articles, documents = load_chat_search_data()
+    texts = {article_id: entry.get("text") or "" for article_id, entry in documents.items()}
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        if embedder.model is None:
+            try:
+                embedder.model = semantic_search.load_index(cursor).model
+            except Exception:
+                pass
+        embedded = semantic_search.sync(cursor, conn.commit, articles, texts, embedder)
+        # Refresh the in-memory index here, never during a staff question.
+        if embedded or semantic_search.cached_index() is None:
+            semantic_search.load_index(cursor, max_age=0)
+        return embedded
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def _semantic_sync_loop(first_delay=60, every=300):
+    time.sleep(first_delay)
+    while True:
+        try:
+            embedded = sync_semantic_index()
+            if embedded:
+                print(f"SEMANTIC SEARCH: embedded {embedded} sections")
+        except Exception as error:
+            print("SEMANTIC SEARCH SYNC ERROR:", type(error).__name__)
+        time.sleep(every)
+
+
+if os.getenv("SEMANTIC_SEARCH_SYNC", os.getenv("DOCUMENT_TEXT_BACKFILL", "1")).strip().lower() not in (
+        "0", "false", "off", "no"):
+    # Meaning search: embed articles 60 s after start, then check for new or
+    # changed ones every 5 minutes (unchanged ones are skipped by hash).
+    import threading
+    threading.Thread(target=_semantic_sync_loop, daemon=True).start()
+
+
 def load_chat_search_data():
     """(articles, documents) exactly as the chat search reads them from the database."""
     conn = get_db_connection()
@@ -9632,7 +9789,7 @@ def load_chat_search_data():
 
 
 def build_ai_chat_context(question, limit=7, max_chars=6000, search_question=None, detail=False, focus_title="",
-                          preloaded=None):
+                          preloaded=None, semantic_search_on=True):
     """
     `search_question` optionally overrides what's used to SCORE/select
     articles (e.g. the English keywords derived from a Chinese/Malay
@@ -9747,6 +9904,30 @@ def build_ai_chat_context(question, limit=7, max_chars=6000, search_question=Non
     scored_articles.sort(key=lambda item: item[0], reverse=True)
     top_articles = [article for _, article in scored_articles[:limit]]
 
+    # Meaning search ("看意思", semantic_search.py): articles whose sections
+    # mean the same as the question, even with other words. Both lists are
+    # merged by rank (reciprocal rank fusion); fully confident title matches
+    # still come first. None (not Gemini, no key, error) = word search only.
+    semantic = semantic_article_matches(scoring_question) if semantic_search_on else None
+    if semantic:
+        by_id = {article.get("article_id"): article for article in articles}
+        keyword_rank = {id(article): rank for rank, (_, article) in enumerate(scored_articles)}
+        direct = {id(article): key[0] for key, article in scored_articles}
+        semantic_rank = {article_id: rank for rank, (article_id, _) in
+                         enumerate(sorted(semantic.items(), key=lambda item: -item[1][0]))}
+        pool = {id(article): article for _, article in scored_articles}
+        pool.update({id(by_id[article_id]): by_id[article_id] for article_id in semantic_rank if article_id in by_id})
+
+        def fused(article):
+            value = 0.0
+            if id(article) in keyword_rank:
+                value += 1.0 / (FUSION_RANK_OFFSET + keyword_rank[id(article)])
+            if article.get("article_id") in semantic_rank:
+                value += SEMANTIC_WEIGHT / (FUSION_RANK_OFFSET + semantic_rank[article.get("article_id")])
+            return (direct.get(id(article), 0), value)
+
+        top_articles = sorted(pool.values(), key=fused, reverse=True)[:limit]
+
     # Follow-up ("下一步是什么？"): the previous answer's article always comes
     # first, even when the new wording alone would not find it.
     if focus_title:
@@ -9791,19 +9972,30 @@ def build_ai_chat_context(question, limit=7, max_chars=6000, search_question=Non
     top_share = max(600, int(room * 0.4))
     article_share = max(600, (room - top_share) // max(len(top_articles) - 1, 1))
 
+    def with_section(section, text, limit):
+        """The best meaning-matched section first, then the word-matched passages."""
+        keep = section[: limit // 2] if section else ""
+        rest = document_text_service.best_passages(
+            text, question_tokens, limit=limit - len(keep) - (3 if keep else 0),
+            weights=word_weights, tokenize=passage_tokenize)
+        if keep and rest:
+            rest = " … ".join(part for part in rest.split(" … ") if part not in keep)
+        return " … ".join(part for part in (keep, rest) if part)
+
     for article_index, article in enumerate(top_articles):
         title = article.get("title") or ""
         body = clean_text(article.get("content"))
         document_text = document_texts.get(article.get("article_id"))
+        match = semantic.get(article.get("article_id")) if semantic else None
+        article_section = match[2] if match and match[1] == "article" else ""
+        document_section = match[2] if match and match[1] == "document" else ""
         excerpt = ""
         if document_text:
             # "More details": the first matching document gets a much bigger
             # share (from its start when no passage matches the words).
             big_share = detail and not detail_document_used
-            excerpt = document_text_service.best_passages(
-                document_text, question_tokens, limit=DETAIL_EXCERPT_CHARS if big_share else 1500,
-                tokenize=passage_tokenize, weights=word_weights,
-            )
+            excerpt = with_section(document_section, document_text,
+                                   DETAIL_EXCERPT_CHARS if big_share else 1500)
             if big_share:
                 excerpt = excerpt or document_text[:DETAIL_EXCERPT_CHARS]
                 detail_document_used = True
@@ -9812,9 +10004,7 @@ def build_ai_chat_context(question, limit=7, max_chars=6000, search_question=Non
         share = top_share if article_index == 0 else article_share
         body_share = max_chars // 2 if (detail and article_index == 0) else max(400, share - len(excerpt))
         if len(body) > body_share:
-            body = (document_text_service.best_passages(body, question_tokens, limit=body_share, weights=word_weights,
-                                                        tokenize=passage_tokenize)
-                    or body[:body_share])
+            body = with_section(article_section, body, body_share) or body[:body_share]
         entry = f"### {title}\n{body}\n"
         if excerpt:
             entry += f"Attached document (excerpt): {excerpt}\n"

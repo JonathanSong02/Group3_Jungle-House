@@ -188,20 +188,148 @@ def duplicate_articles(articles):
     } for reason, group in groups]
 
 
-def run_audit(articles, documents, build_context, progress=None):
-    """Ask every generated question; returns the report dict.
 
-    `build_context(question, preloaded)` -> (context_text, candidate_articles).
+# ------------------------------------------------- "other words" questions
+# One AI-written question per article, in staff wording with different words
+# than the article (e.g. "make ice" for "ice machine"), plus the sentence that
+# answers it. Written once and stored; re-written when the article changes.
+
+QUESTION_BATCH = 8
+QUESTION_TEXT_CHARS = 1500
+QUESTION_WORKERS = 3
+
+
+def ensure_question_table(cursor):
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS retrieval_audit_question (
+            audit_question_id INT NOT NULL AUTO_INCREMENT,
+            article_id INT NOT NULL,
+            content_hash CHAR(64) NOT NULL,
+            question VARCHAR(500) NOT NULL,
+            quote TEXT NOT NULL,
+            created_at DATETIME NOT NULL,
+            PRIMARY KEY (audit_question_id),
+            UNIQUE KEY uq_retrieval_audit_question_article (article_id),
+            CONSTRAINT fk_retrieval_audit_question_article FOREIGN KEY (article_id)
+                REFERENCES wiki_article (article_id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+
+
+def article_hash(article):
+    import hashlib
+    text = f"{article.get('title') or ''}\x1f{article.get('content') or ''}"
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _plain(text):
+    return re.sub(r"\s+", " ", str(text or "")).strip().lower()
+
+
+def question_prompt(batch):
+    parts = []
+    for article in batch:
+        text = _clean(str(article.get("content") or ""))[:QUESTION_TEXT_CHARS]
+        parts.append(f"### id={article.get('article_id')} | title: {article.get('title') or ''}\n{text}")
+    return (
+        "You write test questions for the search of a retail staff help desk.\n"
+        "For EACH article below, write ONE question a shop staff member might type to find one specific fact "
+        "in it: short and casual, the way staff really type, using DIFFERENT words from the article where "
+        "natural (synonyms, everyday words) and NOT the article title. Then copy, word for word, the one "
+        "sentence (or line) from the article text that answers it.\n"
+        'Return ONLY a JSON array, no other text: [{"id": <article id>, "question": "...", "quote": "..."}]. '
+        "Leave out an article that has no clear fact.\n\n" + "\n\n".join(parts)
+    )
+
+
+def parse_questions(reply, batch):
+    """Valid items only: a known id, a question, and a quote really in that article."""
+    import json
+    match = re.search(r"\[.*\]", str(reply or ""), re.DOTALL)
+    if not match:
+        return []
+    try:
+        items = json.loads(match.group(0), strict=False)
+    except ValueError:
+        return []
+    by_id = {str(article.get("article_id")): article for article in batch}
+    found = []
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        article = by_id.get(str(item.get("id")))
+        question = re.sub(r"\s+", " ", str(item.get("question") or "")).strip()[:300]
+        quote = re.sub(r"\s+", " ", str(item.get("quote") or "")).strip()
+        if not article or not question or len(quote) < 15:
+            continue
+        if _plain(quote) not in _plain(_clean(str(article.get("content") or ""))):
+            continue  # the AI changed the sentence: we could not check it
+        found.append({"article_id": article.get("article_id"), "question": question, "quote": quote,
+                      "content_hash": article_hash(article)})
+        by_id.pop(str(item.get("id")))
+    return found
+
+
+def write_questions(articles, ask_ai, progress=None, workers=QUESTION_WORKERS):
+    """AI-written questions for `articles` (in batches, a few at a time)."""
+    from concurrent.futures import ThreadPoolExecutor
+    batches = [articles[i:i + QUESTION_BATCH] for i in range(0, len(articles), QUESTION_BATCH)]
+    done = [0]
+    lock = threading.Lock()
+
+    def one(batch):
+        try:
+            result = parse_questions(ask_ai(question_prompt(batch)), batch)
+        except Exception as error:
+            print("RETRIEVAL AUDIT QUESTION ERROR:", type(error).__name__)
+            result = []
+        with lock:
+            done[0] += 1
+            if progress:
+                progress(done[0], len(batches))
+        return result
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return [item for items in pool.map(one, batches) for item in items]
+
+
+def other_word_questions(cursor, commit, articles, ask_ai, progress=None):
+    """Stored questions for unchanged articles; new ones written for the rest.
+
+    Returns [{article_id, title, question, sentence}] for the check.
     """
-    started = time.monotonic()
-    questions, all_sentences = make_questions(articles)
-    duplicates = _NearDuplicates(all_sentences)
-    preloaded = (articles, documents)
-    passed = 0
-    found_elsewhere = 0
+    ensure_question_table(cursor)
+    cursor.execute("SELECT article_id, content_hash, question, quote FROM retrieval_audit_question")
+    stored = {row["article_id"]: row for row in cursor.fetchall() or []}
+    needing = [article for article in articles
+               if len(_clean(str(article.get("content") or ""))) >= 80
+               and (stored.get(article["article_id"]) or {}).get("content_hash") != article_hash(article)]
+    if needing and ask_ai:
+        for item in write_questions(needing, ask_ai, progress):
+            cursor.execute("""
+                INSERT INTO retrieval_audit_question (article_id, content_hash, question, quote, created_at)
+                VALUES (%s, %s, %s, %s, NOW())
+                ON DUPLICATE KEY UPDATE content_hash = VALUES(content_hash), question = VALUES(question),
+                    quote = VALUES(quote), created_at = VALUES(created_at)
+            """, (item["article_id"], item["content_hash"], item["question"], item["quote"]))
+            stored[item["article_id"]] = item
+        commit()
+    titles = {article["article_id"]: article.get("title") or "" for article in articles}
+    hashes = {article["article_id"]: article_hash(article) for article in articles}
+    return [{"article_id": article_id, "title": titles[article_id], "question": row["question"],
+             "sentence": row["quote"]}
+            for article_id, row in stored.items()
+            if article_id in titles and row.get("content_hash") == hashes[article_id]]
+
+
+# ------------------------------------------------------------------ the run
+
+def _check(items, duplicates, ask):
+    """(passed, found_elsewhere, misses) for one set of questions in one search mode."""
+    passed = found_elsewhere = 0
     misses = []
-    for done, item in enumerate(questions, 1):
-        context, candidates = build_context(item["question"], preloaded)
+    for item in items:
+        context, candidates = ask(item["question"])
         if duplicates.visible(item["sentence"], context):
             passed += 1
         elif same_info_in(item["sentence"], context):
@@ -218,26 +346,76 @@ def run_audit(articles, documents, build_context, progress=None):
                 "cause": "line_cut" if item["article_id"] in chosen_ids else "wrong_article",
                 "picked": [c.get("title") for c in candidates[:3]],
             })
-        if progress:
-            progress(done, len(questions))
+    return passed, found_elsewhere, misses
 
-    total = len(questions)
+
+def _rate(passed, total):
+    return round(passed / total, 4) if total else None
+
+
+def run_audit(articles, documents, build_context, progress=None, other_words=(), meaning=False):
+    """Ask every question; returns the report dict.
+
+    `build_context(question, preloaded, meaning)` -> (context_text, candidate_articles).
+    Own-words questions come from the articles' sentences; `other_words` are
+    the AI-written ones. With `meaning` (meaning search available) every set
+    is asked twice -- words only, then words + meaning -- to compare; the main
+    score and the misses are for what the chat really uses.
+    """
+    started = time.monotonic()
+    own, all_sentences = make_questions(articles)
+    for item in own:
+        item["set"] = "own"
+    other = [dict(item, set="other") for item in other_words]
+    duplicates = _NearDuplicates(all_sentences)
+    preloaded = (articles, documents)
+    modes = [False, True] if meaning else [False]
+    total_steps = (len(own) + len(other)) * len(modes)
+    done = [0]
+
+    def asker(mode):
+        def ask(question):
+            result = build_context(question, preloaded, mode)
+            done[0] += 1
+            if progress:
+                progress(done[0], total_steps)
+            return result
+        return ask
+
+    comparison = {}
+    final = None
+    for mode in modes:
+        results = {name: _check(items, duplicates, asker(mode)) for name, items in (("own", own), ("other", other))}
+        for name, items in (("own", own), ("other", other)):
+            comparison.setdefault(name, {"total": len(items)})["meaning" if mode else "words"] = \
+                _rate(results[name][0], len(items))
+        final = results  # the last mode is what the chat uses
+    for name, (_, _, misses) in final.items():
+        for miss in misses:
+            miss["set"] = name
+
+    passed = sum(result[0] for result in final.values())
+    misses = final["own"][2] + final["other"][2]
+    total = len(own) + len(other)
     return {
         "articleCount": len(articles),
         "total": total,
         "passed": passed,
-        "rate": round(passed / total, 4) if total else None,
-        "foundElsewhere": found_elsewhere,
+        "rate": _rate(passed, total),
+        "foundElsewhere": sum(result[1] for result in final.values()),
+        "meaning": bool(meaning),
+        "meaningArticles": meaning if isinstance(meaning, int) and not isinstance(meaning, bool) else None,
+        "comparison": comparison,
         "duplicates": duplicate_articles(articles),
         "wrongArticle": sum(1 for m in misses if m["cause"] == "wrong_article"),
         "lineCut": sum(1 for m in misses if m["cause"] == "line_cut"),
-        "misses": misses[:MAX_MISSES_SHOWN],
+        "misses": (final["other"][2] + final["own"][2])[:MAX_MISSES_SHOWN],
         "durationSeconds": round(time.monotonic() - started, 1),
         "finishedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
 
 
-_state = {"status": "idle", "done": 0, "total": 0, "result": None, "error": None, "startedAt": None}
+_state = {"status": "idle", "phase": None, "done": 0, "total": 0, "result": None, "error": None, "startedAt": None}
 _lock = threading.Lock()
 
 
@@ -246,28 +424,35 @@ def status():
         return dict(_state)
 
 
-def start(load_data, build_context):
-    """Start the check in a background thread. False if one is already running."""
+def start(load_data, build_context, prepare=None):
+    """Start the check in a background thread. False if one is already running.
+
+    `prepare(articles, progress)` (optional) -> (other_words_questions, meaning_available).
+    """
     with _lock:
         if _state["status"] == "running":
             return False
-        _state.update(status="running", done=0, total=0, error=None,
+        _state.update(status="running", phase="reading", done=0, total=0, error=None,
                       startedAt=datetime.now(timezone.utc).isoformat(timespec="seconds"))
 
-    def progress(done, total):
-        with _lock:
-            _state["done"], _state["total"] = done, total
+    def progress_for(phase):
+        def progress(done, total):
+            with _lock:
+                _state.update(phase=phase, done=done, total=total)
+        return progress
 
     def work():
         try:
             articles, documents = load_data()
-            result = run_audit(articles, documents, build_context, progress)
+            other, meaning = prepare(articles, progress_for("questions")) if prepare else ((), False)
+            result = run_audit(articles, documents, build_context, progress_for("checking"),
+                               other_words=other, meaning=meaning)
             with _lock:
-                _state.update(status="done", result=result)
+                _state.update(status="done", phase=None, result=result)
         except Exception as error:
             print("RETRIEVAL AUDIT ERROR:", type(error).__name__, error)
             with _lock:
-                _state.update(status="failed", error="The check could not finish. Please try again.")
+                _state.update(status="failed", phase=None, error="The check could not finish. Please try again.")
 
     threading.Thread(target=work, name="retrieval-audit", daemon=True).start()
     return True

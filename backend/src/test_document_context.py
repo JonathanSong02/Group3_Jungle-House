@@ -39,10 +39,14 @@ class Cursor:
         pass
 
 
-def build(articles, doc_rows, question, fail_docs=False, max_chars=6000, auth_user=None, **kwargs):
+def build(articles, doc_rows, question, fail_docs=False, max_chars=6000, auth_user=None, semantic=None, **kwargs):
+    """`semantic` = what the meaning search returns ({article_id: (similarity, source, section)});
+    None = not available (another provider, no key), i.e. word search only."""
     document_text_service.invalidate_cache()
     cursor = Cursor(articles, doc_rows, fail_docs)
     env = {
+        "semantic_article_matches": lambda q: semantic,
+        "FUSION_RANK_OFFSET": 20, "SEMANTIC_WEIGHT": 1.0,
         "system_knowledge": system_knowledge,
         "SYSTEM_CONTEXT_LIMIT": 3500, "DETAIL_EXCERPT_CHARS": 9000, "DETAIL_MAX_CHARS": 14000, "TITLE_WORD_WEIGHT": 3,
         "g": types.SimpleNamespace(get=lambda key, default=None: auth_user if key == "auth_user" else default),

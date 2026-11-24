@@ -38,10 +38,12 @@ const RESULT = {
   duplicates: [{ reason: 'same_title', titles: ['Stirrer & Tissue Location SOP'], articles: [
     { article_id: 31, title: 'Stirrer & Tissue Location SOP', category: 'SOP' },
     { article_id: 88, title: 'Stirrer & Tissue Location SOP', category: 'Notion' }] }],
+  meaning: true, meaningArticles: 660,
+  comparison: { own: { total: 1200, words: 0.91, meaning: 0.9583 }, other: { total: 600, words: 0.62, meaning: 0.88 } },
   misses: Array.from({ length: 12 }, (_, i) => ({
     question: `cabinet unlock ${i}`, article_id: i, article_title: 'JHKC Opening Checklist',
     expected: 'Unlock all cabinet doors from B, C, E, F, K and L.',
-    cause: i % 2 ? 'line_cut' : 'wrong_article', picked: ['Promotion', 'Closing'],
+    cause: i % 2 ? 'line_cut' : 'wrong_article', picked: ['Promotion', 'Closing'], set: i < 3 ? 'other' : 'own',
   })),
 };
 
@@ -50,7 +52,7 @@ test('start, progress, then score, causes and misses', async () => {
   let gets = 0;
   const states = [
     { status: 'idle', result: null },
-    { status: 'running', done: 300, total: 1200, result: null },
+    { status: 'running', phase: 'checking', done: 300, total: 1200, result: null },
     { status: 'done', done: 1200, total: 1200, result: RESULT },
   ];
   const api = {
@@ -74,6 +76,13 @@ test('start, progress, then score, causes and misses', async () => {
   assert.match(text, /Duplicate articles \(1\)/);
   assert.match(text, /2 with the same title/);
   assert.match(text, /#88 Stirrer & Tissue Location SOP · Notion/);
+  // Words only vs words + meaning, for both kinds of questions.
+  const rows = [...document.querySelectorAll('.ais-audit-compare tbody tr')].map((row) => row.textContent);
+  assert.deepEqual(rows.length, 2);
+  assert.match(rows[0], /own words.*1200 questions.*91\.0%.*95\.8%/);
+  assert.match(rows[1], /other words.*600 questions.*62\.0%.*88\.0%/);
+  assert.match(text, /Meaning search knows 660 articles/);
+  assert.equal(document.querySelectorAll('.ais-audit-set').length, 3, 'other-words misses are tagged');
   assert.equal(document.querySelectorAll('.ais-audit-misses:not(.ais-audit-duplicates) li').length, 10, 'first 10 shown');
   assert.equal(document.querySelectorAll('.ais-audit-cause.line_cut').length, 5);
   assert.match(text, /Search picked:.*Promotion · Closing/);
