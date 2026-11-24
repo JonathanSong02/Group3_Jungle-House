@@ -597,8 +597,16 @@ def log_chat_timing(response):
         timings = getattr(g, "chat_timings", None)
         started = getattr(g, "chat_started", None)
         if timings is not None and started is not None:
+            total = time.monotonic() - started
             parts = " ".join(f"{stage}={seconds:.1f}s" for stage, seconds in timings.items())
-            print(f"CHAT TIMING total={time.monotonic() - started:.1f}s {parts}".rstrip())
+            print(f"CHAT TIMING total={total:.1f}s {parts}".rstrip())
+            # Same numbers on the reply, so they can be read in the browser
+            # (DevTools > Network > the chat request) without Railway access.
+            response.headers["X-Chat-Timing"] = f"total={total:.1f}s {parts}".rstrip()
+            response.headers["Server-Timing"] = ", ".join(
+                [f"total;dur={total * 1000:.0f}"]
+                + [f"{stage};dur={seconds * 1000:.0f}" for stage, seconds in timings.items()]
+            )
     except Exception:
         pass
     return response

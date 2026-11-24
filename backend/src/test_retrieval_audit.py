@@ -163,5 +163,24 @@ class LiveCheckTests(unittest.TestCase):
         self.assertGreaterEqual(report["rate"], 0.95)
 
 
+class ChatTimingHeaderTests(unittest.TestCase):
+    """Stage times are on the chat reply, readable in the browser without Railway."""
+
+    def test_chat_reply_carries_the_timing(self):
+        import time
+        from flask import g
+        with app.app.test_request_context("/api/chat", method="POST"):
+            g.chat_started = time.monotonic() - 12.3
+            g.chat_timings = {"translate": 2.1, "ai_answer": 9.4}
+            response = app.log_chat_timing(app.app.response_class("{}"))
+        self.assertRegex(response.headers["X-Chat-Timing"], r"^total=12\.\ds translate=2\.1s ai_answer=9\.4s$")
+        self.assertIn("ai_answer;dur=9400", response.headers["Server-Timing"])
+
+    def test_other_requests_have_no_timing(self):
+        with app.app.test_request_context("/api/articles"):
+            response = app.log_chat_timing(app.app.response_class("{}"))
+        self.assertNotIn("X-Chat-Timing", response.headers)
+
+
 if __name__ == "__main__":
     unittest.main()
