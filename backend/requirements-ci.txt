@@ -6,9 +6,11 @@
 # flask-cors, Werkzeug ...), so the two files cannot drift apart. Unpinned packages get the latest release,
 # exactly as on Railway.
 #
-# Left out on purpose: torch, sentence-transformers, pandas, scikit-learn, numpy, Pillow, gunicorn.
-# app.py imports predict_intent (pandas) and image_embedding_helper (torch) inside try/except, and the whole
-# suite passes without them. That saves several GB of downloads on every run.
+# Left out on purpose: torch, sentence-transformers, pandas, scikit-learn, gunicorn.
+# app.py imports image_embedding_helper (torch) inside try/except, and the whole suite passes without them.
+# That saves several GB of downloads on every run.
+# numpy IS needed: semantic_search.py (meaning search) and test_semantic_search.py use it (added 2026-11-25;
+# CI had failed since 2026-11-24 without it). It is small and already in requirements.txt.
 Flask
 flask-cors
 Werkzeug
@@ -20,3 +22,4 @@ pytest
 Pillow
 pypdf
 python-docx
+numpy
