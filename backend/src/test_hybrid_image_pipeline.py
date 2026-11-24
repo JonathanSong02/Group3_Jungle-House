@@ -569,12 +569,14 @@ def test_unseen_object_vision_is_search_hint_even_when_work_related_false(local,
 def test_document_upload_never_enters_image_service(local, monkeypatch):
     process = Mock(side_effect=AssertionError("Document must not enter image pipeline"))
     monkeypatch.setattr(hybrid, "process", process)
-    monkeypatch.setattr(app, "process_question", lambda **kwargs: ({"reply": "Document stored", "answer": "Document stored",
-        "source": "document_test", "confidence": .8, "fallback": False}, 200))
+    # The AI answers every question since the old rule engine was removed (2026-11-24).
+    monkeypatch.setattr(app, "AI_PROVIDER_SERVICE_AVAILABLE", True)
+    monkeypatch.setattr(app, "answer_question_with_ai_provider", lambda **kwargs: {
+        "answer": "Document stored", "sourceTitle": "", "article_id": None, "off_topic": False})
     monkeypatch.setattr(app, "log_request", lambda *a, **k: None)
-    monkeypatch.setattr(app, "save_qa_to_db", lambda *a, **k: None)
     response = upload(client_for(1), "Read this file", content=b"%PDF-1.4\nSynthetic", filename="synthetic.pdf")
     assert response.status_code == 200, response.get_json()
+    assert response.get_json()["answer"] == "Document stored"
     process.assert_not_called()
 
 

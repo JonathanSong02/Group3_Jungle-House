@@ -204,3 +204,18 @@ lint 仍有既有 36 errors / 10 warnings。三个修改的页面与 HEAD 的诊
 动到他人代码（已告知或待告知）：XinWei（旧规则 `process_question`，现为后备；图片搜索只跑一次、加计时）、Alan（追问理解；`db_helper.search_image_retrieval` 改为批次查询，规则不变）、Jonathan（`ArticleDetail` 拆出共用的 `ArticleBody`）。
 
 待办：上线后跑「检查搜索准确率」看对照表，再调 `FUSION_RANK_OFFSET` / `SEMANTIC_WEIGHT`；看 `X-Chat-Timing` 决定是否做 C（追问理解只在像追问时叫 AI，Alan 的功能，需同意）与 D（换 gemini-3.6-flash 用 minimal 思考）。
+
+## 2026-11-24 更新：删除旧规则，聊天只由 AI 回答（LIONG1934，XinWei 已同意）
+
+- 删除：`predict_intent.py`、`train_model.py`、`backend/models/intent_model.pth` 与 metrics（PyTorch 意图模型，只认得 4 月 CSV 的 48 篇）；`app.py` 的 `process_question`、`call_model_answer`、`build_training_data_options_from_model_reply`、`should_escalate_generic_answer`、`update_ai_fail_count`、`search_related_knowledge_base_articles`、`smart_chat_enabled`（`SMART_CHAT_ENABLED` 不再有作用）、`EarlyCall`；没有人呼叫的 `create_quiz_and_questions`；开发用 `/api/chat/test`（`chat_test`）。`/` 与 `/api/health` 不再回报 `model_available` 等栏位。`backend/data/cleaned_knowledge.csv` 保留（准确率测试的考卷）。
+- 新流程（`chat()` 在组长批准答案之后）：
+  1. "show step 4"：有上一题文章 → 那一步的卡片（`build_step_answer_from_last_topic`，读线上文章）；没有主题、也没有对话 → 问哪个主题；有对话 → 交给 AI。
+  2. 其余文字问题与照片问题都交给 AI（`answer_question_with_ai_provider`）。
+  3. AI 回答 / 反问选项 / 礼貌拒绝 → 照旧显示（Show more details、Related articles）。
+  4. AI 读了文章但找不到 → `source: ai_not_found`，"知识库里找不到…"（三语）+ 搜索找到的相关文章卡片（`related_article_options`，看字+看意思，不用 AI）+ "这些内容有帮助吗？/ 转交给组长" 按钮。**不会自动开单**（连续找不到也不会）。
+  5. AI 服务出错、超时、额度用完或没设定 → `source: ai_unavailable`，只显示 "AI chat is currently unavailable. Please try again later."（三语，`CHAT_FAILURE_MESSAGES["ai_unavailable"]`），不转组长、不显示 fallback 标签。
+  6. 照片问题：AI 答不出时，用新搜索找前 3 篇，逐篇用 Alan 的 `hybrid_image_service.verify_text_result` 检查有没有确切句子（`verify_image_question_with_search`）。
+- 回应一律经 `chat_reply()`：保留我们设定的 fallback / escalation 旗标（`standardize_ai_response` 会把答案里有 "escalate" 字眼当成升级）。
+- 前端：拿掉回答上的 "Match score" 与 "Source" 标签、文章卡片上的 "来源 · 百分比" 标签；没有 Show more details 的回答（例如照片答案）保留文章名称连结 ↗。聊天记录页与复制文字不变。
+- 不变：问候、乱打字过滤、"不是这个"→ 组长、员工自己按"转交给组长"、组长批准的答案优先、追问理解、看意思搜索。
+- 测试：`test_chat_memory.py`（Alan）、`test_chat_failure_messages.py`、`test_dev_only_routes.py`、`test_hybrid_image_pipeline.py`、`Chat.image.test.js` 改为检查 AI 收到的搜索内容与新的三种结果；删除 `test_chat_parallel_ai.py`（旧规则与 AI 同时跑已不存在）；新增 `test_retrieval_audit.py::AiOnlyChatHelperTests`。

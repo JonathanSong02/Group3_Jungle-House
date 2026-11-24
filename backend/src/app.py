@@ -169,40 +169,6 @@ def record_chat_stage(stage, started):
         pass
 
 
-class EarlyCall:
-    """Run one function in a background thread now; collect its result later.
-
-    The thread sees the same Flask request and `g` (Flask keeps them in
-    context variables, which are copied), so stopwatch marks and the
-    signed-in user work as usual. `result()` returns the value or re-raises
-    the function's own exception, exactly as a direct call would.
-    """
-
-    def __init__(self, function, **kwargs):
-        import contextvars
-        import threading
-        self.kwargs = kwargs
-        self._value = None
-        self._error = None
-        self._thread = threading.Thread(target=contextvars.copy_context().run,
-                                        args=(self._run, function), daemon=True)
-        self._thread.start()
-
-    def _run(self, function):
-        started = time.monotonic()
-        try:
-            self._value = function(**self.kwargs)
-        except BaseException as error:  # handed to the caller in result()
-            self._error = error
-        self.seconds = time.monotonic() - started
-
-    def result(self, wait=120):
-        self._thread.join(wait)
-        if self._thread.is_alive():
-            raise TimeoutError("early call did not finish")
-        if self._error is not None:
-            raise self._error
-        return self._value
 
 
 _TITLE_WORDS_CACHE = {"words": None, "loaded_at": 0.0}
@@ -556,20 +522,6 @@ def normalize_staff_query(question):
     return (normalized, changed) if changed else (text, False)
 
 
-try:
-    from predict_intent import get_model_answer
-    try:
-        from predict_intent import MODEL_ERROR as PREDICT_MODEL_ERROR
-    except Exception:
-        PREDICT_MODEL_ERROR = None
-    MODEL_AVAILABLE = True
-    MODEL_LOAD_ERROR = None
-except Exception as error:
-    get_model_answer = None
-    PREDICT_MODEL_ERROR = str(error)
-    MODEL_AVAILABLE = False
-    MODEL_LOAD_ERROR = str(error)
-
 BASE_DIR = Path(__file__).resolve().parent
 
 # =========================
@@ -591,10 +543,8 @@ LOG_DIR = BASE_DIR / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 LOG_JSONL = LOG_DIR / "ai_chat_logs.jsonl"
 LOG_CSV = LOG_DIR / "ai_chat_logs.csv"
-TEST_REPORT_CSV = LOG_DIR / "ai_test_results.csv"
 
 ESCALATION_MESSAGE = "Please escalate this question to team lead."
-REAL_JH_TEST_QUESTIONS = []
 
 # Simple in-memory chat context for local prototype use.
 # This helps follow-up messages like "step 25" work even if the frontend
@@ -2177,7 +2127,6 @@ _MANAGER_ENDPOINTS = {
     "get_notion_storage_audit",
     "run_notion_storage_cleanup",
 
-    "chat_test",
     "update_admin_user_role", "update_admin_user_status", "test_db",
     "debug_chat_uploads", "debug_sop_images", "debug_static_files", "debug_uploads",
 }
@@ -3232,7 +3181,7 @@ def ensure_log_files() -> None:
 # CROSS-LINGUAL RETRIEVAL BRIDGE
 #
 # The Knowledge Base (wiki_article) is English-only, and KB search
-# (search_knowledge_base_articles / search_related_knowledge_base_articles /
+# (search_knowledge_base_articles /
 # build_ai_chat_context) matches on English word/token overlap. A Chinese or
 # Bahasa Melayu question has zero token overlap with English article text no
 # matter how relevant the article is, so retrieval silently finds nothing.
@@ -3415,7 +3364,7 @@ def translate_query_to_english_keywords(question: str, detected_language: str) -
     Asks the already-configured AI provider for 2-4 short English search
     keywords capturing the intent of a non-English question -- a cheap,
     lightweight call, not a full translation. Used only to drive KB
-    retrieval (search_knowledge_base_articles / search_related_knowledge_base_articles /
+    retrieval (search_knowledge_base_articles /
     build_ai_chat_context); never shown to the user and never stored as the
     logged/escalated question.
 
@@ -3697,37 +3646,6 @@ def is_staff_not_satisfied(text: str) -> bool:
 
     return any(phrase in text for phrase in phrases)
 
-def should_escalate_generic_answer(question: str, result: dict | None) -> bool:
-    result = result or {}
-
-    source = str(result.get("source", "")).strip().lower()
-    question_clean = clean_question(question).lower()
-
-    # These are allowed broad category questions.
-    # Example: staff types "product", "promotion", "sop"
-    allowed_generic_questions = {
-        "product",
-        "products",
-        "promotion",
-        "promotions",
-        "sop",
-        "notice",
-        "notices",
-        "training",
-    }
-
-    if question_clean in allowed_generic_questions:
-        return False
-
-    # If AI only gives generic category choices for a specific-looking question,
-    # escalate instead of pretending it knows the answer.
-    if source.startswith("generic_"):
-        return True
-
-    if source in {"category_choice", "broad_topic_clarification"}:
-        return False
-
-    return False
 
 
 def build_step_answer_from_last_topic(question: str, last_answer: dict | None):
@@ -3844,52 +3762,6 @@ def get_ai_fail_key(data: dict | None, question: str = "") -> str:
     return f"{get_chat_memory_key(data)}:ai_fail_count"
 
 
-def update_ai_fail_count(data: dict | None, question: str, result: dict | None) -> int:
-    result = result or {}
-
-    bad_sources = {
-        "ambiguous_title_choice",
-        "clarification_round_1",
-        "clarification_round_2",
-        "unclear_question_clarification",
-        "system_problem_clarification",
-        "step_request_missing_topic",
-        "low_confidence_or_model_unavailable",
-        "fallback",
-        "unknown",
-        "prediction_error",
-        "engine_unavailable",
-    }
-
-    source = str(result.get("source", "")).strip()
-    confidence = float(result.get("confidence", result.get("score", 0.0)) or 0.0)
-
-    # A clarifying list or a "these may help" list is the AI asking a
-    # question back, not a failed answer -- it must not count toward the
-    # repeated-failure escalation.
-    if (
-        source in {"broad_topic_clarification", "category_choice", "suggestion_options", "related_knowledge"}
-        or source.startswith("generic_")
-        or "out_of_bounds" in source
-        or source in {"context_step", "context_step_range", "context_show_all", "context_picture", "context_section"}
-    ):
-        AI_FAIL_MEMORY.pop(get_ai_fail_key(data, question), None)
-        return 0
-
-    is_failed_answer = (
-        source in bad_sources
-        or bool(result.get("fallback", False))
-        or confidence < CONFIDENCE_DIRECT_ANSWER
-    )
-
-    fail_key = get_ai_fail_key(data, question)
-
-    if is_failed_answer:
-        AI_FAIL_MEMORY[fail_key] = AI_FAIL_MEMORY.get(fail_key, 0) + 1
-    else:
-        AI_FAIL_MEMORY.pop(fail_key, None)
-
-    return AI_FAIL_MEMORY.get(fail_key, 0)
 
 
 def clear_ai_fail_count(data: dict | None, question: str) -> None:
@@ -4215,12 +4087,6 @@ def log_request(question: str, result: dict | None = None, error: str | None = N
     save_ai_chat_log_to_mysql(payload, user_id=user_id)
 
 
-def call_model_answer(question: str, context: dict | None = None):
-    context = normalize_context(context or {})
-    try:
-        return get_model_answer(question, context=context)
-    except TypeError:
-        return get_model_answer(question)
 
 def normalize_result(result, default_source="unknown"):
     if isinstance(result, dict):
@@ -4395,73 +4261,6 @@ def extract_numbered_option_titles(text):
     return titles
 
 
-def build_training_data_options_from_model_reply(model_result, context=None):
-    model_result = model_result or {}
-    context = normalize_context(context or {})
-
-    reply = model_result.get("reply") or model_result.get("answer") or ""
-    titles = extract_numbered_option_titles(reply)
-
-    options = []
-    seen = set()
-
-    for title in titles[:6]:
-        key = title.lower().strip()
-
-        if key in seen:
-            continue
-
-        seen.add(key)
-
-        try:
-            detail_result = normalize_result(
-                call_model_answer(title, context=context),
-                default_source="pytorch_model"
-            )
-        except Exception:
-            detail_result = None
-
-        answer = ""
-        category = None
-        section = None
-        confidence = 0.0
-        option_type = "text"
-        steps = []
-        notes = []
-
-        if detail_result:
-            answer = detail_result.get("answer") or detail_result.get("reply") or ""
-            category = detail_result.get("category")
-            section = detail_result.get("section")
-            confidence = float(detail_result.get("confidence", detail_result.get("score", 0.0)) or 0.0)
-            option_type = detail_result.get("type", "text")
-            steps = detail_result.get("steps", [])
-            notes = detail_result.get("notes", [])
-            image_files = detail_result.get("image_files")
-            attachment_url = detail_result.get("attachment_url")
-            attachment_type = detail_result.get("attachment_type")
-
-        if not answer:
-            answer = f"Please ask about {title} for more details."
-
-        options.append({
-            "label": title,
-            "title": title,
-            "category": category,
-            "section": section,
-            "source": "training_data",
-            "confidence": confidence,
-            "reply": answer,
-            "answer": answer,
-            "type": option_type,
-            "steps": steps,
-            "notes": notes,
-            "image_files": image_files if 'image_files' in locals() else None,
-            "attachment_url": attachment_url if 'attachment_url' in locals() else None,
-            "attachment_type": attachment_type if 'attachment_type' in locals() else None,
-        })
-
-    return options
 
 def filter_short_keyword_options(question, options):
     """
@@ -4880,60 +4679,6 @@ def search_knowledge_base_articles(question, limit=1):
     return scored_results[:limit]
 
 
-def search_related_knowledge_base_articles(question, limit=3, min_score=CONFIDENCE_ESCALATE_OFFER):
-    """
-    Level-2 retrieval: articles that are topically related but do not clear
-    the direct-answer bar used by search_knowledge_base_articles(). Used to
-    show clickable "related knowledge" cards and ask whether to escalate,
-    instead of jumping straight from "not confident" to a team lead ticket.
-
-    min_score is a tunable heuristic (roughly: at least 40% of the
-    question's meaningful tokens appear somewhere in the article's
-    title/category/subcategory/content) chosen to avoid surfacing dozens of
-    low-quality/noisy matches.
-    """
-    conn = None
-    cursor = None
-
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute("""
-            SELECT
-                article_id,
-                title,
-                content,
-                category,
-                sub_category,
-                link,
-                attachment_url,
-                attachment_type,
-                image_files,
-                created_at
-            FROM wiki_article
-            WHERE COALESCE(is_deleted, 0) = 0
-            ORDER BY created_at DESC, article_id DESC
-        """)
-        articles = cursor.fetchall() or []
-    except Exception as error:
-        print("RELATED KB ARTICLE SEARCH ERROR:", error)
-        return []
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-    scored_results = []
-    for article in articles:
-        score = calculate_article_match_score(question, article)
-
-        if min_score <= score < CONFIDENCE_DIRECT_ANSWER:
-            scored_results.append(build_article_ai_result(article, question, score))
-
-    scored_results = sorted(scored_results, key=lambda item: item.get("score", 0.0), reverse=True)
-
-    return scored_results[:limit]
 
 
 # Fixed, friendly AI Chat failure text. Staff never see an exception message: it can hold a file
@@ -4964,6 +4709,19 @@ CHAT_FAILURE_MESSAGES = {
         "en": "Attachment unavailable. Please attach the image again.",
         "zh": "附件无法使用。请重新附加图片。",
         "ms": "Lampiran tidak tersedia. Sila lampirkan imej sekali lagi.",
+    },
+    # The AI provider failed (outage, quota, timeout, not configured). The
+    # rest of the site keeps working; only the chat answer is unavailable.
+    "ai_unavailable": {
+        "en": "AI chat is currently unavailable. Please try again later.",
+        "zh": "AI 聊天目前无法使用，请稍后再试。",
+        "ms": "Sembang AI tidak tersedia buat masa ini. Sila cuba lagi kemudian.",
+    },
+    # The AI read the matching articles but they do not answer the question.
+    "ai_not_found": {
+        "en": "I couldn't find the answer to this in the Knowledge Base. These articles may help:",
+        "zh": "知识库里找不到这个问题的答案。这些文章可能有帮助：",
+        "ms": "Saya tidak menemui jawapan untuk soalan ini dalam Pangkalan Pengetahuan. Artikel ini mungkin membantu:",
     },
 }
 # The fixed AttachmentError texts in chat_attachment_service; any other text gets the generic one.
@@ -5006,319 +4764,6 @@ def log_chat_failure(where, error):
     print(f"{where}: {type(error).__name__}{status_text}{location}", flush=True)
 
 
-def process_question(question, context=None, search_question=None):
-    """
-    `search_question` optionally overrides what drives KB/database/model
-    retrieval below (e.g. English keywords derived from a Chinese/Malay
-    `question` by translate_query_to_english_keywords()), while `question`
-    itself is still what's echoed back, logged, and used to build/rank the
-    selectable answer options. Defaults to `question` when not given, so
-    existing callers behave exactly as before.
-    """
-    question = clean_question(question)
-    context = normalize_context(context or {})
-    search_term = clean_question(search_question) if search_question else question
-
-    if not question:
-        return standardize_ai_response({
-            "question": "",
-            "type": "text",
-            "category": None,
-            "title": None,
-            "section": None,
-            "reply": "Please enter a question.",
-            "answer": "Please enter a question.",
-            "purpose": None,
-            "steps": [],
-            "notes": [],
-            "score": 0.0,
-            "confidence": 0.0,
-            "source": "none",
-            "fallback": True,
-            "fallback_message": "Please enter a question.",
-            "escalation_ready": False,
-            "escalation_required": False,
-        }), 400
-
-    # Stopwatch marks only (shown in the chat reply's X-Chat-Timing).
-    stage_started = time.monotonic()
-    kb_result = search_knowledge_base_articles(search_term, limit=1)
-    kb_options = search_knowledge_base_articles(search_term, limit=10)
-    record_chat_stage("rules_articles", stage_started)
-
-    stage_started = time.monotonic()
-    # One search: the best match (limit=1) is the first of the top 10 -- the
-    # same sorted list -- so the second identical database search is skipped.
-    image_retrieval_options = search_image_retrieval(search_term, limit=10) or []
-    import copy
-    image_retrieval_result = copy.deepcopy(image_retrieval_options[0]) if image_retrieval_options else None
-
-    if image_retrieval_result:
-        image_retrieval_result = normalize_result(image_retrieval_result, "image_retrieval")
-
-    image_retrieval_options = [
-        normalize_result(item, "image_retrieval")
-        for item in image_retrieval_options
-    ]
-
-    record_chat_stage("rules_images", stage_started)
-
-    stage_started = time.monotonic()
-    retrieval_result = search_similar_question(search_term)
-
-    if retrieval_result:
-        retrieval_result = normalize_result(retrieval_result, "database")
-
-    retrieval_options = search_similar_questions(search_term, team_lead_only=False, limit=10)
-    retrieval_options = [
-        normalize_result(item, "database")
-        for item in retrieval_options
-    ]
-    record_chat_stage("rules_similar", stage_started)
-
-    model_result = None
-
-    if MODEL_AVAILABLE and get_model_answer is not None:
-        try:
-            stage_started = time.monotonic()
-            model_result = normalize_result(
-                call_model_answer(search_term, context=context),
-                default_source="pytorch_model"
-            )
-            record_chat_stage("rules_model", stage_started)
-        except Exception as error:
-            log_chat_failure("INTENT MODEL ERROR", error)
-            failure_text = chat_failure_message("unavailable", question)
-            model_result = standardize_ai_response({
-                "type": "text",
-                "category": None,
-                "title": None,
-                "section": None,
-                "reply": failure_text,
-                "answer": failure_text,
-                "purpose": None,
-                "steps": [],
-                "notes": [],
-                "score": 0.0,
-                "confidence": 0.0,
-                "source": "pytorch_model_error",
-                "fallback": True,
-                "fallback_message": failure_text,
-                "escalation_ready": True,
-                "escalation_required": True,
-            })
-    else:
-        model_result = standardize_ai_response({
-            "type": "text",
-            "category": None,
-            "title": None,
-            "section": None,
-            "reply": "AI model is not available.",
-            "answer": "AI model is not available.",
-            "purpose": None,
-            "steps": [],
-            "notes": [],
-            "score": 0.0,
-            "confidence": 0.0,
-            "source": "engine_unavailable",
-            "fallback": True,
-            "fallback_message": "AI model is not available.",
-            "escalation_ready": True,
-            "escalation_required": True,
-        })
-
-    # Build selectable options from PyTorch training data and Team Lead/database data.
-    answer_options = []
-
-    model_source = str(model_result.get("source", "") if model_result else "")
-
-    # If PyTorch returns a broad numbered list, convert each numbered item into a clickable option.
-    if model_source in {
-        "broad_topic_clarification",
-        "category_choice",
-        "ambiguous_title_choice",
-    }:
-        answer_options.extend(
-            build_training_data_options_from_model_reply(model_result, context=context)
-        )
-    else:
-        answer_options.extend(
-            build_answer_options(question, model_result, None)
-        )
-
-    # Add Knowledge Base article results first because wiki_article is the live main knowledge source.
-    answer_options.extend(
-        build_answer_options(question, None, kb_result)
-    )
-
-    for item in kb_options:
-        answer_options.extend(build_answer_options(question, None, item))
-
-    # Add approved image retrieval results.
-    answer_options.extend(
-        build_answer_options(question, None, image_retrieval_result)
-    )
-
-    for item in image_retrieval_options:
-        answer_options.extend(build_answer_options(question, None, item))
-
-    # Add the best Team Lead/database result.
-    answer_options.extend(
-        build_answer_options(question, None, retrieval_result)
-    )
-
-    for item in retrieval_options:
-        extra_options = build_answer_options(question, None, item)
-        answer_options.extend(extra_options)
-
-    # remove duplicates after adding multiple retrieval options
-    unique_options = []
-    seen_titles = set()
-
-    for option in answer_options:
-        title_key = str(option.get("title", "")).lower().strip()
-        if title_key and title_key not in seen_titles:
-            seen_titles.add(title_key)
-            unique_options.append(option)
-
-    def option_rank(item):
-        source = str(item.get("source", "")).lower()
-        title = str(item.get("title", item.get("label", ""))).lower()
-        question_text = question.lower()
-
-        team_lead_priority = 1 if source == "team_lead" else 0
-        exact_title_priority = 1 if question_text in title or title in question_text else 0
-
-        return (
-            team_lead_priority,
-            exact_title_priority,
-            item.get("confidence", 0.0),
-        )
-
-    answer_options = sorted(
-        unique_options,
-        key=option_rank,
-        reverse=True
-    )
-
-    keyword_question = len(question.split()) <= 3
-
-    if keyword_question:
-        filtered_options = filter_short_keyword_options(question, answer_options)
-
-        if filtered_options:
-            answer_options = filtered_options
-
-    answer_options = answer_options[:5]
-
-    def option_confidence(item):
-        return float(item.get("confidence", 0.0) or 0.0)
-
-    def competing_options(options):
-        """Options strong enough to answer with, and within the ambiguity gap of the best one."""
-        if not options:
-            return []
-
-        best = max(option_confidence(item) for item in options)
-
-        if best < CONFIDENCE_DIRECT_ANSWER:
-            return []
-
-        return [
-            item for item in options
-            if option_confidence(item) >= best - CONFIDENCE_AMBIGUITY_GAP
-        ]
-
-    # Several answers fit about equally well -> ask which one is meant
-    # instead of guessing. One clear leader falls through to a single direct
-    # answer below.
-    clarify_options = []
-    competing = []
-
-    if keyword_question:
-        competing = competing_options(answer_options)
-        if len(competing) >= 2:
-            clarify_options = answer_options
-    else:
-        kb_candidates = []
-        seen_kb_titles = set()
-        for item in kb_options:
-            for option in build_answer_options(question, None, item):
-                title_key = str(option.get("title", "")).lower().strip()
-                if title_key and title_key not in seen_kb_titles:
-                    seen_kb_titles.add(title_key)
-                    kb_candidates.append(option)
-
-        competing = competing_options(kb_candidates)
-        if len(competing) >= 2:
-            clarify_options = competing[:5]
-
-    if clarify_options:
-        # Confidence that any single option is the one meant: the best
-        # match strength shared across the answers competing with it.
-        best_confidence = max(option_confidence(item) for item in competing)
-        shared_confidence = round(best_confidence / len(competing), 4)
-        clarify_message = f"I found {len(clarify_options)} possible matches. Which one do you mean?"
-
-        return standardize_ai_response({
-            "question": question,
-            "type": "multiple_choice",
-            "category": None,
-            "title": None,
-            "section": None,
-            "reply": clarify_message,
-            "answer": clarify_message,
-            "purpose": None,
-            "steps": [],
-            "notes": [],
-            "score": shared_confidence,
-            "confidence": shared_confidence,
-            "confidence_label": get_confidence_label(shared_confidence),
-            "source": "suggestion_options",
-            "context": {},
-            "fallback": False,
-            "fallback_message": "",
-            "escalation_ready": False,
-            "escalation_required": False,
-            "options": clarify_options,
-        }), 200
-
-    # Prefer training data / PyTorch model result for normal valid questions.
-    # Retrieved Team Lead answers are used mainly when the model cannot answer confidently.
-    final_result = choose_final_result(
-        model_result,
-        retrieval_result,
-        kb_result,
-        image_retrieval_result
-    )
-
-    response_payload = {
-        "question": question,
-        "type": final_result.get("type", "text"),
-        "category": final_result.get("category"),
-        "title": final_result.get("title"),
-        "section": final_result.get("section"),
-        "reply": final_result.get("reply", final_result.get("answer", "")),
-        "answer": final_result.get("answer", final_result.get("reply", "")),
-        "purpose": final_result.get("purpose"),
-        "steps": final_result.get("steps", []),
-        "notes": final_result.get("notes", []),
-        "image_files": final_result.get("image_files"),
-        "attachment_url": final_result.get("attachment_url"),
-        "attachment_type": final_result.get("attachment_type"),
-        "score": final_result.get("score", 0.0),
-        "confidence": final_result.get("confidence", final_result.get("score", 0.0)),
-        "confidence_label": final_result.get("confidence_label"),
-        "source": final_result.get("source", "unknown"),
-        "context": final_result.get("context", {}),
-        "fallback": final_result.get("fallback", False),
-        "fallback_message": final_result.get("fallback_message", ""),
-        "escalation_ready": final_result.get("escalation_ready", False),
-        "escalation_required": final_result.get("escalation_required", final_result.get("escalation_ready", False)),
-        "options": final_result.get("options", []),
-    }
-
-    return standardize_ai_response(response_payload), 200
 
 
 # =========================
@@ -5336,11 +4781,7 @@ def verify_manager_account():
 def home():
     return jsonify({
         "message": "Jungle House AI backend is running",
-        "model_available": MODEL_AVAILABLE,
-        "model_load_error": None if MODEL_AVAILABLE else "Model unavailable.",
-        "engine_available": MODEL_AVAILABLE,
-        "engine_import_error": None if MODEL_AVAILABLE else "Model unavailable.",
-        "model_error": None if MODEL_AVAILABLE else "Model unavailable.",
+        "ai_provider_service_available": AI_PROVIDER_SERVICE_AVAILABLE,
     })
 
 
@@ -5349,11 +4790,6 @@ def home():
 def health():
     return jsonify({
         "status": "ok",
-        "model_available": MODEL_AVAILABLE,
-        "model_load_error": None if MODEL_AVAILABLE else "Model unavailable.",
-        "engine_available": MODEL_AVAILABLE,
-        "engine_import_error": None if MODEL_AVAILABLE else "Model unavailable.",
-        "model_error": None if MODEL_AVAILABLE else "Model unavailable.",
         "ai_provider_service_available": AI_PROVIDER_SERVICE_AVAILABLE,
         "ai_provider_service_load_error": (
             None if AI_PROVIDER_SERVICE_AVAILABLE else "AI provider service unavailable."
@@ -6641,246 +6077,6 @@ def mark_notification_as_read(notification_id):
 
 
 
-# Developer-only, see register_dev_only_routes. It runs REAL_JH_TEST_QUESTIONS
-# through the chat engine and writes logs/ai_test_results.csv.
-def chat_test():
-    results = []
-    correct_count = 0
-    partial_count = 0
-    wrong_count = 0
-    fallback_count = 0
-    weak_count = 0
-    escalation_count = 0
-    error_count = 0
-
-    category_summary = {}
-    test_type_summary = {}
-
-    def add_summary(summary, key, result_status):
-        key = key or "Unknown"
-        if key not in summary:
-            summary[key] = {
-                "total": 0,
-                "correct": 0,
-                "partial": 0,
-                "wrong": 0,
-                "fallback": 0,
-                "weak": 0,
-                "escalated": 0,
-                "error": 0,
-            }
-
-        summary[key]["total"] += 1
-
-        if result_status == "Correct":
-            summary[key]["correct"] += 1
-        elif result_status == "Partially Correct":
-            summary[key]["partial"] += 1
-        elif result_status == "Wrong":
-            summary[key]["wrong"] += 1
-        elif result_status == "Fallback":
-            summary[key]["fallback"] += 1
-        elif result_status == "Weak Answer":
-            summary[key]["weak"] += 1
-        elif result_status == "Escalated":
-            summary[key]["escalated"] += 1
-        elif result_status == "Error":
-            summary[key]["error"] += 1
-
-    def evaluate_test_case(test_case, result, status_code):
-        expected_title = test_case.get("expected_title")
-        expected_category = test_case.get("expected_category")
-        expected_behavior = test_case.get("expected_behavior", "answer")
-
-        actual_title = result.get("title")
-        actual_category = result.get("category")
-        actual_source = result.get("source")
-        actual_score = float(result.get("confidence", result.get("score", 0.0)) or 0.0)
-        actual_answer = str(result.get("answer", result.get("reply", ""))).strip()
-        actual_fallback = bool(result.get("fallback", False))
-        actual_escalation = bool(result.get("escalation_required", result.get("escalation_ready", False)))
-
-        if status_code != 200:
-            return "Error", "Backend returned error status."
-
-        if expected_behavior == "clarification":
-            if actual_fallback and not actual_escalation:
-                return "Fallback", "Correct fallback: AI asked the staff to be more specific."
-            if actual_escalation:
-                return "Wrong", "AI escalated too early for the first unclear question."
-            return "Partially Correct", "AI answered, but expected a clarification/fallback message."
-
-        if expected_behavior == "escalation":
-            if actual_escalation:
-                return "Escalated", "Correct escalation after repeated unclear question."
-            return "Wrong", "Expected escalation, but AI did not escalate."
-
-        if expected_behavior == "category_choice":
-            if actual_escalation:
-                return "Wrong", "AI escalated a broad category question instead of showing options."
-            if "clarification" in str(actual_source) or "generic" in str(actual_source) or actual_category == expected_category:
-                return "Correct", "AI showed category options or guidance as expected."
-            return "Partially Correct", "AI responded, but category guidance was not clear."
-
-        if actual_escalation or actual_fallback:
-            return "Fallback", "AI could not answer confidently."
-
-        if expected_title and actual_title == expected_title:
-            if actual_score >= 0.60:
-                return "Correct", "Expected title matched and confidence is acceptable."
-            return "Weak Answer", "Expected title matched, but confidence is below 60%."
-
-        if expected_category and actual_category == expected_category and actual_answer:
-            return "Partially Correct", "Category matched, but the title was not the expected one."
-
-        if actual_answer and actual_score < 0.35:
-            return "Weak Answer", "AI returned an answer with weak confidence."
-
-        return "Wrong", "Actual answer did not match the expected title or category."
-
-    for test_case in REAL_JH_TEST_QUESTIONS:
-        question = clean_question(test_case.get("question", ""))
-        test_context = normalize_context(test_case.get("context") or {})
-
-        try:
-            result, status = process_question(question, context=test_context)
-            log_request(question, result=result)
-            result_status, remarks = evaluate_test_case(test_case, result, status)
-
-            if result_status == "Correct":
-                correct_count += 1
-            elif result_status == "Partially Correct":
-                partial_count += 1
-            elif result_status == "Wrong":
-                wrong_count += 1
-            elif result_status == "Fallback":
-                fallback_count += 1
-            elif result_status == "Weak Answer":
-                weak_count += 1
-            elif result_status == "Escalated":
-                escalation_count += 1
-            elif result_status == "Error":
-                error_count += 1
-
-            add_summary(category_summary, test_case.get("category"), result_status)
-            add_summary(test_type_summary, test_case.get("test_type"), result_status)
-
-            results.append({
-                "id": test_case.get("id"),
-                "category": test_case.get("category"),
-                "test_type": test_case.get("test_type"),
-                "question": question,
-                "expected_title": test_case.get("expected_title"),
-                "expected_category": test_case.get("expected_category"),
-                "expected_behavior": test_case.get("expected_behavior"),
-                "actual_title": result.get("title"),
-                "actual_category": result.get("category"),
-                "actual_section": result.get("section"),
-                "actual_reply": result.get("reply", result.get("answer")),
-                "confidence": result.get("confidence", result.get("score")),
-                "confidence_label": result.get("confidence_label"),
-                "source": result.get("source"),
-                "fallback": bool(result.get("fallback", False)),
-                "escalation_required": bool(result.get("escalation_required", result.get("escalation_ready", False))),
-                "status_code": status,
-                "result_status": result_status,
-                "remarks": remarks,
-            })
-        except Exception as error:
-            log_chat_failure("CHAT TEST ERROR", error)
-            log_request(question, error=type(error).__name__)
-            error_count += 1
-            add_summary(category_summary, test_case.get("category"), "Error")
-            add_summary(test_type_summary, test_case.get("test_type"), "Error")
-
-            results.append({
-                "id": test_case.get("id"),
-                "category": test_case.get("category"),
-                "test_type": test_case.get("test_type"),
-                "question": question,
-                "expected_title": test_case.get("expected_title"),
-                "expected_category": test_case.get("expected_category"),
-                "expected_behavior": test_case.get("expected_behavior"),
-                "actual_title": None,
-                "actual_category": None,
-                "actual_section": None,
-                "actual_reply": "There was a problem while generating the answer.",
-                "confidence": 0.0,
-                "confidence_label": "low",
-                "source": "prediction_error",
-                "fallback": True,
-                "escalation_required": True,
-                "status_code": 500,
-                "result_status": "Error",
-                "remarks": "Internal test error. See server logs for diagnostic details.",
-            })
-
-    ensure_log_files()
-    with open(TEST_REPORT_CSV, "w", newline="", encoding="utf-8") as file:
-        writer = csv.writer(file)
-        writer.writerow([
-            "id",
-            "category",
-            "test_type",
-            "question",
-            "expected_title",
-            "expected_category",
-            "expected_behavior",
-            "actual_title",
-            "actual_category",
-            "confidence",
-            "confidence_label",
-            "source",
-            "fallback",
-            "escalation_required",
-            "result_status",
-            "remarks",
-        ])
-
-        for item in results:
-            writer.writerow([
-                item.get("id"),
-                item.get("category"),
-                item.get("test_type"),
-                item.get("question"),
-                item.get("expected_title"),
-                item.get("expected_category"),
-                item.get("expected_behavior"),
-                item.get("actual_title"),
-                item.get("actual_category"),
-                item.get("confidence"),
-                item.get("confidence_label"),
-                item.get("source"),
-                item.get("fallback"),
-                item.get("escalation_required"),
-                item.get("result_status"),
-                item.get("remarks"),
-            ])
-
-    total = len(REAL_JH_TEST_QUESTIONS)
-    pass_count = correct_count + partial_count + fallback_count + escalation_count
-    answered_count = correct_count + partial_count + weak_count
-
-    return jsonify({
-        "status": "ok",
-        "message": "AI validation test completed.",
-        "total_questions": total,
-        "correct_count": correct_count,
-        "partial_count": partial_count,
-        "wrong_count": wrong_count,
-        "fallback_count": fallback_count,
-        "weak_count": weak_count,
-        "escalation_count": escalation_count,
-        "error_count": error_count,
-        "answered_count": answered_count,
-        "pass_count": pass_count,
-        "answer_rate": round((answered_count / total) * 100, 2) if total else 0.0,
-        "pass_rate": round((pass_count / total) * 100, 2) if total else 0.0,
-        "report_file": str(TEST_REPORT_CSV),
-        "category_summary": category_summary,
-        "test_type_summary": test_type_summary,
-        "results": results,
-    })
 
 
 
@@ -10032,6 +9228,60 @@ def build_ai_chat_context(question, limit=7, max_chars=6000, search_question=Non
     return "\n".join(chunks), candidate_articles
 
 
+def related_article_options(question, search_question, limit=3):
+    """Option cards (same format as before) for the articles the search finds.
+
+    Shown when the AI could not find the answer. Uses only the search (words +
+    meaning), no AI answer, so it never costs an AI call.
+    """
+    try:
+        _, candidates = build_ai_chat_context(question, search_question=search_question, limit=limit)
+        ids = [candidate["article_id"] for candidate in candidates if candidate.get("article_id")][:limit]
+        if not ids:
+            return []
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute(
+                "SELECT * FROM wiki_article WHERE COALESCE(is_deleted, 0) = 0 AND article_id IN ("
+                + ", ".join(["%s"] * len(ids)) + ")", tuple(ids))
+            rows = {row["article_id"]: row for row in cursor.fetchall() or []}
+        finally:
+            cursor.close()
+            conn.close()
+        options, seen = [], set()
+        for article_id in ids:
+            if article_id not in rows:
+                continue
+            for option in build_answer_options(question, None, build_article_ai_result(rows[article_id], question, 0.0)):
+                key = str(option.get("title") or "").strip().lower()
+                if key and key not in seen:
+                    seen.add(key)
+                    options.append(option)
+        return options
+    except Exception as error:
+        log_chat_failure("RELATED ARTICLES ERROR", error)
+        return []
+
+
+def verify_image_question_with_search(question, query, limit=3):
+    """A photo question: the first article the search finds that holds the
+    exact answering sentence (Alan's hybrid_image_service check), or None."""
+    try:
+        _, candidates = build_ai_chat_context(question, search_question=query, limit=limit)
+        references = getattr(g, "chat_attachment_refs", [])
+        for candidate in candidates:
+            if not candidate.get("article_id"):
+                continue
+            verified = hybrid_image_service.verify_text_result(
+                question, query, {"article_id": candidate["article_id"]}, references)
+            if verified:
+                return verified
+    except Exception as error:
+        log_chat_failure("IMAGE ARTICLE CHECK ERROR", error)
+    return None
+
+
 _DETAIL_REQUEST = re.compile(
     r"more details?|in detail|detailed|full details|details? (?:of|about|on)|tell me more|elaborate"
     r"|explain (?:fully|more|everything|in full)|everything about"
@@ -10045,9 +9295,6 @@ def wants_details(question):
     return bool(_DETAIL_REQUEST.search(str(question or "")))
 
 
-def smart_chat_enabled():
-    """Smart chat is on unless SMART_CHAT_ENABLED is 0/false/off/no (emergency off switch)."""
-    return os.environ.get("SMART_CHAT_ENABLED", "1").strip().lower() not in ("0", "false", "off", "no")
 
 
 def answer_question_with_ai_provider(question, timeout=25, search_question=None, user_language="en", conversation_reference=False, conversation_history=None, smart=False, detail=False, focus_title=""):
@@ -11006,141 +10253,19 @@ def chat():
                 "focus_title": focus_title,
             }
 
-        # Speed: when the AI will write the answer anyway (smart chat), start
-        # it now so it runs while the old rule engine works instead of after
-        # it. Only when its inputs cannot change in between: a first question,
-        # or the page sent the previous answer's article (that title wins over
-        # anything the rule engine remembers). The result is used only if the
-        # inputs below turn out identical; otherwise the AI is asked as before.
-        early_ai = None
-        if (AI_PROVIDER_SERVICE_AVAILABLE and smart_chat_enabled()
-                and "image_query" not in data and not uploaded_chat_image
-                and needs_conversation_context(question, question, question)
-                and (not conversation_history or normalize_context(data.get("context") or {}).get("title"))
-                and not (chat_request_id and is_chat_request_cancelled(chat_request_id))):
-            try:
-                early_ai = EarlyCall(answer_question_with_ai_provider, **ai_answer_arguments(True))
-            except Exception as error:
-                log_chat_failure("EARLY AI START ERROR", error)
-                early_ai = None
-
         # =========================
-        # ✅ STEP 3: CALL AI
+        # ✅ STEP 3: "SHOW STEP 4" RIGHT AFTER A TOPIC
+        # The exact step card (with its images) from the article of the
+        # previous answer. Without a topic: with a conversation the AI answers
+        # it from that conversation; otherwise ask which topic is meant.
         # =========================
-        stage_started = time.monotonic()
-        result, status_code = process_question(
-            question=question,
-            context={} if "image_query" in data else prepare_chat_context(data),
-            search_question=question_for_search,
-        )
-        record_chat_stage("rules", stage_started)
-        if "image_query" in data:
-            verified = hybrid_image_service.verify_text_result(question, question_for_search, result,
-                getattr(g, "chat_attachment_refs", []))
-            result = verified or {"type": "text", "answer": "", "reply": "", "source": "fallback",
-                "confidence": 0.0, "score": 0.0, "fallback": True,
-                "escalation_ready": True, "escalation_required": True, "context": {}}
-
-
-        # =========================
-        # GENERIC ANSWER SHOULD ESCALATE
-        # Example:
-        # "honeybee" -> generic_product choices -> escalate to team lead
-        # =========================
-        if should_escalate_generic_answer(question, result):
-            escalation_id = create_chat_escalation(
-                question,
-                result,
-                data,
-                uploaded_chat_image_url,
-                uploaded_chat_image_type
-            )
-
-            result = {
-                "question": question,
-                "reply": (
-                    "I could not find a specific answer for this question.\n\n"
-                    "I have escalated it to a team lead. Once the team lead answers, "
-                    "the answer will be saved for future staff questions."
-                ),
-                "answer": (
-                    "I could not find a specific answer for this question. "
-                    "I have escalated it to a team lead. Once the team lead answers, "
-                    "the answer will be saved for future staff questions."
-                ),
-                "confidence": 0.0,
-                "score": 0.0,
-                "confidence_label": "low",
-                "source": "generic_answer_escalated",
-                "fallback": True,
-                "escalation": True,
-                "escalation_ready": True,
-                "escalation_required": True,
-                "escalation_id": escalation_id,
-                "served_by": "escalation_queue",
-                "options": [
-                    {
-                        "label": "Escalated to team lead",
-                        "value": "escalated",
-                        "type": "status"
-                    }
-                ]
-            }
-
-        remember_chat_context(data, result)
-        log_request(
-                    question,
-                    result=result,
-                    user_id=data.get("user_id") or data.get("userId")
-                )
-        remember_last_ai_answer(data, question, result)
-
-        # =========================
-        # ✅ STEP 4: ESCALATION LOGIC
-        # =========================
-        LOW_CONFIDENCE_THRESHOLD = CONFIDENCE_DIRECT_ANSWER
-
-        clarification_sources = [
-            "suggestion_options",
-            "clarification_round_1",
-            "unclear_question_clarification",
-            "system_problem_clarification",
-                "step_request_missing_topic",
-        ]
-
-        force_escalation_sources = [
-            "repeated_unclear_question",
-            "repeated_system_problem",
-            "escalate_after_two_unclear_attempts",
-            "fallback",
-            "unknown",
-            "prediction_error",
-            "engine_unavailable",
-            "low_confidence_or_model_unavailable",
-            "invalid_input_first_attempt",
-            "staff_not_satisfied_escalated",
-            "staff_requested_escalation",
-            "generic_answer_escalated",
-            "repeated_invalid_input",
-            "repeated_failed_answer",
-        ]
-
-        source = result.get("source", "")
-
-        # "show step 4" with no topic in context: there is nothing to pull a
-        # step from, so ask which topic instead of letting the AI fallback
-        # answer from a random article (or escalating a pointless ticket).
         is_bare_step_request = bool(re.fullmatch(
             r"\s*(?:please\s+)?(?:show|give|tell|open)?\s*(?:me\s+)?(?:the\s+)?steps?\s*\d+(?:\s*(?:to|-)\s*\d+)?\s*[?.!]?\s*",
             question,
             re.IGNORECASE,
         ))
 
-        if (
-            is_bare_step_request
-            and not str(source).startswith(("context_", "matched_title_"))
-            and float(result.get("confidence", result.get("score", 0)) or 0.0) < CONFIDENCE_DIRECT_ANSWER
-        ):
+        if is_bare_step_request and "image_query" not in data:
             step_result, candidate_titles = build_step_answer_from_last_topic(question, last_answer)
             print(
                 "STEP FOLLOW-UP:",
@@ -11164,102 +10289,39 @@ def chat():
 
                 return jsonify(step_result), 200
 
-            missing_topic_message = (
-                "Which topic do you mean? Please type the topic first "
-                "(for example \"kiosk opening\"), choose it from the options, "
-                "then ask for the step."
-            )
-
-            if candidate_titles:
+            if not conversation_history:
                 missing_topic_message = (
-                    "Which topic do you mean? Type the full topic name, then ask for the step:\n"
-                    + "\n".join(f"- {title}" for title in candidate_titles[:5])
+                    "Which topic do you mean? Please type the topic first "
+                    "(for example \"kiosk opening\"), choose it from the options, "
+                    "then ask for the step."
                 )
 
-            result = standardize_ai_response({
-                "question": question,
-                "type": "text",
-                "reply": missing_topic_message,
-                "answer": missing_topic_message,
-                "score": 0.0,
-                "confidence": 0.0,
-                "confidence_label": "low",
-                "source": "step_request_missing_topic",
-                "fallback": False,
-                "escalation_ready": False,
-                "escalation_required": False,
-            })
-            clear_ai_fail_count(data, question)
-            result["final_source"] = "step_request_missing_topic"
-            result["served_by"] = "ai"
+                if candidate_titles:
+                    missing_topic_message = (
+                        "Which topic do you mean? Type the full topic name, then ask for the step:\n"
+                        + "\n".join(f"- {title}" for title in candidate_titles[:5])
+                    )
 
-            return jsonify(result), 200
+                result = standardize_ai_response({
+                    "question": question,
+                    "type": "text",
+                    "reply": missing_topic_message,
+                    "answer": missing_topic_message,
+                    "score": 0.0,
+                    "confidence": 0.0,
+                    "confidence_label": "low",
+                    "source": "step_request_missing_topic",
+                    "fallback": False,
+                    "escalation_ready": False,
+                    "escalation_required": False,
+                })
+                clear_ai_fail_count(data, question)
+                result["final_source"] = "step_request_missing_topic"
+                result["served_by"] = "ai"
 
-        fail_count = update_ai_fail_count(data, question, result)
+                return jsonify(result), 200
 
-        should_escalate = False
-
-        if fail_count >= 2:
-            should_escalate = True
-            result["reply"] = "I could not find a confident answer after repeated attempts. I’ll escalate this to a team lead."
-            result["answer"] = result["reply"]
-            result["source"] = "repeated_failed_answer"
-            result["fallback"] = True
-            result["escalation_ready"] = True
-            result["escalation_required"] = True
-
-        elif result.get("escalation_ready"):
-            should_escalate = True
-
-        elif source in force_escalation_sources:
-            should_escalate = True
-
-        elif source in clarification_sources:
-            should_escalate = False
-
-        elif source == "irrelevant_question":
-            # Off-topic/spam (jokes, memes, "weather", etc.) is deliberately
-            # never escalated, no matter how low its confidence score is --
-            # only genuine work questions the KB can't answer should reach
-            # a team lead. Without this, the low-confidence catch-all below
-            # would escalate it anyway.
-            should_escalate = False
-
-        elif result.get("confidence", result.get("score", 0)) < LOW_CONFIDENCE_THRESHOLD:
-            should_escalate = True
-
-        # Direct (non-trigger) questions: a full natural-language question
-        # such as "where should I keep the iPad when closing?" never
-        # contains an exact topic/title keyword, so the rule-based matcher
-        # only answers it with a "please pick a topic" clarification prompt.
-        # For those, also give the grounded AI provider a chance first. Short
-        # keyword queries ("kiosk", "daily") and "show step N" follow-ups are
-        # excluded so their existing option/step flows are untouched.
-        direct_question_clarification_sources = {
-            "clarification_round_1",
-            "unclear_question_clarification",
-            "system_problem_clarification",
-            "broad_topic_clarification",
-            "category_choice",
-            "ambiguous_title_choice",
-        }
-        is_direct_natural_question = (
-            (len(question.split()) >= 4 or bool(CJK_CHAR_RE.search(question)))
-            and not is_broad_topic_question(question)
-        )
-        try_ai_instead_of_clarifying = (
-            not should_escalate
-            and source in direct_question_clarification_sources
-            and is_direct_natural_question
-            and float(result.get("confidence", result.get("score", 0)) or 0.0) < LOW_CONFIDENCE_THRESHOLD
-        )
-
-        # The user clicked Stop after everything up to this point (KB/rule
-        # matching) but before the two genuinely expensive, side-effecting
-        # steps left: calling the AI provider (costs tokens) and, further
-        # below, creating an escalation ticket / logging this as a resolved
-        # question. Stop here, before either of those, instead of doing
-        # either for a question the user already abandoned.
+        # The user clicked Stop before the AI was asked: do nothing more.
         if chat_request_id and is_chat_request_cancelled(chat_request_id):
             return jsonify({
                 "cancelled": True,
@@ -11272,209 +10334,166 @@ def chat():
                 "escalation_required": False,
             }), 200
 
-        # Before actually escalating, give a real AI provider (if the
-        # manager has configured one) one chance to answer, grounded only
-        # in the real Knowledge Base content. Any failure here (not
-        # configured, bad AI output, provider outage) falls straight
-        # through to the normal escalation flow below -- this can only
-        # ever prevent an escalation, never cause one that wasn't already
-        # about to happen.
-        # Smart chat: the AI writes the answer for every ordinary text work
-        # question, not only as a fallback. Never for images, greetings,
-        # nonsense, "not satisfied" or step controls. SMART_CHAT_ENABLED=0
-        # restores the previous behaviour exactly.
-        smart_eligible = (
-            smart_chat_enabled()
-            and "image_query" not in data
-            and not uploaded_chat_image
-            and needs_conversation_context(question, question, question)
-        )
+        # =========================
+        # ✅ STEP 4: THE AI ANSWERS
+        # Every text question, and photo questions, are answered by the AI
+        # from the articles the search finds (the old rule engine and its
+        # PyTorch model were removed on 2026-11-24). Three outcomes:
+        #   answer / clarifying question / polite decline -> shown;
+        #   the AI could not find it -> "not found" + related articles +
+        #     "ask a team lead?" (staff choose; never automatic);
+        #   the AI provider failed -> "AI chat is currently unavailable".
+        # =========================
+        def chat_reply(fields):
+            """standardize_ai_response, but the flags stay exactly as given
+            (it would treat any answer mentioning "escalate" as an escalation)."""
+            result = standardize_ai_response(dict(fields))
+            for key in ("fallback", "escalation_ready", "escalation_required"):
+                result[key] = bool(fields.get(key, False))
+            if not result["fallback"]:
+                result["fallback_message"] = ""
+            return result
 
-        if (should_escalate or try_ai_instead_of_clarifying or smart_eligible) and AI_PROVIDER_SERVICE_AVAILABLE:
-            ai_arguments = ai_answer_arguments(smart_eligible)
-            detail_request = ai_arguments["detail"]
+        is_image_question = "image_query" in data
+        ai_arguments = ai_answer_arguments(not is_image_question and not uploaded_chat_image)
+        ai_unavailable = not AI_PROVIDER_SERVICE_AVAILABLE
+        ai_answer = None
+        if not ai_unavailable:
             try:
                 stage_started = time.monotonic()
-                if early_ai is not None and early_ai.kwargs == ai_arguments:
-                    # Started before the rule engine with exactly these inputs.
-                    ai_answer = early_ai.result()
-                    # ai_answer = how long the AI took; ai_wait = how much of
-                    # it was still left after the rule engine finished.
-                    record_chat_stage("ai_answer", time.monotonic() - early_ai.seconds)
-                    record_chat_stage("ai_wait", stage_started)
-                else:
-                    ai_answer = answer_question_with_ai_provider(**ai_arguments)
-                    record_chat_stage("ai_answer", stage_started)
+                ai_answer = answer_question_with_ai_provider(**ai_arguments)
+                record_chat_stage("ai_answer", stage_started)
             except ai_provider_service.AIProviderNotConfiguredError:
-                ai_answer = None
+                ai_unavailable = True
             except Exception as error:
-                log_chat_failure("AI CHAT PROVIDER FALLBACK ERROR", error)
-                ai_answer = None
+                log_chat_failure("AI CHAT PROVIDER ERROR", error)
+                ai_unavailable = True
 
-            # AI-first (smart chat): the AI's answer replaces the old rule
-            # engine's steps / choice list; the article it used opens below the
-            # answer with "Show more details", plus up to 3 related articles.
-            # The old engine's result stays only as the backup when the AI
-            # fails or cannot answer.
-            old_engine_found_steps = result.get("type") == "sop"
-            if ai_answer and ai_answer.get("clarify"):
-                clarify_text = ai_answer["answer"]
-                result["reply"] = clarify_text
-                result["answer"] = clarify_text
-                result["message"] = clarify_text
-                result["type"] = "text"
-                result["options"] = []
-                result["steps"] = []
-                # Clickable answers to the question (sent as the next question).
-                result["clarify_options"] = ai_answer.get("options") or []
-                result["source"] = "ai_provider_clarify"
-                result["fallback"] = False
-                result["fallback_message"] = ""
-                result["escalation_ready"] = False
-                result["escalation_required"] = False
-                should_escalate = False
-                ai_answer = None
-            elif ai_answer and smart_eligible and not should_escalate and old_engine_found_steps and (
-                ai_answer.get("off_topic") or not ai_answer.get("article_id")
-            ):
-                # The old engine found steps but the AI declined, or answered
-                # without naming one of the articles it was given: keep the
-                # old engine's answer rather than an ungrounded one.
-                ai_answer = None
-            elif ai_answer and smart_eligible and not ai_answer.get("off_topic"):
-                ai_title = str(ai_answer.get("sourceTitle") or "").strip()
-                result["type"] = "text"
-                result["steps"] = []
-                result["options"] = []
-                result["related_articles"] = ai_answer.get("related") or []
-                # Remember which article this answer used, so the next
-                # question ("下一步是什么？") stays on it.
-                result["context"] = {"title": ai_title}
-                remember_chat_context(data, result)
+        user_id = data.get("user_id") or data.get("userId")
 
-            if ai_answer:
-                result["reply"] = ai_answer["answer"]
-                result["answer"] = ai_answer["answer"]
-                result["message"] = ai_answer["answer"]
-                result["title"] = ai_answer["sourceTitle"] or result.get("title")
-                result["source"] = "ai_provider_decline" if ai_answer.get("off_topic") else "ai_provider_answer"
-                result["fallback"] = False
-                result["fallback_message"] = ""
-                result["escalation_ready"] = False
-                result["escalation_required"] = False
-                should_escalate = False
-                clear_ai_fail_count(data, question)
+        # Photo question the AI could not answer (or AI down): the article
+        # the search finds may still hold the exact sentence (Alan's check).
+        if ai_answer is None and is_image_question:
+            verified = verify_image_question_with_search(question, question_for_search)
+            if verified:
+                remember_chat_context(data, verified)
+                log_request(question, result=verified, user_id=user_id)
+                remember_last_ai_answer(data, question, verified)
+                verified["final_source"] = verified.get("source")
+                verified["served_by"] = "ai"
+                return jsonify(verified), 200
 
-                if try_ai_instead_of_clarifying:
-                    result["type"] = "text"
-                    result["options"] = []
-                    result["steps"] = []
-
-                # The draft `result` this branch started from was the
-                # "below 100%, don't guess" placeholder (score/confidence
-                # 0.0) -- now that the AI provider produced a real,
-                # KB-grounded answer, reflect that in the displayed
-                # confidence instead of leaving it stuck at 0%/low.
-                if ai_answer.get("off_topic"):
-                    confidence_value = 0.0
-                else:
-                    confidence_value = 1.0 if ai_answer.get("article_id") else 0.85
-                result["score"] = confidence_value
-                result["confidence"] = confidence_value
-                result["confidence_label"] = get_confidence_label(confidence_value)
-
-                if "image_query" in data:
-                    result["confidence"] = 0.0
-                    result["score"] = 0.0
-                    result["answer_evidence"] = "current_kb_quote"
-                    result["evidence_quote"] = ai_answer.get("evidence_quote")
-                if ai_answer.get("article_id"):
-                    result["article_id"] = ai_answer["article_id"]
-                    result.setdefault("context", {})
-                    result["context"]["article_id"] = ai_answer["article_id"]
-
-        if should_escalate:
-            related_articles = search_related_knowledge_base_articles(question_for_search, limit=3)
-
-            related_options = []
-            seen_related_titles = set()
-            for item in related_articles:
-                for option in build_answer_options(question, None, item):
-                    title_key = str(option.get("title", "")).lower().strip()
-                    if title_key and title_key not in seen_related_titles:
-                        seen_related_titles.add(title_key)
-                        related_options.append(option)
-
-            if related_options:
-                related_message = (
-                    "I couldn't confirm the exact procedure from the information "
-                    "provided, but these Knowledge Base articles may help:"
-                )
-
-                result = standardize_ai_response({
-                    "question": question,
-                    "type": "options",
-                    "reply": related_message,
-                    "answer": related_message,
-                    "score": related_articles[0].get("score", 0.0),
-                    "confidence": related_articles[0].get("score", 0.0),
-                    "confidence_label": get_confidence_label(related_articles[0].get("score", 0.0)),
-                    "source": "related_knowledge",
-                    "fallback": False,
-                    "escalation_ready": False,
-                    "escalation_required": False,
-                    "options": related_options,
-                    # Tells the chat UI to ask "did any of these help?" and
-                    # offer a button that escalates (force_escalate above).
-                    "escalation_offer": True,
-                })
-
-                remember_chat_context(data, result)
-                log_request(
-                    question,
-                    result=result,
-                    user_id=data.get("user_id") or data.get("userId")
-                )
-
-                result["final_source"] = "related_knowledge"
-                result["served_by"] = "related_knowledge"
-
-                return jsonify(result), 200
-
-            escalation_id = create_chat_escalation(
-            question,
-            result,
-            data,
-            uploaded_chat_image_url,
-            uploaded_chat_image_type
-        )
-
-            clear_ai_fail_count(data, question)
-
-            result["escalation"] = True
-            result["escalation_ready"] = True
-            result["escalation_required"] = True
-            result["escalation_id"] = escalation_id
-            result["served_by"] = "escalation_queue"
-
-            if escalation_id is None:
-                result["reply"] = chat_failure_message("ticket_not_saved", question, data.get("language"))
-                result["answer"] = result["reply"]
-                result["source"] = "escalation_save_failed"
-
+        if ai_unavailable:
+            unavailable_text = chat_failure_message("ai_unavailable", question, data.get("language"))
+            result = chat_reply({
+                "question": question,
+                "type": "text",
+                "reply": unavailable_text,
+                "answer": unavailable_text,
+                "score": 0.0,
+                "confidence": 0.0,
+                "source": "ai_unavailable",
+                "steps": [],
+                # Only the message: no "fallback" / escalation labels.
+                "fallback": False,
+                "escalation_ready": False,
+                "escalation_required": False,
+            })
+            log_request(question, result=result, user_id=user_id)
+            result["final_source"] = "ai_unavailable"
+            result["served_by"] = "ai"
             return jsonify(result), 200
 
-        # =========================
-        # ✅ STEP 5: SAVE GOOD ANSWER
-        # =========================
-        if (
-            result.get("confidence", 0) >= 0.7
-            and not result.get("fallback")
-            and result.get("source") != "ai_provider_answer"
-            and not is_nonsense(question)
-            and not is_nonsense(result.get("answer", ""))
-        ):
-            save_qa_to_db(question, result)
+        if ai_answer is None:
+            not_found_text = chat_failure_message("ai_not_found", question, data.get("language"))
+            result = chat_reply({
+                "question": question,
+                "type": "options",
+                "reply": not_found_text,
+                "answer": not_found_text,
+                "score": 0.0,
+                "confidence": 0.0,
+                "source": "ai_not_found",
+                "steps": [],
+                "fallback": False,
+                "escalation_ready": False,
+                "escalation_required": False,
+                "options": related_article_options(question, question_for_search),
+                # The chat page asks "did any of these help?" with a button
+                # that sends the question to a team lead (force_escalate).
+                "escalation_offer": True,
+            })
+            remember_chat_context(data, result)
+            log_request(question, result=result, user_id=user_id)
+            remember_last_ai_answer(data, question, result)
+            result["final_source"] = "ai_not_found"
+            result["served_by"] = "related_knowledge"
+            return jsonify(result), 200
+
+        if ai_answer.get("clarify"):
+            clarify_text = ai_answer["answer"]
+            result = chat_reply({
+                "question": question,
+                "type": "text",
+                "reply": clarify_text,
+                "answer": clarify_text,
+                "score": 0.0,
+                "confidence": 0.0,
+                "source": "ai_provider_clarify",
+                "steps": [],
+                "options": [],
+                "fallback": False,
+                "escalation_ready": False,
+                "escalation_required": False,
+            })
+            # Clickable answers to the question (sent as the next question).
+            result["clarify_options"] = ai_answer.get("options") or []
+            result["message"] = clarify_text
+            log_request(question, result=result, user_id=user_id)
+            result["final_source"] = "ai_provider_clarify"
+            result["served_by"] = "ai"
+            return jsonify(result), 200
+
+        ai_title = str(ai_answer.get("sourceTitle") or "").strip()
+        off_topic = bool(ai_answer.get("off_topic"))
+        confidence_value = 0.0 if off_topic else (1.0 if ai_answer.get("article_id") else 0.85)
+        result = chat_reply({
+            "question": question,
+            "type": "text",
+            "title": ai_title or None,
+            "reply": ai_answer["answer"],
+            "answer": ai_answer["answer"],
+            "score": confidence_value,
+            "confidence": confidence_value,
+            "confidence_label": get_confidence_label(confidence_value),
+            "source": "ai_provider_decline" if off_topic else "ai_provider_answer",
+            "steps": [],
+            "options": [],
+            "fallback": False,
+            "escalation_ready": False,
+            "escalation_required": False,
+        })
+        result["message"] = ai_answer["answer"]
+        if not off_topic:
+            # The article this answer used opens below it ("Show more
+            # details"), plus up to 3 related articles; the next question
+            # ("下一步是什么？") stays on this article.
+            result["related_articles"] = ai_answer.get("related") or []
+            result["context"] = {"title": ai_title}
+        if ai_answer.get("article_id"):
+            result["article_id"] = ai_answer["article_id"]
+            result.setdefault("context", {})
+            result["context"]["article_id"] = ai_answer["article_id"]
+        if is_image_question:
+            result["confidence"] = 0.0
+            result["score"] = 0.0
+            result["answer_evidence"] = "current_kb_quote"
+            result["evidence_quote"] = ai_answer.get("evidence_quote")
+
+        clear_ai_fail_count(data, question)
+        remember_chat_context(data, result)
+        log_request(question, result=result, user_id=user_id)
+        remember_last_ai_answer(data, question, result)
 
         result["final_source"] = result.get("source")
         result["served_by"] = "ai"
@@ -14209,113 +13228,6 @@ def get_knowledge_for_quiz(topic):
 
     return data
 
-def create_quiz_and_questions(topic, knowledge, count=5):
-    conn = get_db_connection()
-    cursor = conn.cursor(dictionary=True)
-
-    # 1. Create quiz
-    cursor.execute("""
-        INSERT INTO quiz (title, created_at)
-        VALUES (%s, NOW())
-    """, (topic,))
-    quiz_id = cursor.lastrowid
-
-    # 2. Generate MCQ
-    questions = []
-
-    for k in knowledge:
-        base_text = k.get("question", "") + " " + k.get("answer", "")
-
-        # 🔥 CALL YOUR PYTORCH MODEL
-        result = call_model_answer(
-            f"""
-    Create a SHORT and CLEAR quiz question for staff training.
-
-    Rules:
-    - Max 10 words
-    - Must be meaningful
-    - No nonsense
-    - Based on real SOP or product
-
-    Content:
-    {base_text}
-
-    Return only the question.
-    """
-        )
-
-        if not result:
-            continue
-
-        a = str(result.get("answer", "")).strip()
-        q = str(result.get("question", "")).strip().lower()
-
-        # ❌ filter bad AI output
-        if (
-            len(q) < 8 or len(q) > 120
-            or len(a) < 5 or len(a) > 100
-            or is_nonsense(q)
-            or any(x in q for x in ["lol", "haha", "test", "asdf"])
-            or len(q.split()) < 3   # avoid "grease", "lol", etc
-        ):
-            continue
-
-        questions.append({
-            "question": q,
-            "options": [
-                a,
-                "None of the above",
-                "Not related",
-                "All of the above"
-            ],
-            "correct_answer": "A"
-        })
-
-        if len(questions) >= count:
-            break
-
-    # 3. Save questions
-    for q in questions:
-
-        options = q.get("options", [])
-
-        # ✅ Ensure max 4 options
-        options = options[:4]
-
-        # ✅ Limit length (IMPORTANT FIX)
-        options = [str(opt)[:250] for opt in options]
-
-        # ✅ Fill missing options
-        while len(options) < 4:
-            options.append("")
-
-        # ✅ Convert correct answer
-        correct = q.get("correct_answer", "")
-
-        if correct in options:
-            correct = ["A", "B", "C", "D"][options.index(correct)]
-        else:
-            correct = "A"
-
-        cursor.execute("""
-            INSERT INTO quiz_question
-            (quiz_id, question_text, option_a, option_b, option_c, option_d, correct_option)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, (
-            quiz_id,
-            q.get("question", "")[:500],   # also safe limit question
-            options[0],
-            options[1],
-            options[2],
-            options[3],
-            correct
-        ))
-
-    conn.commit()
-    cursor.close()
-    conn.close()
-
-    return quiz_id
 
 
 import random
@@ -17844,7 +16756,6 @@ DEV_ONLY_ROUTES = (
     ("/api/debug/static-files", debug_static_files, ("GET",)),
     ("/api/debug/uploads", debug_uploads, ("GET",)),
     ("/api/test-db", test_db, ("GET",)),
-    ("/api/chat/test", chat_test, ("GET",)),
 )
 
 

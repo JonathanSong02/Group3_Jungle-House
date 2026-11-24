@@ -87,7 +87,10 @@ GUIDE_SECTIONS = [
                 "or type its number (for example 2), or type your own answer. Under an answer, \"Show more details\" "
                 "opens the full article right there (with its pictures, links and attachments), and \"Related articles\" "
                 "lists other articles you can ask about with one click. Ask for \"more details\" to get a fuller answer about a document. The \"Chat History\" tab lists earlier chats and has a search "
-                "box. If an answer is not right, choose \"No, escalate to a team lead\" to send the question to a Team Lead.",
+                "box. If the AI cannot find the answer, it says so, lists articles that may help and asks "
+                "\"Did any of these help?\"; choose \"No, escalate to a team lead\" to send the question to a Team Lead. "
+                "If the chat shows \"AI chat is currently unavailable\", try again later; the Knowledge Base and the rest "
+                "of the site still work.",
     },
     {
         "key": "escalate", "nav_key": None,

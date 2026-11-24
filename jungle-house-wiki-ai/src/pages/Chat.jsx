@@ -917,23 +917,18 @@ function renderRichKnowledgeContent(text, fallbackLink = '') {
 }
 
 // high / medium / low from the server, shown in the selected language; any other value as sent.
-function confidenceLabelText(label, t) {
-  const key = `chat.confidenceLabel.${label}`;
-  const text = t(key);
-  return text === key ? label : text;
-}
-
 function renderResponseMeta(message, t) {
   if (message.sender !== 'ai') return null;
 
-  const hasConfidence = message.confidence_kind !== 'not_calibrated' && message.confidence !== undefined && message.confidence !== null;
-  const hasSource = Boolean(message.source);
+  // "Match score" and "Source" chips removed (2026-11-24): staff found them confusing;
+  // the answer's article opens below it (Show more details) instead.
+  const hasEvidenceNote = message.confidence_kind === 'not_calibrated';
+  const hasErrorId = Boolean(message.error_id);
   const hasFallback = Boolean(message.fallback || message.escalation_ready || message.escalation_required);
+  // Answers without "Show more details" (e.g. photo answers) keep a link to their article.
+  const hasArticleLink = Boolean(message.article_id) && message.source !== 'ai_provider_answer';
 
-  if (!hasConfidence && !hasSource && !hasFallback) return null;
-
-  const confidenceValue = Number(message.confidence || 0);
-  const confidencePercent = Math.round(confidenceValue * 100);
+  if (!hasEvidenceNote && !hasErrorId && !hasFallback && !hasArticleLink) return null;
 
   return (
     <div
@@ -947,54 +942,28 @@ function renderResponseMeta(message, t) {
         fontSize: '12px',
       }}
     >
-      {hasConfidence ? (
-        <span
-          style={{
-            padding: '4px 8px',
-            borderRadius: '999px',
-            backgroundColor: '#f1f3f5',
-            border: '1px solid #dee2e6',
-          }}
-        >
-          {t('chat.matchScore')}: {confidencePercent}% {message.confidence_label ? `(${confidenceLabelText(message.confidence_label, t)})` : ''}
-        </span>
-      ) : null}
-
       {message.confidence_kind === 'not_calibrated' && (
         <span>{t(message.answer_evidence === 'not_established' ? 'chat.evidenceMissing' : 'chat.kbEvidence')}</span>
       )}
       {message.error_id && <span>{t('chat.errorReference')}: {message.error_id}</span>}
 
-      {hasSource ? (
-        message.article_id ? (
-          <Link
-            to={`/knowledge/${message.article_id}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{
-              padding: '4px 8px',
-              borderRadius: '999px',
-              backgroundColor: '#eef6ff',
-              border: '1px solid #b6d7ff',
-              color: '#1a5fb4',
-              textDecoration: 'none',
-              fontWeight: 600,
-            }}
-          >
-            {t('chat.source')}: {message.title || t('chat.viewArticle')} ↗
-          </Link>
-        ) : (
-          <span
-            style={{
-              padding: '4px 8px',
-              borderRadius: '999px',
-              backgroundColor: '#f8f9fa',
-              border: '1px solid #dee2e6',
-            }}
-          >
-            {t('chat.source')}: {message.source}
-          </span>
-        )
+      {hasArticleLink ? (
+        <Link
+          to={`/knowledge/${message.article_id}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            padding: '4px 8px',
+            borderRadius: '999px',
+            backgroundColor: '#eef6ff',
+            border: '1px solid #b6d7ff',
+            color: '#1a5fb4',
+            textDecoration: 'none',
+            fontWeight: 600,
+          }}
+        >
+          {message.title || t('chat.viewArticle')} ↗
+        </Link>
       ) : null}
 
       {hasFallback ? (
@@ -2422,19 +2391,7 @@ const removeSelectedImage = () => {
               <h4 style={{ margin: 0 }}>
                 {option.label || option.title || t('chat.optionN', { n: optionIndex + 1 })}
               </h4>
-
-              <span
-                style={{
-                  fontSize: '12px',
-                  padding: '4px 8px',
-                  borderRadius: '999px',
-                  backgroundColor: '#ffffff',
-                  border: '1px solid #ddd',
-                }}
-              >
-                {option.source || '-'}
-                {option.confidence_kind !== 'not_calibrated' && ` · ${Math.round(Number(option.confidence || 0) * 100)}%`}
-              </span>
+              {/* Source / score chip removed (2026-11-24): staff found it confusing. */}
             </div>
 
             <p

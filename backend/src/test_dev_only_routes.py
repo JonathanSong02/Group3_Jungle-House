@@ -36,10 +36,10 @@ DEV_ONLY = {
     "/api/debug/static-files": "debug_static_files",
     "/api/debug/uploads": "debug_uploads",
     "/api/test-db": "test_db",
-    "/api/chat/test": "chat_test",
 }
-# Removed completely (dead: it only answered 400 "disabled" and no page called it).
-REMOVED = {"/api/generate-quiz": "POST"}
+# Removed completely: /api/generate-quiz (dead: it only answered 400 "disabled" and no page called it);
+# /api/chat/test (ran test questions through the old rule engine, removed on 2026-11-24).
+REMOVED = {"/api/generate-quiz": "POST", "/api/chat/test": "GET"}
 
 # Words that mark a developer/diagnostic route. Matched as whole words of the path and of the endpoint name,
 # so "device" or "testimonial" would not match "dev" or "test".
@@ -96,6 +96,7 @@ class ProductionModeTests(lockout_tests.RouteTestCase):
         for path in REMOVED:
             self.assertNotIn(path, registered)
         self.assertFalse(hasattr(app_module, "generate_quiz"))
+        self.assertFalse(hasattr(app_module, "chat_test"))
 
     def test_a_manager_gets_the_same_404_as_for_any_unknown_url(self):
         manager = self.manager()
@@ -196,12 +197,11 @@ DEVELOPMENT_SCRIPT = textwrap.dedent("""
            "(1, 'Mia Manager', ?, ?, 1, 'active'), (2, 'Sam Staff', ?, ?, 2, 'active')",
            (t.MANAGER, password_hash, t.STAFF, password_hash))
     app_module.get_db_connection = db.connect
-    # The chat test writes CSV files into logs/. Keep every log file out of the repository.
+    # Keep every log file out of the repository.
     logs = Path(tempfile.mkdtemp())
     app_module.LOG_DIR = logs
     app_module.LOG_JSONL = logs / "ai_chat_logs.jsonl"
     app_module.LOG_CSV = logs / "ai_chat_logs.csv"
-    app_module.TEST_REPORT_CSV = report = logs / "ai_test_results.csv"
 
     added = app_module.register_dev_only_routes(app_module.app)
     added_again = app_module.register_dev_only_routes(app_module.app)
@@ -225,7 +225,6 @@ DEVELOPMENT_SCRIPT = textwrap.dedent("""
         "manager": manager_results,
         "staff": {path: staff.get(path).status_code for path in added},
         "anonymous": {path: app_module.app.test_client().get(path).status_code for path in added},
-        "report_written": report.exists(),
     }))
     db.close()
 """)
@@ -259,8 +258,6 @@ class DevelopmentModeTests(unittest.TestCase):
             self.assertTrue(keys, path)
         self.assertIn("files", self.result["manager"]["/api/debug/uploads"][1])
         self.assertIn("result", self.result["manager"]["/api/test-db"][1])
-        self.assertIn("pass_rate", self.result["manager"]["/api/chat/test"][1])
-        self.assertTrue(self.result["report_written"])
 
     def test_developer_routes_still_need_a_manager_login(self):
         self.assertEqual(set(self.result["staff"].values()), {403})

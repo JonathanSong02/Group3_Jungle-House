@@ -216,6 +216,41 @@ class MeaningSearchFallbackTests(unittest.TestCase):
         self.assertIn(RealQuestionsTests.CABINET, text.lower(), "word search still works")
 
 
+class AiOnlyChatHelperTests(unittest.TestCase):
+    """Helpers of the AI-only chat (old rule engine removed 2026-11-24), on the real search."""
+
+    def test_related_articles_for_not_found_come_from_the_search(self):
+        with patch.object(app, "get_db_connection", lambda: _Conn()):
+            options = app.related_article_options("how many cabinet i need to open when opening",
+                                                  "how many cabinet i need to open when opening")
+        self.assertTrue(1 <= len(options) <= 3)
+        self.assertEqual(len({o["title"] for o in options}), len(options), "no duplicates")
+        for option in options:
+            self.assertTrue(option["answer"])
+            self.assertIn("steps", option)
+
+    def test_related_articles_never_break_the_chat(self):
+        def broken():
+            raise RuntimeError("db down")
+        with patch.object(app, "get_db_connection", broken), patch.object(app, "log_chat_failure", Mock()):
+            self.assertEqual(app.related_article_options("ice", "ice"), [])
+
+    def test_photo_question_uses_the_first_search_article_with_the_exact_sentence(self):
+        checked = []
+
+        def verify(question, query, result, references):
+            checked.append(result["article_id"])
+            return {"article_id": result["article_id"], "answer": "quote"} if len(checked) == 2 else None
+
+        with app.app.test_request_context("/api/chat", method="POST"), \
+                patch.object(app, "get_db_connection", lambda: _Conn()), \
+                patch.object(app.hybrid_image_service, "verify_text_result", verify):
+            app.g.chat_attachment_refs = ["ref-1"]
+            result = app.verify_image_question_with_search("where to put this", "honey tester opening")
+        self.assertEqual(len(checked), 2, "stops at the first article that passes Alan's check")
+        self.assertEqual(result["article_id"], checked[1])
+
+
 class ChatTimingHeaderTests(unittest.TestCase):
     """Stage times are on the chat reply, readable in the browser without Railway."""
 

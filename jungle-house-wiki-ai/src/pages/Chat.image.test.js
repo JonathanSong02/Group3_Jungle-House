@@ -129,7 +129,8 @@ test('standard and Staff composers preserve file selection, preview, image+text 
     await send();
     assert.ok(document.body.textContent.includes('Image storage needs a database update.'));
     assert.ok(document.body.textContent.includes('Support reference: ' + 'b'.repeat(16)));
-    assert.ok(document.body.textContent.includes('image_service_unavailable'));
+    // The technical source name is no longer shown to staff (source chip removed 2026-11-24).
+    assert.ok(!document.body.textContent.includes('image_service_unavailable'));
     assert.equal(document.body.textContent.match(/Match score \(not probability\)/g)?.length || 0, beforeFailures);
     failImage = false;
     await React.act(async () => root.unmount());

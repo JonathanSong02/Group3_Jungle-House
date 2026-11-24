@@ -226,7 +226,7 @@ import copy
 selected=[]
 import os
 env["os"]=os
-for name in ["chat","answer_question_with_ai_provider","validate_escalation_context","create_chat_escalation","attach_escalation_context_status","smart_chat_enabled","wants_details"]:
+for name in ["chat","answer_question_with_ai_provider","validate_escalation_context","create_chat_escalation","attach_escalation_context_status","wants_details"]:
     node=copy.deepcopy(next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name==name))
     node.decorator_list=[]
     selected.append(node)
@@ -259,14 +259,14 @@ class ChatRouteTests(unittest.TestCase):
         env["translate_query_to_english_keywords"]=Mock(side_effect=lambda q,lang:q)
         env["is_broad_topic_question"]=Mock(return_value=False)
         env["search_similar_question"]=Mock(return_value=None)
-        env["process_question"]=Mock(side_effect=lambda **kwargs:({"source":"fallback","confidence":0.0,"context":{},"fallback":True},200))
-        env["should_escalate_generic_answer"]=Mock(return_value=False)
         env["clear_ai_fail_count"]=Mock()
         env["remember_last_ai_answer"]=Mock()
         env["log_request"]=Mock()
-        env["update_ai_fail_count"]=Mock(return_value=0)
         env["save_qa_to_db"]=Mock()
-        env["search_related_knowledge_base_articles"]=Mock(return_value=[])
+        # The AI is the only answer engine (old rule engine removed 2026-11-24).
+        env["related_article_options"]=Mock(return_value=[{"title":"Honey","label":"Honey"}])
+        env["verify_image_question_with_search"]=Mock(return_value=None)
+        env["build_step_answer_from_last_topic"]=Mock(return_value=(None,[]))
         env["create_escalation"]=Mock(return_value=123)
         env["save_escalation_context"]=Mock(return_value=True)
         env["get_confidence_label"]=Mock(return_value="high")
@@ -288,9 +288,8 @@ class ChatRouteTests(unittest.TestCase):
     def test_route_context_reaches_retrieval_answer_and_raw_log(self):
         result=self.call()
         self.assertEqual(result["source"],"ai_provider_answer")
-        args=env["process_question"].call_args.kwargs
-        self.assertEqual(args["question"],"And its benefits?")
-        self.assertEqual(args["search_question"],"Golden Passion honey benefits")
+        self.assertEqual(env["build_ai_chat_context"].call_args.args[0],"And its benefits?")
+        self.assertEqual(env["build_ai_chat_context"].call_args.kwargs["search_question"],"Golden Passion honey benefits")
         env["search_similar_question"].assert_called_once_with("Golden Passion honey benefits",team_lead_only=True)
         env["build_ai_chat_context"].assert_called_once_with("And its benefits?",search_question="Golden Passion honey benefits")
         prompt=self.provider.generate_ai_reply.call_args.args[0]
@@ -307,7 +306,7 @@ class ChatRouteTests(unittest.TestCase):
         self.payload["question"]="Golden Passion honey price"
         self.call()
         self.provider._call_ai_provider_once.assert_called_once()
-        self.assertEqual(env["process_question"].call_args.kwargs["search_question"],self.payload["question"])
+        self.assertEqual(env["build_ai_chat_context"].call_args.kwargs["search_question"],self.payload["question"])
     def test_route_force_escalation_raw_no_ai(self):
         self.payload["force_escalate"]=True
         result=self.call()
@@ -316,25 +315,29 @@ class ChatRouteTests(unittest.TestCase):
         self.assertEqual(env["create_escalation"].call_args.args[2],7)
         self.provider._call_ai_provider_once.assert_not_called()
         self.provider.generate_ai_reply.assert_not_called()
-        env["process_question"].assert_not_called()
-    def test_route_unanswered_escalation_keeps_raw_question(self):
+        env["build_ai_chat_context"].assert_not_called()
+    def test_route_not_found_offers_related_articles_and_team_lead_without_escalating(self):
         self.provider.generate_ai_reply.return_value='{"answered":false,"off_topic":false}'
         result=self.call()
-        self.assertTrue(result["escalation"])
-        self.assertEqual(env["create_escalation"].call_args.args[0],"And its benefits?")
+        self.assertEqual(result["source"],"ai_not_found")
+        self.assertEqual(result["type"],"options")
+        self.assertTrue(result["escalation_offer"])
+        self.assertEqual(result["question"],"And its benefits?")
+        self.assertEqual(result["options"],[{"title":"Honey","label":"Honey"}])
+        env["related_article_options"].assert_called_once_with("And its benefits?","Golden Passion honey benefits")
+        env["create_escalation"].assert_not_called()
     def test_route_cancel_during_memory_stops_everything_after(self):
         env["is_chat_request_cancelled"].side_effect=[False,False,True]
         result=self.call()
         self.assertTrue(result["cancelled"])
-        env["process_question"].assert_not_called()
+        env["build_ai_chat_context"].assert_not_called()
         env["log_request"].assert_not_called()
         env["create_escalation"].assert_not_called()
         self.provider.generate_ai_reply.assert_not_called()
     def test_route_memory_timeout_preserves_original_pipeline(self):
         self.provider._call_ai_provider_once.side_effect=TimeoutError("mock")
         self.call()
-        args=env["process_question"].call_args.kwargs
-        self.assertEqual(args["search_question"],"And its benefits?")
+        self.assertEqual(env["build_ai_chat_context"].call_args.kwargs["search_question"],"And its benefits?")
         self.provider._call_ai_provider_once.assert_called_once()
         self.provider.generate_ai_reply.assert_called_once()
         env["create_escalation"].assert_not_called()
@@ -354,7 +357,7 @@ class ChatRouteTests(unittest.TestCase):
         env["translate_query_to_english_keywords"].side_effect=None
         env["translate_query_to_english_keywords"].return_value="benefits"
         self.call()
-        self.assertEqual(env["process_question"].call_args.kwargs["search_question"],"Golden Passion honey benefits")
+        self.assertEqual(env["build_ai_chat_context"].call_args.kwargs["search_question"],"Golden Passion honey benefits")
         self.assertIn("Chinese",self.provider.generate_ai_reply.call_args.args[0])
         self.assertEqual(env["log_request"].call_args.args[0],self.payload["question"])
     def test_route_malay_followup(self):
@@ -363,7 +366,7 @@ class ChatRouteTests(unittest.TestCase):
         env["translate_query_to_english_keywords"].side_effect=None
         env["translate_query_to_english_keywords"].return_value="benefits"
         self.call()
-        self.assertEqual(env["process_question"].call_args.kwargs["search_question"],"Golden Passion honey benefits")
+        self.assertEqual(env["build_ai_chat_context"].call_args.kwargs["search_question"],"Golden Passion honey benefits")
         self.assertIn("Bahasa Melayu",self.provider.generate_ai_reply.call_args.args[0])
         self.assertEqual(env["log_request"].call_args.args[0],self.payload["question"])
     def test_route_image_direct_match_skips_memory(self):
@@ -397,7 +400,6 @@ class ChatRouteTests(unittest.TestCase):
         self.provider.generate_ai_reply.assert_not_called()
     def test_route_step_control_skips_memory(self):
         self.payload["question"]="Step 4"
-        env["process_question"]=Mock(return_value=({"source":"context_step","confidence":.95,"answer":"A mock step","context":{}},200))
         self.call()
         self.provider._call_ai_provider_once.assert_not_called()
     def test_route_next_control_skips_memory(self):
@@ -441,9 +443,6 @@ class ChatRouteTests(unittest.TestCase):
     def confident_sop(self):
         del self.payload["history"]
         self.payload["question"]="How do I open the kiosk?"
-        env["process_question"]=Mock(return_value=({"type":"sop","source":"matched_title","confidence":.95,
-            "title":"Kiosk Opening","steps":[{"step_number":1,"text":"Turn on lights"}],"article_id":5,
-            "reply":"Here are the steps","answer":"Here are the steps","context":{"title":"Kiosk Opening"}},200))
         env["build_ai_chat_context"]=Mock(return_value=("### Kiosk Opening\nTurn on lights.",[{"title":"Kiosk Opening","article_id":5}]))
         self.provider.generate_ai_reply.return_value=json.dumps({"answered":True,"answer":"Mock KB answer","sourceTitle":"Kiosk Opening"})
     # ---- AI-first: the AI answer replaces the old engine's steps ----
@@ -461,12 +460,13 @@ class ChatRouteTests(unittest.TestCase):
         self.assertEqual(result["context"]["title"],"Kiosk Opening")
         self.assertIn('"clarify": true', self.answer_prompt())
         env["create_escalation"].assert_not_called()
-    def test_ai_first_off_topic_keeps_old_steps(self):
+    def test_off_topic_shows_the_ai_decline(self):
         self.confident_sop()
         self.provider.generate_ai_reply.return_value=json.dumps({"answered":False,"off_topic":True,"declineMessage":"Ask a work question."})
         result=self.call()
-        self.assertEqual(result["type"],"sop")
-        self.assertEqual(result["reply"],"Here are the steps")
+        self.assertEqual((result["source"],result["reply"],result["type"]),("ai_provider_decline","Ask a work question.","text"))
+        self.assertNotIn("related_articles",result)
+        env["create_escalation"].assert_not_called()
     def test_followup_keeps_previous_article_in_view(self):
         self.payload["question"]="下一步是什么？"
         self.payload["context"]={"title":"Kiosk Opening"}
@@ -475,7 +475,8 @@ class ChatRouteTests(unittest.TestCase):
         self.assertEqual(env["build_ai_chat_context"].call_args.kwargs.get("focus_title"),"Kiosk Opening")
     def test_stopwatch_records_each_stage(self):
         self.call()
-        self.assertTrue({"follow_up","rules","ai_answer"} <= set(env["g"].chat_timings))
+        self.assertTrue({"follow_up","ai_answer"} <= set(env["g"].chat_timings))
+        self.assertNotIn("rules",env["g"].chat_timings)
         self.assertTrue(all(seconds >= 0 for seconds in env["g"].chat_timings.values()))
     def test_first_question_has_no_focus(self):
         del self.payload["history"]
@@ -485,48 +486,27 @@ class ChatRouteTests(unittest.TestCase):
     def test_broad_question_prompt_asks_for_title_options(self):
         env["answer_question_with_ai_provider"]("opening", smart=True)
         self.assertIn("broad question", self.answer_prompt())
-    # When the old title matcher and the AI pick different articles, the AI
-    # (which read the live articles) wins: "aeon opening" must not stay on
-    # "JHKC Kiosk Opening".
-    def aeon_mismatch(self, aeon_steps_found=True):
+    # The AI's own article is the answer's article ("aeon opening" -> Aeon, not JHKC).
+    def test_ai_answer_uses_the_article_the_ai_named(self):
         del self.payload["history"]
         self.payload["question"]="aeon opening"
-        jhkc=({"type":"sop","source":"matched_title_show_all_first","confidence":1.0,"title":"JHKC Kiosk Opening",
-               "steps":[{"step_number":1,"text":"JHKC step"}],"reply":"I found JHKC Kiosk Opening.","answer":"x",
-               "context":{"title":"JHKC Kiosk Opening"}},200)
-        aeon=({"type":"sop","source":"matched_title_show_all_first","confidence":1.0,"title":"Aeon Roadshow Opening List",
-               "steps":[{"step_number":1,"text":"AEON step"}],"reply":"I found Aeon.","answer":"y",
-               "context":{"title":"Aeon Roadshow Opening List"}},200) if aeon_steps_found else \
-              ({"source":"fallback","confidence":0.0,"context":{},"fallback":True},200)
-        env["process_question"]=Mock(side_effect=[jhkc, aeon])
         env["build_ai_chat_context"]=Mock(return_value=("### Aeon Roadshow Opening List\nAEON steps.",
             [{"title":"JHKC Kiosk Opening","article_id":5},{"title":"Aeon Roadshow Opening List","article_id":9}]))
         self.provider.generate_ai_reply.return_value=json.dumps({"answered":True,"answer":"For AEON: set up the booth first.",
             "sourceTitle":"Aeon Roadshow Opening List"})
-    def test_ai_first_uses_the_ai_article_not_the_old_match(self):
-        self.aeon_mismatch()
         result=self.call()
-        self.assertEqual(env["process_question"].call_count,1)
         self.assertEqual(result["title"],"Aeon Roadshow Opening List")
         self.assertEqual(result["article_id"],9)
         self.assertEqual(result["steps"],[])
         self.assertEqual(result["reply"],"For AEON: set up the booth first.")
         self.assertEqual(result["type"],"text")
-    def test_smart_mismatch_without_steps_shows_ai_answer_only(self):
-        self.aeon_mismatch(aeon_steps_found=False)
-        result=self.call()
-        self.assertEqual(result["type"],"text")
-        self.assertEqual(result["steps"],[])
-        self.assertEqual(result["reply"],"For AEON: set up the booth first.")
-        self.assertEqual(result["article_id"],9)
-        self.assertNotIn("JHKC",json.dumps(result.get("steps")))
-    def test_smart_mismatch_unknown_ai_title_keeps_retrieval(self):
-        # The AI named an article that is not among the ones it was given: do not trust it.
+        self.assertEqual([a["article_id"] for a in result["related_articles"]],[5])
+    def test_answer_naming_an_article_it_was_not_given_has_no_link(self):
         self.confident_sop()
         self.provider.generate_ai_reply.return_value=json.dumps({"answered":True,"answer":"About honey","sourceTitle":"Honey"})
         result=self.call()
-        self.assertEqual(result["reply"],"Here are the steps")
-        self.assertEqual(result["type"],"sop")
+        self.assertEqual(result["reply"],"About honey")
+        self.assertNotIn("article_id",result)
 
     # ---- Short questions ("PDF", "AEON", "SOP") are not gibberish ----
     def test_short_known_terms_are_not_nonsense(self):
@@ -550,7 +530,7 @@ class ChatRouteTests(unittest.TestCase):
         env["_known_title_words"]=broken
         self.assertFalse(env["looks_like_known_term"]("AEON"))
         self.assertTrue(env["looks_like_known_term"]("pdf"))
-    def test_ai_first_clarify_even_when_old_engine_found_steps(self):
+    def test_ai_clarify_question_with_options(self):
         self.confident_sop()
         self.provider.generate_ai_reply.return_value=json.dumps({"answered":False,"clarify":True,"question":"Which kiosk?",
             "options":["JHKC Kiosk","Spring Kiosk"]})
@@ -559,25 +539,34 @@ class ChatRouteTests(unittest.TestCase):
         self.assertEqual(result["type"],"text")
         self.assertEqual(result["steps"],[])
         self.assertEqual(result["clarify_options"],["JHKC Kiosk","Spring Kiosk"])
-    def test_smart_failure_keeps_result(self):
+    def test_ai_failure_shows_unavailable_and_never_escalates(self):
         self.confident_sop()
         self.provider.generate_ai_reply.side_effect=TimeoutError("mock")
         result=self.call()
-        self.assertEqual(result["reply"],"Here are the steps")
-        self.assertEqual(result["steps"],[{"step_number":1,"text":"Turn on lights"}])
+        self.assertEqual(result["source"],"ai_unavailable")
+        self.assertEqual(result["reply"],env["CHAT_FAILURE_MESSAGES"]["ai_unavailable"]["en"])
+        self.assertEqual((result["escalation_ready"],result["escalation_required"]),(False,False))
+        self.assertNotIn("escalation_offer",result)
         env["create_escalation"].assert_not_called()
-    def test_smart_off_no_call(self):
+    def test_no_ai_configured_shows_unavailable(self):
         self.confident_sop()
-        with patch.dict(os.environ,{"SMART_CHAT_ENABLED":"0"}):
-            result=self.call()
-        self.provider.generate_ai_reply.assert_not_called()
-        self.assertEqual(result["reply"],"Here are the steps")
-    def test_smart_skips_step_control(self):
+        self.provider.generate_ai_reply.side_effect=self.provider.AIProviderNotConfiguredError()
+        self.assertEqual(self.call()["source"],"ai_unavailable")
+    def test_step_number_without_a_topic_asks_which_topic(self):
         del self.payload["history"]
         self.payload["question"]="Step 4"
-        env["process_question"]=Mock(return_value=({"source":"context_step","confidence":.95,"answer":"A mock step","context":{}},200))
-        self.call()
+        result=self.call()
+        self.assertEqual(result["source"],"step_request_missing_topic")
         self.provider.generate_ai_reply.assert_not_called()
+    def test_step_number_after_a_topic_returns_that_step(self):
+        self.payload["question"]="show step 2"
+        env["build_step_answer_from_last_topic"].return_value=({"type":"sop","answer":"Step 2: unlock","context":{}},["Kiosk Opening"])
+        result=self.call()
+        self.assertEqual(result["final_source"],"context_step_from_last_topic")
+        self.provider.generate_ai_reply.assert_not_called()
+    def test_step_number_with_a_conversation_but_no_card_is_answered_by_the_ai(self):
+        self.payload["question"]="show step 2"
+        self.assertEqual(self.call()["source"],"ai_provider_answer")
     def test_smart_clarify_on_fallback_no_escalation(self):
         del self.payload["history"]
         self.payload["question"]="How do I open the shop?"
@@ -590,17 +579,12 @@ class ChatRouteTests(unittest.TestCase):
     def test_smart_confident_text_rewritten(self):
         del self.payload["history"]
         self.payload["question"]="What is the honey price?"
-        env["process_question"]=Mock(return_value=({"type":"text","source":"matched_title","confidence":.9,
-            "reply":"Old","answer":"Old","context":{}},200))
         result=self.call()
         self.assertEqual(result["reply"],"Mock KB answer")
         self.assertEqual(result["source"],"ai_provider_answer")
     def test_ai_first_clarify_replaces_old_choice_list(self):
         del self.payload["history"]
         self.payload["question"]="kiosk"
-        options=[{"label":"Kiosk Opening"},{"label":"Kiosk Closing"}]
-        env["process_question"]=Mock(return_value=({"type":"multiple_choice","source":"suggestion_options","confidence":.5,
-            "options":options,"reply":"Pick one","answer":"Pick one","context":{}},200))
         self.provider.generate_ai_reply.return_value=json.dumps({"answered":False,"clarify":True,"question":"Opening or closing?"})
         result=self.call()
         self.assertEqual(result["options"],[])
@@ -717,7 +701,7 @@ class ChatRouteTests(unittest.TestCase):
         self.image_request("Golden Passion honey price")
         self.call()
         self.provider._call_ai_provider_once.assert_not_called()
-        self.assertEqual(env["process_question"].call_args.kwargs["question"],"Golden Passion honey price")
+        self.assertEqual(env["build_ai_chat_context"].call_args.args[0],"Golden Passion honey price")
     def test_route_image_only_clarification(self):
         self.image_request("")
         env["build_image_only_clarification_response"]=Mock(return_value={"source":"image_only_clarification","answer":"Mock clarification"})
@@ -729,15 +713,15 @@ class ChatRouteTests(unittest.TestCase):
     def test_route_vision_work_classification_cannot_short_circuit_retrieval(self):
         self.image_request("photo",{"isWorkRelated":False,"confidence":.9})
         self.call()
-        env["process_question"].assert_called_once()
-        self.assertEqual(env["process_question"].call_args.kwargs["question"],"photo")
+        env["build_ai_chat_context"].assert_called_once()
+        self.assertEqual(env["build_ai_chat_context"].call_args.args[0],"photo")
     def test_route_related_image_plus_text_keeps_original_question(self):
         self.image_request("price",{"isWorkRelated":True,"confidence":.9})
         env["hybrid_image_service"].process.return_value=(None,"Golden Passion honey price",[])
         self.call()
         self.provider._call_ai_provider_once.assert_not_called()
-        self.assertEqual(env["process_question"].call_args.kwargs["question"],"price")
-        self.assertEqual(env["process_question"].call_args.kwargs["search_question"],"Golden Passion honey price")
+        self.assertEqual(env["build_ai_chat_context"].call_args.args[0],"price")
+        self.assertEqual(env["build_ai_chat_context"].call_args.kwargs["search_question"],"Golden Passion honey price")
     def test_route_not_this_keeps_existing_escalation(self):
         self.payload["question"]="not this"
         env["AI_LAST_ANSWER_MEMORY"]["user:7:last_answer"]={"question":"Golden Passion honey price","result":{"answer":"Mock prior answer"}}
@@ -750,20 +734,20 @@ class ChatRouteTests(unittest.TestCase):
         self.payload["question"]="its benfits?"
         env["normalize_staff_query"]=Mock(return_value=("its benefits?",True))
         self.call()
-        self.assertEqual(env["process_question"].call_args.kwargs["search_question"],"Golden Passion honey benefits")
+        self.assertEqual(env["build_ai_chat_context"].call_args.kwargs["search_question"],"Golden Passion honey benefits")
         self.assertEqual(env["log_request"].call_args.args[0],"its benfits?")
     def test_route_standalone_topic_change_keeps_own_search(self):
         self.provider._call_ai_provider_once.return_value="{}"
         self.payload["question"]="ST3 kiosk opening"
         self.call()
         self.provider._call_ai_provider_once.assert_called_once()
-        self.assertEqual(env["process_question"].call_args.kwargs["search_question"],"ST3 kiosk opening")
+        self.assertEqual(env["build_ai_chat_context"].call_args.kwargs["search_question"],"ST3 kiosk opening")
     def test_route_correction_preserves_raw_and_uses_new_location(self):
         self.payload["question"]="Correction, I mean ST3."
         self.payload["history"]=[{"role":"user","content":"kiosk closing at Spring"}]
         self.provider._call_ai_provider_once.return_value=json.dumps({"query":"ST3 kiosk closing","subject":"ST3","evidence_index":-1,"topic_index":0})
         self.call()
-        self.assertEqual(env["process_question"].call_args.kwargs["search_question"],"ST3 kiosk closing")
+        self.assertEqual(env["build_ai_chat_context"].call_args.kwargs["search_question"],"ST3 kiosk closing")
         self.assertEqual(env["log_request"].call_args.args[0],"Correction, I mean ST3.")
 
     def test_route_force_escalation_saves_valid_client_snapshot_with_authenticated_owner(self):

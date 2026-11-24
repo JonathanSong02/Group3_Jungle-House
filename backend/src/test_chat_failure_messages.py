@@ -26,7 +26,7 @@ from test_login_lockout import app_module
 
 import chat_attachment_service
 
-FAKE_PATH = "/app/backend/models/intent_model.pth"
+FAKE_PATH = "/app/backend/secrets/provider_key.json"
 FAKE_SECRET = "sk-FAKE-SECRET-123"
 TECHNICAL = (FAKE_PATH, FAKE_SECRET, "Errno", "Traceback", "Model prediction failed", "backend terminal")
 
@@ -56,7 +56,6 @@ class ChatFailureRouteTestCase(lockout.RouteTestCase):
         self.recorded = {name: Mock(name=name, wraps=getattr(app_module, name)) for name in
                          ("log_request", "remember_chat_context", "remember_last_ai_answer")}
         for target, value in (("LOG_DIR", logs), ("LOG_CSV", logs / "ai_chat_logs.csv"),
-                              ("TEST_REPORT_CSV", logs / "ai_test_results.csv"),
                               ("save_ai_chat_log_to_mysql", self.saved_logs),
                               ("create_chat_escalation", self.escalations),
                               ("answer_question_with_ai_provider", self.provider),
@@ -92,45 +91,29 @@ class ChatFailureRouteTestCase(lockout.RouteTestCase):
                 self.assertNotIn(technical, text)
 
 
-class ModelFailureTests(ChatFailureRouteTestCase):
-    """Test 1, 2, 3, 4: the intent model raises an error holding a file path and a secret."""
+class AiUnavailableTests(ChatFailureRouteTestCase):
+    """The AI provider fails (outage, quota, timeout) with an error holding a file path and a secret:
+    staff get "AI chat is currently unavailable" in their language; nothing is escalated."""
 
     def setUp(self):
         super().setUp()
-        self.standardize = Mock(name="standardize_ai_response", wraps=app_module.standardize_ai_response)
-        for target, value in (("MODEL_AVAILABLE", True), ("get_model_answer", Mock()),
-                              ("call_model_answer", Mock(side_effect=technical_error())),
-                              ("standardize_ai_response", self.standardize)):
-            patcher = patch.object(app_module, target, value)
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        self.provider.side_effect = technical_error(RuntimeError)
+        patcher = patch.object(app_module, "AI_PROVIDER_SERVICE_AVAILABLE", True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
-    def model_failure_result(self):
-        results = [call.args[0] for call in self.standardize.call_args_list
-                   if call.args and isinstance(call.args[0], dict) and call.args[0].get("source") == "pytorch_model_error"]
-        self.assertEqual(len(results), 1, "the forced model failure ran once")
-        return results[0]
-
-    def test_the_model_failure_result_is_friendly_in_each_language_and_its_flags_are_unchanged(self):
+    def test_friendly_unavailable_reply_in_each_language_and_no_ticket(self):
         for language, question in QUESTIONS.items():
             with self.subTest(language=language):
-                self.standardize.reset_mock()
                 status, body, log = self.ask(question)
                 self.assertEqual(status, 200)
-                result = self.model_failure_result()
-                expected = MESSAGES["unavailable"][language]
-                self.assertEqual((result["reply"], result["answer"], result["fallback_message"]),
-                                 (expected, expected, expected))
-                # Only the text changed: every flag is what it was before this fix. (standardize_ai_response
-                # then adds its usual derived keys to the same dict; "message" copies the friendly reply.)
-                unchanged = {
-                    "type": "text", "category": None, "title": None, "section": None, "purpose": None,
-                    "steps": [], "notes": [], "score": 0.0, "confidence": 0.0, "source": "pytorch_model_error",
-                    "fallback": True, "escalation_ready": True, "escalation_required": True}
-                self.assertEqual({key: result.get(key) for key in unchanged}, unchanged)
-                self.assertEqual(result.get("message", expected), expected)
-                self.assertIn("INTENT MODEL ERROR: FileNotFoundError at app.py:", log)
+                expected = MESSAGES["ai_unavailable"][language]
+                self.assertEqual((body["reply"], body["answer"], body["source"]), (expected, expected, "ai_unavailable"))
+                self.assertEqual((body["escalation_ready"], body["escalation_required"]), (False, False))
+                self.assertNotIn("escalation_offer", body)
+                self.assertIn("AI CHAT PROVIDER ERROR: RuntimeError at app.py:", log)
                 self.assert_nothing_technical(json.dumps(body, ensure_ascii=False), log)
+        self.escalations.assert_not_called()
 
     def test_the_error_text_reaches_no_reply_log_memory_provider_escalation_or_notification(self):
         for question in (*QUESTIONS.values(), "kiosk"):
@@ -138,8 +121,6 @@ class ModelFailureTests(ChatFailureRouteTestCase):
             self.assertEqual(status, 200)
             self.assert_nothing_technical(json.dumps(body, ensure_ascii=False))
         self.assertTrue(self.saved_logs.called, "chat log rows were written")
-        self.assertTrue(self.recorded["remember_last_ai_answer"].called or self.recorded["remember_chat_context"].called
-                        or self.escalations.called, "the failure reached the normal flow after it")
         self.assert_nothing_technical(self.everything_kept())
 
 
@@ -148,7 +129,9 @@ class ChatCrashTests(ChatFailureRouteTestCase):
 
     def setUp(self):
         super().setUp()
-        patcher = patch.object(app_module, "process_question", Mock(side_effect=technical_error(RuntimeError)))
+        # Any unexpected error in the flow; here the Team Lead answer lookup.
+        self.lookup = Mock(side_effect=technical_error(RuntimeError))
+        patcher = patch.object(app_module, "search_similar_question", self.lookup)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -184,7 +167,7 @@ class ChatCrashTests(ChatFailureRouteTestCase):
         self.assert_nothing_technical(json.dumps(body), log)
 
     def test_an_attachment_error_with_internal_detail_gets_the_generic_attachment_message(self):
-        app_module.process_question.side_effect = chat_attachment_service.AttachmentError(
+        self.lookup.side_effect = chat_attachment_service.AttachmentError(
             f"Attachment row missing at {FAKE_PATH} key={FAKE_SECRET}")
         for language, question in QUESTIONS.items():
             with self.subTest(language=language):
@@ -196,18 +179,18 @@ class ChatCrashTests(ChatFailureRouteTestCase):
                 self.assert_nothing_technical(json.dumps(body, ensure_ascii=False), log)
 
     def test_the_known_attachment_messages_are_translated(self):
-        app_module.process_question.side_effect = chat_attachment_service.AttachmentError(
+        self.lookup.side_effect = chat_attachment_service.AttachmentError(
             "A valid chat is required for image uploads.")
         status, body, _ = self.ask(QUESTIONS["zh"])
         self.assertEqual((status, body["message"]), (400, MESSAGES["attachment_chat_required"]["zh"]))
-        app_module.process_question.side_effect = chat_attachment_service.AttachmentError(
+        self.lookup.side_effect = chat_attachment_service.AttachmentError(
             "Attachment unavailable. Please attach the image again.")
         status, body, _ = self.ask(QUESTIONS["ms"])
         self.assertEqual((status, body["message"]), (400, MESSAGES["attachment_unavailable"]["ms"]))
 
 
-class ProviderFallbackFailureTests(ChatFailureRouteTestCase):
-    """The AI provider fallback fails: the flow continues exactly as when the provider has no answer."""
+class ProviderAnswerTests(ChatFailureRouteTestCase):
+    """The AI is the only answer engine: "not found" and "provider failed" are told apart."""
 
     def setUp(self):
         super().setUp()
@@ -215,21 +198,36 @@ class ProviderFallbackFailureTests(ChatFailureRouteTestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def test_provider_error_is_logged_by_type_and_status_and_the_flow_is_unchanged(self):
-        status, without_provider_answer, _ = self.ask(QUESTIONS["en"])
+    def test_not_found_offers_related_articles_and_a_team_lead_but_never_escalates_by_itself(self):
+        status, body, _ = self.ask(QUESTIONS["zh"])
         self.assertEqual(status, 200)
-        self.assertTrue(self.provider.called, "the provider fallback was reached")
+        self.assertTrue(self.provider.called, "the AI was asked")
+        self.assertEqual((body["source"], body["reply"]), ("ai_not_found", MESSAGES["ai_not_found"]["zh"]))
+        self.assertEqual(body["type"], "options")
+        self.assertTrue(body["escalation_offer"])
+        self.assertEqual(body["question"], QUESTIONS["zh"])
+        self.assertEqual((body["escalation_ready"], body["escalation_required"]), (False, False))
+        for _ in range(3):  # asking again and again never opens a ticket on its own
+            self.ask(QUESTIONS["en"])
+        self.escalations.assert_not_called()
 
+    def test_provider_error_is_logged_by_type_and_status_and_shows_unavailable(self):
         response = requests.Response()
         response.status_code = 503
         self.provider.side_effect = requests.HTTPError(
             f"503 Server Error for url: https://provider.example/v1?key={FAKE_SECRET}", response=response)
-        self.escalations.reset_mock()
         status, body, log = self.ask(QUESTIONS["en"])
         self.assertEqual(status, 200)
-        self.assertIn("AI CHAT PROVIDER FALLBACK ERROR: HTTPError HTTP 503", log)
-        self.assertEqual(body, without_provider_answer)
-        self.assert_nothing_technical(json.dumps(body), log, repr(self.escalations.call_args_list))
+        self.assertIn("AI CHAT PROVIDER ERROR: HTTPError HTTP 503", log)
+        self.assertEqual(body["reply"], MESSAGES["ai_unavailable"]["en"])
+        self.escalations.assert_not_called()
+        self.assert_nothing_technical(json.dumps(body), log)
+
+    def test_no_ai_configured_shows_unavailable(self):
+        with patch.object(app_module, "AI_PROVIDER_SERVICE_AVAILABLE", False):
+            status, body, _ = self.ask(QUESTIONS["ms"])
+        self.assertEqual((status, body["reply"]), (200, MESSAGES["ai_unavailable"]["ms"]))
+        self.provider.assert_not_called()
 
 
 class HelperTests(unittest.TestCase):
