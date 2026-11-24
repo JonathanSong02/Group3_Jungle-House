@@ -205,10 +205,13 @@ class ExactTitleTests(unittest.TestCase):
         _, candidates = build(self.PROMOTIONS, [], "what promotion now")
         self.assertNotEqual(candidates[0]["article_id"], 42)
 
-    def test_two_articles_with_the_same_title_are_not_pinned(self):
-        twin = dict(self.PROMOTIONS[2], article_id=43)
-        _, candidates = build(self.PROMOTIONS + [twin], [], "promotion")
-        self.assertNotEqual(candidates[0]["article_id"], 42)
+    def test_two_articles_with_the_same_title_both_come_first(self):
+        # Like the real #14 and #249, both "Promotion" with different content.
+        twin = dict(self.PROMOTIONS[2], article_id=43, content="Old promotion list from April.")
+        text, candidates = build(self.PROMOTIONS + [twin], [], "promotion")
+        self.assertEqual({c["article_id"] for c in candidates[:2]}, {42, 43})
+        self.assertIn("Current promotions this month.", text)
+        self.assertIn("Old promotion list from April.", text)
 
     def test_follow_up_focus_still_wins(self):
         _, candidates = build(self.PROMOTIONS, [], "promotion", focus_title="Free Drink Promotion")

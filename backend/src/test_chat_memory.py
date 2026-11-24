@@ -524,11 +524,12 @@ class ChatRouteTests(unittest.TestCase):
         env["answer_question_with_ai_provider"]("any promotion now?", smart=True)
         self.assertNotIn("exactly the title", self.answer_prompt())
         self.assertIn('"clarify": true', self.answer_prompt())
-    def test_two_same_titles_still_may_ask(self):
+    def test_two_same_titles_are_combined_not_asked(self):
         env["build_ai_chat_context"]=Mock(return_value=("### Promotion\nThis month.",
             [{"title":"Promotion","article_id":42},{"title":"Promotion","article_id":43}]))
         env["answer_question_with_ai_provider"]("Promotion", smart=True)
-        self.assertNotIn("exactly the title", self.answer_prompt())
+        self.assertIn("2 articles in the context share", self.answer_prompt())
+        self.assertNotIn('"clarify": true', self.answer_prompt())
     # The AI's own article is the answer's article ("aeon opening" -> Aeon, not JHKC).
     def test_ai_answer_uses_the_article_the_ai_named(self):
         del self.payload["history"]

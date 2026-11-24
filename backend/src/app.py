@@ -9216,20 +9216,26 @@ def build_ai_chat_context(question, limit=7, max_chars=6000, search_question=Non
                 article for article in top_articles if article is not focus_article
             ][: limit - 1]
 
-    # Typed (or clicked as an option) exactly one article's title, e.g.
+    # Typed (or clicked as an option) exactly an article's title, e.g.
     # "Promotion": that article comes first, so the AI answers it instead of
     # asking "which promotion?". Case, spaces, punctuation and emoji are
-    # ignored. Two articles with the same title stay unclear, so nothing moves.
+    # ignored. Several articles with that same title (#14 and #249 are both
+    # "Promotion", with different content) all come first, best match first,
+    # and the AI combines them -- an option list of identical titles can't
+    # be told apart, so asking only went round in circles.
     if not focus_title:
         title_key = lambda text: re.sub(r"[\W_]+", "", str(text or "").casefold())
         question_key = title_key(question)
         exact_articles = [article for article in articles
                           if question_key and title_key(article.get("title")) == question_key]
-        if len(exact_articles) == 1:
-            exact_article = exact_articles[0]
-            top_articles = [exact_article] + [
-                article for article in top_articles if article is not exact_article
-            ][: limit - 1]
+        if exact_articles:
+            exact_articles = sorted(
+                exact_articles,
+                key=lambda article: next((rank for rank, top in enumerate(top_articles) if top is article), limit),
+            )[:3]
+            top_articles = exact_articles + [
+                article for article in top_articles if not any(article is exact for exact in exact_articles)
+            ][: limit - len(exact_articles)]
 
     def clean_text(text):
         text = re.sub(r"<[^>]+>", " ", str(text or ""))
@@ -9484,6 +9490,13 @@ def answer_question_with_ai_provider(question, timeout=25, search_question=None,
             f'\n(The staff question is exactly the title of the article "{exact_titles[0]}". '
             "They have chosen that article: answer from it -- summarise its main points -- "
             "and do not ask which one they mean.)"
+        )
+    elif exact_titles:
+        # Several articles share that exact title (different content).
+        exact_title_hint = (
+            f'\n(The staff question is exactly the title "{exact_titles[0]}", which '
+            f"{len(exact_titles)} articles in the context share. Answer from all of them "
+            "together -- summarise the main points of each -- and do not ask which one they mean.)"
         )
 
     source_title_rule = (
