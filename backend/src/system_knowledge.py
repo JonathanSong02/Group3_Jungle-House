@@ -84,7 +84,9 @@ GUIDE_SECTIONS = [
         "text": "Ask questions about SOPs, products, training and daily operations: type the question and press Send. "
                 "You can ask follow-up questions, and say \"you said earlier...\". The \"+ Attach file\" button lets you send a photo, "
                 "PDF or Word file. If the AI asks which one you mean, it lists numbered choices: click one, "
-                "or type its number (for example 2), or type your own answer. Ask for \"more details\" to get a fuller answer about a document. The \"Chat History\" tab lists earlier chats and has a search "
+                "or type its number (for example 2), or type your own answer. Under an answer, \"Show more details\" "
+                "opens the full article right there (with its pictures, links and attachments), and \"Related articles\" "
+                "lists other articles you can ask about with one click. Ask for \"more details\" to get a fuller answer about a document. The \"Chat History\" tab lists earlier chats and has a search "
                 "box. If an answer is not right, choose \"No, escalate to a team lead\" to send the question to a Team Lead.",
     },
     {

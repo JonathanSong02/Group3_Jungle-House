@@ -118,6 +118,17 @@ class SystemContextTests(unittest.TestCase):
         self.assertEqual(text, "### Kiosk Opening\nTurn on the lights.\n")
 
 
+class FocusArticleTests(unittest.TestCase):
+    def test_previous_article_comes_first_even_without_matching_words(self):
+        text, candidates = build(ARTICLES, [], "what is next", focus_title="staff handbook")
+        self.assertEqual(candidates[0]["article_id"], 2)
+        self.assertTrue(text.startswith("### Staff Handbook"))
+
+    def test_unknown_focus_title_changes_nothing(self):
+        self.assertEqual(build(ARTICLES, [], "kiosk opening lights", focus_title="Nope"),
+                         build(ARTICLES, [], "kiosk opening lights"))
+
+
 class DetailModeTests(unittest.TestCase):
     LONG = " ".join(f"Lab step {i}: connect resistor {i} to the breadboard row {i}." for i in range(400))
 

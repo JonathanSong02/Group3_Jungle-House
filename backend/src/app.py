@@ -154,6 +154,19 @@ import re
 CJK_CHAR_RE = re.compile(r'[一-鿿㐀-䶿豈-﫿]')
 
 
+def record_chat_stage(stage, started):
+    """Add the seconds since `started` to the request's stopwatch.
+
+    Called around a stage instead of wrapping it, so error logs still point
+    at the real place (log_chat_failure reports the innermost app.py frame).
+    """
+    try:
+        timings = g.chat_timings
+        timings[stage] = timings.get(stage, 0.0) + (time.monotonic() - started)
+    except Exception:
+        pass
+
+
 _TITLE_WORDS_CACHE = {"words": None, "loaded_at": 0.0}
 
 
@@ -574,6 +587,20 @@ app.config.update(
 # Requirement 13 "file too large" handling). 8MB covers a normal phone photo
 # with headroom; anything bigger is almost certainly a mistake.
 app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024
+
+
+@app.after_request
+def log_chat_timing(response):
+    """One line per chat request: total and per-stage seconds (no question text)."""
+    try:
+        timings = getattr(g, "chat_timings", None)
+        started = getattr(g, "chat_started", None)
+        if timings is not None and started is not None:
+            parts = " ".join(f"{stage}={seconds:.1f}s" for stage, seconds in timings.items())
+            print(f"CHAT TIMING total={time.monotonic() - started:.1f}s {parts}".rstrip())
+    except Exception:
+        pass
+    return response
 
 
 @app.errorhandler(413)
@@ -9503,7 +9530,7 @@ DETAIL_EXCERPT_CHARS = 9000
 DETAIL_MAX_CHARS = 14000
 
 
-def build_ai_chat_context(question, limit=5, max_chars=6000, search_question=None, detail=False):
+def build_ai_chat_context(question, limit=5, max_chars=6000, search_question=None, detail=False, focus_title=""):
     """
     `search_question` optionally overrides what's used to SCORE/select
     articles (e.g. the English keywords derived from a Chinese/Malay
@@ -9593,6 +9620,19 @@ def build_ai_chat_context(question, limit=5, max_chars=6000, search_question=Non
     scored_articles.sort(key=lambda item: item[0], reverse=True)
     top_articles = [article for _, article in scored_articles[:limit]]
 
+    # Follow-up ("下一步是什么？"): the previous answer's article always comes
+    # first, even when the new wording alone would not find it.
+    if focus_title:
+        focus_key = str(focus_title).strip().casefold()
+        focus_article = next(
+            (article for article in articles if str(article.get("title") or "").strip().casefold() == focus_key),
+            None,
+        )
+        if focus_article:
+            top_articles = [focus_article] + [
+                article for article in top_articles if article is not focus_article
+            ][: limit - 1]
+
     def clean_text(text):
         text = re.sub(r"<[^>]+>", " ", str(text or ""))
         text = re.sub(r"\s+", " ", text).strip()
@@ -9673,7 +9713,7 @@ def smart_chat_enabled():
     return os.environ.get("SMART_CHAT_ENABLED", "1").strip().lower() not in ("0", "false", "off", "no")
 
 
-def answer_question_with_ai_provider(question, timeout=25, search_question=None, user_language="en", conversation_reference=False, conversation_history=None, smart=False, detail=False):
+def answer_question_with_ai_provider(question, timeout=25, search_question=None, user_language="en", conversation_reference=False, conversation_history=None, smart=False, detail=False, focus_title=""):
     """
     Returns {"answer": str, "sourceTitle": str, "article_id": int|None,
     "off_topic": bool} if the AI provider produced a usable reply (either a
@@ -9703,6 +9743,9 @@ def answer_question_with_ai_provider(question, timeout=25, search_question=None,
     """
     # "More details" questions get a much bigger part of the matching document.
     context_options = {"detail": True} if detail else {}
+    if focus_title:
+        # Follow-up: keep the previous answer's article in the context.
+        context_options["focus_title"] = focus_title
     context_text, candidate_articles = build_ai_chat_context(question, search_question=search_question, **context_options)
 
     # English behavior is unchanged from before: no KB context at all means
@@ -9770,9 +9813,13 @@ def answer_question_with_ai_provider(question, timeout=25, search_question=None,
             "how many articles or documents it has) are work questions: answer them\n"
             "from the \"System guide\", statistics, document and quiz sections of the\n"
             "context, using the menu names in the staff member's language.\n\n"
+            "Understand what the staff member means, including casual wording,\n"
+            "typos, mixed languages and earlier messages in the conversation.\n\n"
             "If the context contains several plausible answers (for example two\n"
             "stores, products or procedures) and the question does not say which\n"
-            "one, do not guess. Respond with ONLY this exact JSON:\n"
+            "one, do not guess. The same applies to a broad question (for example\n"
+            "just \"opening\") that matches several different articles: use their\n"
+            "article titles as the options. Respond with ONLY this exact JSON:\n"
             '{"answered": false, "clarify": true, "question": "...", "options": ["...", "..."]}\n'
             f'("question" is ONE short clarifying question written in {language_label}; '
             f'"options" are 2 to 4 short possible answers the staff member can click, '
@@ -9927,12 +9974,19 @@ Knowledge Base context:
         # English uses the actual quote. Translations retain the verified source quote as evidence.
         if user_language == "en":
             answer_text = quote.strip()
+    # Up to 3 other articles the search found, shown as "Related articles".
+    related = [
+        {"title": candidate["title"], "article_id": candidate["article_id"]}
+        for candidate in candidate_articles
+        if candidate.get("article_id") and candidate.get("article_id") != article_id
+    ][:3]
     return {
         "answer": answer_text,
         "sourceTitle": source_title,
         "article_id": article_id,
         "off_topic": False,
         "evidence_quote": quote.strip() if image_context else None,
+        "related": related,
     }
 
 
@@ -10041,6 +10095,12 @@ def cancel_chat_request():
 @app.route("/chat", methods=["POST"])
 @app.route("/api/chat", methods=["POST"])
 def chat():
+    # Stopwatch: seconds per stage, logged once per request (no content).
+    try:
+        g.chat_timings = {}
+        g.chat_started = time.monotonic()
+    except Exception:
+        pass
     data = {}
     uploaded_chat_image = None
     uploaded_chat_image_url = None
@@ -10209,15 +10269,18 @@ def chat():
 
         question_for_search = data.get("image_query") or question
 
+        stage_started = time.monotonic()
         if detected_language == "zh":
             question_for_search = translate_query_to_english_keywords(
                 correct_chinese_homophones(question), detected_language
             )
+            record_chat_stage("translate", stage_started)
         elif detected_language == "ms":
             question_for_search = translate_query_to_english_keywords(
                 malay_expanded_question if malay_query_was_expanded else question,
                 detected_language,
             )
+            record_chat_stage("translate", stage_started)
 
         # =========================
         # TYPO / SHORTHAND / NO-SPACE NORMALIZATION
@@ -10250,8 +10313,10 @@ def chat():
                 question, question_for_search, malay_expanded_question
             ):
                 previous_search_question = question_for_search
+                stage_started = time.monotonic()
                 question_for_search, memory_cancelled = resolve_conversation_search_query(
                     question, question_for_search, conversation_history, chat_request_id)
+                record_chat_stage("follow_up", stage_started)
                 conversation_query_was_resolved = question_for_search != previous_search_question
                 if memory_cancelled:
                     return jsonify({
@@ -10573,11 +10638,13 @@ def chat():
         # =========================
         # ✅ STEP 3: CALL AI
         # =========================
+        stage_started = time.monotonic()
         result, status_code = process_question(
             question=question,
             context={} if "image_query" in data else prepare_chat_context(data),
             search_question=question_for_search,
         )
+        record_chat_stage("rules", stage_started)
         if "image_query" in data:
             verified = hybrid_image_service.verify_text_result(question, question_for_search, result,
                 getattr(g, "chat_attachment_refs", []))
@@ -10840,6 +10907,10 @@ def chat():
             # question too, so the same document is found. Detailed answers
             # are longer, so they get more time (still under the 60 s page limit).
             detail_request = smart_eligible and wants_details(question)
+            # A follow-up keeps the article of the previous answer in view.
+            focus_title = ""
+            if smart_eligible and conversation_history:
+                focus_title = prepare_chat_context(data).get("title") or ""
             answer_search_question = question_for_search
             if detail_request and conversation_history and not conversation_query_was_resolved:
                 previous_user_question = next(
@@ -10847,6 +10918,7 @@ def chat():
                 if previous_user_question:
                     answer_search_question = f"{previous_user_question} {question_for_search}"
             try:
+                stage_started = time.monotonic()
                 ai_answer = answer_question_with_ai_provider(
                     question,
                     timeout=40 if detail_request else 25,
@@ -10856,100 +10928,55 @@ def chat():
                     conversation_history=conversation_history,
                     smart=smart_eligible,
                     detail=detail_request,
+                    focus_title=focus_title,
                 )
+                record_chat_stage("ai_answer", stage_started)
             except ai_provider_service.AIProviderNotConfiguredError:
                 ai_answer = None
             except Exception as error:
                 log_chat_failure("AI CHAT PROVIDER FALLBACK ERROR", error)
                 ai_answer = None
 
-            # Retrieval already found article steps or choice buttons: keep
-            # them (images, links, options) and only replace the text above.
-            result_type = result.get("type")
-            keep_shape = (
-                smart_eligible
-                and not should_escalate
-                and not try_ai_instead_of_clarifying
-                and result_type in ("sop", "options", "multiple_choice")
-            )
+            # AI-first (smart chat): the AI's answer replaces the old rule
+            # engine's steps / choice list; the article it used opens below the
+            # answer with "Show more details", plus up to 3 related articles.
+            # The old engine's result stays only as the backup when the AI
+            # fails or cannot answer.
+            old_engine_found_steps = result.get("type") == "sop"
             if ai_answer and ai_answer.get("clarify"):
-                if not (keep_shape and result_type == "sop"):
-                    clarify_text = ai_answer["answer"]
-                    result["reply"] = clarify_text
-                    result["answer"] = clarify_text
-                    result["message"] = clarify_text
-                    if not keep_shape:
-                        result["type"] = "text"
-                        result["options"] = []
-                        result["steps"] = []
-                        # Clickable answers to the question (sent as the next question).
-                        result["clarify_options"] = ai_answer.get("options") or []
-                    result["source"] = "ai_provider_clarify"
-                    result["fallback"] = False
-                    result["fallback_message"] = ""
-                    result["escalation_ready"] = False
-                    result["escalation_required"] = False
-                    should_escalate = False
+                clarify_text = ai_answer["answer"]
+                result["reply"] = clarify_text
+                result["answer"] = clarify_text
+                result["message"] = clarify_text
+                result["type"] = "text"
+                result["options"] = []
+                result["steps"] = []
+                # Clickable answers to the question (sent as the next question).
+                result["clarify_options"] = ai_answer.get("options") or []
+                result["source"] = "ai_provider_clarify"
+                result["fallback"] = False
+                result["fallback_message"] = ""
+                result["escalation_ready"] = False
+                result["escalation_required"] = False
+                should_escalate = False
                 ai_answer = None
-            elif ai_answer and keep_shape:
-                # The text above SOP steps must describe the same article
-                # as the steps; otherwise keep the original text.
-                same_article = (
-                    result_type != "sop"
-                    or (result.get("article_id") and ai_answer.get("article_id") == result.get("article_id"))
-                    or (not result.get("article_id") and str(ai_answer.get("sourceTitle") or "").strip().casefold()
-                        == str(result.get("title") or "").strip().casefold() != "")
-                )
-                ai_picked_other_article = (
-                    result_type == "sop"
-                    and not ai_answer.get("off_topic")
-                    and ai_answer.get("article_id")
-                    and ai_answer.get("article_id") != result.get("article_id")
-                    and not same_article
-                )
-                if not ai_answer.get("off_topic") and same_article:
-                    result["reply"] = ai_answer["answer"]
-                    result["answer"] = ai_answer["answer"]
-                    result["message"] = ai_answer["answer"]
-                    ai_answer = None
-                elif ai_picked_other_article:
-                    # The old title matcher (a fixed April list) and the AI
-                    # (live articles) picked different articles, e.g.
-                    # "aeon opening" -> "JHKC Kiosk Opening". Trust the AI:
-                    # show the steps of ITS article when the matcher has them,
-                    # otherwise its answer alone, never the wrong steps.
-                    ai_title = str(ai_answer.get("sourceTitle") or "").strip()
-                    switched = None
-                    try:
-                        alt_result, _alt_status = process_question(
-                            question=ai_title, context={}, search_question=ai_title)
-                        if (isinstance(alt_result, dict) and alt_result.get("type") == "sop"
-                                and alt_result.get("steps")
-                                and str(alt_result.get("title") or "").strip().casefold() == ai_title.casefold()):
-                            switched = alt_result
-                    except Exception as error:
-                        log_chat_failure("AI ARTICLE SWITCH ERROR", error)
-
-                    if switched:
-                        result = switched
-                        result["reply"] = ai_answer["answer"]
-                        result["answer"] = ai_answer["answer"]
-                        result["message"] = ai_answer["answer"]
-                        result["article_id"] = ai_answer["article_id"]
-                        result.setdefault("context", {})
-                        result["context"]["article_id"] = ai_answer["article_id"]
-                        remember_chat_context(data, result)
-                        ai_answer = None
-                    else:
-                        # Fall through to the normal AI-answer handling below,
-                        # without the wrong article's steps.
-                        result["type"] = "text"
-                        result["steps"] = []
-                        result["options"] = []
-                        result["context"] = {"title": ai_title, "article_id": ai_answer["article_id"]}
-                        remember_chat_context(data, result)
-                else:
-                    ai_answer = None
+            elif ai_answer and smart_eligible and not should_escalate and old_engine_found_steps and (
+                ai_answer.get("off_topic") or not ai_answer.get("article_id")
+            ):
+                # The old engine found steps but the AI declined, or answered
+                # without naming one of the articles it was given: keep the
+                # old engine's answer rather than an ungrounded one.
+                ai_answer = None
+            elif ai_answer and smart_eligible and not ai_answer.get("off_topic"):
+                ai_title = str(ai_answer.get("sourceTitle") or "").strip()
+                result["type"] = "text"
+                result["steps"] = []
+                result["options"] = []
+                result["related_articles"] = ai_answer.get("related") or []
+                # Remember which article this answer used, so the next
+                # question ("下一步是什么？") stays on it.
+                result["context"] = {"title": ai_title}
+                remember_chat_context(data, result)
 
             if ai_answer:
                 result["reply"] = ai_answer["answer"]

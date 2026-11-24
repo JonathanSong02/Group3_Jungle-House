@@ -16,7 +16,7 @@ names = {"clean_question", "is_nonsense", "normalize_context", "get_chat_memory_
          "get_ai_fail_key", "is_staff_not_satisfied", "validate_conversation_history",
          "needs_conversation_context", "resolve_conversation_search_query", "is_explicit_answer_rejection",
          "make_clarification_token", "read_clarification_token", "get_escalation_issue_question",
-         "chat_failure_language", "chat_failure_message", "attachment_error_message", "looks_like_known_term"}
+         "chat_failure_language", "chat_failure_message", "attachment_error_message", "looks_like_known_term", "record_chat_stage"}
 env = {"re": re, "json": json, "CJK_CHAR_RE": re.compile(r"[\u3400-\u9fff]"),
        "datetime": datetime, "timezone": timezone, "request": types.SimpleNamespace(remote_addr="local", is_json=True),
        "AI_CHAT_MEMORY": {}, "base64": base64, "hashlib": hashlib, "hmac": hmac, "time": time,
@@ -446,15 +446,45 @@ class ChatRouteTests(unittest.TestCase):
             "reply":"Here are the steps","answer":"Here are the steps","context":{"title":"Kiosk Opening"}},200))
         env["build_ai_chat_context"]=Mock(return_value=("### Kiosk Opening\nTurn on lights.",[{"title":"Kiosk Opening","article_id":5}]))
         self.provider.generate_ai_reply.return_value=json.dumps({"answered":True,"answer":"Mock KB answer","sourceTitle":"Kiosk Opening"})
-    def test_smart_sop_keeps_steps(self):
+    # ---- AI-first: the AI answer replaces the old engine's steps ----
+    def test_ai_first_replaces_old_steps_and_links_the_article(self):
         self.confident_sop()
+        env["build_ai_chat_context"]=Mock(return_value=("### Kiosk Opening\nTurn on lights.",[
+            {"title":"Kiosk Opening","article_id":5},{"title":"Kiosk Closing","article_id":6},
+            {"title":"Ice Bin","article_id":7},{"title":"Honey","article_id":8},{"title":"Spring","article_id":9}]))
         result=self.call()
-        self.assertEqual(result["type"],"sop")
-        self.assertEqual(result["steps"],[{"step_number":1,"text":"Turn on lights"}])
+        self.assertEqual(result["type"],"text")
+        self.assertEqual(result["steps"],[])
         self.assertEqual(result["article_id"],5)
         self.assertEqual(result["reply"],"Mock KB answer")
+        self.assertEqual([a["article_id"] for a in result["related_articles"]],[6,7,8])
+        self.assertEqual(result["context"]["title"],"Kiosk Opening")
         self.assertIn('"clarify": true', self.answer_prompt())
         env["create_escalation"].assert_not_called()
+    def test_ai_first_off_topic_keeps_old_steps(self):
+        self.confident_sop()
+        self.provider.generate_ai_reply.return_value=json.dumps({"answered":False,"off_topic":True,"declineMessage":"Ask a work question."})
+        result=self.call()
+        self.assertEqual(result["type"],"sop")
+        self.assertEqual(result["reply"],"Here are the steps")
+    def test_followup_keeps_previous_article_in_view(self):
+        self.payload["question"]="下一步是什么？"
+        self.payload["context"]={"title":"Kiosk Opening"}
+        self.provider._call_ai_provider_once.return_value="{}"
+        self.call()
+        self.assertEqual(env["build_ai_chat_context"].call_args.kwargs.get("focus_title"),"Kiosk Opening")
+    def test_stopwatch_records_each_stage(self):
+        self.call()
+        self.assertTrue({"follow_up","rules","ai_answer"} <= set(env["g"].chat_timings))
+        self.assertTrue(all(seconds >= 0 for seconds in env["g"].chat_timings.values()))
+    def test_first_question_has_no_focus(self):
+        del self.payload["history"]
+        self.payload["question"]="What is the honey price?"
+        self.call()
+        self.assertNotIn("focus_title",env["build_ai_chat_context"].call_args.kwargs)
+    def test_broad_question_prompt_asks_for_title_options(self):
+        env["answer_question_with_ai_provider"]("opening", smart=True)
+        self.assertIn("broad question", self.answer_prompt())
     # When the old title matcher and the AI pick different articles, the AI
     # (which read the live articles) wins: "aeon opening" must not stay on
     # "JHKC Kiosk Opening".
@@ -473,14 +503,15 @@ class ChatRouteTests(unittest.TestCase):
             [{"title":"JHKC Kiosk Opening","article_id":5},{"title":"Aeon Roadshow Opening List","article_id":9}]))
         self.provider.generate_ai_reply.return_value=json.dumps({"answered":True,"answer":"For AEON: set up the booth first.",
             "sourceTitle":"Aeon Roadshow Opening List"})
-    def test_smart_mismatch_switches_to_the_ai_article_steps(self):
+    def test_ai_first_uses_the_ai_article_not_the_old_match(self):
         self.aeon_mismatch()
         result=self.call()
-        self.assertEqual(env["process_question"].call_args_list[1].kwargs["question"],"Aeon Roadshow Opening List")
+        self.assertEqual(env["process_question"].call_count,1)
         self.assertEqual(result["title"],"Aeon Roadshow Opening List")
-        self.assertEqual(result["steps"],[{"step_number":1,"text":"AEON step"}])
+        self.assertEqual(result["article_id"],9)
+        self.assertEqual(result["steps"],[])
         self.assertEqual(result["reply"],"For AEON: set up the booth first.")
-        self.assertEqual(result["type"],"sop")
+        self.assertEqual(result["type"],"text")
     def test_smart_mismatch_without_steps_shows_ai_answer_only(self):
         self.aeon_mismatch(aeon_steps_found=False)
         result=self.call()
@@ -519,12 +550,15 @@ class ChatRouteTests(unittest.TestCase):
         env["_known_title_words"]=broken
         self.assertFalse(env["looks_like_known_term"]("AEON"))
         self.assertTrue(env["looks_like_known_term"]("pdf"))
-    def test_smart_sop_ignores_clarify(self):
+    def test_ai_first_clarify_even_when_old_engine_found_steps(self):
         self.confident_sop()
-        self.provider.generate_ai_reply.return_value=json.dumps({"answered":False,"clarify":True,"question":"Which kiosk?"})
+        self.provider.generate_ai_reply.return_value=json.dumps({"answered":False,"clarify":True,"question":"Which kiosk?",
+            "options":["JHKC Kiosk","Spring Kiosk"]})
         result=self.call()
-        self.assertEqual(result["reply"],"Here are the steps")
-        self.assertEqual(result["type"],"sop")
+        self.assertEqual(result["reply"],"Which kiosk?")
+        self.assertEqual(result["type"],"text")
+        self.assertEqual(result["steps"],[])
+        self.assertEqual(result["clarify_options"],["JHKC Kiosk","Spring Kiosk"])
     def test_smart_failure_keeps_result(self):
         self.confident_sop()
         self.provider.generate_ai_reply.side_effect=TimeoutError("mock")
@@ -561,7 +595,7 @@ class ChatRouteTests(unittest.TestCase):
         result=self.call()
         self.assertEqual(result["reply"],"Mock KB answer")
         self.assertEqual(result["source"],"ai_provider_answer")
-    def test_smart_options_keep_buttons(self):
+    def test_ai_first_clarify_replaces_old_choice_list(self):
         del self.payload["history"]
         self.payload["question"]="kiosk"
         options=[{"label":"Kiosk Opening"},{"label":"Kiosk Closing"}]
@@ -569,9 +603,10 @@ class ChatRouteTests(unittest.TestCase):
             "options":options,"reply":"Pick one","answer":"Pick one","context":{}},200))
         self.provider.generate_ai_reply.return_value=json.dumps({"answered":False,"clarify":True,"question":"Opening or closing?"})
         result=self.call()
-        self.assertEqual(result["options"],options)
-        self.assertEqual(result["type"],"multiple_choice")
+        self.assertEqual(result["options"],[])
+        self.assertEqual(result["type"],"text")
         self.assertEqual(result["reply"],"Opening or closing?")
+        self.assertEqual(result["source"],"ai_provider_clarify")
     def test_answer_with_line_breaks_is_accepted(self):
         # A list answer often comes back with raw line breaks inside the JSON
         # string; it must not be thrown away as "invalid JSON".

@@ -133,3 +133,12 @@ lint 仍有既有 36 errors / 10 warnings。三个修改的页面与 HEAD 的诊
 
 - `looks_like_known_term()`：系统词（pdf、quiz、sop…）或线上文章标题里的字（缓存 10 分钟）组成的短问题，不再被 `is_nonsense` 当无效输入，聊天入口与 `needs_conversation_context` 都适用。读不到标题时只认系统词。
 - 旧规则（`predict_intent.py` 读 4 月的固定 CSV）与 AI 选了不同文章时（AI 的 sourceTitle 必须是交给它的候选文章之一），改信 AI：用该标题重跑 `process_question` 取得那篇的步骤与图片；取不到就只显示 AI 答案、清掉错误的步骤。AI 指名的文章不在候选内时仍保留原结果。
+
+## 2026-11-24 更新：AI 先答、Show more details、Related articles、计时器（LIONG1934）
+
+- AI 先答：智能模式下，AI 的回答取代旧规则（`process_question`）的步骤卡片或选项清单；旧规则只在 AI 失败、AI 无法回答，或 AI 婉拒、却说不出依据的文章（而旧规则找到了步骤）时作为备用。组长批准答案、问候、Step/next 控制、图片聊天不变。
+- 回应新增 `related_articles`（最多 3 篇其他候选文章）；`result.context.title` 记住本次文章，下一题以 `focus_title` 把该文章放在 AI 上下文第一位（`build_ai_chat_context(focus_title=...)`）。
+- 提示加强：理解口语、错字、混合语言；笼统问题（例如只打 "opening"）匹配多篇时，以文章标题当选项反问。
+- 计时器：`record_chat_stage()` 记录 translate / follow_up / rules / ai_answer 秒数，`log_chat_timing` 每题印一行 `CHAT TIMING total=…`（不含问题内容）。刻意不包装函数，以免 `log_chat_failure` 的错误位置变成包装函数。
+- 翻译与追问理解**未**并行：并行会让中文追问时 Alan 的“关键词必须来自用户原话”检查更常失败，影响准确率；先看计时数据再决定。
+- 前端：`ArticleDetail.jsx` 的内容、附件、相关链接拆成共用元件 `components/ArticleBody.jsx`（改前改后 HTML 完全相同、截图逐像素相同）；`components/ChatArticleDetails.jsx` 在聊天答案下提供可展开的 Show more details（同一元件、同一样式，不跳页）；Related articles 用编号按钮，点选即以该标题提问。测试：`Chat.details.test.js`。

@@ -11,6 +11,7 @@ import { isHtmlContent, rewriteSrcset, sanitizeHtml } from '../utils/safeHtml';
 import { imageReferencesForQuestion } from '../utils/imageAttachmentContext';
 import { imageFailureDetails } from '../utils/imageServiceError';
 import { displayStoredText } from '../utils/storedChatText';
+import ChatArticleDetails from '../components/ChatArticleDetails';
 
 
 const starterMessages = [
@@ -1221,6 +1222,9 @@ function buildAiMessage(data, t) {
     section: data.section || backendContext.section || '',
     notes: data.notes || [],
     steps: Array.isArray(data.steps) ? data.steps : [],
+    related_articles: Array.isArray(data.related_articles)
+      ? data.related_articles.filter((item) => item && item.title && item.article_id).slice(0, 3)
+      : [],
     clarify_options: Array.isArray(data.clarify_options)
       ? data.clarify_options.filter((option) => typeof option === 'string' && option.trim()).slice(0, 4)
       : [],
@@ -2561,6 +2565,46 @@ const removeSelectedImage = () => {
                 </div>
               );
             })() : null}
+
+            {/* AI-first answer: open the article it used, in place. */}
+            {message.sender === 'ai' && message.source === 'ai_provider_answer' && message.article_id ? (
+              <ChatArticleDetails articleId={message.article_id} />
+            ) : null}
+
+            {/* Up to 3 other articles; choosing one asks about it. */}
+            {message.sender === 'ai' && message.source === 'ai_provider_answer' && Array.isArray(message.related_articles) && message.related_articles.length > 0 ? (
+              <div style={{ marginTop: '14px' }}>
+                <p style={{ margin: '0 0 8px', fontSize: '0.9em', fontWeight: 600, opacity: 0.8 }}>
+                  {t('chat.relatedArticles')}
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {message.related_articles.map((item, itemIndex) => (
+                    <button
+                      key={item.article_id}
+                      type="button"
+                      className="related-article-btn"
+                      disabled={loading}
+                      onClick={() => handleSend(item.title)}
+                      style={CLARIFY_OPTION_STYLE}
+                      onMouseEnter={(event) => {
+                        event.currentTarget.style.transform = 'translateY(-2px)';
+                        event.currentTarget.style.boxShadow = '0 10px 22px rgba(122, 92, 0, 0.14)';
+                        event.currentTarget.style.borderColor = '#d89b00';
+                      }}
+                      onMouseLeave={(event) => {
+                        event.currentTarget.style.transform = 'none';
+                        event.currentTarget.style.boxShadow = CLARIFY_OPTION_STYLE.boxShadow;
+                        event.currentTarget.style.borderColor = '#e8c56b';
+                      }}
+                    >
+                      <span className="clarify-option-number" style={CLARIFY_NUMBER_STYLE}>{itemIndex + 1}</span>
+                      <span className="clarify-option-label" style={{ flex: 1 }}>{item.title}</span>
+                      <span aria-hidden="true" style={{ opacity: 0.55 }}>›</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
             {message.clarification_requested && message.question ? (
               <button type="button" className="secondary-btn" disabled={loading} onClick={() => handleEscalationOffer(message, true)}>
