@@ -6,6 +6,11 @@ question goes through the real chat search (build_ai_chat_context), and we
 check whether that sentence actually reaches the text the AI reads. No AI is
 called, so it costs nothing; it only reads the database once.
 
+When search picks another article that says the same thing (most of the
+sentence's words close together), it counts as found ("foundElsewhere"):
+the same step is often written in several articles. The report also lists
+duplicate articles (same title, or same text under different titles).
+
 A miss is labelled:
   wrong_article -- search did not pick the article at all;
   line_cut      -- the article was picked but the sentence did not fit.
@@ -25,6 +30,7 @@ MAX_QUESTIONS = 1500
 MAX_MISSES_SHOWN = 200
 SNIPPET_CHARS = 60
 NEAR_DUPLICATE = 0.7
+SAME_INFO_SHARE = 60  # percent of the sentence's words, close together
 
 _STOP = set("""a an the and or of to in on at for with by from is are be it this that these those you your
 we our they their them as if then than so not no do does did can will should must have has had into out
@@ -128,6 +134,60 @@ class _NearDuplicates:
         return False
 
 
+def _stem(word):
+    for suffix in ("ing", "ed", "es", "s"):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+            return word[: -len(suffix)]
+    return word
+
+
+def same_info_in(sentence, context):
+    """True when one short stretch of the context says the same thing in
+    other words, e.g. "Click Shopify app and start the session for iPad." vs
+    "Open the Shopify POS app on the iPad and start a session." (another
+    article). At least 60% of the sentence's words, and at least 3, must
+    appear close together -- the whole context together does not count.
+    """
+    mine = {_stem(w) for w in words(sentence)}
+    if len(mine) < 3:
+        return False
+    sequence = [_stem(w) for w in words(context)]
+    window = max(8, 2 * len(mine))
+    needed = max(3, -(-len(mine) * SAME_INFO_SHARE // 100))
+    for start in range(0, max(len(sequence) - window, 0) + 1):
+        if len(mine.intersection(sequence[start:start + window])) >= needed:
+            return True
+    return False
+
+
+def duplicate_articles(articles):
+    """Groups of live articles with the same title, or the same text under different titles."""
+    def normal(text):
+        return re.sub(r"\s+", " ", str(text or "")).strip().casefold()
+
+    groups = []
+    by_title = defaultdict(list)
+    for article in articles:
+        by_title[normal(article.get("title"))].append(article)
+    for group in by_title.values():
+        if len(group) > 1:
+            groups.append(("same_title", group))
+    by_content = defaultdict(list)
+    for article in articles:
+        content = normal(_clean(str(article.get("content") or "")))
+        if len(content) >= 50:
+            by_content[content].append(article)
+    for group in by_content.values():
+        if len({normal(a.get("title")) for a in group}) > 1:
+            groups.append(("same_content", group))
+    return [{
+        "reason": reason,
+        "titles": sorted({a.get("title") or "" for a in group}),
+        "articles": [{"article_id": a.get("article_id"), "title": a.get("title") or "",
+                      "category": a.get("category") or ""} for a in group],
+    } for reason, group in groups]
+
+
 def run_audit(articles, documents, build_context, progress=None):
     """Ask every generated question; returns the report dict.
 
@@ -138,11 +198,16 @@ def run_audit(articles, documents, build_context, progress=None):
     duplicates = _NearDuplicates(all_sentences)
     preloaded = (articles, documents)
     passed = 0
+    found_elsewhere = 0
     misses = []
     for done, item in enumerate(questions, 1):
         context, candidates = build_context(item["question"], preloaded)
         if duplicates.visible(item["sentence"], context):
             passed += 1
+        elif same_info_in(item["sentence"], context):
+            # Search picked another article that says the same thing.
+            passed += 1
+            found_elsewhere += 1
         else:
             chosen_ids = [c.get("article_id") for c in candidates]
             misses.append({
@@ -162,6 +227,8 @@ def run_audit(articles, documents, build_context, progress=None):
         "total": total,
         "passed": passed,
         "rate": round(passed / total, 4) if total else None,
+        "foundElsewhere": found_elsewhere,
+        "duplicates": duplicate_articles(articles),
         "wrongArticle": sum(1 for m in misses if m["cause"] == "wrong_article"),
         "lineCut": sum(1 for m in misses if m["cause"] == "line_cut"),
         "misses": misses[:MAX_MISSES_SHOWN],

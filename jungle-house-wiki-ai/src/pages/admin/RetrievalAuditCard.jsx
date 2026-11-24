@@ -54,6 +54,7 @@ export default function RetrievalAuditCard() {
 
   const result = audit?.result;
   const misses = result?.misses || [];
+  const duplicates = result?.duplicates || [];
   const shownMisses = showAll ? misses : misses.slice(0, MISSES_PREVIEW);
   const percent = result?.rate == null ? '-' : `${(result.rate * 100).toFixed(1)}%`;
   const failed = audit?.status === 'failed';
@@ -106,6 +107,9 @@ export default function RetrievalAuditCard() {
                   articles: result.articleCount,
                 })}
               </small>
+              {result.foundElsewhere ? (
+                <small>{t('ai.audit.foundElsewhere', { count: result.foundElsewhere })}</small>
+              ) : null}
             </div>
             <div>
               <span>{t('ai.audit.wrongArticle')}</span>
@@ -123,6 +127,35 @@ export default function RetrievalAuditCard() {
               seconds: Math.round(result.durationSeconds),
             })}
           </p>
+
+          {duplicates.length ? (
+            <>
+              <h3 className="ais-audit-subtitle">
+                {t('ai.audit.duplicates', { count: duplicates.length })}
+              </h3>
+              <p className="ais-audit-hint">{t('ai.audit.duplicatesHint')}</p>
+              <ol className="ais-audit-misses ais-audit-duplicates">
+                {duplicates.map((group, index) => (
+                  <li key={`dup-${index}`}>
+                    <div className="ais-audit-miss-head">
+                      <strong>{group.titles.join(' / ')}</strong>
+                      <span className="ais-audit-cause duplicate">
+                        {group.reason === 'same_content'
+                          ? t('ai.audit.sameContent')
+                          : t('ai.audit.sameTitle', { count: group.articles.length })}
+                      </span>
+                    </div>
+                    {group.articles.map((article) => (
+                      <div key={article.article_id}>
+                        <span>#{article.article_id}</span> {article.title}
+                        {article.category ? ` · ${article.category}` : ''}
+                      </div>
+                    ))}
+                  </li>
+                ))}
+              </ol>
+            </>
+          ) : null}
 
           {misses.length ? (
             <>

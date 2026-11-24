@@ -86,6 +86,49 @@ class RunTests(unittest.TestCase):
         self.assertFalse(duplicates.visible("Charge the iPad terminal overnight in the back office drawer.", context))
 
 
+class SameInfoTests(unittest.TestCase):
+    SENTENCE = "Click Shopify app and start the session for iPad."
+
+    def test_same_step_in_other_words_counts(self):
+        context = "### Shopify POS app Opening\nOpen the Shopify POS app on the iPad and start a new session."
+        self.assertTrue(audit.same_info_in(self.SENTENCE, context))
+
+    def test_words_scattered_over_the_context_do_not_count(self):
+        filler = " ".join(f"filler{i}" for i in range(30))
+        context = f"Click the bell. {filler} Download the app. {filler} Start early. {filler} New iPad case."
+        self.assertFalse(audit.same_info_in(self.SENTENCE, context))
+
+    def test_too_few_shared_words_do_not_count(self):
+        self.assertFalse(audit.same_info_in(self.SENTENCE, "Charge the iPad overnight in the drawer."))
+
+    def test_run_counts_it_as_found_elsewhere(self):
+        article = {"article_id": 5, "title": "Aeon Roadshow Opening List", "content": f"<p>{self.SENTENCE}</p>"}
+        context = "### Shopify POS app Opening\nOpen the Shopify POS app on the iPad and start a new session."
+        report = audit.run_audit([article], {}, lambda q, p: (context, [{"article_id": 9, "title": "Shopify"}]))
+        self.assertEqual((report["passed"], report["foundElsewhere"], report["misses"]), (1, 1, []))
+
+
+class DuplicateTests(unittest.TestCase):
+    def test_same_title_and_same_text_are_listed(self):
+        text = "<p>Keep the stirrers and tissues under the counter, left side.</p>"
+        articles = [
+            {"article_id": 1, "title": "Stirrer & Tissue Location SOP", "category": "SOP", "content": text},
+            {"article_id": 2, "title": "stirrer &  tissue location sop ", "category": "Notion", "content": "<p>Other</p>"},
+            {"article_id": 3, "title": "Where are the stirrers", "category": "SOP", "content": text},
+            {"article_id": 4, "title": "Closing", "category": "SOP", "content": "<p>Lock up.</p>"},
+        ]
+        groups = audit.duplicate_articles(articles)
+        same_title = next(g for g in groups if g["reason"] == "same_title")
+        self.assertEqual([a["article_id"] for a in same_title["articles"]], [1, 2])
+        same_text = next(g for g in groups if g["reason"] == "same_content")
+        self.assertEqual([a["article_id"] for a in same_text["articles"]], [1, 3])
+        self.assertEqual(len(groups), 2)
+
+    def test_report_includes_duplicates(self):
+        report = audit.run_audit([OPENING, dict(OPENING, article_id=7)], {}, lambda q, p: ("", []))
+        self.assertEqual(len(report["duplicates"]), 1)
+
+
 class BackgroundTests(unittest.TestCase):
     def setUp(self):
         audit._state.update(status="idle", done=0, total=0, result=None, error=None)

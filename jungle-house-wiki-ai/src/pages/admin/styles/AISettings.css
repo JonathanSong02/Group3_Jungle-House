@@ -1220,7 +1220,8 @@
   border: 1px solid #ebc8c1;
 }
 
-.ais-audit-misses .ais-audit-cause.line_cut {
+.ais-audit-misses .ais-audit-cause.line_cut,
+.ais-audit-misses .ais-audit-cause.duplicate {
   color: var(--ais-honey-dark);
   background: var(--ais-honey-soft);
   border-color: #e8c982;
@@ -1234,6 +1235,12 @@
 
 .ais-audit-card > .ais-btn {
   justify-self: start;
+}
+
+/* Keep "Start check" on one line next to the long hint text. */
+.ais-audit-card .ais-section-head > .ais-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 @media (max-width: 620px) {

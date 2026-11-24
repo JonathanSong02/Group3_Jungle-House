@@ -34,7 +34,10 @@ const en = translations.en;
 
 const RESULT = {
   articleCount: 512, total: 1200, passed: 1150, rate: 0.9583, wrongArticle: 30, lineCut: 20,
-  durationSeconds: 184.2, finishedAt: '2026-11-24T04:00:00+00:00',
+  durationSeconds: 184.2, finishedAt: '2026-11-24T04:00:00+00:00', foundElsewhere: 40,
+  duplicates: [{ reason: 'same_title', titles: ['Stirrer & Tissue Location SOP'], articles: [
+    { article_id: 31, title: 'Stirrer & Tissue Location SOP', category: 'SOP' },
+    { article_id: 88, title: 'Stirrer & Tissue Location SOP', category: 'Notion' }] }],
   misses: Array.from({ length: 12 }, (_, i) => ({
     question: `cabinet unlock ${i}`, article_id: i, article_title: 'JHKC Opening Checklist',
     expected: 'Unlock all cabinet doors from B, C, E, F, K and L.',
@@ -67,11 +70,15 @@ test('start, progress, then score, causes and misses', async () => {
   assert.match(text, /95\.8%/);
   assert.match(text, /1150 of 1200 questions · 512 articles/);
   assert.match(text, /took 184s/);
-  assert.equal(document.querySelectorAll('.ais-audit-misses li').length, 10, 'first 10 shown');
+  assert.match(text, /Includes 40 found in another article/);
+  assert.match(text, /Duplicate articles \(1\)/);
+  assert.match(text, /2 with the same title/);
+  assert.match(text, /#88 Stirrer & Tissue Location SOP · Notion/);
+  assert.equal(document.querySelectorAll('.ais-audit-misses:not(.ais-audit-duplicates) li').length, 10, 'first 10 shown');
   assert.equal(document.querySelectorAll('.ais-audit-cause.line_cut').length, 5);
   assert.match(text, /Search picked:.*Promotion · Closing/);
   await React.act(async () => button('Show all (12)').click());
-  assert.equal(document.querySelectorAll('.ais-audit-misses li').length, 12);
+  assert.equal(document.querySelectorAll('.ais-audit-misses:not(.ais-audit-duplicates) li').length, 12);
   assert.equal(button(en['ai.audit.start']).disabled, false);
 
   await React.act(async () => root.unmount());

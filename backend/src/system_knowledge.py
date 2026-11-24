@@ -186,7 +186,9 @@ GUIDE_SECTIONS = [
                 "test. Lightweight models (such as Gemini Flash or Claude Haiku) are faster and cheaper. "
                 "\"Check search accuracy\" (below) asks the chat search a few questions about every article and shows "
                 "the percentage that found their answer, plus each missed question with its cause (wrong article "
-                "picked, or right article but the line cut off). It uses no AI and costs nothing; press \"Start "
+                "picked, or right article but the line cut off). An answer found in another article that says the "
+                "same thing counts as found. It also lists duplicate articles (same title, or same text) so one "
+                "can be moved to the bin in Content Management. It uses no AI and costs nothing; press \"Start "
                 "check\" now and then, especially after adding many articles.",
     },
     {

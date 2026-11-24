@@ -161,3 +161,7 @@ lint 仍有既有 36 errors / 10 warnings。三个修改的页面与 HEAD 的诊
 - 用 CSV 的 48 篇试跑：119 题对 118 题（99%），约 3 秒；以 500 篇长文章估计约 3–4 分钟。
 - 速度：用 500 篇长文章实测 `build_ai_chat_context` 每题约 0.15 秒，所以聊天慢不是找文章造成，没有加缓存。
 - 测试：`test_retrieval_audit_live.py`、`test_retrieval_audit.py::LiveCheckTests`、`RetrievalAuditCard.test.js`；系统使用说明（`system_knowledge.GUIDE_SECTIONS` 的 AI Model Settings）已加入此功能。
+- 第二版（同日，看过正式结果 85.6%、662 篇、193 题选错文章之后）：
+  - 搜索选到另一篇讲同一件事的文章也算找到（`same_info_in`：该句至少 60%、且至少 3 个字，要在上下文里靠在一起出现；整段上下文零散出现不算），另计 `foundElsewhere`。用 CSV 随机配对测过，误判 2/499（两句本来就在两份 roadshow 清单里都有）。
+  - 报告新增重复的文章（`duplicate_articles`：同标题，或标题不同但内容完全相同），附文章编号与分类，方便在内容管理清掉多余的。
+  - “开始检查”按钮固定一行（不再被说明文字挤成两行）。
