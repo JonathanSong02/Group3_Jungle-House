@@ -36,6 +36,8 @@ migration (`backend/migrations/0001_baseline.py`) relates to production. How to 
 | `login_lockout.py` · `ensure_counter_table` | login request | creates `login_rate_limit` (the login failure counters) | `CREATE TABLE IF NOT EXISTS` |
 | `login_lockout.py` · `ensure_known_device_table` | login, `/auth/me`, reset password, change password requests | creates `login_known_devices` (FK → `users`, ON DELETE CASCADE). **Not in production yet**: migration 0003, see section 7 | `IF NOT EXISTS` |
 | `document_text_service.py` · `ensure_table` | after an article is added or edited, and once 30 s after the app starts (background thread; off with `DOCUMENT_TEXT_BACKFILL=0`) | creates `article_attachment_text` (FK → `wiki_article`, ON DELETE CASCADE). **Not in production yet**: migration 0005, see section 8 | `IF NOT EXISTS` |
+| `semantic_search.py` · `ensure_table` | background meaning-search sync, 60 s after the app starts and then every 5 minutes (off with `SEMANTIC_SEARCH_SYNC=0`, or with `DOCUMENT_TEXT_BACKFILL=0` when that is not set) | creates `article_chunk_embedding` (FK → `wiki_article`, ON DELETE CASCADE). **Not in production yet**: migration 0007, see section 9 | `IF NOT EXISTS` |
+| `retrieval_audit.py` · `ensure_question_table` | a manager presses "Check search accuracy" on AI Model Settings | creates `retrieval_audit_question` (FK → `wiki_article`, ON DELETE CASCADE). **Not in production yet**: migration 0007, see section 9 | `IF NOT EXISTS` |
 | `app.py` · `ensure_password_reset_tokens_table` | forgot / validate / reset password requests | creates `password_reset_tokens` (FK → `users`, ON DELETE CASCADE) | `IF NOT EXISTS` |
 | `app.py` · `ensure_declined_registration_history_table` | register request (called before the registration transaction, because DDL commits) | creates `declined_registration_history` | `IF NOT EXISTS` |
 | `app.py` · `ensure_ai_chat_log_table` | chat, chat test, analytics requests | creates `ai_chat_log` + 5 indexes | `IF NOT EXISTS` |
@@ -184,3 +186,45 @@ Old `.doc` files, images and scanned PDFs are not read.
 
 Files linked inside the article content (for example Notion-synced attachments) are read too. Unique `(article_id, file_url)`. The app creates the table at runtime, so the site works whether or not 0005 has
 been applied. The table can be emptied at any time; it is rebuilt from the files on the next start.
+
+## 9. Added after the baseline: meaning search and accuracy-check questions (migration 0007)
+
+Both tables are created by the app at runtime with exactly the migration's definition (a test compares them), so the
+site works whether or not 0007 has been applied. Both can be emptied at any time and are rebuilt automatically.
+
+### `article_chunk_embedding`
+
+Every live article, and the readable text of its PDF / Word attachments (at most 40 sections), cut into sections
+of about 900 characters. Each section has Google's text embedding (`gemini-embedding-2`, or `gemini-embedding-001`
+when the newer model is unavailable): 768 numbers that describe its meaning. The chat compares a question's
+embedding with these to find articles that mean the same thing even in other words ("make ice" → "Ice machine").
+Only used when the AI provider in AI Model Settings is Gemini (same key). Code: `backend/src/semantic_search.py`.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `chunk_embedding_id` | INT, auto-increment, primary key | |
+| `article_id` | INT NOT NULL, FK → `wiki_article.article_id` ON DELETE CASCADE | the article |
+| `chunk_index` | INT NOT NULL | position of the section (article text first, then attachments) |
+| `source` | VARCHAR(20) NOT NULL | `article` or `document` (attachment) |
+| `content_hash` | CHAR(64) NOT NULL | SHA-256 of title, category, content and attachment text; the article is re-embedded only when it changes |
+| `model` | VARCHAR(64) NOT NULL | embedding model used |
+| `chunk_text` | TEXT NOT NULL | the section, an exact piece of the article's plain text |
+| `vector` | MEDIUMBLOB NOT NULL | 768 float32 numbers (3 KB) |
+| `created_at` | DATETIME NOT NULL | |
+
+Unique `(article_id, chunk_index)`. About 3,000–4,000 rows for ~660 articles (roughly 10 MB of vectors).
+
+### `retrieval_audit_question`
+
+One AI-written test question per article for "Check search accuracy": the way staff would ask, in different words
+than the article, plus the sentence of the article that answers it (kept only if it is really in the article).
+Re-written when the article changes. Code: `backend/src/retrieval_audit.py`.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `audit_question_id` | INT, auto-increment, primary key | |
+| `article_id` | INT NOT NULL, FK → `wiki_article.article_id` ON DELETE CASCADE, unique | the article |
+| `content_hash` | CHAR(64) NOT NULL | SHA-256 of the article's title and content when the question was written |
+| `question` | VARCHAR(500) NOT NULL | the test question |
+| `quote` | TEXT NOT NULL | the article sentence that answers it |
+| `created_at` | DATETIME NOT NULL | |

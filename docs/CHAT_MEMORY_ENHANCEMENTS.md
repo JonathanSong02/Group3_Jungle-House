@@ -181,3 +181,26 @@ lint 仍有既有 36 errors / 10 warnings。三个修改的页面与 HEAD 的诊
 - 检查搜索准确率：新增「换字题」——AI 为每篇写 1 题员工口吻、用不同字的问题，加上文章里回答它的原句（原句必须真的在文章里才收），存在 `retrieval_audit_question`，文章改了才重写；第一次约 80 次 AI 呼叫（几分钱）。报告新增对照表：原字题／换字题 × 只看字／看字+看意思；错题标示「换字题」。题目的「意思」先分批一次取得。
 - 测试：`test_semantic_search.py`（段落、Google 请求格式与换型号、批次、只重做有变的文章、合并排名、换字题验证与对照）、`test_retrieval_audit.py::MeaningSearchFallbackTests`、`RetrievalAuditCard.test.js`；`test_schema_migrations.py` 加入 0007。
 - 本地无法用真的 Google 测试（没有 key）；上线后由「检查搜索准确率」的对照表看实际效果，再调整 `FUSION_RANK_OFFSET` / `SEMANTIC_WEIGHT`。
+
+## 2026-11-23 至 11-24 总览（LIONG1934）
+
+两天内 AI 聊天的改动一览（细节见上面各日期段落）。全部经用户同意，由用户提交。
+
+| 日期 | 提交 | 改了什么 |
+|---|---|---|
+| 11-23 | 567f7ae | 聊天记得对话、自然回答、会反问；读得懂 PDF 和 Word 附件（`article_attachment_text`，migration 0005） |
+| 11-23 | c4612af | 文件一次性总结（migration 0006）；AI 能回答系统里有什么（文章数、分类、quiz）；内建系统使用说明 `GUIDE_SECTIONS` |
+| 11-23 | f7435c0 | 反问时给选项按；"详细"给更完整答案；修好清单答案被丢掉 |
+| 11-23 | 9536256 | Gemini 少思考（`thinkingLevel=low`）加速；答案不再出现 `**`；"更多细节"追问找得到文件 |
+| 11-23 | 263075c | AI Settings：型号下拉选单（即时清单、推荐标示）、钥匙遮住加 Edit、测试成功才能存 |
+| 11-23 | 832da31 | 反问选项改成直排编号 1 2 3，可打数字选，选过会标示 |
+| 11-24 | b7d89fe | 短问题（PDF / AEON / SOP）不再被当乱打；AI 与旧规则选不同文章时听 AI |
+| 11-24 | 4a3b00c | AI 先答；答案下可展开整篇文章（Show more details）与相关文章；计时器 `CHAT TIMING` |
+| 11-24 | c705d20 | 找段落更准（只放相关段落、罕见词加权、7 篇）；AI Settings 加「检查搜索准确率」 |
+| 11-24 | 25176a7 | 检查更会判断（别篇讲同一件事也算对）；列出重复文章；按钮固定一行；回应附 `X-Chat-Timing` |
+| 11-24 | d5334b6 | 聊天加速：AI 与旧规则同时跑（`EarlyCall`）；图片搜索约 20 次查询减为 3 次 |
+| 11-24 | 9bc5370 | 看意思搜索（Gemini embedding，migration 0007）；检查加入换字题与「只看字 vs 看字+看意思」对照 |
+
+动到他人代码（已告知或待告知）：XinWei（旧规则 `process_question`，现为后备；图片搜索只跑一次、加计时）、Alan（追问理解；`db_helper.search_image_retrieval` 改为批次查询，规则不变）、Jonathan（`ArticleDetail` 拆出共用的 `ArticleBody`）。
+
+待办：上线后跑「检查搜索准确率」看对照表，再调 `FUSION_RANK_OFFSET` / `SEMANTIC_WEIGHT`；看 `X-Chat-Timing` 决定是否做 C（追问理解只在像追问时叫 AI，Alan 的功能，需同意）与 D（换 gemini-3.6-flash 用 minimal 思考）。
