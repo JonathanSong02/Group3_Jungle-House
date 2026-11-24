@@ -1645,6 +1645,88 @@ def debug_uploads():
 # =========================
 # DATABASE CONNECTION
 # =========================
+# Connection reuse ("线不挂断", 2026-11-25): opening a MySQL connection
+# (network + login) was most of the time of small requests such as
+# /api/auth/me (1.70 s measured). Up to DB_POOL_SIZE connections are kept
+# open after conn.close() and handed to the next get_db_connection() call.
+#
+# Safety rules -- callers keep the exact same "connect, use, close" code:
+# * close() never raises, and a second close() does nothing.
+# * Every returned connection is rolled back first, so the next request
+#   never sees an unfinished transaction or an old snapshot of the data.
+# * A connection idle for more than DB_POOL_PING_AFTER_SECONDS is checked
+#   (ping) before reuse; a dead one is thrown away and a new one opened.
+# * Basket empty -> a new connection, exactly as before. Basket full -> the
+#   returned connection is really closed. Any problem in the reuse code
+#   -> the connection is closed and the old behaviour applies.
+# * DB_POOL_SIZE=0 turns reuse off completely (used by tests).
+# Only app.py's get_db_connection uses it; notion_sync_service.py,
+# ai_provider_service.py and db_helper.py keep their own connections.
+import queue as db_pool_queue
+
+DB_POOL_SIZE = max(0, int(os.getenv("DB_POOL_SIZE", "10") or 0))
+DB_POOL_PING_AFTER_SECONDS = 30
+_DB_POOL_IDLE = db_pool_queue.LifoQueue(maxsize=max(DB_POOL_SIZE, 1))
+
+
+def _close_db_connection_quietly(connection):
+    try:
+        connection.close()
+    except Exception:
+        pass
+
+
+class PooledDbConnection:
+    """A normal connection whose close() puts it back for reuse."""
+
+    def __init__(self, connection, config_key):
+        object.__setattr__(self, "_connection", connection)
+        object.__setattr__(self, "_config_key", config_key)
+
+    def __getattr__(self, name):
+        connection = object.__getattribute__(self, "_connection")
+        if connection is None:
+            raise mysql.connector.errors.OperationalError("Connection already closed.")
+        return getattr(connection, name)
+
+    def __setattr__(self, name, value):
+        setattr(object.__getattribute__(self, "_connection"), name, value)
+
+    def close(self):
+        connection = object.__getattribute__(self, "_connection")
+        if connection is None:
+            return  # closed twice: nothing to do
+        object.__setattr__(self, "_connection", None)
+        try:
+            # End any transaction (also a read-only one, whose snapshot
+            # would otherwise show the next request old data).
+            connection.rollback()
+            _DB_POOL_IDLE.put_nowait((connection, object.__getattribute__(self, "_config_key"), time.monotonic()))
+        except Exception:
+            # Unread results, a dead connection, or the basket is full.
+            _close_db_connection_quietly(connection)
+
+    disconnect = close
+
+
+def _take_idle_db_connection(config_key):
+    """A reusable open connection from the basket, or None."""
+    while True:
+        try:
+            connection, key, returned_at = _DB_POOL_IDLE.get_nowait()
+        except db_pool_queue.Empty:
+            return None
+        if key != config_key:
+            _close_db_connection_quietly(connection)  # settings changed
+            continue
+        try:
+            if time.monotonic() - returned_at <= DB_POOL_PING_AFTER_SECONDS or connection.is_connected():
+                return connection
+        except Exception:
+            pass
+        _close_db_connection_quietly(connection)
+
+
 def get_db_connection():
     """Connect using Railway Variables or backend/src/.env, never embedded credentials."""
     host = os.getenv("DB_HOST") or os.getenv("MYSQL_HOST") or os.getenv("MYSQLHOST")
@@ -1654,14 +1736,20 @@ def get_db_connection():
     database = os.getenv("DB_NAME") or os.getenv("MYSQL_DATABASE") or os.getenv("MYSQLDATABASE")
     if not all((host, username, password, database)):
         raise RuntimeError("Missing MySQL environment configuration (DB_* or MYSQL*).")
+    config_key = hashlib.sha256(f"{host}|{port}|{username}|{password}|{database}".encode("utf-8")).hexdigest()
+    if DB_POOL_SIZE:
+        idle_connection = _take_idle_db_connection(config_key)
+        if idle_connection is not None:
+            return PooledDbConnection(idle_connection, config_key)
     try:
-        return mysql.connector.connect(
+        connection = mysql.connector.connect(
             host=host, port=int(port), user=username,
             password=password, database=database,
         )
     except mysql.connector.Error:
         print("DATABASE CONNECTION ERROR: Check MySQL connectivity and Railway Variables.")
         raise
+    return PooledDbConnection(connection, config_key) if DB_POOL_SIZE else connection
 
 
 # =========================
