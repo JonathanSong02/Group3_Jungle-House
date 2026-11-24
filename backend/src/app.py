@@ -9510,15 +9510,19 @@ def answer_question_with_ai_provider(question, timeout=25, search_question=None,
             "context, using the menu names in the staff member's language.\n\n"
             "Understand what the staff member means, including casual wording,\n"
             "typos, mixed languages and earlier messages in the conversation.\n\n"
-            "If the context contains several plausible answers (for example two\n"
-            "stores, products or procedures) and the question does not say which\n"
-            "one, do not guess. The same applies to a broad question (for example\n"
-            "just \"opening\") that matches several different articles: use their\n"
-            "article titles as the options. Respond with ONLY this exact JSON:\n"
-            '{"answered": false, "clarify": true, "question": "...", "options": ["...", "..."]}\n'
-            f'("question" is ONE short clarifying question written in {language_label}; '
-            f'"options" are 2 to 4 short possible answers the staff member can click, '
-            f'also in {language_label}.)\n\n'
+            # An exact article title was typed or clicked: leave out the
+            # "ask which one" rule entirely (the AI kept asking "which
+            # promotion?" for "promotion" even with the hint alone).
+            + ("" if exact_title_hint else
+               "If the context contains several plausible answers (for example two\n"
+               "stores, products or procedures) and the question does not say which\n"
+               "one, do not guess. The same applies to a broad question (for example\n"
+               "just \"opening\") that matches several different articles: use their\n"
+               "article titles as the options. Respond with ONLY this exact JSON:\n"
+               '{"answered": false, "clarify": true, "question": "...", "options": ["...", "..."]}\n'
+               f'("question" is ONE short clarifying question written in {language_label}; '
+               f'"options" are 2 to 4 short possible answers the staff member can click, '
+               f'also in {language_label}.)\n\n')
             + source_title_rule
         )
     else:

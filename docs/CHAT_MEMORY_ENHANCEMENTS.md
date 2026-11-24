@@ -236,3 +236,4 @@ lint 仍有既有 36 errors / 10 warnings。三个修改的页面与 HEAD 的诊
 - 笼统问题（"any promotion now?""现在有什么促销"）照旧可以反问让员工选。
 - 只比对员工原本打的字（`question`），不比对中文/马来文翻成的英文关键字。
 - 测试：`test_document_context.py::ExactTitleTests`（5 个）、`test_chat_memory.py`（标题题加提示、笼统题不加、同标题两篇不加）。
+- 补充（同日）：上线后打"promotion"仍被反问。原因是提示词里"笼统问题要反问"的规则（例子就是 "opening"）比提示更强，AI 照样反问。现在标题完全相同时，**整段反问规则不放进提示词**，AI 只能回答或说找不到；笼统问题的提示词不变。测试同步更新。

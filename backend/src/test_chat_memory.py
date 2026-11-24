@@ -515,11 +515,15 @@ class ChatRouteTests(unittest.TestCase):
             [{"title":"Promotion","article_id":42},{"title":"Free Drink Promotion","article_id":41}]))
         env["answer_question_with_ai_provider"]("promotion", smart=True)
         self.assertIn('exactly the title of the article "Promotion"', self.answer_prompt())
+        # The "ask which one" rule is not even offered (the hint alone was ignored).
+        self.assertNotIn('"clarify": true', self.answer_prompt())
+        self.assertNotIn("broad question", self.answer_prompt())
     def test_broad_promotion_question_still_may_ask(self):
         env["build_ai_chat_context"]=Mock(return_value=("### Promotion\nThis month.",
             [{"title":"Promotion","article_id":42},{"title":"Free Drink Promotion","article_id":41}]))
         env["answer_question_with_ai_provider"]("any promotion now?", smart=True)
         self.assertNotIn("exactly the title", self.answer_prompt())
+        self.assertIn('"clarify": true', self.answer_prompt())
     def test_two_same_titles_still_may_ask(self):
         env["build_ai_chat_context"]=Mock(return_value=("### Promotion\nThis month.",
             [{"title":"Promotion","article_id":42},{"title":"Promotion","article_id":43}]))
