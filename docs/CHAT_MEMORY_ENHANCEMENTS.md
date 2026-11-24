@@ -227,3 +227,12 @@ lint 仍有既有 36 errors / 10 warnings。三个修改的页面与 HEAD 的诊
 - `focus_title`（上一篇文章排第一）只给追问（解析过、像追问、或 next/下一步），换新题目时不再把上一篇文章钉在第一位——这会让 AI 用错文章回答。
 - `prefetch_semantic_question()`：在查组长批准答案的同时，背景先向 Google 取得问题的"意思"（`semantic_search.prefetch_query`）；之后搜索要用时直接拿或等它完成，不会重复问 Google。
 - 测试：`test_chat_memory.py`（完整问题不再叫 resolver、短问题与标题字、三语追问字、换题不钉旧文章、预先取意思）、`test_semantic_search.py::IndexTests::test_early_request_is_waited_for_not_repeated`。
+
+## 2026-11-25 更新：打的字就是文章标题时直接回答，不再反问"哪一个？"（LIONG1934）
+
+- 问题：资料库有一篇标题就叫"Promotion"，也有"🇲🇾 Merdeka Promotion""Free Drink Promotion"等。打"Promotion"或按反问选项"Promotion"时，AI 仍反问"Which promotion…?"，还把"Promotion"本身列成选项，可能一直绕圈。
+- `build_ai_chat_context`：没有 `focus_title`（不是追问）时，若问题与**刚好一篇**文章的标题相同（忽略大小写、空格、标点、emoji），那篇排第一（拿约 40% 篇幅）。两篇以上同标题（重复文章）不动。追问的 `focus_title` 仍优先。
+- `answer_question_with_ai_provider`：若候选文章里刚好一篇标题等于问题，提示词加一行 `exact_title_hint`：员工已选了这一篇，直接回答、摘要重点，不要问哪一个。
+- 笼统问题（"any promotion now?""现在有什么促销"）照旧可以反问让员工选。
+- 只比对员工原本打的字（`question`），不比对中文/马来文翻成的英文关键字。
+- 测试：`test_document_context.py::ExactTitleTests`（5 个）、`test_chat_memory.py`（标题题加提示、笼统题不加、同标题两篇不加）。

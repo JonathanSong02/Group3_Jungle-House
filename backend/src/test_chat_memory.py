@@ -508,6 +508,23 @@ class ChatRouteTests(unittest.TestCase):
     def test_broad_question_prompt_asks_for_title_options(self):
         env["answer_question_with_ai_provider"]("opening", smart=True)
         self.assertIn("broad question", self.answer_prompt())
+        self.assertNotIn("exactly the title", self.answer_prompt())
+    # Typing / clicking an article's exact title ("Promotion") answers it, no "which one?".
+    def test_exact_title_question_tells_the_ai_not_to_ask_which(self):
+        env["build_ai_chat_context"]=Mock(return_value=("### Promotion\nThis month.",
+            [{"title":"Promotion","article_id":42},{"title":"Free Drink Promotion","article_id":41}]))
+        env["answer_question_with_ai_provider"]("promotion", smart=True)
+        self.assertIn('exactly the title of the article "Promotion"', self.answer_prompt())
+    def test_broad_promotion_question_still_may_ask(self):
+        env["build_ai_chat_context"]=Mock(return_value=("### Promotion\nThis month.",
+            [{"title":"Promotion","article_id":42},{"title":"Free Drink Promotion","article_id":41}]))
+        env["answer_question_with_ai_provider"]("any promotion now?", smart=True)
+        self.assertNotIn("exactly the title", self.answer_prompt())
+    def test_two_same_titles_still_may_ask(self):
+        env["build_ai_chat_context"]=Mock(return_value=("### Promotion\nThis month.",
+            [{"title":"Promotion","article_id":42},{"title":"Promotion","article_id":43}]))
+        env["answer_question_with_ai_provider"]("Promotion", smart=True)
+        self.assertNotIn("exactly the title", self.answer_prompt())
     # The AI's own article is the answer's article ("aeon opening" -> Aeon, not JHKC).
     def test_ai_answer_uses_the_article_the_ai_named(self):
         del self.payload["history"]

@@ -181,6 +181,40 @@ class FocusArticleTests(unittest.TestCase):
                          build(ARTICLES, [], "kiosk opening lights"))
 
 
+class ExactTitleTests(unittest.TestCase):
+    """Typing (or clicking) exactly one article's title puts that article first."""
+    PROMOTIONS = [
+        {"article_id": 40, "title": "\U0001F1F2\U0001F1FE Merdeka Promotion", "category": "SALES", "sub_category": "",
+         "content": "Merdeka promotion: promotion price for every honey promotion set, promotion ends 31 August."},
+        {"article_id": 41, "title": "Free Drink Promotion", "category": "SALES", "sub_category": "",
+         "content": "Free drink promotion with every promotion purchase above RM50, promotion while stocks last."},
+        {"article_id": 42, "title": "Promotion", "category": "SALES", "sub_category": "",
+         "content": "Current promotions this month."},
+    ]
+
+    def test_exact_title_comes_first(self):
+        _, candidates = build(self.PROMOTIONS, [], "promotion")
+        self.assertEqual(candidates[0]["article_id"], 42)
+        self.assertEqual(len(candidates), 3)
+
+    def test_clicked_option_with_emoji_comes_first(self):
+        _, candidates = build(self.PROMOTIONS, [], "Merdeka Promotion!")
+        self.assertEqual(candidates[0]["article_id"], 40)
+
+    def test_broad_question_is_not_pinned(self):
+        _, candidates = build(self.PROMOTIONS, [], "what promotion now")
+        self.assertNotEqual(candidates[0]["article_id"], 42)
+
+    def test_two_articles_with_the_same_title_are_not_pinned(self):
+        twin = dict(self.PROMOTIONS[2], article_id=43)
+        _, candidates = build(self.PROMOTIONS + [twin], [], "promotion")
+        self.assertNotEqual(candidates[0]["article_id"], 42)
+
+    def test_follow_up_focus_still_wins(self):
+        _, candidates = build(self.PROMOTIONS, [], "promotion", focus_title="Free Drink Promotion")
+        self.assertEqual(candidates[0]["article_id"], 41)
+
+
 class DetailModeTests(unittest.TestCase):
     LONG = " ".join(f"Lab step {i}: connect resistor {i} to the breadboard row {i}." for i in range(400))
 

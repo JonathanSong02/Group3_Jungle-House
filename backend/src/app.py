@@ -9216,6 +9216,21 @@ def build_ai_chat_context(question, limit=7, max_chars=6000, search_question=Non
                 article for article in top_articles if article is not focus_article
             ][: limit - 1]
 
+    # Typed (or clicked as an option) exactly one article's title, e.g.
+    # "Promotion": that article comes first, so the AI answers it instead of
+    # asking "which promotion?". Case, spaces, punctuation and emoji are
+    # ignored. Two articles with the same title stay unclear, so nothing moves.
+    if not focus_title:
+        title_key = lambda text: re.sub(r"[\W_]+", "", str(text or "").casefold())
+        question_key = title_key(question)
+        exact_articles = [article for article in articles
+                          if question_key and title_key(article.get("title")) == question_key]
+        if len(exact_articles) == 1:
+            exact_article = exact_articles[0]
+            top_articles = [exact_article] + [
+                article for article in top_articles if article is not exact_article
+            ][: limit - 1]
+
     def clean_text(text):
         text = re.sub(r"<[^>]+>", " ", str(text or ""))
         text = re.sub(r"\s+", " ", text).strip()
@@ -9456,6 +9471,21 @@ def answer_question_with_ai_provider(question, timeout=25, search_question=None,
                 + json.dumps(history_slice, ensure_ascii=False)
             )
 
+    # The question is exactly one article's title ("Promotion", or a clicked
+    # option): the staff member already chose that article, so tell the AI to
+    # answer from it and not ask "which one?" again.
+    exact_title_hint = ""
+    title_key = lambda text: re.sub(r"[\W_]+", "", str(text or "").casefold())
+    question_key = title_key(question)
+    exact_titles = [candidate["title"] for candidate in candidate_articles
+                    if question_key and title_key(candidate.get("title")) == question_key]
+    if len(exact_titles) == 1:
+        exact_title_hint = (
+            f'\n(The staff question is exactly the title of the article "{exact_titles[0]}". '
+            "They have chosen that article: answer from it -- summarise its main points -- "
+            "and do not ask which one they mean.)"
+        )
+
     source_title_rule = (
         '"sourceTitle" must be copied exactly\nfrom one of the "###" headings in the context below '
         '(empty string if there\nis no context).'
@@ -9527,7 +9557,7 @@ exact shape (no markdown, no text outside the JSON):
 {answer_style}
 
 Staff question: {question}
-{search_meaning_hint}{history_block}
+{search_meaning_hint}{exact_title_hint}{history_block}
 
 Knowledge Base context:
 {context_text if context_text.strip() else "(no matching Knowledge Base articles found)"}
