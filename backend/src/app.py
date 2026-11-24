@@ -154,6 +154,46 @@ import re
 CJK_CHAR_RE = re.compile(r'[一-鿿㐀-䶿豈-﫿]')
 
 
+_TITLE_WORDS_CACHE = {"words": None, "loaded_at": 0.0}
+
+
+def _known_title_words():
+    """Lower-case words used in live Knowledge Base article titles (cached 10 min)."""
+    if _TITLE_WORDS_CACHE["words"] is not None and time.monotonic() - _TITLE_WORDS_CACHE["loaded_at"] < 600:
+        return _TITLE_WORDS_CACHE["words"]
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute("SELECT title FROM wiki_article WHERE COALESCE(is_deleted, 0) = 0")
+        words = set()
+        for row in cursor.fetchall() or []:
+            words.update(re.findall(r"[a-z0-9]{2,}", str(row.get("title") or "").lower()))
+    finally:
+        cursor.close()
+        conn.close()
+    _TITLE_WORDS_CACHE.update(words=words, loaded_at=time.monotonic())
+    return words
+
+
+def looks_like_known_term(text):
+    """A short question such as "PDF", "AEON" or "SOP" is a real topic, not gibberish.
+
+    True when a word is a system term (pdf, quiz, sop ...) or appears in a
+    live article title. If titles cannot be read, only the system terms count.
+    """
+    words = set(re.findall(r"[a-z0-9]{2,}", str(text or "").lower()))
+    if not words:
+        return False
+    system_terms = {"pdf", "pdfs", "doc", "docx", "word", "file", "files", "quiz", "quizzes",
+                    "sop", "sops", "faq", "pos", "kb", "notion", "manual"}
+    if words & system_terms:
+        return True
+    try:
+        return bool(words & _known_title_words())
+    except Exception:
+        return False
+
+
 def is_nonsense(text):
     text = text.strip().lower()
 
@@ -3373,7 +3413,7 @@ def needs_conversation_context(question, search_question, expanded_question):
     greetings.update(_PINYIN_GREETINGS)
     if any(text in greetings for text in variants):
         return False
-    if all(is_nonsense(text) for text in variants if text):
+    if all(is_nonsense(text) and not looks_like_known_term(text) for text in variants if text):
         return False
     if is_staff_not_satisfied(question):
         return False
@@ -10278,7 +10318,9 @@ def chat():
         # actually nonsense -- only fall into this whole block if it's
         # still unrecognizable after normalization too.
         # =========================
-        if is_nonsense(question) and not (
+        # A short real topic ("PDF", "AEON", "SOP") is not gibberish: let it
+        # reach the search and the AI instead of "please ask again".
+        if is_nonsense(question) and not looks_like_known_term(question) and not (
             (query_was_normalized and not is_nonsense(normalized_question))
             or (malay_query_was_expanded and not is_nonsense(malay_expanded_question))
         ):
@@ -10858,11 +10900,56 @@ def chat():
                     or (not result.get("article_id") and str(ai_answer.get("sourceTitle") or "").strip().casefold()
                         == str(result.get("title") or "").strip().casefold() != "")
                 )
+                ai_picked_other_article = (
+                    result_type == "sop"
+                    and not ai_answer.get("off_topic")
+                    and ai_answer.get("article_id")
+                    and ai_answer.get("article_id") != result.get("article_id")
+                    and not same_article
+                )
                 if not ai_answer.get("off_topic") and same_article:
                     result["reply"] = ai_answer["answer"]
                     result["answer"] = ai_answer["answer"]
                     result["message"] = ai_answer["answer"]
-                ai_answer = None
+                    ai_answer = None
+                elif ai_picked_other_article:
+                    # The old title matcher (a fixed April list) and the AI
+                    # (live articles) picked different articles, e.g.
+                    # "aeon opening" -> "JHKC Kiosk Opening". Trust the AI:
+                    # show the steps of ITS article when the matcher has them,
+                    # otherwise its answer alone, never the wrong steps.
+                    ai_title = str(ai_answer.get("sourceTitle") or "").strip()
+                    switched = None
+                    try:
+                        alt_result, _alt_status = process_question(
+                            question=ai_title, context={}, search_question=ai_title)
+                        if (isinstance(alt_result, dict) and alt_result.get("type") == "sop"
+                                and alt_result.get("steps")
+                                and str(alt_result.get("title") or "").strip().casefold() == ai_title.casefold()):
+                            switched = alt_result
+                    except Exception as error:
+                        log_chat_failure("AI ARTICLE SWITCH ERROR", error)
+
+                    if switched:
+                        result = switched
+                        result["reply"] = ai_answer["answer"]
+                        result["answer"] = ai_answer["answer"]
+                        result["message"] = ai_answer["answer"]
+                        result["article_id"] = ai_answer["article_id"]
+                        result.setdefault("context", {})
+                        result["context"]["article_id"] = ai_answer["article_id"]
+                        remember_chat_context(data, result)
+                        ai_answer = None
+                    else:
+                        # Fall through to the normal AI-answer handling below,
+                        # without the wrong article's steps.
+                        result["type"] = "text"
+                        result["steps"] = []
+                        result["options"] = []
+                        result["context"] = {"title": ai_title, "article_id": ai_answer["article_id"]}
+                        remember_chat_context(data, result)
+                else:
+                    ai_answer = None
 
             if ai_answer:
                 result["reply"] = ai_answer["answer"]

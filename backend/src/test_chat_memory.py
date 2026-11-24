@@ -16,11 +16,12 @@ names = {"clean_question", "is_nonsense", "normalize_context", "get_chat_memory_
          "get_ai_fail_key", "is_staff_not_satisfied", "validate_conversation_history",
          "needs_conversation_context", "resolve_conversation_search_query", "is_explicit_answer_rejection",
          "make_clarification_token", "read_clarification_token", "get_escalation_issue_question",
-         "chat_failure_language", "chat_failure_message", "attachment_error_message"}
+         "chat_failure_language", "chat_failure_message", "attachment_error_message", "looks_like_known_term"}
 env = {"re": re, "json": json, "CJK_CHAR_RE": re.compile(r"[\u3400-\u9fff]"),
        "datetime": datetime, "timezone": timezone, "request": types.SimpleNamespace(remote_addr="local", is_json=True),
        "AI_CHAT_MEMORY": {}, "base64": base64, "hashlib": hashlib, "hmac": hmac, "time": time,
-       "app": types.SimpleNamespace(secret_key="isolated-test-only")}
+       "app": types.SimpleNamespace(secret_key="isolated-test-only"),
+       "_known_title_words": lambda: set()}
 nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
 for n in tree.body:
     if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id in {"_MALAY_GREETINGS", "_PINYIN_GREETINGS", "CHAT_FAILURE_MESSAGES", "ATTACHMENT_ERROR_KINDS", "_DETAIL_REQUEST"} for t in n.targets):
@@ -274,6 +275,7 @@ class ChatRouteTests(unittest.TestCase):
         env["normalize_result"]=Mock(side_effect=lambda x,*args:x)
         env["traceback"]=types.SimpleNamespace(print_exc=Mock())
         env["log_chat_failure"]=Mock()
+        env["_known_title_words"]=lambda: set()
         self.provider.AIProviderNotConfiguredError=type("AIProviderNotConfiguredError",(Exception,),{})
         self.provider.generate_ai_reply=Mock(return_value=json.dumps({"answered":True,"answer":"Mock KB answer","sourceTitle":"Honey"}))
         self.provider.vision_identity=Mock(return_value="isolated-model")
@@ -453,12 +455,70 @@ class ChatRouteTests(unittest.TestCase):
         self.assertEqual(result["reply"],"Mock KB answer")
         self.assertIn('"clarify": true', self.answer_prompt())
         env["create_escalation"].assert_not_called()
-    def test_smart_sop_mismatched_source_keeps_reply(self):
+    # When the old title matcher and the AI pick different articles, the AI
+    # (which read the live articles) wins: "aeon opening" must not stay on
+    # "JHKC Kiosk Opening".
+    def aeon_mismatch(self, aeon_steps_found=True):
+        del self.payload["history"]
+        self.payload["question"]="aeon opening"
+        jhkc=({"type":"sop","source":"matched_title_show_all_first","confidence":1.0,"title":"JHKC Kiosk Opening",
+               "steps":[{"step_number":1,"text":"JHKC step"}],"reply":"I found JHKC Kiosk Opening.","answer":"x",
+               "context":{"title":"JHKC Kiosk Opening"}},200)
+        aeon=({"type":"sop","source":"matched_title_show_all_first","confidence":1.0,"title":"Aeon Roadshow Opening List",
+               "steps":[{"step_number":1,"text":"AEON step"}],"reply":"I found Aeon.","answer":"y",
+               "context":{"title":"Aeon Roadshow Opening List"}},200) if aeon_steps_found else \
+              ({"source":"fallback","confidence":0.0,"context":{},"fallback":True},200)
+        env["process_question"]=Mock(side_effect=[jhkc, aeon])
+        env["build_ai_chat_context"]=Mock(return_value=("### Aeon Roadshow Opening List\nAEON steps.",
+            [{"title":"JHKC Kiosk Opening","article_id":5},{"title":"Aeon Roadshow Opening List","article_id":9}]))
+        self.provider.generate_ai_reply.return_value=json.dumps({"answered":True,"answer":"For AEON: set up the booth first.",
+            "sourceTitle":"Aeon Roadshow Opening List"})
+    def test_smart_mismatch_switches_to_the_ai_article_steps(self):
+        self.aeon_mismatch()
+        result=self.call()
+        self.assertEqual(env["process_question"].call_args_list[1].kwargs["question"],"Aeon Roadshow Opening List")
+        self.assertEqual(result["title"],"Aeon Roadshow Opening List")
+        self.assertEqual(result["steps"],[{"step_number":1,"text":"AEON step"}])
+        self.assertEqual(result["reply"],"For AEON: set up the booth first.")
+        self.assertEqual(result["type"],"sop")
+    def test_smart_mismatch_without_steps_shows_ai_answer_only(self):
+        self.aeon_mismatch(aeon_steps_found=False)
+        result=self.call()
+        self.assertEqual(result["type"],"text")
+        self.assertEqual(result["steps"],[])
+        self.assertEqual(result["reply"],"For AEON: set up the booth first.")
+        self.assertEqual(result["article_id"],9)
+        self.assertNotIn("JHKC",json.dumps(result.get("steps")))
+    def test_smart_mismatch_unknown_ai_title_keeps_retrieval(self):
+        # The AI named an article that is not among the ones it was given: do not trust it.
         self.confident_sop()
         self.provider.generate_ai_reply.return_value=json.dumps({"answered":True,"answer":"About honey","sourceTitle":"Honey"})
         result=self.call()
         self.assertEqual(result["reply"],"Here are the steps")
         self.assertEqual(result["type"],"sop")
+
+    # ---- Short questions ("PDF", "AEON", "SOP") are not gibberish ----
+    def test_short_known_terms_are_not_nonsense(self):
+        env["_known_title_words"]=lambda: {"aeon","roadshow","opening","st3"}
+        for q in ["PDF","AEON","SOP","quiz","ST3"]:
+            with self.subTest(q=q):
+                self.assertTrue(env["looks_like_known_term"](q))
+        for q in ["asdf","zzz","qwe"]:
+            with self.subTest(q=q):
+                self.assertFalse(env["looks_like_known_term"](q))
+    def test_route_short_pdf_question_reaches_the_ai(self):
+        env["_known_title_words"]=lambda: set()
+        del self.payload["history"]
+        self.payload["question"]="PDF"
+        result=self.call()
+        self.assertNotEqual(result["source"],"invalid_input_first_attempt")
+        self.provider.generate_ai_reply.assert_called()
+    def test_route_title_word_fails_safe_when_titles_unavailable(self):
+        def broken():
+            raise RuntimeError("db down")
+        env["_known_title_words"]=broken
+        self.assertFalse(env["looks_like_known_term"]("AEON"))
+        self.assertTrue(env["looks_like_known_term"]("pdf"))
     def test_smart_sop_ignores_clarify(self):
         self.confident_sop()
         self.provider.generate_ai_reply.return_value=json.dumps({"answered":False,"clarify":True,"question":"Which kiosk?"})

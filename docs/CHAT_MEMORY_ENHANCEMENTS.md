@@ -128,3 +128,8 @@ lint 仍有既有 36 errors / 10 warnings。三个修改的页面与 HEAD 的诊
 - 提示要求纯文字、不用 Markdown（网页不显示粗体，`**` 会直接露出）。
 - “更多细节”追问若解析失败，检索时带上上一题用户问题；详细回答时限 40 秒（一般仍 25 秒）。
 - AI Settings 已由用户改为正式版 `gemini-3.8-flash`（原 `gemini-3-flash-preview` 为预览版，同代其他预览版已被 Google 关闭）。
+
+## 2026-11-24 更新：短问题不再当乱打；AI 与旧规则选不同文章时听 AI（LIONG1934）
+
+- `looks_like_known_term()`：系统词（pdf、quiz、sop…）或线上文章标题里的字（缓存 10 分钟）组成的短问题，不再被 `is_nonsense` 当无效输入，聊天入口与 `needs_conversation_context` 都适用。读不到标题时只认系统词。
+- 旧规则（`predict_intent.py` 读 4 月的固定 CSV）与 AI 选了不同文章时（AI 的 sourceTitle 必须是交给它的候选文章之一），改信 AI：用该标题重跑 `process_question` 取得那篇的步骤与图片；取不到就只显示 AI 答案、清掉错误的步骤。AI 指名的文章不在候选内时仍保留原结果。
