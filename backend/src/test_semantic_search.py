@@ -178,6 +178,24 @@ class IndexTests(unittest.TestCase):
         self.assertEqual(best, 1)
         self.assertEqual(matches[1][1:], ("article", "Fill the freezer tray with water. Wait two hours for cubes."))
 
+    def test_early_request_is_waited_for_not_repeated(self):
+        import threading
+        release = threading.Event()
+        slow_google = FakeGoogle()
+
+        def slow(url, headers, json, timeout):
+            release.wait(2)
+            return slow_google(url, headers, json, timeout)
+
+        embedder = semantic_search.Embedder("key", post=slow)
+        embedder.model = "gemini-embedding-2"
+        semantic_search.prefetch_query(embedder, "how to make ice")
+        semantic_search.prefetch_query(embedder, "how to make ice")  # already on its way
+        threading.Timer(0.1, release.set).start()
+        vector = semantic_search.query_vector(embedder, "how to make ice")
+        self.assertEqual(len(slow_google.calls), 1, "one Google call in total")
+        self.assertAlmostEqual(float(numpy.linalg.norm(vector)), 1.0, places=5)
+
     def test_question_meanings_are_remembered(self):
         semantic_search.query_vector(self.embedder, "make ice")
         semantic_search.query_vector(self.embedder, "make ice")

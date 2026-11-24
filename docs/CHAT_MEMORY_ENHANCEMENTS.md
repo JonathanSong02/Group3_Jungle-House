@@ -219,3 +219,11 @@ lint 仍有既有 36 errors / 10 warnings。三个修改的页面与 HEAD 的诊
 - 前端：拿掉回答上的 "Match score" 与 "Source" 标签、文章卡片上的 "来源 · 百分比" 标签；没有 Show more details 的回答（例如照片答案）保留文章名称连结 ↗。聊天记录页与复制文字不变。
 - 不变：问候、乱打字过滤、"不是这个"→ 组长、员工自己按"转交给组长"、组长批准的答案优先、追问理解、看意思搜索。
 - 测试：`test_chat_memory.py`（Alan）、`test_chat_failure_messages.py`、`test_dev_only_routes.py`、`test_hybrid_image_pipeline.py`、`Chat.image.test.js` 改为检查 AI 收到的搜索内容与新的三种结果；删除 `test_chat_parallel_ai.py`（旧规则与 AI 同时跑已不存在）；新增 `test_retrieval_audit.py::AiOnlyChatHelperTests`。
+
+## 2026-11-24 更新：追问理解只用在追问；换题不再被上一篇文章带偏；看意思与组长答案同时查（LIONG1934，Alan 已同意）
+
+- 实测（改前）：一题 13.4 秒 = 追问理解 6.3 + 组长答案 1.2 + AI 写答案 4.5（其中看意思 1.4、准备资料 0.2，Gemini 约 2.9）+ 其他约 1.4。
+- `needs_conversation_context`：不再"第二题起每题都问 AI"（11-23 的做法），改用 `looks_like_follow_up()`：Alan 原本的规则，加上代名词（it/that/它/这个/itu…）、接续（下一步、然后、more details、what else、lepas tu…）、指向前文（you said、earlier、刚才、之前、tadi…），以及很短又没有文章标题字的问题（"price?""价格呢？"）。完整问题与换题（"who can open the new honey tester?""aeon closing"）直接用自己的字搜索，省约 6 秒；回答的 AI 仍看得到最近的对话。
+- `focus_title`（上一篇文章排第一）只给追问（解析过、像追问、或 next/下一步），换新题目时不再把上一篇文章钉在第一位——这会让 AI 用错文章回答。
+- `prefetch_semantic_question()`：在查组长批准答案的同时，背景先向 Google 取得问题的"意思"（`semantic_search.prefetch_query`）；之后搜索要用时直接拿或等它完成，不会重复问 Google。
+- 测试：`test_chat_memory.py`（完整问题不再叫 resolver、短问题与标题字、三语追问字、换题不钉旧文章、预先取意思）、`test_semantic_search.py::IndexTests::test_early_request_is_waited_for_not_repeated`。

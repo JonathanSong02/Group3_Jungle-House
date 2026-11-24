@@ -294,16 +294,52 @@ def sync(cursor, commit, articles, documents, embedder, pause=0.3):
 
 _query_cache = {}
 _QUERY_CACHE_SIZE = 2000
+_pending = {}  # (model, question) -> Event, while an early request is running
+_pending_lock = threading.Lock()
+
+
+def prefetch_query(embedder, question):
+    """Ask Google for a question's meaning in the background now, so it is
+    ready when the search needs it (the chat starts this while it checks the
+    Team Lead answers). Errors are ignored: the search then asks itself."""
+    key = (embedder.model, question)
+    with _pending_lock:
+        if key in _query_cache or key in _pending:
+            return
+        event = _pending[key] = threading.Event()
+
+    def run():
+        try:
+            vector = embedder.embed([question], kind="query", timeout=QUERY_TIMEOUT)[0]
+            _remember(embedder.model, question, vector)
+        except Exception:
+            pass
+        finally:
+            with _pending_lock:
+                _pending.pop(key, None)
+            event.set()
+
+    threading.Thread(target=run, name="semantic-prefetch", daemon=True).start()
+
+
+def _remember(model, question, vector):
+    if len(_query_cache) >= _QUERY_CACHE_SIZE:
+        _query_cache.clear()
+    _query_cache[(model, question)] = vector
 
 
 def query_vector(embedder, question):
     key = (embedder.model, question)
     if key in _query_cache:
         return _query_cache[key]
+    with _pending_lock:
+        event = _pending.get(key)
+    if event is not None:  # an early request is on its way: wait for it
+        event.wait(QUERY_TIMEOUT)
+        if key in _query_cache:
+            return _query_cache[key]
     vector = embedder.embed([question], kind="query", timeout=QUERY_TIMEOUT)[0]
-    if len(_query_cache) >= _QUERY_CACHE_SIZE:
-        _query_cache.clear()
-    _query_cache[(embedder.model, question)] = vector
+    _remember(embedder.model, question, vector)
     return vector
 
 

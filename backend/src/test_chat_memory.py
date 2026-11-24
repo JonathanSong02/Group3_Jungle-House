@@ -16,7 +16,8 @@ names = {"clean_question", "is_nonsense", "normalize_context", "get_chat_memory_
          "get_ai_fail_key", "is_staff_not_satisfied", "validate_conversation_history",
          "needs_conversation_context", "resolve_conversation_search_query", "is_explicit_answer_rejection",
          "make_clarification_token", "read_clarification_token", "get_escalation_issue_question",
-         "chat_failure_language", "chat_failure_message", "attachment_error_message", "looks_like_known_term", "record_chat_stage"}
+         "chat_failure_language", "chat_failure_message", "attachment_error_message", "looks_like_known_term", "record_chat_stage",
+         "looks_like_follow_up"}
 env = {"re": re, "json": json, "CJK_CHAR_RE": re.compile(r"[\u3400-\u9fff]"),
        "datetime": datetime, "timezone": timezone, "request": types.SimpleNamespace(remote_addr="local", is_json=True),
        "AI_CHAT_MEMORY": {}, "base64": base64, "hashlib": hashlib, "hmac": hmac, "time": time,
@@ -24,7 +25,7 @@ env = {"re": re, "json": json, "CJK_CHAR_RE": re.compile(r"[\u3400-\u9fff]"),
        "_known_title_words": lambda: set()}
 nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
 for n in tree.body:
-    if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id in {"_MALAY_GREETINGS", "_PINYIN_GREETINGS", "CHAT_FAILURE_MESSAGES", "ATTACHMENT_ERROR_KINDS", "_DETAIL_REQUEST"} for t in n.targets):
+    if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id in {"_MALAY_GREETINGS", "_PINYIN_GREETINGS", "CHAT_FAILURE_MESSAGES", "ATTACHMENT_ERROR_KINDS", "_DETAIL_REQUEST", "_FOLLOW_UP_PATTERN"} for t in n.targets):
         nodes.append(n)
 exec(compile(ast.Module(body=nodes, type_ignores=[]), "selected_app_helpers.py", "exec"), env)
 chat = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "chat")
@@ -82,10 +83,25 @@ class MemoryTests(unittest.TestCase):
         for q in ["hi","hello","你好","selamat pagi","asdfgh","Step 4","next","not this",
                   "show me step 4","下一步"]:
             with self.subTest(q=q): self.assertFalse(env["needs_conversation_context"](q,q,q))
-    def test_standalone_now_checked(self):
-        # Any real question after the first may refer back; the resolver decides.
-        for q in ["kiosk opening","Golden Passion honey price","Honey shelf life"]:
-            with self.subTest(q=q): self.assertTrue(env["needs_conversation_context"](q,q,q))
+    def test_complete_questions_skip_the_resolver(self):
+        # 2026-11-24: only questions leaning on earlier messages pay for the resolver (~6 s).
+        for q in ["Golden Passion honey price","Honey shelf life","who can open the new honey tester?",
+                  "How do I close the kiosk at night?","做果汁要戴什么？","siapa boleh buka tester madu baru?"]:
+            with self.subTest(q=q): self.assertFalse(env["needs_conversation_context"](q,q,q))
+    def test_short_topic_vs_short_follow_up(self):
+        env["_known_title_words"]=lambda: {"kiosk","opening","aeon","closing"}
+        try:
+            for q in ["kiosk opening","aeon closing"]:
+                with self.subTest(q=q): self.assertFalse(env["looks_like_follow_up"](q))
+            for q in ["price?","benefits?","价格呢？","多少钱呢"]:
+                with self.subTest(q=q): self.assertTrue(env["looks_like_follow_up"](q))
+        finally:
+            env["_known_title_words"]=lambda: set()
+    def test_follow_up_words_in_three_languages(self):
+        for q in ["下一步是什么？","然后呢？","what about closing?","then what?","is it allowed?","more details please",
+                  "tell me more","what else do I need?","you said earlier the code is 1234","刚才说的密码是什么",
+                  "还有呢","lepas tu buat apa?","apa lagi?","tadi awak cakap apa?","and the closing?"]:
+            with self.subTest(q=q): self.assertTrue(env["looks_like_follow_up"](q))
     def test_refer_back_phrases(self):
         for q in ["你刚才说开店第二步是开收银机，那密码是什么？",
                   "You said earlier step 2 is the cash register, what is its password?",
@@ -267,6 +283,7 @@ class ChatRouteTests(unittest.TestCase):
         env["related_article_options"]=Mock(return_value=[{"title":"Honey","label":"Honey"}])
         env["verify_image_question_with_search"]=Mock(return_value=None)
         env["build_step_answer_from_last_topic"]=Mock(return_value=(None,[]))
+        env["prefetch_semantic_question"]=Mock()
         env["create_escalation"]=Mock(return_value=123)
         env["save_escalation_context"]=Mock(return_value=True)
         env["get_confidence_label"]=Mock(return_value="high")
@@ -301,9 +318,14 @@ class ChatRouteTests(unittest.TestCase):
         env["create_escalation"].assert_not_called()
         self.provider._call_ai_provider_once.assert_called_once()
         self.provider.generate_ai_reply.assert_called_once()
-    def test_route_standalone_resolver_failure_keeps_pipeline(self):
-        self.provider._call_ai_provider_once.side_effect=TimeoutError("mock")
+    def test_route_complete_question_skips_the_resolver(self):
         self.payload["question"]="Golden Passion honey price"
+        self.call()
+        self.provider._call_ai_provider_once.assert_not_called()
+        self.assertEqual(env["build_ai_chat_context"].call_args.kwargs["search_question"],self.payload["question"])
+    def test_route_resolver_failure_keeps_pipeline(self):
+        self.provider._call_ai_provider_once.side_effect=TimeoutError("mock")
+        self.payload["question"]="what about its price?"
         self.call()
         self.provider._call_ai_provider_once.assert_called_once()
         self.assertEqual(env["build_ai_chat_context"].call_args.kwargs["search_question"],self.payload["question"])
@@ -736,12 +758,18 @@ class ChatRouteTests(unittest.TestCase):
         self.call()
         self.assertEqual(env["build_ai_chat_context"].call_args.kwargs["search_question"],"Golden Passion honey benefits")
         self.assertEqual(env["log_request"].call_args.args[0],"its benfits?")
-    def test_route_standalone_topic_change_keeps_own_search(self):
-        self.provider._call_ai_provider_once.return_value="{}"
-        self.payload["question"]="ST3 kiosk opening"
+    def test_route_topic_jump_keeps_own_search_and_drops_the_old_article(self):
+        # The previous answer was about "Kiosk Opening"; a new topic must not be pinned to it.
+        self.payload["question"]="ST3 kiosk closing checklist"
+        self.payload["context"]={"title":"Kiosk Opening"}
         self.call()
-        self.provider._call_ai_provider_once.assert_called_once()
-        self.assertEqual(env["build_ai_chat_context"].call_args.kwargs["search_question"],"ST3 kiosk opening")
+        self.provider._call_ai_provider_once.assert_not_called()
+        self.assertEqual(env["build_ai_chat_context"].call_args.kwargs["search_question"],"ST3 kiosk closing checklist")
+        self.assertNotIn("focus_title",env["build_ai_chat_context"].call_args.kwargs)
+    def test_route_meaning_is_fetched_while_team_lead_answers_are_checked(self):
+        self.payload["question"]="Golden Passion honey price"
+        self.call()
+        env["prefetch_semantic_question"].assert_called_once_with("Golden Passion honey price")
     def test_route_correction_preserves_raw_and_uses_new_location(self):
         self.payload["question"]="Correction, I mean ST3."
         self.payload["history"]=[{"role":"user","content":"kiosk closing at Spring"}]

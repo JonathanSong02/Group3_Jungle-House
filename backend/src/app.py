@@ -3444,10 +3444,68 @@ def needs_conversation_context(question, search_question, expanded_question):
            or re.fullmatch(r"(?:next(?: step)?|previous(?: step)?|back|continue|上一[步页頁]|下一[步页頁]|继续|繼續|seterusnya|sebelum|lanjut)[?.!？。！]*", text)
            for text in variants):
         return False
-    # Any real question after the first may refer back to earlier messages
-    # ("you said earlier ..."), so let the resolver decide. It returns the
-    # original search when the question already stands on its own.
-    return True
+    # Only questions that lean on earlier messages go to the resolver (one AI
+    # call, ~6 s). A complete question, or a jump to a new topic, is searched
+    # with its own words; the answer AI still sees the recent conversation.
+    return any(looks_like_follow_up(text) for text in (variants[0], variants[2]) if text)
+
+
+# Words that make a question lean on what was said before (2026-11-24).
+# Alan's original patterns plus continuation, "you said earlier" and
+# Chinese / Malay forms. Missing one costs little (the answer AI still sees
+# the conversation); a wrong hit costs ~6 s, so plain topic words are not here.
+_FOLLOW_UP_PATTERN = re.compile(
+    # Alan's original references and corrections
+    r"^(?:(?:and|but|then)\s+)?(?:it|its|that one|this one|those|them)\b"
+    r"|^(?:what|how|where|when|why|can|should|does|is|are|do)\s+"
+    r"(?:(?:is|are|do|does|should|can|i|we|you|the|use|store|keep|put|open|close|about)\s+){0,5}"
+    r"(?:it|its|that one|this one|those|them)\b"
+    r"|^(?:(?:apa|khasiat|manfaat|harga|bagaimana|simpan|guna)\s+){1,3}(?:dia|itu|tersebut)\b"
+    r"|^(?:and|how about|what about)\b"
+    r"|^kalau\s+(?:buka|tutup)\s+kedai\b"
+    r"|^(?:correction\b|actually[, ]|i mean\b|maksud saya\b|sebenarnya\b)"
+    r"|那[它牠]|(?:它|这个|這個|那个|那個)的|^那(?:开店|開店|打烊|关店|關店)"
+    r"|^(?:更正|纠正|糾正|其实|其實|我是说|我是說)"
+    # pronouns pointing back, anywhere in the question
+    r"|\b(?:it|its|them|they|those|these|that one|this one|the same)\b"
+    r"|它|它们|這個|这个|那个|那個|這些|这些|那些|\b(?:itu|tu|dia|tersebut)\b"
+    # continuing the same topic
+    r"|\b(?:then what|what next|what'?s next|next step|after that|and then|what else|anything else|"
+    r"more details?|tell me more|more about|in detail|elaborate|continue|go on)\b"
+    r"|下一步|然后|然後|接下来|接下來|还有呢|還有呢|还有什么|還有什麼|更多|详细|詳細|继续|繼續|再说|再說"
+    r"|\b(?:lepas tu|lepas itu|seterusnya|lagi apa|apa lagi|pula)\b"
+    # pointing at an earlier message
+    r"|\b(?:you said|you mentioned|earlier|previous|above|just now|last answer|before this)\b"
+    r"|刚才|剛才|之前|上面|你说|你說|前面"
+    r"|\b(?:tadi|sebelum ini|awak cakap|kau cakap)\b",
+    re.IGNORECASE,
+)
+
+
+def looks_like_follow_up(question):
+    """True when a question needs the earlier conversation to be understood.
+
+    "下一步是什么？", "and its benefits?", "you said earlier ...", "价格呢？"
+    -> True. "who can open the new honey tester?", "aeon closing" -> False.
+    """
+    text = str(question or "").strip().lower()
+    if not text:
+        return False
+    if _FOLLOW_UP_PATTERN.search(text):
+        return True
+    # A very short question with no topic word ("price?", "价格呢？") only
+    # makes sense with the previous answer.
+    cjk = CJK_CHAR_RE.findall(text)
+    if cjk:
+        return len(cjk) <= 6 and text.rstrip("?？!！。. ").endswith(("呢", "吗", "嗎"))
+    words = re.findall(r"[a-z0-9]+", text)
+    if len(words) <= 2:
+        try:
+            title_words = _known_title_words()
+        except Exception:
+            title_words = set()
+        return not any(word in title_words for word in words if len(word) > 2)
+    return False
 
 
 def resolve_conversation_search_query(question, search_question, history, request_id):
@@ -8918,6 +8976,27 @@ def semantic_article_matches(question):
         record_chat_stage("semantic", started)
 
 
+def prefetch_semantic_question(question):
+    """Start asking Google for the question's meaning now (background), so the
+    search later finds it ready. Only when the stored sections use the same
+    model; never blocks the chat and never raises."""
+    def start():
+        try:
+            embedder = semantic_embedder()
+            index = semantic_search.cached_index()
+            if embedder is None or index is None or not index.entries or not str(question or "").strip():
+                return
+            if embedder.model is None:
+                embedder.model = index.model
+            if embedder.model == index.model:
+                semantic_search.prefetch_query(embedder, str(question))
+        except Exception as error:
+            print("SEMANTIC PREFETCH ERROR:", type(error).__name__)
+
+    import threading
+    threading.Thread(target=start, name="semantic-prefetch-start", daemon=True).start()
+
+
 def sync_semantic_index():
     """Embed new / changed articles (runs in the background, never in a request)."""
     embedder = semantic_embedder(max_age=0)
@@ -10199,6 +10278,11 @@ def chat():
         # =========================
         skip_team_lead_first = is_broad_topic_question(question)
 
+        # Speed: Google works out the question's meaning (meaning search)
+        # while the Team Lead answers are checked, instead of after.
+        if "image_query" not in data:
+            prefetch_semantic_question(question_for_search)
+
         if not skip_team_lead_first:
             stage_started = time.monotonic()
             team_lead_result = search_similar_question(
@@ -10231,9 +10315,17 @@ def chat():
             # question too, so the same document is found. Detailed answers
             # are longer, so they get more time (still under the 60 s page limit).
             detail_request = smart_eligible and wants_details(question)
-            # A follow-up keeps the article of the previous answer in view.
+            # A follow-up keeps the article of the previous answer first in
+            # view. A new topic does not: pinning the old article there made
+            # the AI answer a jump to another topic from the wrong article.
             focus_title = ""
-            if smart_eligible and conversation_history:
+            if smart_eligible and conversation_history and (
+                conversation_query_was_resolved
+                or looks_like_follow_up(question)
+                or looks_like_follow_up(malay_expanded_question)
+                or re.fullmatch(r"(?:next(?: step)?|previous(?: step)?|back|continue|上一[步页頁]|下一[步页頁]|继续|繼續"
+                                r"|seterusnya|sebelum|lanjut)[?.!？。！]*", question.strip().lower())
+            ):
                 focus_title = prepare_chat_context(data).get("title") or ""
             answer_search_question = question_for_search
             if detail_request and conversation_history and not conversation_query_was_resolved:
