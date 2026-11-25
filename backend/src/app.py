@@ -1786,13 +1786,30 @@ def format_user_dates(user_row):
     return user_row
 
 
+def read_profile_picture(cursor, user_row):
+    """Load the photo only for an authenticated account's profile response.
+
+    Missing migration or temporary DB errors must not break sign-in.
+    No original image or avatar data is written into session cookies.
+    """
+    if not user_row:
+        return
+    try:
+        cursor.execute("SELECT profile_picture FROM users WHERE user_id = %s",
+                       (user_row["user_id"],))
+        row = cursor.fetchone()
+        user_row["profile_picture"] = row["profile_picture"] if row else None
+    except mysql.connector.Error:
+        print("PROFILE PICTURE READ ERROR: Check profile-picture migration and database.")
+
+
 def get_user_profile_payload(user_row):
     if not user_row:
         return None
 
     user_row = format_user_dates(user_row)
 
-    return {
+    payload = {
         "id": user_row.get("user_id"),
         "name": user_row.get("full_name"),
         "full_name": user_row.get("full_name"),
@@ -1801,6 +1818,13 @@ def get_user_profile_payload(user_row):
         "status": user_row.get("status"),
         "created_at": user_row.get("created_at"),
     }
+    if "profile_picture" in user_row:
+        photo = user_row["profile_picture"]
+        payload["profile_picture"] = (
+            "data:image/jpeg;base64," + base64.b64encode(photo).decode("ascii")
+            if photo else None
+        )
+    return payload
 
 
 def record_login_history(cursor, user_id=None, email=None, full_name=None, status="failed"):
@@ -2127,6 +2151,19 @@ def auth_csrf():
 
 @app.route("/api/auth/me", methods=["GET"])
 def auth_me():
+    avatar_conn = None
+    avatar_cursor = None
+    try:
+        avatar_conn = get_db_connection()
+        avatar_cursor = avatar_conn.cursor(dictionary=True)
+        read_profile_picture(avatar_cursor, g.auth_user)
+    except Exception:
+        print("PROFILE PICTURE READ ERROR: Unable to load account photo.")
+    finally:
+        if avatar_cursor:
+            avatar_cursor.close()
+        if avatar_conn:
+            avatar_conn.close()
     response = jsonify({
         "user": get_user_profile_payload(g.auth_user),
         "csrf_token": session["csrf_token"],
@@ -2218,7 +2255,7 @@ _MANAGER_ENDPOINTS = {
     "update_admin_user_role", "update_admin_user_status", "test_db",
     "debug_chat_uploads", "debug_sop_images", "debug_static_files", "debug_uploads",
 }
-_SELF_PROFILE_ENDPOINTS = {"get_profile", "update_profile", "change_password"}
+_SELF_PROFILE_ENDPOINTS = {"get_profile", "update_profile", "change_password", "update_profile_picture"}
 _SELF_MESSAGE_ENDPOINTS = {"get_message_threads", "get_thread_messages"}
 
 # Public reference images used by Knowledge Base / SOP / product / notice pages.
@@ -5661,7 +5698,10 @@ def get_profile(user_id):
         if not user:
             return jsonify({"message": "User not found."}), 404
 
-        return jsonify(get_user_profile_payload(user)), 200
+        read_profile_picture(cursor, user)
+        response = jsonify(get_user_profile_payload(user))
+        response.headers["Cache-Control"] = "private, no-store"
+        return response, 200
 
     except mysql.connector.Error as err:
         print("GET PROFILE MYSQL ERROR:", err)
@@ -5749,10 +5789,13 @@ def update_profile(user_id):
         """, (user_id,))
         updated_user = cursor.fetchone()
 
-        return jsonify({
+        read_profile_picture(cursor, updated_user)
+        response = jsonify({
             "message": "Profile updated successfully.",
             "user": get_user_profile_payload(updated_user)
-        }), 200
+        })
+        response.headers["Cache-Control"] = "private, no-store"
+        return response, 200
 
     except mysql.connector.Error as err:
         print("UPDATE PROFILE MYSQL ERROR:", err)
@@ -5766,6 +5809,55 @@ def update_profile(user_id):
             conn.rollback()
         return jsonify({"message": "A server error occurred. Please try again."}), 500
 
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@app.route("/api/profile/<int:user_id>/avatar", methods=["PUT", "DELETE"])
+def update_profile_picture(user_id):
+    # Global authentication + CSRF also validate this user_id. Keep a local
+    # ownership check as defence in depth, never accept an actor from a body.
+    if user_id != current_auth_user_id():
+        return jsonify({"code": "FORBIDDEN", "message": "You can only access your own account."}), 403
+
+    photo = None
+    if request.method == "PUT":
+        try:
+            from avatar_service import normalize_avatar, AvatarValidationError, MAX_AVATAR_BYTES
+        except ImportError:
+            print("PROFILE PICTURE ERROR: Image processing dependency unavailable.")
+            return jsonify({"code": "AVATAR_SAVE_FAILED", "message": "Image processing is temporarily unavailable."}), 503
+        upload = request.files.get("avatar")
+        if upload is None:
+            return jsonify({"code": "AVATAR_INVALID", "message": "Select a JPEG, PNG or WebP photo."}), 400
+        try:
+            photo = normalize_avatar(upload.stream.read(MAX_AVATAR_BYTES + 1))
+        except AvatarValidationError:
+            return jsonify({"code": "AVATAR_INVALID", "message": "Use a valid JPEG, PNG or WebP photo up to 5 MB and 20 megapixels."}), 400
+
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET profile_picture = %s WHERE user_id = %s",
+                       (photo, user_id))
+        conn.commit()
+        response = jsonify({"user": {
+            "id": user_id,
+            "profile_picture": ("data:image/jpeg;base64," + base64.b64encode(photo).decode("ascii")
+                                if photo else None),
+        }})
+        response.headers["Cache-Control"] = "private, no-store"
+        return response, 200
+    except mysql.connector.Error:
+        if conn:
+            conn.rollback()
+        print("PROFILE PICTURE WRITE ERROR: Check profile-picture migration and database.")
+        return jsonify({"code": "AVATAR_SAVE_FAILED", "message": "Unable to save profile picture. Please retry."}), 500
     finally:
         if cursor:
             cursor.close()

@@ -234,6 +234,9 @@ export function AuthProvider({ children }) {
         full_name: fullName,
         name: fullName,
         email: updatedUser.email ?? current.email,
+        profile_picture: Object.prototype.hasOwnProperty.call(updatedUser, 'profile_picture')
+          ? updatedUser.profile_picture
+          : current.profile_picture,
       };
     });
   }, []);

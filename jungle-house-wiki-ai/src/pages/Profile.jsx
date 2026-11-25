@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import AvatarPicture from '../components/AvatarPicture';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
@@ -18,6 +19,12 @@ function ProfileIcon({ name, size = 18 }) {
   };
 
   const paths = {
+    camera: (
+      <>
+        <path d="M4 7h4l2-3h4l2 3h4a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" />
+        <circle cx="12" cy="13" r="3.5" />
+      </>
+    ),
     edit: (
       <>
         <path d="M12 20h9" />
@@ -82,7 +89,76 @@ function ProfileIcon({ name, size = 18 }) {
 
 export default function Profile() {
   const { user, updateUser, refreshUser } = useAuth();
-  const { t, tOr, locale } = useLanguage();
+  const { t, tOr, locale, language } = useLanguage();
+  const photoText = ({
+    en: {
+      change: 'Change profile picture', remove: 'Remove photo', confirm: 'Remove your profile picture?',
+      saving: 'Saving photo…', saved: 'Profile picture updated.', removed: 'Profile picture removed.',
+      invalid: 'Choose a JPEG, PNG or WebP image up to 5 MB.', failed: 'Unable to save your photo. Please try again.',
+      hint: 'JPEG, PNG or WebP · max 5 MB',
+    },
+    zh: {
+      change: '更换头像', remove: '移除头像', confirm: '确定移除您的头像？',
+      saving: '正在保存头像…', saved: '头像已更新。', removed: '头像已移除。',
+      invalid: '请选择不超过 5 MB 的 JPEG、PNG 或 WebP 图片。', failed: '无法保存头像，请重试。',
+      hint: 'JPEG、PNG 或 WebP · 最大 5 MB',
+    },
+    ms: {
+      change: 'Tukar gambar profil', remove: 'Buang gambar', confirm: 'Buang gambar profil anda?',
+      saving: 'Menyimpan gambar…', saved: 'Gambar profil dikemas kini.', removed: 'Gambar profil dibuang.',
+      invalid: 'Pilih imej JPEG, PNG atau WebP sehingga 5 MB.', failed: 'Gagal menyimpan gambar. Sila cuba lagi.',
+      hint: 'JPEG, PNG atau WebP · maksimum 5 MB',
+    },
+  })[language || 'en'];
+  const photoInput = useRef(null);
+  const photoBusy = useRef(false);
+  const [photoSaving, setPhotoSaving] = useState(false);
+  const [photoNotice, setPhotoNotice] = useState(null);
+
+  const savePhoto = async (file, remove = false) => {
+    if (!user?.id || photoBusy.current) return;
+    setPhotoNotice(null);
+    if (!remove && (!file || file.size > 5 * 1024 * 1024 ||
+      (file.type && !['image/jpeg', 'image/png', 'image/webp'].includes(file.type)))) {
+      setPhotoNotice({ error: true, text: photoText.invalid });
+      return;
+    }
+    photoBusy.current = true;
+    setPhotoSaving(true);
+    try {
+      const path = `/profile/${user.id}/avatar`;
+      let response;
+      if (remove) {
+        response = await api.delete(path);
+      } else {
+        const form = new FormData();
+        form.append('avatar', file);
+        response = await api.put(path, form);
+      }
+      const updated = response.data?.user;
+      if (!updated || String(updated.id) !== String(user.id) ||
+          !Object.prototype.hasOwnProperty.call(updated, 'profile_picture')) {
+        throw new Error('Invalid avatar response');
+      }
+      updateUser(updated);
+      setPhotoNotice({ error: false, text: remove ? photoText.removed : photoText.saved });
+    } catch (error) {
+      setPhotoNotice({
+        error: true,
+        text: error.response?.data?.code === 'AVATAR_INVALID' ? photoText.invalid : photoText.failed,
+      });
+    } finally {
+      photoBusy.current = false;
+      setPhotoSaving(false);
+    }
+  };
+
+  const choosePhoto = (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (file) void savePhoto(file);
+  };
+
 
   const [fullName, setFullName] = useState(user?.full_name || user?.name || '');
   const [email, setEmail] = useState(user?.email || '');
@@ -419,8 +495,18 @@ export default function Profile() {
 
       <section className="profile-overview-card">
         <div className="profile-identity-area">
-          <div className="profile-avatar-modern" aria-hidden="true">
-            {userInitial}
+          <div className="profile-picture-wrap">
+            <div className="profile-avatar-modern" aria-hidden="true">
+              <AvatarPicture src={user?.profile_picture} fallback={userInitial} />
+            </div>
+            <input ref={photoInput} type="file" accept="image/jpeg,image/png,image/webp"
+              hidden onChange={choosePhoto} />
+            <button type="button" className="profile-picture-camera"
+              title={photoText.change} aria-label={photoText.change}
+              disabled={photoSaving || isEditingProfile || isLoadingProfile || !user?.id}
+              onClick={() => photoInput.current?.click()}>
+              <ProfileIcon name="camera" size={16}/>
+            </button>
           </div>
 
           <div className="profile-identity-copy">
@@ -442,6 +528,24 @@ export default function Profile() {
                 {statusLabel}
               </span>
             </div>
+            <div className="profile-picture-actions">
+              <button type="button" className="profile-picture-link"
+                disabled={photoSaving || isEditingProfile || isLoadingProfile || !user?.id}
+                onClick={() => photoInput.current?.click()}>
+                {photoText.change}
+              </button>
+              {user?.profile_picture && (
+                <button type="button" className="profile-picture-link profile-picture-remove"
+                  disabled={photoSaving || isEditingProfile || isLoadingProfile}
+                  onClick={() => { if (window.confirm(photoText.confirm)) void savePhoto(null, true); }}>
+                  {photoText.remove}
+                </button>
+              )}
+              <small>{photoText.hint}</small>
+            </div>
+            {photoSaving && <p className="profile-picture-notice" role="status">{photoText.saving}</p>}
+            {photoNotice && <p className={`profile-picture-notice ${photoNotice.error ? 'is-error' : ''}`}
+              role={photoNotice.error ? 'alert' : 'status'}>{photoNotice.text}</p>}
           </div>
         </div>
 
@@ -450,7 +554,7 @@ export default function Profile() {
             type="button"
             className="secondary-btn"
             onClick={handleRefreshProfile}
-            disabled={isLoadingProfile}
+            disabled={isLoadingProfile || photoSaving}
           >
             <ProfileIcon name="refresh" />
             {isLoadingProfile ? t('profile.refreshing') : t('profile.refresh')}
@@ -460,7 +564,7 @@ export default function Profile() {
             type="button"
             className="primary-btn"
             onClick={handleStartEditProfile}
-            disabled={isEditingProfile}
+            disabled={isEditingProfile || photoSaving}
           >
             <ProfileIcon name="edit" />
             {t('profile.editProfile')}
