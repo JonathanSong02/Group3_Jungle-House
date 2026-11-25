@@ -30,6 +30,7 @@ const VALID = {
 
 const translations = {
   en: {
+    aiSection: 'AI Chat', workspaceSection: 'Workspace', viewAllChats: 'View all chats', unreadLabel: '{n} unread',
     assistant: 'Staff Assistant', workspace: 'Staff workspace', newChat: 'New chat', searchChats: 'Search chats',
     knowledge: 'Knowledge Base', quiz: 'Training & Quiz', messages: 'Messages', notifications: 'Notifications',
     more: 'More', profile: 'My profile', account: 'Profile & account', sop: 'SOP selection', history: 'Full chat history',
@@ -50,6 +51,7 @@ const translations = {
     saved: 'Saved on this browser for your account.', close: 'Close preferences', searchPlaceholder: 'Search your conversations…', noMatches: 'No matching conversations.', viewHistory: 'View detailed chat history', openSettings: 'Open workspace preferences',
   },
   zh: {
+    aiSection: 'AI 对话', workspaceSection: '工作空间', viewAllChats: '查看全部对话', unreadLabel: '{n} 条未读',
     assistant: '员工智能助手', workspace: '员工工作空间', newChat: '新对话', searchChats: '搜索对话',
     knowledge: '知识库', quiz: '培训与测验', messages: '消息', notifications: '通知', more: '更多',
     profile: '我的个人资料', account: '个人资料与账户', sop: '标准作业程序', history: '完整聊天记录',
@@ -70,6 +72,7 @@ const translations = {
     saved: '设置已在此浏览器中按账户保存。', close: '关闭设置', searchPlaceholder: '搜索您的对话…', noMatches: '未找到匹配的对话。', viewHistory: '查看详细聊天记录', openSettings: '打开工作空间设置',
   },
   ms: {
+    aiSection: 'Sembang AI', workspaceSection: 'Ruang kerja', viewAllChats: 'Lihat semua sembang', unreadLabel: '{n} belum dibaca',
     assistant: 'Pembantu Kakitangan', workspace: 'Ruang kerja kakitangan', newChat: 'Sembang baharu',
     searchChats: 'Cari sembang', knowledge: 'Pangkalan Pengetahuan', quiz: 'Latihan & Kuiz', messages: 'Mesej',
     notifications: 'Pemberitahuan', more: 'Lagi', profile: 'Profil saya', account: 'Profil & akaun',

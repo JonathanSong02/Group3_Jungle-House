@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import api from '../services/api';
 import { StaffChatProvider, useStaffChat } from '../context/StaffChatContext';
 import LanguageSelector from '../i18n/LanguageSelector';
 import { useLanguage } from '../i18n/LanguageContext';
@@ -11,7 +12,8 @@ import { StaffPreferencesDialog, StaffPreferencesProvider, useStaffPreferences }
 function Symbol({ name, size = 20 }) {
   const paths = {
     menu: <><path d="M4 7h16M4 12h16M4 17h16" /></>,
-    panel: <><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16" /></>,
+    history: <><path d="M3 12a9 9 0 1 0 2.7-6.4L3 8M3 3v5h5M12 7v5l3 2" /></>,
+    chevronsVertical: <><path d="m8 9 4-4 4 4m-8 6 4 4 4-4" /></>,
     chevronLeft: <><path d="m15 18-6-6 6-6" /></>,
     chevronRight: <><path d="m9 18 6-6-6-6" /></>,
     edit: <><path d="M12 5H6a3 3 0 0 0-3 3v10a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-6"/><path d="m11 13 9-9a2 2 0 0 1 2 2l-9 9-4 1z" /></>,
@@ -66,10 +68,10 @@ function BrandMark({ size = 30, className = '' }) {
 }
 
 const staffLinks = [
-  { to: '/knowledge', text: 'Knowledge Base', icon: 'book' },
-  { to: '/quiz', text: 'Training & Quiz', icon: 'quiz' },
-  { to: '/messages', text: 'Messages', icon: 'chat' },
-  { to: '/notifications', text: 'Notifications', icon: 'bell' },
+  { to: '/knowledge', text: 'knowledge', icon: 'book' },
+  { to: '/quiz', text: 'quiz', icon: 'quiz' },
+  { to: '/messages', text: 'messages', icon: 'chat', count: 'messages' },
+  { to: '/notifications', text: 'notifications', icon: 'bell', count: 'notifications' },
 ];
 
 const managementLinks = [
@@ -97,7 +99,6 @@ function StaffShell() {
   const [collapsed, setCollapsed] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [search, setSearch] = useState('');
-  const [moreOpen, setMoreOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [preferencesOpen, setPreferencesOpen] = useState(false);
   const closePreferences = useCallback(() => setPreferencesOpen(false), []);
@@ -110,6 +111,52 @@ function StaffShell() {
   const role = String(user?.role || '').trim().toLowerCase().replace(/[\s_-]/g, '');
   const visibleManagementLinks = managementLinks.filter((link) => link.roles.includes(role));
   const isChatRoute = location.pathname === '/chat';
+  const userId = user?.id ?? user?.user_id ?? null;
+  const [unread, setUnread] = useState({ userId: null, messages: null, notifications: null });
+  const counts = unread.userId === userId ? unread : {};
+
+  // Use existing authenticated read-only endpoints. Never show another user's counts.
+  // Poll quietly only while visible; route changes also refresh after reading a chat.
+  useEffect(() => {
+    if (userId == null || (user?.status && user.status !== 'active')) return undefined;
+    const controller = new AbortController();
+    let busy = false;
+    const refresh = async () => {
+      if (busy || controller.signal.aborted || document.visibilityState === 'hidden') return;
+      busy = true;
+      const config = { signal: controller.signal };
+      try {
+        const [messages, notifications] = await Promise.allSettled([
+          api.get(`/messages/threads/${userId}`, config),
+          api.get(`/notifications/${userId}`, config),
+        ]);
+        if (controller.signal.aborted) return;
+        const threads = messages.status === 'fulfilled' && Array.isArray(messages.value.data)
+          ? messages.value.data : null;
+        const items = notifications.status === 'fulfilled' && Array.isArray(notifications.value.data)
+          ? notifications.value.data : null;
+        setUnread({
+          userId,
+          messages: threads === null ? null : threads.reduce((sum, item) => {
+            const count = Number(item.unread_count);
+            return sum + (Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0);
+          }, 0),
+          notifications: items === null ? null : items.filter((item) =>
+            ![true, 1, '1'].includes(item.isRead)).length,
+        });
+      } finally { busy = false; }
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 30000);
+    document.addEventListener('visibilitychange', refresh);
+    window.addEventListener('focus', refresh);
+    return () => {
+      controller.abort();
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', refresh);
+      window.removeEventListener('focus', refresh);
+    };
+  }, [userId, user?.status, location.pathname]);
   const workspaceLabel = role === 'manager' || role === 'admin'
     ? t('nav.adminWorkspace')
     : role === 'teamlead'
@@ -121,10 +168,10 @@ function StaffShell() {
       ? t('role.teamlead')
       : t('assistant');
 
-  useEffect(() => { setMobileOpen(false); setMoreOpen(false); setSearchOpen(false); setProfileOpen(false); setPreferencesOpen(false); }, [location.pathname]);
+  useEffect(() => { setMobileOpen(false); setSearchOpen(false); setProfileOpen(false); setPreferencesOpen(false); }, [location.pathname]);
   useEffect(() => {
     const handleEscape = (event) => {
-      if (event.key === 'Escape') { setMobileOpen(false); setMoreOpen(false); setSearchOpen(false); setProfileOpen(false); setPreferencesOpen(false); }
+      if (event.key === 'Escape') { setMobileOpen(false); setSearchOpen(false); setProfileOpen(false); setPreferencesOpen(false); }
     };
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
@@ -141,7 +188,7 @@ function StaffShell() {
     catch (error) { setLogoutError(translateServerMessage(appT, error?.message) || t('staff.logoutFailed')); setProfileOpen(true); }
     finally { logoutBusy.current = false; setLogoutPending(false); }
   };
-  const visibleSessions = sessions.filter((item) => item.title?.toLowerCase().includes(search.trim().toLowerCase()));
+  const visibleSessions = sessions.filter((item) => String(displayStoredText(item.title, appT) || '').toLowerCase().includes(search.trim().toLowerCase()));
 
   return (
     <div
@@ -159,7 +206,7 @@ function StaffShell() {
       <aside className="staff-sidebar" aria-label={t('layout.staffNav')}>
         <div className="staff-brand">
           <BrandMark size={34} className="staff-brand-icon" />
-          {!collapsed && <div><strong>Jungle House AI</strong><small>{roleLabel}</small></div>}
+          <div className="staff-brand-copy"><strong>Jungle House AI</strong><small>{roleLabel}</small></div>
           <button
             type="button"
             className="staff-icon-button staff-collapse-button"
@@ -173,31 +220,46 @@ function StaffShell() {
         </div>
         <div className="staff-nav-scroll">
           <nav aria-label={t('layout.mainFeatures')} className="staff-primary-links">
-            <button type="button" className="staff-nav-link staff-new-chat" onClick={startChat} title={t('newChat')}><Symbol name="edit"/><span>{t('newChat')}</span></button>
-            <button type="button" className="staff-nav-link" onClick={() => setSearchOpen(true)} title={t('searchChats')}><Symbol name="search"/><span>{t('searchChats')}</span></button>
-            {staffLinks.map((link) => <NavLink key={link.to} className={({isActive}) => `staff-nav-link ${isActive ? 'active' : ''}`} to={link.to} title={t(({ '/knowledge': 'knowledge', '/quiz': 'quiz', '/messages': 'messages', '/notifications': 'notifications' })[link.to])} onClick={() => setMobileOpen(false)}><Symbol name={link.icon}/><span>{t(({ '/knowledge': 'knowledge', '/quiz': 'quiz', '/messages': 'messages', '/notifications': 'notifications' })[link.to])}</span></NavLink>)}
-            <button type="button" className="staff-nav-link" aria-expanded={moreOpen} onClick={() => setMoreOpen((current) => !current)} title={t('more')}><Symbol name="more"/><span>{t('more')}</span></button>
-            {moreOpen && <div className="staff-more-links"><NavLink to="/profile" onClick={() => setMobileOpen(false)} className="staff-nav-link"><Symbol name="user"/><span>{t('profile')}</span></NavLink><NavLink to="/sop-selection" onClick={() => setMobileOpen(false)} className="staff-nav-link"><Symbol name="book"/><span>{t('sop')}</span></NavLink><button type="button" className="staff-nav-link" onClick={openHistory}><Symbol name="search"/><span>{t('history')}</span></button></div>}
+            <div className="staff-nav-section staff-ai-links" role="group" aria-label={t('aiSection')}>
+              <button type="button" className="staff-nav-link staff-new-chat" onClick={startChat} title={t('newChat')} aria-label={t('newChat')}><Symbol name="edit"/><span className="staff-nav-label">{t('newChat')}</span></button>
+              <button type="button" className="staff-nav-link" onClick={() => { setMobileOpen(false); setSearchOpen(true); }} title={t('searchChats')} aria-label={t('searchChats')}><Symbol name="search"/><span className="staff-nav-label">{t('searchChats')}</span></button>
+            </div>
+            <div className="staff-nav-section staff-workspace-links" role="group" aria-label={t('workspaceSection')}>
+              <div className="staff-nav-heading" aria-hidden="true">{t('workspaceSection')}</div>
+              {staffLinks.map((link) => {
+                const count = counts[link.count];
+                const label = t(link.text);
+                const accessibleLabel = count > 0 ? `${label} — ${t('unreadLabel').replace('{n}', count)}` : label;
+                return <NavLink key={link.to} className={({isActive}) => `staff-nav-link ${isActive ? 'active' : ''}`} to={link.to} title={accessibleLabel} aria-label={accessibleLabel} onClick={() => setMobileOpen(false)}>
+                  <Symbol name={link.icon}/><span className="staff-nav-label">{label}</span>
+                  {count > 0 && <span className="staff-nav-count" aria-hidden="true">{count > 99 ? '99+' : count}</span>}
+                </NavLink>;
+              })}
+            </div>
             {visibleManagementLinks.length > 0 && (
-              <div className="staff-primary-links staff-management-links" role="group" aria-label={t('layout.managementTools')}>
-                <div className="staff-recent-header" aria-hidden="true"><span>{t('nav.management')}</span></div>
+              <div className="staff-nav-section staff-management-links" role="group" aria-label={t('layout.managementTools')}>
+                <div className="staff-nav-heading" aria-hidden="true">{t('nav.management')}</div>
                 {visibleManagementLinks.map((link) => (
-                  <NavLink key={link.to} to={link.to} title={t(link.text)} onClick={() => setMobileOpen(false)} className={({ isActive }) => `staff-nav-link ${isActive ? 'active' : ''}`}>
-                    <Symbol name={link.icon}/><span>{t(link.text)}</span>
+                  <NavLink key={link.to} to={link.to} title={t(link.text)} aria-label={t(link.text)} onClick={() => setMobileOpen(false)} className={({ isActive }) => `staff-nav-link ${isActive ? 'active' : ''}`}>
+                    <Symbol name={link.icon}/><span className="staff-nav-label">{t(link.text)}</span>
                   </NavLink>
                 ))}
               </div>
             )}
           </nav>
-          <div className="staff-recent-header"><span>{t('recent')}</span><button type="button" aria-label={t('staff.openChatHistory')} title={t('staff.openChatHistory')} onClick={openHistory}><Symbol name="search" size={15}/></button></div>
+          <section className="staff-recent-section" aria-label={t('layout.recentConversations')}>
+          <div className="staff-nav-heading" aria-hidden="true">{t('recent')}</div>
           <div className="staff-recent-list" aria-label={t('layout.recentConversations')}>
             {sessions.length ? sessions.slice(0, 18).map((item) => <div key={item.id} className="staff-recent-row"><button type="button" className={`staff-recent-chat ${String(activeSessionId) === String(item.id) && location.pathname === '/chat' ? 'active' : ''}`} onClick={() => chooseChat(item.id)} title={displayStoredText(item.title, appT)}><Symbol name="chat" size={16}/><span>{displayStoredText(item.title, appT)}</span></button><button type="button" className="staff-delete-recent" onClick={() => deleteChat(item.id)} aria-label={`${t('staff.deleteChat')}: ${displayStoredText(item.title, appT)}`} title={t('staff.deleteChat')}>×</button></div>) : <p className="staff-sidebar-empty">{t('emptyChats')}</p>}
-            {sessions.length > 18 && <button type="button" className="staff-show-all" onClick={openHistory}>{t('allChats')} →</button>}
           </div>
+          <button type="button" className="staff-nav-link staff-history-link" onClick={openHistory} title={t('viewAllChats')} aria-label={t('viewAllChats')}>
+            <Symbol name="history"/><span className="staff-nav-label">{t('viewAllChats')}</span><span className="staff-history-arrow" aria-hidden="true"><Symbol name="chevronRight" size={15}/></span>
+          </button>
+          </section>
         </div>
         <div className="staff-profile-area">
-          {profileOpen && <div className="staff-account-menu" role="menu"><div className="staff-account-head"><strong>{fullName}</strong><small>{user?.email || t('role.staff')}</small></div><button type="button" role="menuitem" onClick={() => { setProfileOpen(false); setPreferencesOpen(true); }}><Symbol name="leaf" size={18}/>{t('settings')}</button><NavLink to="/profile" role="menuitem" onClick={() => setProfileOpen(false)}><Symbol name="user" size={18}/> {t('account')}</NavLink><button type="button" role="menuitem" disabled={logoutPending} onClick={signOut}><Symbol name="logout" size={18}/>{logoutPending ? t('loggingOut') : t('logout')}</button>{logoutError && <p role="alert" className="staff-logout-error">{logoutError}</p>}</div>}
-          <button type="button" className="staff-profile-trigger" aria-haspopup="menu" aria-expanded={profileOpen} onClick={() => setProfileOpen((current) => !current)}><span className="staff-avatar">{initial}</span><span className="staff-profile-identity"><strong>{fullName}</strong><small>{roleLabel}</small></span><Symbol name="more" size={18}/></button>
+          {profileOpen && <div className="staff-account-menu" role="menu"><div className="staff-account-head"><strong>{fullName}</strong><small>{user?.email || t('role.staff')}</small></div><button type="button" role="menuitem" onClick={() => { setProfileOpen(false); setPreferencesOpen(true); }}><Symbol name="settings" size={18}/>{t('settings')}</button><NavLink to="/profile" role="menuitem" onClick={() => { setProfileOpen(false); setMobileOpen(false); }}><Symbol name="user" size={18}/> {t('account')}</NavLink><button type="button" role="menuitem" disabled={logoutPending} onClick={signOut}><Symbol name="logout" size={18}/>{logoutPending ? t('loggingOut') : t('logout')}</button>{logoutError && <p role="alert" className="staff-logout-error">{logoutError}</p>}</div>}
+          <button type="button" className="staff-profile-trigger" aria-label={`${t('account')}: ${fullName}`} title={t('account')} aria-haspopup="menu" aria-expanded={profileOpen} onClick={() => setProfileOpen((current) => !current)}><span className="staff-avatar">{initial}</span><span className="staff-profile-identity"><strong>{fullName}</strong><small>{roleLabel}</small></span><Symbol name="chevronsVertical" size={18}/></button>
         </div>
       </aside>
       <div className="staff-main">

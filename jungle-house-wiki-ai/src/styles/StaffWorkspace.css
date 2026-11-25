@@ -1821,3 +1821,214 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+
+/* ========================================================================
+   Grouped staff navigation — scoped to the sidebar; no page styles changed.
+   ======================================================================== */
+.staff-workspace .staff-sidebar {
+  box-sizing: border-box;
+}
+.staff-workspace .staff-sidebar .staff-brand {
+  flex: 0 0 auto;
+  margin-bottom: 18px;
+}
+.staff-workspace .staff-sidebar .staff-brand-copy strong,
+.staff-workspace .staff-sidebar .staff-brand-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.staff-workspace .staff-sidebar .staff-nav-scroll {
+  overflow-x: hidden;
+  overscroll-behavior-y: contain;
+  padding: 2px 0 10px;
+  scrollbar-width: thin;
+}
+.staff-workspace .staff-sidebar .staff-primary-links,
+.staff-workspace .staff-sidebar .staff-nav-section {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.staff-workspace .staff-sidebar .staff-workspace-links,
+.staff-workspace .staff-sidebar .staff-management-links,
+.staff-workspace .staff-sidebar .staff-recent-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--staff-border);
+}
+.staff-workspace .staff-sidebar .staff-nav-heading {
+  margin: 0;
+  padding: 2px 12px 6px;
+  color: var(--staff-muted);
+  font-size: var(--jh-small-font, 11px);
+  font-weight: 750;
+  line-height: 1.35;
+  letter-spacing: .045em;
+  text-transform: uppercase;
+}
+.staff-workspace .staff-sidebar .staff-nav-link {
+  box-sizing: border-box;
+  position: relative;
+  min-width: 0;
+  align-items: center;
+  line-height: 1.35;
+}
+.staff-workspace .staff-sidebar .staff-nav-link > svg {
+  display: block;
+  width: 19px;
+  height: 19px;
+  flex: 0 0 19px;
+}
+.staff-workspace .staff-sidebar .staff-nav-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.staff-workspace .staff-sidebar .staff-nav-count {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--jh-accent);
+  color: var(--jh-on-accent);
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.staff-workspace .staff-sidebar .staff-nav-link.active .staff-nav-label {
+  font-weight: 750;
+}
+.staff-workspace .staff-sidebar .staff-history-link {
+  margin-top: 5px;
+  color: var(--staff-text);
+}
+.staff-workspace .staff-sidebar .staff-history-arrow {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  color: var(--staff-muted);
+}
+.staff-workspace .staff-sidebar .staff-recent-list {
+  gap: 2px;
+}
+.staff-workspace .staff-sidebar .staff-recent-chat {
+  min-height: 38px;
+  padding-inline: 12px 4px;
+  line-height: 1.35;
+}
+.staff-workspace .staff-sidebar .staff-recent-chat > svg {
+  width: 16px;
+  height: 16px;
+}
+.staff-workspace .staff-sidebar .staff-delete-recent {
+  flex: 0 0 28px;
+  width: 28px;
+  min-height: 30px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  line-height: 1;
+}
+.staff-workspace .staff-sidebar .staff-profile-area {
+  flex: 0 0 auto;
+}
+.staff-workspace .staff-sidebar .staff-profile-trigger > svg {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  color: var(--staff-muted);
+}
+.staff-workspace .staff-sidebar .staff-collapse-button {
+  color: var(--staff-text);
+  background: var(--jh-control);
+  border-color: var(--jh-control-border);
+}
+.staff-workspace[data-jh-density="compact"] .staff-sidebar :is(.staff-workspace-links,.staff-management-links,.staff-recent-section) {
+  margin-top: 8px;
+  padding-top: 8px;
+}
+.staff-workspace[data-jh-density="compact"] .staff-sidebar .staff-recent-chat {
+  min-height: 36px;
+}
+
+/* Collapsed desktop rail: labels hidden, history and essential icons remain. */
+@media (min-width: 1025px) {
+  .staff-workspace.staff-is-collapsed .staff-sidebar {
+    width: 77px;
+    padding-inline: 10px;
+  }
+  .staff-workspace.staff-is-collapsed .staff-sidebar .staff-brand-copy,
+  .staff-workspace.staff-is-collapsed .staff-sidebar .staff-nav-heading,
+  .staff-workspace.staff-is-collapsed .staff-sidebar .staff-nav-label,
+  .staff-workspace.staff-is-collapsed .staff-sidebar .staff-history-arrow,
+  .staff-workspace.staff-is-collapsed .staff-sidebar .staff-recent-list,
+  .staff-workspace.staff-is-collapsed .staff-sidebar .staff-profile-trigger > svg {
+    display: none;
+  }
+  .staff-workspace.staff-is-collapsed .staff-sidebar .staff-nav-link {
+    justify-content: center;
+    padding-inline: 0;
+    gap: 0;
+    min-height: 43px;
+  }
+  .staff-workspace.staff-is-collapsed .staff-sidebar .staff-nav-count {
+    position: absolute;
+    top: 1px;
+    right: 1px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 3px;
+    font-size: 9px;
+    box-shadow: 0 0 0 2px var(--staff-sidebar);
+  }
+  .staff-workspace.staff-is-collapsed .staff-sidebar .staff-collapse-button {
+    color: var(--staff-text);
+    background: var(--jh-control);
+    border-color: var(--jh-control-border);
+  }
+}
+
+/* A mobile drawer is always fully expanded, regardless of desktop state. */
+@media (max-width: 1024px) {
+  .staff-workspace .staff-sidebar {
+    width: min(86vw, 320px);
+    padding-top: max(16px, env(safe-area-inset-top));
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+  }
+  .staff-workspace .staff-sidebar .staff-collapse-button {
+    display: none;
+  }
+  .staff-workspace .staff-sidebar .staff-mobile-close {
+    display: grid;
+    place-items: center;
+    flex: 0 0 40px;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    color: var(--staff-text);
+    background: var(--jh-control);
+    border: 1px solid var(--jh-control-border);
+  }
+  .staff-workspace .staff-sidebar .staff-mobile-close svg {
+    display: block;
+    width: 20px;
+    height: 20px;
+  }
+  .staff-workspace.staff-is-collapsed .staff-sidebar .staff-brand-copy,
+  .staff-workspace.staff-is-collapsed .staff-sidebar .staff-profile-identity {
+    display: grid;
+  }
+  .staff-workspace.staff-is-collapsed .staff-sidebar .staff-profile-trigger > svg {
+    display: block;
+  }
+  .staff-workspace.staff-is-collapsed .staff-sidebar .staff-account-menu {
+    left: 0;
+  }
+}
