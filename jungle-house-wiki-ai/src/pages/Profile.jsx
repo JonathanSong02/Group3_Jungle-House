@@ -92,36 +92,59 @@ export default function Profile() {
   const { t, tOr, locale, language } = useLanguage();
   const photoText = ({
     en: {
-      change: 'Change profile picture', remove: 'Remove photo', confirm: 'Remove your profile picture?',
+      change: 'Change profile picture',
       saving: 'Saving photo…', saved: 'Profile picture updated.', removed: 'Profile picture removed.',
       invalid: 'Choose a JPEG, PNG or WebP image up to 5 MB.', failed: 'Unable to save your photo. Please try again.',
       hint: 'JPEG, PNG or WebP · max 5 MB',
+      title: 'Profile picture', description: 'Choose a photo and preview it before saving.',
+      choose: 'Choose photo', another: 'Choose another', save: 'Save picture', cancel: 'Cancel', close: 'Close',
+      current: 'Current profile picture', preview: 'New picture preview', defaultAvatar: 'Default avatar',
+      crop: 'Your photo will be centre-cropped to a square.',
+      removeTitle: 'Remove profile picture?', removeDescription: 'Your current photo will be deleted and replaced with your initial. You can upload a new picture anytime.',
+      removeConfirm: 'Remove picture', useDefault: 'Use default avatar',
     },
     zh: {
-      change: '更换头像', remove: '移除头像', confirm: '确定移除您的头像？',
+      change: '更换头像',
       saving: '正在保存头像…', saved: '头像已更新。', removed: '头像已移除。',
       invalid: '请选择不超过 5 MB 的 JPEG、PNG 或 WebP 图片。', failed: '无法保存头像，请重试。',
       hint: 'JPEG、PNG 或 WebP · 最大 5 MB',
+      title: '个人头像', description: '选择图片，并在保存前预览效果。',
+      choose: '选择图片', another: '重新选择', save: '保存头像', cancel: '取消', close: '关闭',
+      current: '当前头像', preview: '新头像预览', defaultAvatar: '默认头像',
+      crop: '图片将从中心裁剪为正方形。',
+      removeTitle: '移除个人头像？', removeDescription: '当前照片将被删除，并恢复为姓名首字母头像。您可以随时上传新照片。',
+      removeConfirm: '确认移除', useDefault: '恢复默认头像',
     },
     ms: {
-      change: 'Tukar gambar profil', remove: 'Buang gambar', confirm: 'Buang gambar profil anda?',
+      change: 'Tukar gambar profil',
       saving: 'Menyimpan gambar…', saved: 'Gambar profil dikemas kini.', removed: 'Gambar profil dibuang.',
       invalid: 'Pilih imej JPEG, PNG atau WebP sehingga 5 MB.', failed: 'Gagal menyimpan gambar. Sila cuba lagi.',
       hint: 'JPEG, PNG atau WebP · maksimum 5 MB',
+      title: 'Gambar profil', description: 'Pilih gambar dan lihat pratonton sebelum menyimpan.',
+      choose: 'Pilih gambar', another: 'Pilih gambar lain', save: 'Simpan gambar', cancel: 'Batal', close: 'Tutup',
+      current: 'Gambar profil semasa', preview: 'Pratonton gambar baharu', defaultAvatar: 'Avatar lalai',
+      crop: 'Gambar akan dipangkas dari tengah menjadi segi empat sama.',
+      removeTitle: 'Buang gambar profil?', removeDescription: 'Gambar semasa akan dipadam dan digantikan dengan huruf awal nama anda. Anda boleh memuat naik gambar baharu pada bila-bila masa.',
+      removeConfirm: 'Buang gambar', useDefault: 'Guna avatar lalai',
     },
   })[language || 'en'];
   const photoInput = useRef(null);
   const photoBusy = useRef(false);
+  const photoDialog = useRef(null);
+  const [photoMode, setPhotoMode] = useState(null);
+  const [photoDraft, setPhotoDraft] = useState(null);
+  const [photoReady, setPhotoReady] = useState(false);
+  const photoOpen = photoMode !== null;
   const [photoSaving, setPhotoSaving] = useState(false);
   const [photoNotice, setPhotoNotice] = useState(null);
 
   const savePhoto = async (file, remove = false) => {
-    if (!user?.id || photoBusy.current) return;
+    if (!user?.id || photoBusy.current) return false;
     setPhotoNotice(null);
     if (!remove && (!file || file.size > 5 * 1024 * 1024 ||
       (file.type && !['image/jpeg', 'image/png', 'image/webp'].includes(file.type)))) {
       setPhotoNotice({ error: true, text: photoText.invalid });
-      return;
+      return false;
     }
     photoBusy.current = true;
     setPhotoSaving(true);
@@ -142,21 +165,72 @@ export default function Profile() {
       }
       updateUser(updated);
       setPhotoNotice({ error: false, text: remove ? photoText.removed : photoText.saved });
+      return true;
     } catch (error) {
       setPhotoNotice({
         error: true,
         text: error.response?.data?.code === 'AVATAR_INVALID' ? photoText.invalid : photoText.failed,
       });
+      return false;
     } finally {
       photoBusy.current = false;
       setPhotoSaving(false);
     }
   };
 
+  // Native modal enters the browser top layer, above the fixed staff navigation.
+  useEffect(() => {
+    const dialog = photoDialog.current;
+    if (!photoOpen || !dialog) return undefined;
+    if (!dialog.open) dialog.showModal();
+    return () => { if (dialog.open) dialog.close(); };
+  }, [photoOpen]);
+
+  const draftUrl = photoDraft?.url;
+  useEffect(() => {
+    return () => { if (draftUrl) URL.revokeObjectURL(draftUrl); };
+  }, [draftUrl]);
+
+  const openPhotoDialog = (mode = 'change') => {
+    if (photoBusy.current) return;
+    setPhotoDraft(null);
+    setPhotoReady(false);
+    setPhotoNotice(null);
+    setPhotoMode(mode);
+  };
+
+  const closePhotoDialog = () => {
+    if (photoBusy.current) return;
+    setPhotoMode(null);
+    setPhotoDraft(null);
+    setPhotoReady(false);
+    setPhotoNotice(null);
+  };
+
   const choosePhoto = (event) => {
     const file = event.target.files?.[0];
     event.target.value = '';
-    if (file) void savePhoto(file);
+    if (!file || photoBusy.current) return;
+    setPhotoReady(false);
+    setPhotoNotice(null);
+    if (!file.size || file.size > 5 * 1024 * 1024 ||
+        (file.type && !['image/jpeg', 'image/png', 'image/webp'].includes(file.type))) {
+      setPhotoDraft(null);
+      setPhotoNotice({ error: true, text: photoText.invalid });
+      return;
+    }
+    setPhotoDraft({ file, url: URL.createObjectURL(file) });
+  };
+
+  const confirmPhotoChange = async () => {
+    const removing = photoMode === 'remove';
+    if (photoBusy.current || (removing ? !user?.profile_picture : !photoDraft || !photoReady)) return;
+    const success = await savePhoto(removing ? null : photoDraft.file, removing);
+    if (success) {
+      setPhotoMode(null);
+      setPhotoDraft(null);
+      setPhotoReady(false);
+    }
   };
 
 
@@ -493,18 +567,79 @@ export default function Profile() {
         subtitle={t('profile.subtitle')}
       />
 
+      <dialog ref={photoDialog} className="profile-photo-dialog"
+        aria-labelledby="profile-photo-title" aria-describedby="profile-photo-description"
+        onCancel={(event) => { event.preventDefault(); closePhotoDialog(); }}>
+        <div className="profile-photo-dialog-inner">
+          <header className="profile-photo-header">
+            <div>
+              <h2 id="profile-photo-title">{photoMode === 'remove' ? photoText.removeTitle : photoText.title}</h2>
+              <p id="profile-photo-description">{photoMode === 'remove' ? photoText.removeDescription : photoText.description}</p>
+            </div>
+            <button type="button" className="profile-photo-close" aria-label={photoText.close}
+              disabled={photoSaving} onClick={closePhotoDialog}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+            </button>
+          </header>
+          <div className="profile-photo-stage">
+            <div className="profile-photo-preview">
+              {photoMode === 'remove' ? userInitial : photoDraft ? (
+                <img key={photoDraft.url} src={photoDraft.url} alt={photoText.preview}
+                  onLoad={(event) => {
+                    const { naturalWidth, naturalHeight } = event.currentTarget;
+                    if (!naturalWidth || !naturalHeight || naturalWidth * naturalHeight > 20000000) {
+                      setPhotoDraft(null);
+                      setPhotoReady(false);
+                      setPhotoNotice({ error: true, text: photoText.invalid });
+                    } else setPhotoReady(true);
+                  }}
+                  onError={() => {
+                    setPhotoDraft(null);
+                    setPhotoReady(false);
+                    setPhotoNotice({ error: true, text: photoText.invalid });
+                  }}/>
+              ) : <AvatarPicture src={user?.profile_picture} fallback={userInitial}/>}
+            </div>
+            <strong>{photoMode === 'remove' || (!photoDraft && !user?.profile_picture)
+              ? photoText.defaultAvatar : photoDraft ? photoText.preview : photoText.current}</strong>
+            {photoMode !== 'remove' && <p>{photoDraft ? photoText.crop : photoText.hint}</p>}
+          </div>
+          {photoMode !== 'remove' && (
+            <div className="profile-photo-selection">
+              <input ref={photoInput} type="file" accept="image/jpeg,image/png,image/webp"
+                hidden onChange={choosePhoto}/>
+              <button type="button" className="profile-photo-button is-secondary" disabled={photoSaving}
+                onClick={() => photoInput.current?.click()}>
+                <ProfileIcon name="camera" size={17}/>{photoDraft ? photoText.another : photoText.choose}
+              </button>
+              {user?.profile_picture && <button type="button" className="profile-photo-default"
+                disabled={photoSaving} onClick={() => openPhotoDialog('remove')}>{photoText.useDefault}</button>}
+            </div>
+          )}
+          {photoNotice?.error && <p className="profile-photo-error" role="alert">{photoNotice.text}</p>}
+          <footer className="profile-photo-footer">
+            <button type="button" className="profile-photo-button is-secondary" disabled={photoSaving}
+              onClick={closePhotoDialog}>{photoText.cancel}</button>
+            <button type="button" className={`profile-photo-button ${photoMode === 'remove' ? 'is-danger' : 'is-primary'}`}
+              disabled={photoSaving || (photoMode === 'remove' ? !user?.profile_picture : !photoReady || !photoDraft)}
+              onClick={() => void confirmPhotoChange()}>
+              {photoSaving ? photoText.saving : photoMode === 'remove' ? photoText.removeConfirm : photoText.save}
+            </button>
+          </footer>
+          {photoSaving && <span className="profile-photo-sr-only" role="status">{photoText.saving}</span>}
+        </div>
+      </dialog>
+
       <section className="profile-overview-card">
         <div className="profile-identity-area">
           <div className="profile-picture-wrap">
             <div className="profile-avatar-modern" aria-hidden="true">
               <AvatarPicture src={user?.profile_picture} fallback={userInitial} />
             </div>
-            <input ref={photoInput} type="file" accept="image/jpeg,image/png,image/webp"
-              hidden onChange={choosePhoto} />
             <button type="button" className="profile-picture-camera"
               title={photoText.change} aria-label={photoText.change}
               disabled={photoSaving || isEditingProfile || isLoadingProfile || !user?.id}
-              onClick={() => photoInput.current?.click()}>
+              onClick={() => openPhotoDialog('change')}>
               <ProfileIcon name="camera" size={16}/>
             </button>
           </div>
@@ -531,20 +666,19 @@ export default function Profile() {
             <div className="profile-picture-actions">
               <button type="button" className="profile-picture-link"
                 disabled={photoSaving || isEditingProfile || isLoadingProfile || !user?.id}
-                onClick={() => photoInput.current?.click()}>
+                onClick={() => openPhotoDialog('change')}>
                 {photoText.change}
               </button>
               {user?.profile_picture && (
                 <button type="button" className="profile-picture-link profile-picture-remove"
                   disabled={photoSaving || isEditingProfile || isLoadingProfile}
-                  onClick={() => { if (window.confirm(photoText.confirm)) void savePhoto(null, true); }}>
-                  {photoText.remove}
+                  onClick={() => openPhotoDialog('remove')}>
+                  {photoText.useDefault}
                 </button>
               )}
               <small>{photoText.hint}</small>
             </div>
-            {photoSaving && <p className="profile-picture-notice" role="status">{photoText.saving}</p>}
-            {photoNotice && <p className={`profile-picture-notice ${photoNotice.error ? 'is-error' : ''}`}
+            {!photoOpen && photoNotice && <p className={`profile-picture-notice ${photoNotice.error ? 'is-error' : ''}`}
               role={photoNotice.error ? 'alert' : 'status'}>{photoNotice.text}</p>}
           </div>
         </div>
