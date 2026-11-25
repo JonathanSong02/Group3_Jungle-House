@@ -602,7 +602,12 @@ export default function Profile() {
             </div>
             <strong>{photoMode === 'remove' || (!photoDraft && !user?.profile_picture)
               ? photoText.defaultAvatar : photoDraft ? photoText.preview : photoText.current}</strong>
-            {photoMode !== 'remove' && <p>{photoDraft ? photoText.crop : photoText.hint}</p>}
+            {photoMode !== 'remove' && (
+              <>
+                {photoDraft && <p>{photoText.crop}</p>}
+                <p>{photoText.hint}</p>
+              </>
+            )}
           </div>
           {photoMode !== 'remove' && (
             <div className="profile-photo-selection">
@@ -662,21 +667,6 @@ export default function Profile() {
               >
                 {statusLabel}
               </span>
-            </div>
-            <div className="profile-picture-actions">
-              <button type="button" className="profile-picture-link"
-                disabled={photoSaving || isEditingProfile || isLoadingProfile || !user?.id}
-                onClick={() => openPhotoDialog('change')}>
-                {photoText.change}
-              </button>
-              {user?.profile_picture && (
-                <button type="button" className="profile-picture-link profile-picture-remove"
-                  disabled={photoSaving || isEditingProfile || isLoadingProfile}
-                  onClick={() => openPhotoDialog('remove')}>
-                  {photoText.useDefault}
-                </button>
-              )}
-              <small>{photoText.hint}</small>
             </div>
             {!photoOpen && photoNotice && <p className={`profile-picture-notice ${photoNotice.error ? 'is-error' : ''}`}
               role={photoNotice.error ? 'alert' : 'status'}>{photoNotice.text}</p>}
