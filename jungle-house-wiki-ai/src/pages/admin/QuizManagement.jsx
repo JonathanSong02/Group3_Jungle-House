@@ -3,6 +3,7 @@ import PageHeader from '../../components/PageHeader';
 import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../i18n/LanguageContext';
+import { aiTasks, newAiRequestId, useAiTasks } from '../../services/aiTasks';
 import './styles/QuizManagement.css';
 import './styles/QuizManagementAIBuild.css';
 
@@ -160,7 +161,27 @@ export default function QuizManagement() {
   };
   const titleLabel = (title) => (title === 'AI Generated Quiz' ? t('qm.defaultAiTitle') : title);
 
-  const [activeTab, setActiveTab] = useState('manage');
+  // AI keeps running after the page is left (2026-11-26): generated questions
+  // are kept in this browser (per user) until saved or discarded, so they are
+  // still here after switching page, locking the phone or a reload.
+  const quizDraftKey = `jh_ai_quiz_draft_${String(user?.id ?? '')}`;
+  const readQuizDraft = () => {
+    try {
+      return JSON.parse(localStorage.getItem(quizDraftKey) || 'null');
+    } catch {
+      return null;
+    }
+  };
+  const writeQuizDraft = (quiz) => {
+    try {
+      if (quiz) localStorage.setItem(quizDraftKey, JSON.stringify(quiz));
+      else localStorage.removeItem(quizDraftKey);
+    } catch {
+      // Storage full or blocked: the draft only lives on this page, as before.
+    }
+  };
+
+  const [activeTab, setActiveTab] = useState(() => (readQuizDraft() ? 'ai-generate' : 'manage'));
   const [searchTerm, setSearchTerm] = useState('');
 
   const [quizzes, setQuizzes] = useState([]);
@@ -176,10 +197,40 @@ export default function QuizManagement() {
   const [message, setMessage] = useState('');
 
   const [aiForm, setAiForm] = useState(emptyAiForm);
-  const [aiLoading, setAiLoading] = useState(false);
+  const aiLoading = useAiTasks().some(
+    (task) => task.kind === 'quiz' && String(task.userId) === String(user?.id)
+  );
   const [aiSaving, setAiSaving] = useState(false);
   const [aiError, setAiError] = useState('');
-  const [aiPreview, setAiPreview] = useState(null);
+  const [aiPreview, setAiPreview] = useState(readQuizDraft);
+
+  useEffect(() => {
+    writeQuizDraft(aiPreview);
+  // writeQuizDraft only depends on quizDraftKey.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aiPreview, quizDraftKey]);
+
+  // A quiz finished after a page reload waits in the task inbox; opening
+  // this page also clears its "ready" dot in the sidebar.
+  useEffect(() => {
+    if (user?.id == null) return undefined;
+    const collect = () => {
+      for (const entry of aiTasks.takeInbox(user.id, 'quiz')) {
+        if (entry.ok && entry.data?.quiz) {
+          writeQuizDraft(entry.data.quiz);
+          setAiPreview(entry.data.quiz);
+          setAiError('');
+        } else {
+          setAiError(entry.failed ? t('aiTask.unfinished') : (entry.data?.message || t('qm.err.generateFailed')));
+        }
+        setActiveTab('ai-generate');
+      }
+      aiTasks.markSeen(user.id, (item) => item.kind === 'quiz');
+    };
+    collect();
+    return aiTasks.onDone((event) => { if (event.kind === 'quiz') collect(); });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
   const [aiArticles, setAiArticles] = useState([]);
 
   const [successModal, setSuccessModal] = useState({
@@ -540,28 +591,40 @@ export default function QuizManagement() {
       return;
     }
 
-    try {
-      setAiLoading(true);
+    if (aiLoading) return;
 
+    try {
       const chosenArticle = aiArticles.find(
         (article) => String(article.article_id) === String(aiForm.articleId)
       );
 
-      const response = await api.post(
-        '/admin/quizzes/ai-generate',
-        {
-          title:
-            aiForm.title.trim() ||
-            (chosenArticle ? t('qm.titleSuffix', { title: chosenArticle.title }) : t('qm.defaultAiTitle')),
-          sourceCategory: aiForm.sourceCategory,
-          articleId: aiForm.articleId ? Number(aiForm.articleId) : null,
-          count: requestedQuestionCount,
-          difficulty: aiForm.difficulty,
-          status: 'inactive',
-        },
-        { timeout: 150000 }
-      );
+      const requestId = newAiRequestId();
+      // Same request as before plus an optional request_id, run by the
+      // app-wide task runner so the result still arrives after leaving.
+      const response = await aiTasks.run({
+        userId: user?.id,
+        kind: 'quiz',
+        requestId,
+        meta: {},
+        send: (signal) => api.post(
+          '/admin/quizzes/ai-generate',
+          {
+            title:
+              aiForm.title.trim() ||
+              (chosenArticle ? t('qm.titleSuffix', { title: chosenArticle.title }) : t('qm.defaultAiTitle')),
+            sourceCategory: aiForm.sourceCategory,
+            articleId: aiForm.articleId ? Number(aiForm.articleId) : null,
+            count: requestedQuestionCount,
+            difficulty: aiForm.difficulty,
+            status: 'inactive',
+            request_id: requestId,
+          },
+          { timeout: 150000, signal }
+        ),
+      });
 
+      // Saved first: this page may already be closed.
+      writeQuizDraft(response.data?.quiz || null);
       setAiPreview(response.data?.quiz || null);
     } catch (error) {
       console.error('AI generate quiz error:', error.response?.data || error);
@@ -578,8 +641,6 @@ export default function QuizManagement() {
           ? (SERVER_MESSAGE_KEYS[serverMessage] ? t(SERVER_MESSAGE_KEYS[serverMessage]) : serverMessage)
           : fallbackMessage
       );
-    } finally {
-      setAiLoading(false);
     }
   };
 

@@ -37,6 +37,7 @@ migration (`backend/migrations/0001_baseline.py`) relates to production. How to 
 | `login_lockout.py` · `ensure_known_device_table` | login, `/auth/me`, reset password, change password requests | creates `login_known_devices` (FK → `users`, ON DELETE CASCADE). **Not in production yet**: migration 0003, see section 7 | `IF NOT EXISTS` |
 | `document_text_service.py` · `ensure_table` | after an article is added or edited, and once 30 s after the app starts (background thread; off with `DOCUMENT_TEXT_BACKFILL=0`) | creates `article_attachment_text` (FK → `wiki_article`, ON DELETE CASCADE). **Not in production yet**: migration 0005, see section 8 | `IF NOT EXISTS` |
 | `semantic_search.py` · `ensure_table` | background meaning-search sync, 60 s after the app starts and then every 5 minutes (off with `SEMANTIC_SEARCH_SYNC=0`, or with `DOCUMENT_TEXT_BACKFILL=0` when that is not set) | creates `article_chunk_embedding` (FK → `wiki_article`, ON DELETE CASCADE). **Not in production yet**: migration 0007, see section 9 | `IF NOT EXISTS` |
+| `ai_task_results.py` · `ensure_table` | after an AI chat / AI quiz reply that carries a `request_id` (background thread), and on `GET /api/ai-tasks/<id>` | creates `ai_task_result` (FK → `users`, ON DELETE CASCADE). **Not in production yet**: migration 0008, see section 10 | `IF NOT EXISTS` |
 | `retrieval_audit.py` · `ensure_question_table` | a manager presses "Check search accuracy" on AI Model Settings | creates `retrieval_audit_question` (FK → `wiki_article`, ON DELETE CASCADE). **Not in production yet**: migration 0007, see section 9 | `IF NOT EXISTS` |
 | `app.py` · `ensure_password_reset_tokens_table` | forgot / validate / reset password requests | creates `password_reset_tokens` (FK → `users`, ON DELETE CASCADE) | `IF NOT EXISTS` |
 | `app.py` · `ensure_declined_registration_history_table` | register request (called before the registration transaction, because DDL commits) | creates `declined_registration_history` | `IF NOT EXISTS` |
@@ -228,3 +229,62 @@ Re-written when the article changes. Code: `backend/src/retrieval_audit.py`.
 | `question` | VARCHAR(500) NOT NULL | the test question |
 | `quote` | TEXT NOT NULL | the article sentence that answers it |
 | `created_at` | DATETIME NOT NULL | |
+
+## 10. Added after the baseline: saved AI replies (migration 0008)
+
+### `ai_task_result`
+
+A copy of exactly the reply that an AI chat question or an AI quiz generation sent, per signed-in user and the
+`request_id` the page chose. A page that was closed, put in the phone background or lost its connection while waiting
+fetches it later with `GET /api/ai-tasks/<request_id>` (only the user's own rows). Nothing about how a question is
+answered depends on it. Created by the app at runtime with exactly the migration's definition, so the site works
+whether or not 0008 has been applied. Rows older than 7 days are deleted (checked at most every 10 minutes while
+saving); the table can be emptied at any time. Code: `backend/src/ai_task_results.py`.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `ai_task_result_id` | INT, auto-increment, primary key | |
+| `user_id` | INT NOT NULL, FK → `users.user_id` ON DELETE CASCADE | who asked |
+| `request_id` | VARCHAR(64) NOT NULL | the id the page sent with the request (a UUID) |
+| `kind` | VARCHAR(20) NOT NULL | `chat` or `quiz` |
+| `http_status` | INT NOT NULL | status code of the reply (an error reply is saved too) |
+| `result` | MEDIUMTEXT NOT NULL | the reply JSON, as sent |
+| `created_at` | DATETIME NOT NULL | |
+
+Unique `(user_id, request_id)`.
+
+## 11. Added after the baseline: phone / browser notifications (migration 0009)
+
+Both tables are created by the app at runtime (`web_push.ensure_tables`) with exactly the migration's definition. Code:
+`backend/src/web_push.py`.
+
+### `web_push_key`
+
+One row: the server's own VAPID key pair (P-256), made automatically the first time a notification is needed. The
+private key (PEM) signs a short token that proves to the push services that the notifications come from this site.
+Deleting the row makes a new pair, after which every phone has to turn notifications on again.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `web_push_key_id` | INT, auto-increment, primary key | |
+| `private_key` | TEXT NOT NULL | PEM private key |
+| `public_key` | VARCHAR(255) NOT NULL | the public key, base64url (given to browsers) |
+| `created_at` | DATETIME NOT NULL | |
+
+### `web_push_subscription`
+
+One row per browser / phone that turned notifications on.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `web_push_subscription_id` | INT, auto-increment, primary key | |
+| `user_id` | INT NOT NULL, FK → `users.user_id` ON DELETE CASCADE | the staff member now using that browser |
+| `endpoint_hash` | CHAR(64) NOT NULL, unique | SHA-256 of `endpoint` (endpoints can be too long for an index) |
+| `endpoint` | TEXT NOT NULL | the push service address (only Google / Mozilla / Apple / Microsoft are accepted) |
+| `p256dh`, `auth` | VARCHAR(255), VARCHAR(64) NOT NULL | the browser's key and secret for encrypting the message |
+| `subject` | VARCHAR(255) NOT NULL | the site's https address, used in the VAPID token |
+| `labels` | TEXT NOT NULL | JSON: the notification words in the user's language |
+| `created_at` | DATETIME NOT NULL | |
+| `last_used_at` | DATETIME | reserved |
+
+Index on `user_id`. Rows are deleted when the push service says the subscription is gone (404 / 410).

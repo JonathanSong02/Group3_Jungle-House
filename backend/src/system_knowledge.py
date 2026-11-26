@@ -90,7 +90,10 @@ GUIDE_SECTIONS = [
                 "box. If the AI cannot find the answer, it says so, lists articles that may help and asks "
                 "\"Did any of these help?\"; choose \"No, escalate to a team lead\" to send the question to a Team Lead. "
                 "If the chat shows \"AI chat is currently unavailable\", try again later; the Knowledge Base and the rest "
-                "of the site still work.",
+                "of the site still work. While the AI is answering you can open another page, lock your phone or start "
+                "a new chat (up to two questions at a time): the answer is saved in its chat, a small \"AI answer is "
+                "ready\" box appears and the chat gets a dot in the sidebar. If a question did not finish, the chat says "
+                "so; just ask again.",
     },
     {
         "key": "escalate", "nav_key": None,
@@ -155,7 +158,9 @@ GUIDE_SECTIONS = [
         "keywords": ["quiz management", "create quiz", "make quiz", "new quiz", "build quiz", "add question",
                      "ai generate", "出题", "建测验", "新增测验", "测验管理", "cipta kuiz", "pengurusan kuiz"],
         "text": "Build and manage training quizzes: create a quiz, \"Add Question\", or use \"AI Generate\" to draft "
-                "questions from Knowledge Base articles.",
+                "questions from Knowledge Base articles. You can leave the page while the AI is writing; an \"AI quiz is "
+                "ready\" box appears when it is done, and the drafted questions stay on this page until you save or "
+                "discard them.",
     },
     {
         "key": "review_management", "nav_key": "nav.reviewManagement",
@@ -233,9 +238,14 @@ GUIDE_SECTIONS = [
         "labels": {"en": "Profile", "zh": "个人资料", "ms": "Profil"},
         "roles": {"staff", "teamlead", "manager"},
         "keywords": ["profile", "my account", "password", "change password", "my details", "个人资料", "我的账户",
-                     "密码", "改密码", "profil", "akaun saya", "kata laluan"],
+                     "密码", "改密码", "profil", "akaun saya", "kata laluan", "notification on phone",
+                     "phone notification", "push notification", "手机通知", "通知手机", "pemberitahuan telefon"],
         "text": "\"My Account\": update your details and press \"Save Changes\". Use \"Change Password\" to set a new "
-                "password (at least 8 characters, with an uppercase letter and a number).",
+                "password (at least 8 characters, with an uppercase letter and a number). \"Phone notifications\": "
+                "turn on a notification for this phone or computer when the AI has answered or finished a quiz (it "
+                "only says the answer is ready). On iPhone, first add the site to the Home Screen (Safari Share button, "
+                "\"Add to Home Screen\") and open it from there. If notifications are blocked, allow them in the phone "
+                "or browser settings.",
     },
     {
         "key": "language", "nav_key": None,

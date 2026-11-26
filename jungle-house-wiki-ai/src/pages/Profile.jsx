@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import AvatarPicture from '../components/AvatarPicture';
 import PageHeader from '../components/PageHeader';
+import PushSetupPanel from '../components/PushSetupPanel';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import { useLanguage } from '../i18n/LanguageContext';
@@ -1036,6 +1037,23 @@ export default function Profile() {
               </div>
             </form>
           )}
+        </section>
+
+        {/* AI-ready phone / browser notifications (2026-11-26) */}
+        <section className="profile-panel">
+          <div className="profile-panel-header">
+            <span className="profile-panel-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"
+                strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M18 9a6 6 0 0 0-12 0c0 6-3 8-3 8h18s-3-2-3-8M10 21h4" />
+              </svg>
+            </span>
+            <div>
+              <h3>{t('push.title')}</h3>
+              <p>{t('push.hint')}</p>
+            </div>
+          </div>
+          <PushSetupPanel t={t} />
         </section>
       </div>
     </div>

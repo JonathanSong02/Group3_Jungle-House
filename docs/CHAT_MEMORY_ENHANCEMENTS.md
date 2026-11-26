@@ -238,3 +238,19 @@ lint 仍有既有 36 errors / 10 warnings。三个修改的页面与 HEAD 的诊
 - 测试：`test_document_context.py::ExactTitleTests`（5 个）、`test_chat_memory.py`（标题题加提示、笼统题不加、同标题两篇不加）。
 - 补充（同日）：上线后打"promotion"仍被反问。原因是提示词里"笼统问题要反问"的规则（例子就是 "opening"）比提示更强，AI 照样反问。现在标题完全相同时，**整段反问规则不放进提示词**，AI 只能回答或说找不到；笼统问题的提示词不变。测试同步更新。
 - 补充 2（同日）：仍然绕圈，真正原因是资料库有**两篇都叫 "Promotion"**（#14 手动建、#249 Notion 同步，内容不同）。原规则"同名两篇不处理"让 AI 反问，但 AI 把两个同名合成一个选项，按了又对到两篇。现在同名的文章（最多 3 篇，依搜索排名）全部排最前，提示词请 AI 把它们合起来回答、不反问，反问规则同样不放进提示词。测试改为"同名两篇都排前、合起来答"。
+
+## 2026-11-26 更新：离开页面 AI 照常跑（第一步）（LIONG1934）
+
+- 用户需求：员工多数用手机；问完 AI 或叫 AI 出 quiz 后换页面、锁手机、切去别的 app，回来答案要在，好了要通知。分两步：第一步（本次）答案不丢＋页内通知；第二步手机推送（未做）。要求：速度、准确率不能变。
+- 聊天流程（`chat()`）、找文章、提示词完全没改。页面照旧直接等 `/api/chat` 的回应；服务器在回应送出后另开线程存一份**同样的回应**到 `ai_task_result`（migration 0008，按用户＋`request_id`，留 7 天）。只有请求失败且**没有收到服务器回应**（断线、手机暂停网页）时，前端才每 3 秒去 `GET /api/ai-tasks/<id>` 拿存好的那份，最多 3 分钟（quiz 4 分钟）。服务器错误、按停止照旧马上显示。
+- 前端：`services/aiTaskManager.js` / `aiTasks.js` 在页面以外跑请求；`Chat.jsx` 的"思考中"改为每个对话各自计算，可在别的对话再问，每人最多同时 2 题；存对话先写 localStorage（`utils/chatSessionStore.js`），离开页面时回来的答案也存得到。网页被手机重开时，未完成的题在 `resume()` 后放进 inbox，聊天页读出放回原对话；没跑完显示"这题没跑完，请再问一次"。
+- `components/AiTaskNotice.jsx`：不在那个对话/quiz 页时，角落跳"AI 回答好了"（不显示问题与答案内容），左边 Recent chats 那个对话与 Quiz Management 亮小点；分页在背景时标题加"✓"。
+- 实测发现：旧版换页面后答案其实多半还是会存进 localStorage（React 会立即执行 state updater），但回来时看不到"思考中"、手机背景会断线，所以看起来像停了。
+- 测试：`test_ai_task_results.py`（16）、`aiTaskManager.test.js`（15）、`chatSessionStore.test.js`（6）、`Chat.background.test.js`（3）；其他 `Chat.*.test.js` 由 `pages/chatTestEnv.js` 提供 runner。后端 621、前端 146 全过。未在真浏览器/手机、真数据库联调。
+
+## 2026-11-26 更新：第二步，AI 好了推送到手机（LIONG1934）
+
+- 用户说"直接做第二步"。不装新东西、不碰 Railway：`backend/src/web_push.py` 用已有的 `cryptography`、`requests` 写标准 Web Push；加密与 RFC 8291 附录 A 的官方例子逐字节相同，另用 `http_ece` 参考库（只装在测试环境）解密成功。钥匙第一次需要时自动产生，存在 `web_push_key`（migration 0009）。
+- 什么时候推：存副本后等 4 秒；网页在"看得见"时收到答案、或按了停止，会送 `/api/ai-tasks/<id>/seen`，就不推。只推"AI 回答好了 / AI 出好 quiz 了"，不含问题与答案。只连 Google / Mozilla / Apple / Microsoft 的推送服务。
+- 前端：`public/sw.js`（只显示通知、处理点击，不缓存网页）、`manifest.webmanifest` 与图示（可加到主屏幕）、个人资料页"手机通知"卡、第一次问 AI 后问一次要不要开；iPhone 在 Safari 会教"加到主屏幕"。
+- 测试：`test_web_push.py`（26）、`webPushSupport.test.js`（6）、`aiTaskManager.test.js` 加"停止会告诉服务器不要推"。后端 647、前端 153 全过。未在真手机测试。

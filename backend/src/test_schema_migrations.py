@@ -424,7 +424,7 @@ class BaselineTests(TempMigrations):
         db = self.backend()
         ml.apply_migrations(db, migrations)
         self.assertEqual(sl.compare(ml.replay(migrations), db.schema), [])
-        self.assertEqual(len(db.schema.tables), 41)                   # the 36 production tables + login_known_devices (0003), chat_attachments (0004), article_attachment_text (0005), article_chunk_embedding + retrieval_audit_question (0007)
+        self.assertEqual(len(db.schema.tables), 44)                   # the 36 production tables + login_known_devices (0003), chat_attachments (0004), article_attachment_text (0005), article_chunk_embedding + retrieval_audit_question (0007), ai_task_result (0008), web_push_key + web_push_subscription (0009)
 
 
 # --------------------------------------------------------------------------
@@ -759,7 +759,8 @@ class InventoryTests(unittest.TestCase):
             self.assertIn(name, self.expected.tables)
         # Later migrations add to it: 0003 creates login_known_devices (device-based login lockout).
         self.assertEqual(set(self.expected.tables) - set(self.baseline.tables), {"login_known_devices", "chat_attachments", "article_attachment_text",
-                                                                                         "article_chunk_embedding", "retrieval_audit_question"})
+                                                                                         "article_chunk_embedding", "retrieval_audit_question", "ai_task_result",
+                                                                                         "web_push_key", "web_push_subscription"})
 
     def test_baseline_is_production_not_the_scripts(self):
         users = self.baseline.get("users").columns["status"]
@@ -1059,7 +1060,7 @@ class OptionalIndexMigrationTests(unittest.TestCase):
         self.production = ml.replay(self.migrations[:1])          # production = the baseline only
 
     def test_0002_is_two_add_index_operations_and_is_not_part_of_the_baseline(self):
-        self.assertEqual([m.name for m in self.migrations], ["baseline", "escalation_indexes", "login_known_devices", "image_pipeline", "article_attachment_text", "article_attachment_summary", "semantic_search"])
+        self.assertEqual([m.name for m in self.migrations], ["baseline", "escalation_indexes", "login_known_devices", "image_pipeline", "article_attachment_text", "article_attachment_summary", "semantic_search", "ai_task_result", "web_push"])
         ctx = ml.Context(self.production.copy(), dry_run=True)
         self.migrations[1].upgrade(ctx)
         self.assertEqual([(s.status, s.sql) for s in ctx.steps], [
@@ -1072,7 +1073,7 @@ class OptionalIndexMigrationTests(unittest.TestCase):
         ml.baseline_database(db, self.migrations)                 # production matches 0001: only the ledger is written
         self.assertEqual(db.executed, [ml.LEDGER_DDL])
         results = ml.apply_migrations(db, self.migrations)
-        self.assertEqual([r.migration.version for r in results], ["0002", "0003", "0004", "0005", "0006", "0007"])
+        self.assertEqual([r.migration.version for r in results], ["0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009"])
         self.assertEqual([s.status for s in results[0].steps], ["done", "done"])
         self.assertEqual([s.status for s in results[1].steps], ["done"])     # 0003: the login_known_devices table
         self.assertEqual(len(db.executed), 1 + sum(len(result.steps) for result in results))
@@ -1097,7 +1098,7 @@ class OptionalIndexMigrationTests(unittest.TestCase):
         ledger = [{"version": "0001", "name": "baseline", "checksum": self.migrations[0].checksum, "applied_at": "x"}]
         report = ml.check_schema(self.migrations, self.production.copy(), ledger)
         self.assertEqual((report.scope, report.differences), (["0001"], []))
-        self.assertEqual([e.version for e in report.status.pending()], ["0002", "0003", "0004", "0005", "0006", "0007"])
+        self.assertEqual([e.version for e in report.status.pending()], ["0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009"])
         ledger.append({"version": "0002", "name": "escalation_indexes", "checksum": self.migrations[1].checksum, "applied_at": "x"})
         report = ml.check_schema(self.migrations, self.production.copy(), ledger)
         self.assertEqual({d.kind for d in report.errors()}, {"missing_index"})

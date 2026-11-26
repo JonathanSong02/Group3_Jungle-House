@@ -12,6 +12,9 @@ import { imageReferencesForQuestion } from '../utils/imageAttachmentContext';
 import { imageFailureDetails } from '../utils/imageServiceError';
 import { displayStoredText } from '../utils/storedChatText';
 import ChatArticleDetails from '../components/ChatArticleDetails';
+import { aiTasks, newAiRequestId, useAiTasks } from '../services/aiTasks';
+import { MAX_RUNNING_PER_USER } from '../services/aiTaskManager';
+import { inboxEntryToMessage, notifyChatStorageChanged, readSavedList, subscribeChatStorage, withSessionMessages } from '../utils/chatSessionStore';
 
 
 const starterMessages = [
@@ -1619,19 +1622,23 @@ function ChatContent({ storageKeys }) {
   const [history, setHistory] = useState(() => getHistoryFromStorage(storageKeys));
   const [historySearch, setHistorySearch] = useState('');
   const [question, setQuestion] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [escalationLoading, setEscalationLoading] = useState(false);
   const [previewImage, setPreviewImage] = useState(null);
   const [selectedImage, setSelectedImage] = useState(null);
   const [selectedImagePreview, setSelectedImagePreview] = useState('');
 
-  // "Stop Generating" support: the AbortController for whatever request is
-  // currently in flight, and the ID the backend uses to recognize that
-  // same request when the Stop button also tells it to cancel server-side
-  // work (grounded AI call / escalation). Refs, not state -- purely
-  // internal bookkeeping that a click handler needs to read at call time,
-  // not something that should ever trigger its own re-render.
-  const abortControllerRef = useRef(null);
-  const currentRequestIdRef = useRef(null);
+  // AI keeps running after the page is left (2026-11-26): questions run in the
+  // app-wide task runner (services/aiTasks.js), not in this page, so a reply
+  // still arrives after switching page or locking the phone. "Busy" is per
+  // chat: another chat can ask while this one waits. Stop cancels the task of
+  // the open chat (same request_id the backend uses to stop server-side work).
+  const runningChatTasks = useAiTasks().filter(
+    (task) => task.kind === 'chat' && String(task.userId) === String(user?.id)
+  );
+  const activeChatTask = runningChatTasks.find(
+    (task) => String(task.meta?.sessionId) === String(activeSessionId)
+  );
+  const loading = Boolean(activeChatTask) || escalationLoading;
   const [confirmModal, setConfirmModal] = useState({
     open: false,
     type: '',
@@ -1683,29 +1690,24 @@ function ChatContent({ storageKeys }) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading, activeSessionId]);
 
+  // Starts from the SAVED chats, not this page's state: a reply may arrive
+  // after this page was left (AI keeps running), when its state no longer
+  // updates. Saving first means the reply is there when Chat opens again;
+  // any open Chat page is told to reload (subscribeChatStorage below).
   const updateCurrentSessionMessages = (nextMessages, titleQuestion = '', sessionId = activeSessionId) => {
     const now = new Date().toLocaleString();
+    const savedSessions = readSavedList(localStorage, storageKeys.sessions) || chatSessions;
+    const newTitle = titleQuestion && titleQuestion.trim() ? makeSessionTitle(titleQuestion) : '';
+    const updatedSessions = withSessionMessages(savedSessions, sessionId, nextMessages, newTitle, now);
 
-    setChatSessions((prev) => {
-      const updatedSessions = prev.map((session) => {
-        if (session.id !== sessionId) {
-          return session;
-        }
+    saveChatSessionsToStorage(storageKeys, updatedSessions);
+    setChatSessions(updatedSessions);
+    notifyChatStorageChanged(storageKeys.sessions);
+  };
 
-        const shouldUpdateTitle =
-          session.title === 'New Chat' && titleQuestion && titleQuestion.trim();
-
-        return {
-          ...session,
-          title: shouldUpdateTitle ? makeSessionTitle(titleQuestion) : session.title,
-          messages: nextMessages,
-          updated_at: now,
-        };
-      });
-
-      saveChatSessionsToStorage(storageKeys, updatedSessions);
-      return updatedSessions;
-    });
+  const sessionMessagesFromStorage = (sessionId) => {
+    const savedSessions = readSavedList(localStorage, storageKeys.sessions) || chatSessions;
+    return savedSessions.find((session) => session.id === sessionId)?.messages || null;
   };
 
   const addChatHistory = (userQuestion, aiMessage) => {
@@ -1725,12 +1727,56 @@ function ChatContent({ storageKeys }) {
       created_at: new Date().toLocaleString(),
     };
 
-    setHistory((prev) => {
-      const updatedHistory = [newRecord, ...prev].slice(0, 100);
-      saveHistoryToStorage(storageKeys, updatedHistory);
-      return updatedHistory;
-    });
+    // Saved list first, for the same reason as updateCurrentSessionMessages.
+    const savedHistory = readSavedList(localStorage, storageKeys.history) || history;
+    const updatedHistory = [newRecord, ...savedHistory].slice(0, 100);
+    saveHistoryToStorage(storageKeys, updatedHistory);
+    setHistory(updatedHistory);
+    notifyChatStorageChanged(storageKeys.history);
   };
+
+  // Another (or an earlier, already closed) copy of this page saved a reply:
+  // show what is saved now.
+  useEffect(() => subscribeChatStorage((key) => {
+    if (key === storageKeys.sessions) {
+      const saved = readSavedList(localStorage, storageKeys.sessions);
+      if (saved && saved.length) setChatSessions(saved);
+    } else if (key === storageKeys.history) {
+      const saved = readSavedList(localStorage, storageKeys.history);
+      if (saved) setHistory(saved);
+    }
+  }), [storageKeys.sessions, storageKeys.history]);
+
+  // Replies collected after a page reload (the phone closed the page while
+  // the AI was answering) wait in the task inbox: add each to its own chat.
+  const collectChatInbox = () => {
+    if (user?.id == null) return;
+    const texts = { unfinished: t('aiTask.unfinished'), unavailable: t('chat.error.unavailable') };
+    for (const entry of aiTasks.takeInbox(user.id, 'chat')) {
+      const sessionId = entry.meta?.sessionId;
+      const sessionMessages = sessionMessagesFromStorage(sessionId);
+      if (!sessionMessages) continue; // that chat was deleted meanwhile
+      const aiMessage = inboxEntryToMessage(entry, (data) => buildAiMessage(data, t), texts);
+      updateCurrentSessionMessages([...sessionMessages, aiMessage], entry.meta?.title || '', sessionId);
+      addChatHistory(entry.meta?.title || '', aiMessage);
+    }
+  };
+  const collectChatInboxRef = useRef(collectChatInbox);
+  collectChatInboxRef.current = collectChatInbox;
+
+  useEffect(() => {
+    collectChatInboxRef.current();
+    return aiTasks.onDone((event) => {
+      if (event.kind === 'chat') collectChatInboxRef.current();
+    });
+  }, []);
+
+  // Opening a chat clears its "answer ready" dot in the sidebar.
+  const runningChatCount = runningChatTasks.length;
+  useEffect(() => {
+    if (user?.id == null) return;
+    aiTasks.markSeen(user.id, (item) => item.kind === 'chat' && String(item.sessionId) === String(activeSessionId));
+  }, [user?.id, activeSessionId, runningChatCount]);
 
   const handleSelectSession = (sessionId) => {
     setActiveSessionId(sessionId);
@@ -1966,10 +2012,9 @@ const removeSelectedImage = () => {
   // request_id, so it skips the AI provider call and never creates an
   // escalation ticket for a question the user already abandoned.
   const handleStopGeneration = () => {
-    abortControllerRef.current?.abort();
-
-    const requestId = currentRequestIdRef.current;
+    const requestId = activeChatTask?.requestId;
     if (requestId) {
+      aiTasks.cancel(requestId);
       api.post('/chat/cancel', { request_id: requestId }).catch((error) => {
         console.error('Cancel chat request error:', error);
       });
@@ -1993,7 +2038,7 @@ const removeSelectedImage = () => {
       return;
     }
 
-    setLoading(true);
+    setEscalationLoading(true);
 
     try {
       const issueContext = buildIssueContext(messages, offerMessage.question, `main-${initiatingSessionId}`, offerMessage.id);
@@ -2041,7 +2086,7 @@ const removeSelectedImage = () => {
         initiatingSessionId
       );
     } finally {
-      setLoading(false);
+      setEscalationLoading(false);
     }
   };
 
@@ -2056,6 +2101,12 @@ const removeSelectedImage = () => {
         : typedText;
 
     if ((!trimmedQuestion && !selectedImage) || loading) return;
+
+    // At most MAX_RUNNING_PER_USER questions at once per person (one server, 4 threads).
+    if (runningChatTasks.length >= MAX_RUNNING_PER_USER) {
+      alert(t('aiTask.busy'));
+      return;
+    }
 
     const initiatingSessionId = activeSessionId;
     const initiatingMessages = [...messages];
@@ -2093,20 +2144,12 @@ const removeSelectedImage = () => {
     setSelectedImage(null);
     setSelectedImagePreview('');
 
-    const requestId =
-      (typeof crypto !== 'undefined' && crypto.randomUUID)
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const requestId = newAiRequestId();
 
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
-    currentRequestIdRef.current = requestId;
-
-    setLoading(true);
-
-    try {
-      let response;
-
+    // The same request as before, run by the app-wide task runner so the
+    // reply still lands after this page is left (it keeps the "thinking"
+    // state and the Stop button for this chat, too).
+    const sendChatRequest = (signal) => {
       if (imageToSend) {
         const formData = new FormData();
         formData.append('question', trimmedQuestion);
@@ -2119,14 +2162,23 @@ const removeSelectedImage = () => {
         formData.append('clarification_token', getClarificationToken(initiatingMessages, issueContextForRequest));
         // Do not set multipart Content-Type by hand: the browser must supply
         // the boundary. The shared client adds credentials and X-CSRF-Token.
-        response = await api.post('/chat', formData, { signal: controller.signal, timeout: 120000 });
-      } else {
-        response = await api.post(
-          '/chat',
-          { question: trimmedQuestion, language, context, request_id: requestId, history: historyForRequest, chat_session_id: `main-${initiatingSessionId}`, escalation_context: issueContextForRequest, clarification_token: getClarificationToken(initiatingMessages, issueContextForRequest), ...(attachmentRefs.length ? { attachment_refs: attachmentRefs } : {}) },
-          { signal: controller.signal, ...(attachmentRefs.length ? { timeout: 120000 } : {}) }
-        );
+        return api.post('/chat', formData, { signal, timeout: 120000 });
       }
+      return api.post(
+        '/chat',
+        { question: trimmedQuestion, language, context, request_id: requestId, history: historyForRequest, chat_session_id: `main-${initiatingSessionId}`, escalation_context: issueContextForRequest, clarification_token: getClarificationToken(initiatingMessages, issueContextForRequest), ...(attachmentRefs.length ? { attachment_refs: attachmentRefs } : {}) },
+        { signal, ...(attachmentRefs.length ? { timeout: 120000 } : {}) }
+      );
+    };
+
+    try {
+      const response = await aiTasks.run({
+        userId: user?.id,
+        kind: 'chat',
+        requestId,
+        meta: { sessionId: initiatingSessionId, title: displayQuestion },
+        send: sendChatRequest,
+      });
 
       // Axios already validates HTTP status and decodes JSON responses.
       // Retain the original text-response fallback for existing AI behavior.
@@ -2247,10 +2299,6 @@ const removeSelectedImage = () => {
         saveResponseMessages(messagesAfterError);
         addChatHistory(displayQuestion, errorMessage);
       }
-    } finally {
-      setLoading(false);
-      abortControllerRef.current = null;
-      currentRequestIdRef.current = null;
     }
   };
 

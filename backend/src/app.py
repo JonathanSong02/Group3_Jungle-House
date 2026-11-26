@@ -3,6 +3,7 @@ from flask import Flask, request, jsonify, send_from_directory, redirect, g, ses
 from flask_cors import CORS
 import os
 import time
+import threading
 from werkzeug.utils import secure_filename
 import mysql.connector
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -27,6 +28,8 @@ import document_text_service
 import system_knowledge
 import retrieval_audit
 import semantic_search
+import ai_task_results
+import web_push
 from image_service_errors import failure_response as image_failure_response
 
 
@@ -9979,6 +9982,144 @@ def cancel_chat_request():
     mark_chat_request_cancelled(request_id)
 
     return jsonify({"message": "Cancelled."}), 200
+
+
+# =========================
+# AI KEEPS RUNNING AFTER THE PAGE IS LEFT (saved reply copies)
+# =========================
+# Staff (mostly on phones) ask the AI, then switch page, lock the phone or
+# lose signal. The page still waits for its reply the normal way -- nothing
+# about that path changed, so it is exactly as fast as before. But a copy of
+# the very same reply is also saved (per signed-in user + request_id) in a
+# background thread, so a page that missed the reply can fetch it later with
+# GET /api/ai-tasks/<request_id>. Only /api/chat (and /chat) and the AI quiz
+# generator, and only when the page sent a request_id; replies are never
+# changed. See backend/src/ai_task_results.py and migration 0008.
+AI_TASK_ENDPOINT_KINDS = {"chat": "chat", "ai_generate_quiz": "quiz"}
+
+
+def run_in_background(target, *args):
+    threading.Thread(target=target, args=args, daemon=True).start()
+
+
+def _request_id_for_ai_task():
+    if request.form:
+        value = request.form.get("request_id", "")
+    else:
+        value = (request.get_json(silent=True) or {}).get("request_id", "")
+    value = str(value or "").strip()
+    return value if 0 < len(value) <= ai_task_results.MAX_REQUEST_ID_LENGTH else ""
+
+
+PUSH_WAIT_SECONDS = 4
+
+
+def _chat_session_for_push():
+    """The main chat page's session number ("main-<digits>"), so a tap on the notification opens that chat."""
+    if request.form:
+        value = request.form.get("chat_session_id", "")
+    else:
+        value = (request.get_json(silent=True) or {}).get("chat_session_id", "")
+    match = re.fullmatch(r"main-(\d{1,20})", str(value or ""))
+    return match.group(1) if match else None
+
+
+def save_ai_task_result_copy(response):
+    try:
+        kind = AI_TASK_ENDPOINT_KINDS.get(request.endpoint or "")
+        if not kind or request.method != "POST" or not response.is_json or response.direct_passthrough:
+            return response
+        request_id = _request_id_for_ai_task()
+        # g.auth_user is missing when the request was refused (e.g. 401).
+        user_id = current_auth_user_id() if request_id and getattr(g, "auth_user", None) else None
+        if not request_id or not user_id:
+            return response
+        body = response.get_data(as_text=True)
+        run_in_background(ai_task_results.save_result, get_db_connection,
+                          user_id, request_id, kind, response.status_code, body)
+        # Step 2: a phone / browser notification, unless the page says within
+        # PUSH_WAIT_SECONDS that it showed the reply (see mark_ai_task_seen).
+        if kind == "chat" or response.status_code < 400:
+            run_in_background(web_push.notify_user, get_db_connection, user_id, request_id, kind,
+                              _chat_session_for_push(), PUSH_WAIT_SECONDS)
+    except Exception as error:
+        print("AI TASK RESULT COPY ERROR:", type(error).__name__)
+    return response
+
+
+# Flask runs after_request hooks last-registered first. Index 0 therefore runs
+# LAST, so the copy is the final reply (image URL, escalation fixes, timing).
+app.after_request_funcs.setdefault(None, []).insert(0, save_ai_task_result_copy)
+
+
+@app.route("/api/ai-tasks/<request_id>", methods=["GET"])
+def get_ai_task_result(request_id):
+    request_id = str(request_id or "").strip()
+    if not request_id or len(request_id) > ai_task_results.MAX_REQUEST_ID_LENGTH:
+        return jsonify({"found": False})
+    found = ai_task_results.fetch_result(get_db_connection, current_auth_user_id(), request_id)
+    if not found:
+        return jsonify({"found": False})
+    return jsonify({"found": True, **found})
+
+
+# =========================
+# PHONE / BROWSER PUSH NOTIFICATIONS (step 2, 2026-11-26)
+# =========================
+# Standard Web Push with no new package (web_push.py). The browser asks for
+# permission, then sends its subscription here; when an AI reply is saved
+# (above), the user's devices get "AI answer is ready" -- never the question or
+# the answer. The page calls /seen when it showed the reply itself (or Stop
+# was pressed), so nobody is notified about something already on screen.
+@app.route("/api/push/public-key", methods=["GET"])
+def get_push_public_key():
+    try:
+        _, public_key = web_push.server_keys(get_db_connection)
+    except Exception as error:
+        print("WEB PUSH KEY ERROR:", type(error).__name__)
+        return jsonify({"message": "Notifications are not available right now."}), 503
+    return jsonify({"publicKey": public_key})
+
+
+def _push_subject():
+    """The site's own https address, for VAPID (the push services may use it to contact the sender)."""
+    origin = str(request.headers.get("Origin") or "").strip()
+    if not origin.startswith("https://"):
+        origin = request.host_url.rstrip("/")
+    return origin if origin.startswith("https://") else ""
+
+
+@app.route("/api/push/subscribe", methods=["POST"])
+def subscribe_push():
+    data = request.get_json(silent=True) or {}
+    try:
+        saved = web_push.save_subscription(get_db_connection, current_auth_user_id(), data.get("subscription"),
+                                           data.get("labels"), _push_subject())
+    except Exception as error:
+        print("WEB PUSH SUBSCRIBE ERROR:", type(error).__name__)
+        return jsonify({"message": "Notifications could not be turned on. Please try again."}), 503
+    if not saved:
+        return jsonify({"message": "This browser's notification details were not accepted."}), 400
+    return jsonify({"success": True})
+
+
+@app.route("/api/push/unsubscribe", methods=["POST"])
+def unsubscribe_push():
+    data = request.get_json(silent=True) or {}
+    try:
+        web_push.delete_subscription(get_db_connection, str(data.get("endpoint") or ""), user_id=current_auth_user_id())
+    except Exception as error:
+        print("WEB PUSH UNSUBSCRIBE ERROR:", type(error).__name__)
+        return jsonify({"message": "Please try again."}), 503
+    return jsonify({"success": True})
+
+
+@app.route("/api/ai-tasks/<request_id>/seen", methods=["POST"])
+def mark_ai_task_seen(request_id):
+    request_id = str(request_id or "").strip()
+    if request_id and len(request_id) <= ai_task_results.MAX_REQUEST_ID_LENGTH:
+        web_push.mark_seen(current_auth_user_id(), request_id)
+    return jsonify({"success": True})
 
 
 # =========================

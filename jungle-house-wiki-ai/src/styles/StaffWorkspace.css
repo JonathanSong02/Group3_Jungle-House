@@ -2032,3 +2032,76 @@
     left: 0;
   }
 }
+
+/* AI keeps running after the page is left (2026-11-26): "answer ready" box
+   and sidebar dot. Theme variables only. On phones the box sits under the
+   top bar so it never covers the question box. */
+.ai-task-notice {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 1100;
+  display: flex;
+  align-items: stretch;
+  max-width: min(340px, calc(100vw - 32px));
+  background: var(--staff-panel);
+  color: var(--staff-text);
+  border: 1px solid var(--jh-accent);
+  border-radius: 14px;
+  box-shadow: 0 14px 36px #0006;
+  overflow: hidden;
+}
+.ai-task-notice-open {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  padding: 13px 14px;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.ai-task-notice-title { font-weight: 800; font-size: 14px; }
+.ai-task-notice-action { color: var(--jh-accent); font-size: 12.5px; }
+.ai-task-notice-close {
+  min-width: 44px;
+  border: 0;
+  border-left: 1px solid var(--staff-border);
+  background: none;
+  color: var(--staff-muted);
+  font-size: 20px;
+  cursor: pointer;
+}
+.ai-task-notice-open:hover, .ai-task-notice-close:hover { background: var(--jh-accent-tint); }
+.ai-task-ready-dot {
+  flex: 0 0 8px;
+  width: 8px;
+  height: 8px;
+  margin-left: auto;
+  border-radius: 999px;
+  background: var(--jh-accent);
+}
+.staff-recent-chat .ai-task-ready-dot { overflow: visible; }
+@media (max-width:1024px) {
+  .ai-task-notice {
+    top: calc(74px + env(safe-area-inset-top, 0px));
+    bottom: auto;
+    left: 16px;
+    right: 16px;
+    max-width: none;
+  }
+}
+
+/* Step 2: phone notification setting (Profile) and the one-time question. */
+.push-setup { display: grid; gap: 10px; justify-items: start; }
+.push-setup p { margin: 0; line-height: 1.5; }
+.push-setup-steps { margin: 0; padding-left: 20px; display: grid; gap: 6px; line-height: 1.5; }
+.push-setup-button { min-height: 44px; }
+.push-setup-error { color: var(--danger-text); font-size: 13px; }
+.push-setup-compact { gap: 8px; font-size: 13px; }
+.ai-push-question { max-width: min(380px, calc(100vw - 32px)); }
+.ai-push-question-body { flex: 1; min-width: 0; display: grid; gap: 8px; padding: 13px 14px; }
+.ai-push-question-body > strong { font-size: 14px; }

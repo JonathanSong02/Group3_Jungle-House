@@ -10,6 +10,7 @@ import { imageReferencesForQuestion } from '../utils/imageAttachmentContext.js';
 import { imageFailureDetails } from '../utils/imageServiceError.js';
 import { displayStoredText } from '../utils/storedChatText.js';
 import { translations } from '../i18n/translations.js';
+import { aiTaskTestEnv } from './chatTestEnv.js';
 
 // AI-first answers: "Show more details" opens the article in place, with the
 // same ArticleBody as the Knowledge Base page; related articles are buttons
@@ -60,6 +61,7 @@ test('show more details opens the article in place and related articles ask abou
     useAuth: () => ({ user: { id: 'synthetic-details-test', status: 'active', full_name: 'Synthetic User' } }),
     useStaffChat: () => null,
     ...issue, ...escalation, ...safe, imageReferencesForQuestion, imageFailureDetails, displayStoredText,
+    ...aiTaskTestEnv(React, api),
   };
   const Chat = await compile('./Chat.jsx', 'Chat', env);
 

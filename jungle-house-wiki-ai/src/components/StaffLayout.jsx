@@ -9,6 +9,9 @@ import { useLanguage } from '../i18n/LanguageContext';
 import { translateServerMessage } from '../i18n/serverMessages';
 import { displayStoredText } from '../utils/storedChatText';
 import { StaffPreferencesDialog, StaffPreferencesProvider, useStaffPreferences } from './StaffPreferences';
+import AiTaskNotice from './AiTaskNotice';
+import { aiTasks, useAiTasks } from '../services/aiTasks';
+import { QUIZ_PAGE_PATH } from '../services/aiTaskManager';
 
 function Symbol({ name, size = 20 }) {
   const paths = {
@@ -113,6 +116,11 @@ function StaffShell() {
   const visibleManagementLinks = managementLinks.filter((link) => link.roles.includes(role));
   const isChatRoute = location.pathname === '/chat';
   const userId = user?.id ?? user?.user_id ?? null;
+  // "Answer ready" dots: AI replies / quizzes finished while elsewhere (AiTaskNotice).
+  useAiTasks(); // re-render when tasks finish or are seen
+  const aiUnseen = userId == null ? [] : aiTasks.unseen(userId);
+  const chatReady = (sessionId) => aiUnseen.some((item) => item.kind === 'chat' && String(item.sessionId) === String(sessionId));
+  const quizReady = aiUnseen.some((item) => item.kind === 'quiz');
   const [unread, setUnread] = useState({ userId: null, messages: null, notifications: null });
   const counts = unread.userId === userId ? unread : {};
 
@@ -243,6 +251,7 @@ function StaffShell() {
                 {visibleManagementLinks.map((link) => (
                   <NavLink key={link.to} to={link.to} title={t(link.text)} aria-label={t(link.text)} onClick={() => setMobileOpen(false)} className={({ isActive }) => `staff-nav-link ${isActive ? 'active' : ''}`}>
                     <Symbol name={link.icon}/><span className="staff-nav-label">{t(link.text)}</span>
+                    {link.to === QUIZ_PAGE_PATH && quizReady && <span className="ai-task-ready-dot" role="img" aria-label={t('aiTask.doneQuiz')}/>}
                   </NavLink>
                 ))}
               </div>
@@ -251,7 +260,7 @@ function StaffShell() {
           <section className="staff-recent-section" aria-label={t('layout.recentConversations')}>
           <div className="staff-nav-heading" aria-hidden="true">{t('recent')}</div>
           <div className="staff-recent-list" aria-label={t('layout.recentConversations')}>
-            {sessions.length ? sessions.slice(0, 18).map((item) => <div key={item.id} className="staff-recent-row"><button type="button" className={`staff-recent-chat ${String(activeSessionId) === String(item.id) && location.pathname === '/chat' ? 'active' : ''}`} onClick={() => chooseChat(item.id)} title={displayStoredText(item.title, appT)}><Symbol name="chat" size={16}/><span>{displayStoredText(item.title, appT)}</span></button><button type="button" className="staff-delete-recent" onClick={() => deleteChat(item.id)} aria-label={`${t('staff.deleteChat')}: ${displayStoredText(item.title, appT)}`} title={t('staff.deleteChat')}>×</button></div>) : <p className="staff-sidebar-empty">{t('emptyChats')}</p>}
+            {sessions.length ? sessions.slice(0, 18).map((item) => <div key={item.id} className="staff-recent-row"><button type="button" className={`staff-recent-chat ${String(activeSessionId) === String(item.id) && location.pathname === '/chat' ? 'active' : ''}`} onClick={() => chooseChat(item.id)} title={displayStoredText(item.title, appT)}><Symbol name="chat" size={16}/><span>{displayStoredText(item.title, appT)}</span>{chatReady(item.id) && <span className="ai-task-ready-dot" role="img" aria-label={t('aiTask.doneChat')}/>}</button><button type="button" className="staff-delete-recent" onClick={() => deleteChat(item.id)} aria-label={`${t('staff.deleteChat')}: ${displayStoredText(item.title, appT)}`} title={t('staff.deleteChat')}>×</button></div>) : <p className="staff-sidebar-empty">{t('emptyChats')}</p>}
           </div>
           <button type="button" className="staff-nav-link staff-history-link" onClick={openHistory} title={t('viewAllChats')} aria-label={t('viewAllChats')}>
             <Symbol name="history"/><span className="staff-nav-label">{t('viewAllChats')}</span><span className="staff-history-arrow" aria-hidden="true"><Symbol name="chevronRight" size={15}/></span>
@@ -266,6 +275,8 @@ function StaffShell() {
       <div className="staff-main">
         <header className="staff-topbar"><button type="button" className="staff-icon-button staff-hamburger" onClick={() => setMobileOpen(true)} aria-label={t('staff.openNavigation')}><Symbol name="menu"/></button><div className="staff-topbar-label"><BrandMark size={30}/><span>Jungle House AI</span><small>{workspaceLabel}</small></div><div className="staff-topbar-actions"><LanguageSelector placement="down" /><button type="button" className="staff-icon-button jh-preferences-top-trigger" title={t('settings')} aria-label={t('openSettings')} onClick={() => setPreferencesOpen(true)}><Symbol name="settings" size={19}/></button><NavLink to="/notifications" aria-label={t('nav.notifications')} title={t('nav.notifications')} className="staff-icon-button"><Symbol name="bell" size={20}/></NavLink><NavLink to="/profile" className="staff-avatar staff-avatar-top" aria-label={`${t('profile')}: ${fullName}`} title={fullName}><AvatarPicture src={user?.profile_picture} fallback={initial}/></NavLink></div></header>
         <main className={`staff-content ${location.pathname === '/chat' ? 'staff-content-chat' : ''}`} id="staff-content"><Outlet context={{ firstName }}/></main>
+        <AiTaskNotice userId={userId} pathname={location.pathname} search={location.search} activeSessionId={activeSessionId} t={t}
+          onOpenChat={(sessionId) => chooseChat(sessionId)} onOpenQuiz={() => navigate(QUIZ_PAGE_PATH)}/>
       </div>
       {preferencesOpen && <StaffPreferencesDialog onClose={closePreferences} />}
       {searchOpen && <div className="staff-search-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSearchOpen(false); }}><section className="staff-search-dialog" role="dialog" aria-modal="true" aria-label={t('searchChats')}><div className="staff-search-bar"><Symbol name="search"/><input autoFocus aria-label={t('searchChats')} placeholder={t('searchPlaceholder')} value={search} onChange={(event) => setSearch(event.target.value)}/><button type="button" className="staff-icon-button" aria-label={t('close')} onClick={() => setSearchOpen(false)}><Symbol name="close"/></button></div><div className="staff-search-results">{visibleSessions.length ? visibleSessions.map((item) => <button key={item.id} type="button" onClick={() => chooseChat(item.id)}><Symbol name="chat" size={18}/><span>{displayStoredText(item.title, appT)}</span><small>{item.updated_at}</small></button>) : <p>{t('noMatches')}</p>}</div><button type="button" className="staff-search-history" onClick={openHistory}>{t('viewHistory')} →</button></section></div>}

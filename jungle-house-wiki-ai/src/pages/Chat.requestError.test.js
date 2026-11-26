@@ -14,6 +14,7 @@ import { imageReferencesForQuestion } from '../utils/imageAttachmentContext.js';
 import { imageFailureDetails } from '../utils/imageServiceError.js';
 import { displayStoredText } from '../utils/storedChatText.js';
 import { translations } from '../i18n/translations.js';
+import { aiTaskTestEnv } from './chatTestEnv.js';
 
 const FAKE_PATH = '/app/backend/src/app.py';
 const FAKE_SECRET = 'sk-FAKE-SECRET-123';
@@ -70,6 +71,7 @@ test('a failed chat request shows a friendly message in en, zh and ms, never the
     const source = (await fs.readFile(new URL('./Chat.jsx', import.meta.url), 'utf8'))
       .replace(/^import .*;\r?\n/gm, '').replace('export default function Chat()', 'function Chat()');
     const compiled = await transformWithOxc(source, 'Chat.jsx', { jsx: { runtime: 'classic' } });
+    Object.assign(env, aiTaskTestEnv(React, env.api));
     const Chat = new Function(...Object.keys(env), `${compiled.code}\nreturn Chat;`)(...Object.values(env));
 
     const ask = async (failure) => {

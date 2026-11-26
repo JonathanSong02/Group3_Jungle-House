@@ -10,6 +10,7 @@ import { imageReferencesForQuestion } from '../utils/imageAttachmentContext.js';
 import { imageFailureDetails } from '../utils/imageServiceError.js';
 import { displayStoredText } from '../utils/storedChatText.js';
 import { translations } from '../i18n/translations.js';
+import { aiTaskTestEnv } from './chatTestEnv.js';
 
 test('standard and Staff composers preserve file selection, preview, image+text and refreshed image references', async () => {
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost:5173' });
@@ -56,6 +57,7 @@ test('standard and Staff composers preserve file selection, preview, image+text 
   const source = (await fs.readFile(new URL('./Chat.jsx', import.meta.url), 'utf8'))
     .replace(/^import .*;\r?\n/gm, '').replace('export default function Chat()', 'function Chat()');
   const compiled = await transformWithOxc(source, 'Chat.jsx', { jsx: { runtime: 'classic' } });
+  Object.assign(env, aiTaskTestEnv(React, env.api));
   const Chat = new Function(...Object.keys(env), `${compiled.code}\nreturn Chat;`)(...Object.values(env));
   const renderImages = new Function(...Object.keys(env), `${compiled.code}\nreturn renderImages;`)(...Object.values(env));
   for (const staffMode of [false, true]) {

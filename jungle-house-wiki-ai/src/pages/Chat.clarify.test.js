@@ -10,6 +10,7 @@ import { imageReferencesForQuestion } from '../utils/imageAttachmentContext.js';
 import { imageFailureDetails } from '../utils/imageServiceError.js';
 import { displayStoredText } from '../utils/storedChatText.js';
 import { translations } from '../i18n/translations.js';
+import { aiTaskTestEnv } from './chatTestEnv.js';
 
 // When the AI asks a clarifying question it can offer short answers as
 // buttons; clicking one sends it as the next question, like typing it.
@@ -45,6 +46,7 @@ test('clarifying question options are buttons that send the chosen answer', asyn
   const source = (await fs.readFile(new URL('./Chat.jsx', import.meta.url), 'utf8'))
     .replace(/^import .*;\r?\n/gm, '').replace('export default function Chat()', 'function Chat()');
   const compiled = await transformWithOxc(source, 'Chat.jsx', { jsx: { runtime: 'classic' } });
+  Object.assign(env, aiTaskTestEnv(React, env.api));
   const Chat = new Function(...Object.keys(env), `${compiled.code}\nreturn Chat;`)(...Object.values(env));
 
   for (const staffMode of [false, true]) {
@@ -111,6 +113,7 @@ test('typing an option number sends that option', async () => {
   const source = (await fs.readFile(new URL('./Chat.jsx', import.meta.url), 'utf8'))
     .replace(/^import .*;\r?\n/gm, '').replace('export default function Chat()', 'function Chat()');
   const compiled = await transformWithOxc(source, 'Chat.jsx', { jsx: { runtime: 'classic' } });
+  Object.assign(env, aiTaskTestEnv(React, env.api));
   const Chat = new Function(...Object.keys(env), `${compiled.code}\nreturn Chat;`)(...Object.values(env));
   localStorage.clear();
   const root = createRoot(document.getElementById('root'));
