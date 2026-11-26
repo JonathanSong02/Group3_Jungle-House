@@ -181,6 +181,10 @@ export default function QuizManagement() {
     }
   };
 
+  // How many questions the AI wrote, before any are deleted by hand: fewer
+  // than asked for (a batch failed twice) is said on the preview.
+  const withWrittenCount = (quiz) => (quiz ? { ...quiz, writtenCount: quiz.questions?.length ?? 0 } : null);
+
   const [activeTab, setActiveTab] = useState(() => (readQuizDraft() ? 'ai-generate' : 'manage'));
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -217,8 +221,9 @@ export default function QuizManagement() {
     const collect = () => {
       for (const entry of aiTasks.takeInbox(user.id, 'quiz')) {
         if (entry.ok && entry.data?.quiz) {
-          writeQuizDraft(entry.data.quiz);
-          setAiPreview(entry.data.quiz);
+          const quiz = withWrittenCount(entry.data.quiz);
+          writeQuizDraft(quiz);
+          setAiPreview(quiz);
           setAiError('');
         } else {
           setAiError(entry.failed ? t('aiTask.unfinished') : (entry.data?.message || t('qm.err.generateFailed')));
@@ -624,8 +629,9 @@ export default function QuizManagement() {
       });
 
       // Saved first: this page may already be closed.
-      writeQuizDraft(response.data?.quiz || null);
-      setAiPreview(response.data?.quiz || null);
+      const quiz = withWrittenCount(response.data?.quiz);
+      writeQuizDraft(quiz);
+      setAiPreview(quiz);
     } catch (error) {
       console.error('AI generate quiz error:', error.response?.data || error);
 
@@ -1732,6 +1738,11 @@ export default function QuizManagement() {
                       <p>
                         {aiPreview.questions.length} {t('quiz.questions')}
                       </p>
+                      {aiPreview.writtenCount < aiPreview.count && (
+                        <p className="qm-ai-fewer" role="status">
+                          {t('qm.ai.fewer', { got: aiPreview.writtenCount, want: aiPreview.count })}
+                        </p>
+                      )}
                     </div>
 
                     <div className="qm-ai-preview-actions">

@@ -30,6 +30,7 @@ import retrieval_audit
 import semantic_search
 import ai_task_results
 import web_push
+import quiz_ai_batches
 from image_service_errors import failure_response as image_failure_response
 
 
@@ -15467,165 +15468,17 @@ def delete_admin_quiz_question(question_id):
 
 
 # =========================
-# AI GENERATED QUIZ (template-based, no external AI provider)
+# AI GENERATED QUIZ (written by the AI provider in AI Model Settings)
 #
-# This project has no live generative-AI/LLM integration (AI Chat only
-# matches/retrieves existing stored answers). Rather than fake it, this
-# builds multiple-choice questions directly out of the numbered SOP steps
-# already stored in wiki_article.content, picking distractor options from
-# other steps depending on the requested difficulty. It only ever returns
-# a preview -- saving reuses the existing manual quiz create routes below.
+# 2026-11-26: the stiff template questions (built from numbered SOP steps,
+# used whenever the AI failed) were removed at the user's request -- every
+# quiz is written by the configured AI. The quiz is split into small batches
+# written at the same time (quiz_ai_batches.py): faster, far fewer time-outs,
+# and each batch reads different articles (or a different part of one article)
+# in much more depth than the old 500-character cut.
 # =========================
-def build_ai_quiz_questions(category_filter, question_count, difficulty):
-    import random as random_module
-
-    conn = None
-    cursor = None
-
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor(dictionary=True)
-
-        query = """
-            SELECT article_id, title, content, category
-            FROM wiki_article
-            WHERE COALESCE(is_deleted, 0) = 0
-        """
-        params = ()
-
-        if category_filter and str(category_filter).strip().lower() != "all":
-            query += " AND category = %s"
-            params = (category_filter,)
-
-        cursor.execute(query, params)
-        articles = cursor.fetchall() or []
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-    def clean_step_text(text):
-        text = re.sub(r"\s+", " ", str(text or "")).strip()
-
-        if len(text) > 180:
-            text = text[:177].rstrip() + "..."
-
-        return text
-
-    article_step_groups = []
-
-    for article in articles:
-        steps = parse_article_steps(article.get("content"))
-        clean_steps = []
-
-        for step in steps:
-            text = clean_step_text(step.get("answer") or step.get("content"))
-
-            if text:
-                clean_steps.append({
-                    "title": article.get("title"),
-                    "step": step.get("step"),
-                    "text": text,
-                })
-
-        # Need at least 2 steps in an article so it can supply its own
-        # "same article" distractor option.
-        if len(clean_steps) >= 2:
-            article_step_groups.append(clean_steps)
-
-    all_steps_flat = [step for group in article_step_groups for step in group]
-    distinct_texts = {step["text"] for step in all_steps_flat}
-
-    if not article_step_groups or len(distinct_texts) < 4:
-        return []
-
-    shuffled_groups = list(article_step_groups)
-    random_module.shuffle(shuffled_groups)
-
-    generated = []
-    used_correct_texts = set()
-
-    for group in shuffled_groups:
-        if len(generated) >= question_count:
-            break
-
-        candidates = [step for step in group if step["text"] not in used_correct_texts]
-
-        if not candidates:
-            continue
-
-        correct_step = random_module.choice(candidates)
-        used_correct_texts.add(correct_step["text"])
-
-        same_article_pool = [
-            step["text"] for step in group
-            if step["text"] != correct_step["text"]
-        ]
-        other_article_pool = [
-            step["text"] for step in all_steps_flat
-            if step["title"] != correct_step["title"] and step["text"] != correct_step["text"]
-        ]
-
-        random_module.shuffle(same_article_pool)
-        random_module.shuffle(other_article_pool)
-
-        if difficulty == "basic":
-            # Easier: distractors mostly from the SAME article (more
-            # obviously related, easier to eliminate by context).
-            distractor_source = same_article_pool + other_article_pool
-        elif difficulty == "advanced":
-            # Harder: distractors mostly from OTHER articles (less
-            # contextual overlap, harder to tell apart at a glance).
-            distractor_source = other_article_pool + same_article_pool
-        else:
-            # intermediate: one distractor from the same article, rest mixed.
-            distractor_source = same_article_pool[:1] + other_article_pool + same_article_pool[1:]
-
-        distractors = []
-        seen_texts = {correct_step["text"]}
-
-        for text in distractor_source:
-            if text in seen_texts:
-                continue
-
-            seen_texts.add(text)
-            distractors.append(text)
-
-            if len(distractors) == 3:
-                break
-
-        if len(distractors) < 3:
-            continue
-
-        options = [correct_step["text"]] + distractors
-        random_module.shuffle(options)
-        correct_index = options.index(correct_step["text"])
-
-        generated.append({
-            "question": f'In the "{correct_step["title"]}" SOP, what is Step {correct_step["step"]}?',
-            "options": options,
-            "correctAnswerIndex": correct_index,
-            "explanation": f'This is Step {correct_step["step"]} from the "{correct_step["title"]}" SOP.',
-            "sourceTitle": correct_step["title"],
-        })
-
-    return generated
-
-
-def build_ai_quiz_source_text(category_filter, max_chars=16000, max_chars_per_article=500, article_id=None):
-    """
-    Collect the latest verified article content into one text blob to feed
-    a real AI provider as context. Each article's content is capped
-    individually so one long article (e.g. a verbose Notion-synced page)
-    cannot crowd out every other article when "All Knowledge" is selected
-    -- previously, articles were added in full, in created_at DESC order,
-    until the (much smaller) total budget ran out, so a single long recent
-    article could consume the whole budget and every generated question
-    ended up about just that one article. Still capped by total character
-    count so it stays a reasonable prompt size regardless of how large the
-    Knowledge Base gets.
-    """
+def load_ai_quiz_articles(category_filter, article_id=None):
+    """[(title, plain text)] of live articles for a quiz: one article, a category, or all (newest first)."""
     conn = None
     cursor = None
 
@@ -15641,11 +15494,8 @@ def build_ai_quiz_source_text(category_filter, max_chars=16000, max_chars_per_ar
         params = ()
 
         if article_id:
-            # One specific article: give the model far more of it than the
-            # per-article cap used when sampling a whole category.
             query += " AND article_id = %s"
             params = (article_id,)
-            max_chars_per_article = max(max_chars_per_article, 8000)
         elif category_filter and str(category_filter).strip().lower() != "all":
             query += " AND category = %s"
             params = (category_filter,)
@@ -15670,36 +15520,8 @@ def build_ai_quiz_source_text(category_filter, max_chars=16000, max_chars_per_ar
         text = re.sub(r"\s+", " ", text).strip()
         return text
 
-    chunks = []
-    total_len = 0
-    included_count = 0
-
-    for article in articles:
-        title = article.get("title") or ""
-        body = clean_text(article.get("content"))
-
-        if len(body) > max_chars_per_article:
-            body = body[:max_chars_per_article].rstrip() + "..."
-
-        entry = f"### {title}\n{body}\n"
-
-        if total_len + len(entry) > max_chars:
-            break
-
-        chunks.append(entry)
-        total_len += len(entry)
-        included_count += 1
-
-    if included_count < len(articles):
-        print(
-            f"AI QUIZ: source text budget reached; included {included_count}/"
-            f"{len(articles)} eligible article(s) (each capped at "
-            f"{max_chars_per_article} chars, total budget {max_chars} chars)."
-        )
-    else:
-        print(f"AI QUIZ: included all {included_count} eligible article(s) in source text.")
-
-    return "\n".join(chunks)
+    return [(article.get("title") or "", clean_text(article.get("content"))) for article in articles
+            if clean_text(article.get("content"))]
 
 
 QUIZ_DIFFICULTY_GUIDANCE = {
@@ -15727,16 +15549,16 @@ def build_ai_quiz_questions_via_provider(category_filter, question_count, diffic
     the caller can tell "nothing to work with" apart from "AI returned zero
     valid questions".
     """
-    source_text = build_ai_quiz_source_text(category_filter, article_id=article_id)
+    articles = load_ai_quiz_articles(category_filter, article_id=article_id)
 
-    if not source_text.strip():
+    if not articles:
         print(
             "AI QUIZ: no eligible knowledge base content found for category "
             f"'{category_filter}'; skipping AI provider call."
         )
         return None
 
-    def build_prompt(strict_retry=False):
+    def build_prompt(source_text, question_count, focus_note="", strict_retry=False):
         strict_note = ""
 
         if strict_retry:
@@ -15763,7 +15585,7 @@ answer correct:
 - "correctAnswerIndex": integer, 0, 1, 2 or 3
 - "explanation": string
 - "sourceTitle": string (copy the exact article title shown after ### in the source content; do not paraphrase it)
-{strict_note}
+{focus_note}{strict_note}
 Source content:
 {source_text}
 """
@@ -15834,26 +15656,60 @@ Source content:
 
         return result
 
-    # The provider call itself (network/auth/HTTP errors) is allowed to raise
-    # straight out of this function -- that is a real provider failure, not a
-    # JSON formatting problem, and the caller classifies it accordingly.
-    raw_reply = ai_provider_service.generate_ai_reply(build_prompt())
-    print(f"AI QUIZ: provider response received ({len(raw_reply or '')} chars).")
+    # Split into small batches written at the same time (quiz_ai_batches.py).
+    sizes = quiz_ai_batches.batch_sizes(question_count)
+    if article_id:
+        title, body = articles[0]
+        parts = quiz_ai_batches.article_parts(body[:quiz_ai_batches.SINGLE_ARTICLE_MAX_CHARS], len(sizes))
+        sources = [f"### {title}\n{part}\n" for part in parts]
+        split = len(set(parts)) > 1
+    else:
+        groups = quiz_ai_batches.share_out(articles, len(sizes))
+        sources = [quiz_ai_batches.source_text(group) for group in groups]
+        split = False
 
-    try:
-        questions = parse_questions(raw_reply)
-        print(f"AI QUIZ: JSON validation passed on first attempt, {len(questions)} usable question(s).")
-    except Exception as error:
-        print(f"AI QUIZ: JSON validation failed on first attempt ({error}); retrying with a stricter prompt.")
+    if split:
+        part_note = "The source below is only one part of the article: ask only about this part."
+    elif article_id:
+        part_note = ("To avoid repeats, split the source into {n} equal parts in order and ask mainly about "
+                     "part {i}.")
+    else:
+        part_note = "Ask about the articles below, spreading the questions across them."
 
-        raw_retry_reply = ai_provider_service.generate_ai_reply(build_prompt(strict_retry=True))
-        print(f"AI QUIZ: provider retry response received ({len(raw_retry_reply or '')} chars).")
+    jobs = []
+    for index, size in enumerate(sizes):
+        focus_note = ""
+        if len(sizes) > 1:
+            focus_note = (f"\nThis is batch {index + 1} of {len(sizes)}; other batches write the other questions. "
+                          + part_note.format(n=len(sizes), i=index + 1) + "\n")
+        jobs.append({"index": index, "size": size, "source": sources[index], "focus": focus_note})
 
-        questions = parse_questions(raw_retry_reply)
-        print(f"AI QUIZ: JSON validation passed on retry, {len(questions)} usable question(s).")
+    def write_batch(job):
+        # Network / auth / HTTP errors raise; a bad JSON reply raises ValueError.
+        # Either way run_batches retries this batch once, with the stricter prompt.
+        raw_reply = ai_provider_service.generate_ai_reply(
+            build_prompt(job["source"], job["size"], job["focus"], strict_retry=job["retry"]),
+            timeout=quiz_ai_batches.BATCH_TIMEOUT_SECONDS,
+        )
+        found = parse_questions(raw_reply)
+        print(f"AI QUIZ: batch {job['index'] + 1}/{len(jobs)}"
+              f"{' (retry)' if job['retry'] else ''}: {len(found)} usable question(s).")
+        return found[:job["size"]]
+
+    result = quiz_ai_batches.run_batches(
+        jobs, write_batch, stop_on=(ai_provider_service.AIProviderNotConfiguredError,)
+    )
+    questions = quiz_ai_batches.dedupe(result.questions)
 
     if not questions:
-        raise ValueError("AI returned zero valid questions after validation.")
+        if result.failures and all(isinstance(error, ValueError) for error in result.failures):
+            raise ValueError("AI returned zero valid questions after validation.")
+        raise RuntimeError(f"All {len(jobs)} AI quiz batch(es) failed: "
+                           + "; ".join(type(error).__name__ for error in result.failures))
+
+    if result.failures:
+        print(f"AI QUIZ: {len(result.failures)} of {len(jobs)} batch(es) failed twice; "
+              f"returning {len(questions)} question(s).")
 
     return questions[:question_count]
 
@@ -15870,7 +15726,6 @@ def ai_generate_quiz():
 
     # Accepts Easy/Medium/Hard (and the older basic/intermediate/advanced).
     difficulty = normalize_quiz_difficulty(data.get("difficulty"))
-    legacy_difficulty = {"Easy": "basic", "Medium": "intermediate", "Hard": "advanced"}[difficulty]
 
     if status not in ("active", "inactive"):
         status = "inactive"
@@ -15909,17 +15764,16 @@ def ai_generate_quiz():
             return jsonify({"message": "The selected article could not be found."}), 404
         source_category = source_article.get("category") or source_category
 
-    generation_method = "template"
+    generation_method = "ai_provider"
     questions = []
     ai_failure_reason = None
 
-    # Prefer a real AI provider if the manager has configured one in AI
-    # Model Settings. Track *why* the AI path didn't produce questions so
-    # the eventual error message (if the template fallback also comes up
-    # empty) tells the truth instead of always blaming "not enough content".
+    # Always the AI provider configured in AI Model Settings (2026-11-26: the
+    # template fallback was removed at the user's request). Track *why* the AI
+    # produced no questions so the error message tells the truth.
     if not AI_PROVIDER_SERVICE_AVAILABLE:
         ai_failure_reason = "service_unavailable"
-        print("AI QUIZ: ai_provider_service module failed to import; using template fallback only.")
+        print("AI QUIZ: ai_provider_service module failed to import.")
     else:
         try:
             provider_questions = build_ai_quiz_questions_via_provider(
@@ -15939,18 +15793,7 @@ def ai_generate_quiz():
             print("AI QUIZ: provider returned an invalid quiz format:", error)
         except Exception as error:
             ai_failure_reason = "provider_failed"
-            print("AI QUIZ: AI provider request failed, falling back to template:", error)
-
-    # The template builder works per category, not per article, so it is only
-    # a valid fallback when the manager did not pick a specific article.
-    if not questions and not article_id:
-        try:
-            questions = build_ai_quiz_questions(source_category, question_count, legacy_difficulty)
-
-            if questions:
-                generation_method = "template"
-        except Exception as error:
-            print("AI QUIZ: template fallback generation error:", error)
+            print("AI QUIZ: AI provider request failed:", type(error).__name__, error)
 
     # Validate generated output before it ever reaches the frontend.
     questions = [

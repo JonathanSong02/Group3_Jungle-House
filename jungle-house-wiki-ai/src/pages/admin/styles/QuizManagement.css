@@ -3007,3 +3007,15 @@ button.qm-stat:hover {
   .qm-ai-preview-actions { display: flex; flex-wrap: wrap; gap: 8px; }
   .qm-ai-preview-actions .qm-btn { flex: 1 1 100%; min-height: 44px; }
 }
+
+/* AI quiz in batches (2026-11-26): "the AI wrote fewer questions than asked". */
+.qm-ai-fewer {
+  margin: 6px 0 0;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--qm-amber-soft);
+  border: 1px solid var(--qm-amber);
+  color: var(--qm-ink);
+  font-size: 13px;
+  line-height: 1.45;
+}
