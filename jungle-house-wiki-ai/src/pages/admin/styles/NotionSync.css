@@ -1518,3 +1518,12 @@
     transition:none;
   }
 }
+
+/* Pinned bulk buttons (2026-11-26): on phones the pending list is full length,
+   so "Apply / Trash selected" stay on screen while scrolling it. */
+.ns-bulk-toolbar{
+  position:sticky;
+  top:8px;
+  z-index:5;
+  box-shadow:0 8px 20px rgba(40,60,40,.1);
+}

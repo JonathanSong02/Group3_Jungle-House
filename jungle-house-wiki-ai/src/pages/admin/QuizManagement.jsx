@@ -8,6 +8,8 @@ import ArticlePicker from '../../components/ArticlePicker';
 
 // Same limit as QUIZ_MAX_MATERIALS in backend/src/app.py.
 const QUIZ_MAX_MATERIALS = 30;
+// Revision material under an AI quiz preview: the first few, then "Show all".
+const MATERIALS_SHOWN_FIRST = 3;
 import './styles/QuizManagement.css';
 import './styles/QuizManagementAIBuild.css';
 
@@ -215,6 +217,7 @@ export default function QuizManagement() {
   const [aiSaving, setAiSaving] = useState(false);
   const [aiError, setAiError] = useState('');
   const [aiPreview, setAiPreview] = useState(readQuizDraft);
+  const [showAllMaterials, setShowAllMaterials] = useState(false);
 
   useEffect(() => {
     writeQuizDraft(aiPreview);
@@ -595,9 +598,10 @@ export default function QuizManagement() {
   };
 
   const generateAiQuiz = async (event) => {
-    event.preventDefault();
+    event?.preventDefault();
 
     setAiError('');
+    setShowAllMaterials(false);
     setAiPreview(null);
 
     const requestedQuestionCount = Number(aiForm.questionCount);
@@ -715,6 +719,13 @@ export default function QuizManagement() {
   const cancelAiPreview = () => {
     setAiPreview(null);
     setAiError('');
+  };
+
+  // "Generate again" next to Publish, so nobody has to scroll back up. It
+  // replaces the whole set, so it asks first.
+  const regenerateAiQuiz = () => {
+    if (aiLoading || !window.confirm(t('qm.ai.regenerateConfirm'))) return;
+    generateAiQuiz();
   };
 
   // One request saves the quiz and every question in a single DB transaction.
@@ -1714,6 +1725,47 @@ export default function QuizManagement() {
                 </div>
               ) : (
                 <>
+                  {/* Pinned while scrolling, so these buttons never need scrolling back up to. */}
+                  <div className="qm-ai-preview-bar">
+                      <div className="qm-ai-preview-actions">
+                        <button
+                          type="button"
+                          className="qm-btn qm-btn-soft"
+                          onClick={regenerateAiQuiz}
+                          disabled={aiSaving || aiLoading}
+                        >
+                          {t('qm.ai.regenerate')}
+                        </button>
+  
+                        <button
+                          type="button"
+                          className="qm-btn qm-btn-soft"
+                          onClick={cancelAiPreview}
+                          disabled={aiSaving}
+                        >
+                          {t('quiz.edit.discard')}
+                        </button>
+  
+                        <button
+                          type="button"
+                          className="qm-btn qm-btn-soft"
+                          onClick={() => saveAiGeneratedQuiz(false)}
+                          disabled={aiSaving || aiPreview.questions.length === 0}
+                        >
+                          {t('quiz.edit.saveDraft')}
+                        </button>
+  
+                        <button
+                          type="button"
+                          className="qm-btn qm-btn-primary"
+                          onClick={() => saveAiGeneratedQuiz(true)}
+                          disabled={aiSaving || aiPreview.questions.length === 0}
+                        >
+                          {aiSaving ? '...' : t('quiz.edit.publish')}
+                        </button>
+                      </div>
+                  </div>
+
                   <div className="qm-ai-preview-head">
                     <div>
                       <div className="qm-detail-tags">
@@ -1748,35 +1800,6 @@ export default function QuizManagement() {
                         </p>
                       )}
                     </div>
-
-                    <div className="qm-ai-preview-actions">
-                      <button
-                        type="button"
-                        className="qm-btn qm-btn-soft"
-                        onClick={cancelAiPreview}
-                        disabled={aiSaving}
-                      >
-                        {t('quiz.edit.discard')}
-                      </button>
-
-                      <button
-                        type="button"
-                        className="qm-btn qm-btn-soft"
-                        onClick={() => saveAiGeneratedQuiz(false)}
-                        disabled={aiSaving || aiPreview.questions.length === 0}
-                      >
-                        {t('quiz.edit.saveDraft')}
-                      </button>
-
-                      <button
-                        type="button"
-                        className="qm-btn qm-btn-primary"
-                        onClick={() => saveAiGeneratedQuiz(true)}
-                        disabled={aiSaving || aiPreview.questions.length === 0}
-                      >
-                        {aiSaving ? '...' : t('quiz.edit.publish')}
-                      </button>
-                    </div>
                   </div>
 
                   <div className="qm-ai-auto-materials">
@@ -1796,7 +1819,10 @@ export default function QuizManagement() {
 
                     {(aiPreview.sourceArticles || []).length > 0 ? (
                       <div className="qm-ai-auto-material-list">
-                        {(aiPreview.sourceArticles || []).map((article) => (
+                        {(showAllMaterials
+                          ? aiPreview.sourceArticles
+                          : aiPreview.sourceArticles.slice(0, MATERIALS_SHOWN_FIRST)
+                        ).map((article) => (
                           <div key={article.article_id || article.id} className="qm-ai-auto-material-item">
                             <Icon name="quiz" size={16} />
                             <span>
@@ -1812,6 +1838,18 @@ export default function QuizManagement() {
                             </span>
                           </div>
                         ))}
+                        {aiPreview.sourceArticles.length > MATERIALS_SHOWN_FIRST && (
+                          <button
+                            type="button"
+                            className="qm-ai-materials-toggle"
+                            aria-expanded={showAllMaterials}
+                            onClick={() => setShowAllMaterials((open) => !open)}
+                          >
+                            {showAllMaterials
+                              ? t('qm.ai.showLess')
+                              : t('qm.ai.showAllMaterials', { n: aiPreview.sourceArticles.length })}
+                          </button>
+                        )}
                       </div>
                     ) : (
                       <p className="qm-ai-auto-material-warning">

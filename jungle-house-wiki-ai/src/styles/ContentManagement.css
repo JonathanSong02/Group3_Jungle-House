@@ -1067,3 +1067,17 @@ button.cm-summary-card:hover {
   color: #8a6a35;
   font-size: 12px;
 }
+
+/* Pinned bulk buttons (2026-11-26): after ticking articles far down the list,
+   "Move to bin / Restore / Delete" stay on screen, so nobody has to scroll
+   back up. `clip` clips like the old `hidden` but lets position: sticky work. */
+.cm-workspace {
+  overflow: clip;
+}
+
+.cm-bin-toolbar {
+  position: sticky;
+  top: 8px;
+  z-index: 5;
+  box-shadow: 0 8px 20px rgba(80, 60, 30, 0.12);
+}

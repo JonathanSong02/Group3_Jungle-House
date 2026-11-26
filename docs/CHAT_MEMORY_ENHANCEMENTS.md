@@ -267,3 +267,11 @@ lint 仍有既有 36 errors / 10 warnings。三个修改的页面与 HEAD 的诊
 - AI Generate 的"Source article"与手动建 quiz 的"Training Material"改用同一个选单（`components/ArticlePicker.jsx`）：搜索标题、分类按钮、打勾多选、"全选目前列出的"，最多 30 篇（手动建 quiz 原本最多 12 篇）。
 - AI Generate：不勾＝整个分类（同以前）；勾一篇＝同以前；勾多篇＝新的 `articleIds`，AI 只从这几篇出题，这几篇都变成复习材料。编辑旧 quiz 会自动勾回已连的文章。
 - 测试：`ArticlePicker.test.js`（6）、`test_quiz_ai_batches.py::SeveralArticlesTests`（5）。后端 670 全过；前端 159 中有 3 个旧测试（EscalationContext、EscalationEvidence、StandardQuestionField，"useState of null"）在没改过的版本上也会失败，不是这次造成。
+
+## 2026-11-26 更新：滑下去按钮不见的问题（LIONG1934）
+
+- AI Builder：出好题目后，上方"重新出题 / 丢弃 / 存草稿 / 发布"那排按钮独立成一条，滑动时钉在顶部（`qm-ai-preview-bar`）；"重新出题"会先问"确定要换掉吗？"。电脑上左边设定栏也钉住（宽度 > 1050px）。复习材料清单先显示 3 篇，"显示全部 N 篇 / 收起"。
+- 全站检查后，同样问题的还有：内容管理（662 篇不分页，批量按钮在上面）、Notion 同步（手机上待更新清单很长）、升级单（"删除所选"在上面）。三页的批量按钮列都改成滑动时钉在顶部，只改样式。
+- 外层原本的 `overflow: hidden` 会让"钉住"失效，`.qm-workspace`（只在 AI Builder 那页）和 `.cm-workspace` 改为 `overflow: clip`，裁切效果相同。旧版 iPhone（iOS 15 以下）不认识 clip，会保持原样（不钉，但不会坏）。
+- 检查过没问题的：文章编辑（编辑器固定高度）、员工做 quiz、知识库、审核、安全监控（有分页）、用户、通知、个人资料、AI 设定、AI 聊天。
+- 只验证了打包与测试，未在真浏览器看过。

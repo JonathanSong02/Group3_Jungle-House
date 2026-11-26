@@ -314,3 +314,12 @@
   background: #b53d25;
   border-color: #b53d25;
 }
+
+/* Pinned bulk buttons (2026-11-26): "Delete selected" stays on screen while
+   scrolling down the escalation list. */
+.escalation-delete-toolbar {
+  position: sticky;
+  top: 8px;
+  z-index: 5;
+  box-shadow: 0 8px 20px rgba(80, 40, 30, 0.1);
+}

@@ -542,3 +542,57 @@
 .qm-linked-materials-summary strong {
   color: var(--qm-ink);
 }
+
+/* --------------------------------------------------------------------------
+   Pinned while scrolling (2026-11-26): the buttons above a generated quiz
+   (Generate again / Discard / Save / Publish) and, on wide screens, the
+   settings column stay on screen while the questions are scrolled.
+   `overflow: clip` clips exactly like the old `hidden` but, unlike it, does
+   not stop position: sticky from working. Only on this tab.
+   -------------------------------------------------------------------------- */
+.qm-workspace:has(.qm-ai-layout-v2) {
+  overflow: clip;
+}
+
+.qm-ai-preview-bar {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  justify-content: flex-end;
+  margin: -8px -8px 12px;
+  padding: 8px;
+  background: #fffdf9;
+  border-bottom: 1px solid rgba(113, 91, 66, 0.12);
+}
+
+.qm-ai-preview-bar .qm-ai-preview-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.qm-ai-materials-toggle {
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px dashed rgba(113, 91, 66, 0.3);
+  border-radius: 12px;
+  background: transparent;
+  color: #5f519d;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+@media (min-width: 1051px) {
+  .qm-ai-layout-v2 {
+    align-items: start;
+  }
+
+  .qm-ai-builder-v2 {
+    position: sticky;
+    top: 0;
+    max-height: 100dvh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+}
