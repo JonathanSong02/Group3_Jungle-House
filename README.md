@@ -8,6 +8,8 @@
 | `backend/` | Flask backend (deployed on Railway) and the database tools in `backend/tools/` |
 | `mysql/`, `backend/migrations/` | SQL scripts and schema migrations ([docs](docs/database-migrations.md)) |
 
+**New here, or taking over the system?** Start with the step-by-step [Handover and Installation Guide](docs/handover/HANDOVER_GUIDE.md). It covers moving the live site to your own accounts, and installing everything on a computer.
+
 ## Automatic checks (CI)
 
 Every push to any branch, and every pull request to `main`, runs two independent jobs on GitHub

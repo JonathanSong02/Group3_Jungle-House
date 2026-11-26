@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="560" viewBox="0 0 980 560" font-family="Segoe UI, Arial, sans-serif">
+  <rect width="980" height="560" fill="#fbf4e6"/>
+  <text x="490" y="40" text-anchor="middle" font-size="24" font-weight="700" fill="#342414">How Jungle House AI fits together</text>
+
+  <!-- staff -->
+  <rect x="30" y="230" width="170" height="100" rx="14" fill="#ffffff" stroke="#ead8b7" stroke-width="2"/>
+  <text x="115" y="268" text-anchor="middle" font-size="18" font-weight="700" fill="#342414">Staff</text>
+  <text x="115" y="293" text-anchor="middle" font-size="14" fill="#5b4a36">phone or computer</text>
+  <text x="115" y="313" text-anchor="middle" font-size="14" fill="#5b4a36">browser</text>
+
+  <!-- vercel -->
+  <rect x="260" y="200" width="210" height="160" rx="14" fill="#ffffff" stroke="#c88918" stroke-width="3"/>
+  <text x="365" y="236" text-anchor="middle" font-size="18" font-weight="700" fill="#342414">Vercel</text>
+  <text x="365" y="262" text-anchor="middle" font-size="14" fill="#5b4a36">the website (pages)</text>
+  <text x="365" y="284" text-anchor="middle" font-size="14" fill="#5b4a36">jhgroup3.com</text>
+  <text x="365" y="312" text-anchor="middle" font-size="13" fill="#7a6a55">code: jungle-house-wiki-ai/</text>
+  <text x="365" y="334" text-anchor="middle" font-size="13" fill="#7a6a55">React + Vite</text>
+
+  <!-- railway -->
+  <rect x="530" y="120" width="230" height="320" rx="14" fill="#ffffff" stroke="#6f8f63" stroke-width="3"/>
+  <text x="645" y="156" text-anchor="middle" font-size="18" font-weight="700" fill="#342414">Railway</text>
+  <rect x="555" y="175" width="180" height="110" rx="10" fill="#f3f7f1" stroke="#6f8f63"/>
+  <text x="645" y="205" text-anchor="middle" font-size="15" font-weight="700" fill="#342414">Backend</text>
+  <text x="645" y="228" text-anchor="middle" font-size="13" fill="#5b4a36">Python (Flask)</text>
+  <text x="645" y="249" text-anchor="middle" font-size="13" fill="#7a6a55">code: backend/</text>
+  <text x="645" y="270" text-anchor="middle" font-size="13" fill="#7a6a55">answers every /api call</text>
+  <rect x="555" y="305" width="180" height="110" rx="10" fill="#f3f7f1" stroke="#6f8f63"/>
+  <text x="645" y="335" text-anchor="middle" font-size="15" font-weight="700" fill="#342414">MySQL database</text>
+  <text x="645" y="358" text-anchor="middle" font-size="13" fill="#5b4a36">articles, users, quizzes,</text>
+  <text x="645" y="379" text-anchor="middle" font-size="13" fill="#5b4a36">chats escalated, settings</text>
+  <line x1="645" y1="285" x2="645" y2="305" stroke="#6f8f63" stroke-width="3"/>
+
+  <!-- outside services -->
+  <rect x="800" y="110" width="160" height="70" rx="12" fill="#ffffff" stroke="#ead8b7" stroke-width="2"/>
+  <text x="880" y="140" text-anchor="middle" font-size="15" font-weight="700" fill="#342414">Google Gemini</text>
+  <text x="880" y="162" text-anchor="middle" font-size="12" fill="#5b4a36">the AI (answers, quizzes)</text>
+  <rect x="800" y="210" width="160" height="70" rx="12" fill="#ffffff" stroke="#ead8b7" stroke-width="2"/>
+  <text x="880" y="240" text-anchor="middle" font-size="15" font-weight="700" fill="#342414">Resend</text>
+  <text x="880" y="262" text-anchor="middle" font-size="12" fill="#5b4a36">sends emails</text>
+  <rect x="800" y="310" width="160" height="70" rx="12" fill="#ffffff" stroke="#ead8b7" stroke-width="2"/>
+  <text x="880" y="340" text-anchor="middle" font-size="15" font-weight="700" fill="#342414">Notion</text>
+  <text x="880" y="362" text-anchor="middle" font-size="12" fill="#5b4a36">articles synced in</text>
+  <rect x="800" y="410" width="160" height="70" rx="12" fill="#ffffff" stroke="#ead8b7" stroke-width="2"/>
+  <text x="880" y="440" text-anchor="middle" font-size="15" font-weight="700" fill="#342414">Push services</text>
+  <text x="880" y="462" text-anchor="middle" font-size="12" fill="#5b4a36">phone notifications</text>
+
+  <!-- arrows -->
+  <defs><marker id="a" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#342414"/></marker></defs>
+  <line x1="200" y1="280" x2="256" y2="280" stroke="#342414" stroke-width="2.5" marker-end="url(#a)"/>
+  <line x1="470" y1="250" x2="526" y2="230" stroke="#342414" stroke-width="2.5" marker-end="url(#a)"/>
+  <text x="498" y="210" text-anchor="middle" font-size="12" fill="#342414">/api, /static</text>
+  <line x1="760" y1="180" x2="796" y2="150" stroke="#342414" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="760" y1="235" x2="796" y2="243" stroke="#342414" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="760" y1="280" x2="796" y2="340" stroke="#342414" stroke-width="2" marker-end="url(#a)"/>
+  <line x1="760" y1="300" x2="796" y2="440" stroke="#342414" stroke-width="2" marker-end="url(#a)"/>
+
+  <!-- github -->
+  <rect x="260" y="440" width="210" height="80" rx="14" fill="#ffffff" stroke="#342414" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="365" y="472" text-anchor="middle" font-size="16" font-weight="700" fill="#342414">GitHub</text>
+  <text x="365" y="496" text-anchor="middle" font-size="13" fill="#5b4a36">stores all the code</text>
+  <path d="M470 480 C 520 480, 520 440, 540 440" fill="none" stroke="#342414" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#a)"/>
+  <line x1="365" y1="440" x2="365" y2="364" stroke="#342414" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#a)"/>
+  <text x="560" y="500" font-size="12" fill="#342414">a new commit on "main" updates</text>
+  <text x="560" y="518" font-size="12" fill="#342414">Vercel and Railway automatically</text>
+</svg>
