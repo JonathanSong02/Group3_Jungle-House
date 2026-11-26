@@ -13876,7 +13876,13 @@ def quiz_extra_select(alias="q"):
     return "'Medium' AS difficulty, 80 AS passing_score, NULL AS source_article_id"
 
 
-def normalize_quiz_material_ids(raw_ids, fallback_primary_id=None, max_items=12):
+# Most articles one quiz can link / be written from (2026-11-26, was 12): the
+# AI reads about 40 articles per quiz in depth, so 30 keeps questions good and
+# the staff revision list short enough. Above that, use a category.
+QUIZ_MAX_MATERIALS = 30
+
+
+def normalize_quiz_material_ids(raw_ids, fallback_primary_id=None, max_items=QUIZ_MAX_MATERIALS):
     """Return a unique ordered list of valid positive article IDs."""
     values = raw_ids if isinstance(raw_ids, list) else []
     if not values and fallback_primary_id:
@@ -13989,13 +13995,46 @@ def attach_quiz_training_materials(cursor, quizzes):
     return quizzes
 
 
-def resolve_generated_quiz_materials(questions, selected_source_article=None):
+def find_quiz_source_articles(article_ids):
+    """Live articles (article_id, title, category) for the given ids, in the given order."""
+    ids = [int(value) for value in article_ids or []]
+    if not ids:
+        return []
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute(
+            f"""SELECT article_id, title, category FROM wiki_article
+                WHERE article_id IN ({', '.join(['%s'] * len(ids))}) AND COALESCE(is_deleted, 0) = 0""",
+            tuple(ids),
+        )
+        by_id = {int(row["article_id"]): row for row in cursor.fetchall() or []}
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+    return [by_id[article_id] for article_id in ids if article_id in by_id]
+
+
+def resolve_generated_quiz_materials(questions, selected_source_article=None, selected_source_articles=None):
     """Map AI question sourceTitle values back to real KB articles.
 
-    A selected article always wins. In category/all-knowledge mode, only exact
+    A selected article always wins; several ticked articles are all linked, in
+    the order ticked. In category/all-knowledge mode, only exact
     case-insensitive title matches are linked, so the system never invents or
     guesses a reading article.
     """
+    if selected_source_articles:
+        return [{
+            "id": int(row["article_id"]),
+            "article_id": int(row["article_id"]),
+            "title": row.get("title") or "",
+            "category": row.get("category") or "",
+        } for row in selected_source_articles]
+
     if selected_source_article:
         return [{
             "id": int(selected_source_article["article_id"]),
@@ -15477,8 +15516,9 @@ def delete_admin_quiz_question(question_id):
 # and each batch reads different articles (or a different part of one article)
 # in much more depth than the old 500-character cut.
 # =========================
-def load_ai_quiz_articles(category_filter, article_id=None):
-    """[(title, plain text)] of live articles for a quiz: one article, a category, or all (newest first)."""
+def load_ai_quiz_articles(category_filter, article_id=None, article_ids=None):
+    """[(title, plain text)] of live articles for a quiz: one article, several ticked
+    articles (in the order ticked), a category, or all (newest first)."""
     conn = None
     cursor = None
 
@@ -15487,13 +15527,16 @@ def load_ai_quiz_articles(category_filter, article_id=None):
         cursor = conn.cursor(dictionary=True)
 
         query = """
-            SELECT title, content
+            SELECT article_id, title, content
             FROM wiki_article
             WHERE COALESCE(is_deleted, 0) = 0
         """
         params = ()
 
-        if article_id:
+        if article_ids:
+            query += f" AND article_id IN ({', '.join(['%s'] * len(article_ids))})"
+            params = tuple(int(value) for value in article_ids)
+        elif article_id:
             query += " AND article_id = %s"
             params = (article_id,)
         elif category_filter and str(category_filter).strip().lower() != "all":
@@ -15504,6 +15547,9 @@ def load_ai_quiz_articles(category_filter, article_id=None):
 
         cursor.execute(query, params)
         articles = cursor.fetchall() or []
+        if article_ids:
+            order = {int(value): position for position, value in enumerate(article_ids)}
+            articles.sort(key=lambda row: order.get(int(row["article_id"]), len(order)))
     finally:
         if cursor:
             cursor.close()
@@ -15541,7 +15587,7 @@ QUIZ_DIFFICULTY_GUIDANCE = {
 }
 
 
-def build_ai_quiz_questions_via_provider(category_filter, question_count, difficulty, article_id=None):
+def build_ai_quiz_questions_via_provider(category_filter, question_count, difficulty, article_id=None, article_ids=None):
     """
     Same output shape as build_ai_quiz_questions(), but genuinely written by
     whichever AI provider the manager configured in AI Model Settings.
@@ -15549,7 +15595,7 @@ def build_ai_quiz_questions_via_provider(category_filter, question_count, diffic
     the caller can tell "nothing to work with" apart from "AI returned zero
     valid questions".
     """
-    articles = load_ai_quiz_articles(category_filter, article_id=article_id)
+    articles = load_ai_quiz_articles(category_filter, article_id=article_id, article_ids=article_ids)
 
     if not articles:
         print(
@@ -15665,7 +15711,11 @@ Source content:
         split = len(set(parts)) > 1
     else:
         groups = quiz_ai_batches.share_out(articles, len(sizes))
-        sources = [quiz_ai_batches.source_text(group) for group in groups]
+        # A few ticked articles: each batch can read much more of each one.
+        per_article = quiz_ai_batches.CHARS_PER_ARTICLE
+        if article_ids:
+            per_article = max(per_article, min(8000, quiz_ai_batches.CHARS_PER_BATCH // max(1, len(groups[0]))))
+        sources = [quiz_ai_batches.source_text(group, per_article=per_article) for group in groups]
         split = False
 
     if split:
@@ -15742,27 +15792,29 @@ def ai_generate_quiz():
     except (TypeError, ValueError):
         article_id = None
 
+    # Several ticked articles (2026-11-26, optional "articleIds"): the AI
+    # writes only from them, and all of them become revision material. One
+    # ticked article is the same as choosing one article (articleId).
+    try:
+        chosen_article_ids = normalize_quiz_material_ids(data.get("articleIds"), fallback_primary_id=article_id)
+    except ValueError as material_error:
+        return jsonify({"message": str(material_error)}), 400
+    article_id = chosen_article_ids[0] if len(chosen_article_ids) == 1 else None
+    several_article_ids = chosen_article_ids if len(chosen_article_ids) > 1 else None
+
     source_article = None
+    source_articles = None
     if article_id:
-        conn = None
-        cursor = None
-        try:
-            conn = get_db_connection()
-            cursor = conn.cursor(dictionary=True)
-            cursor.execute(
-                """SELECT article_id, title, category FROM wiki_article
-                   WHERE article_id = %s AND COALESCE(is_deleted, 0) = 0 LIMIT 1""",
-                (article_id,),
-            )
-            source_article = cursor.fetchone()
-        finally:
-            if cursor:
-                cursor.close()
-            if conn:
-                conn.close()
+        found = find_quiz_source_articles([article_id])
+        source_article = found[0] if found else None
         if not source_article:
             return jsonify({"message": "The selected article could not be found."}), 404
         source_category = source_article.get("category") or source_category
+    elif several_article_ids:
+        source_articles = find_quiz_source_articles(several_article_ids)
+        if len(source_articles) != len(several_article_ids):
+            return jsonify({"message": "One or more selected articles could not be found."}), 404
+        source_category = source_articles[0].get("category") or source_category
 
     generation_method = "ai_provider"
     questions = []
@@ -15777,7 +15829,8 @@ def ai_generate_quiz():
     else:
         try:
             provider_questions = build_ai_quiz_questions_via_provider(
-                source_category, question_count, difficulty, article_id=article_id
+                source_category, question_count, difficulty, article_id=article_id,
+                article_ids=several_article_ids,
             )
 
             if provider_questions:
@@ -15835,6 +15888,7 @@ def ai_generate_quiz():
     auto_materials = resolve_generated_quiz_materials(
         questions,
         selected_source_article=source_article,
+        selected_source_articles=source_articles,
     )
     primary_material = auto_materials[0] if auto_materials else None
 

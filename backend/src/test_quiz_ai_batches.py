@@ -220,3 +220,60 @@ class RouteTests(unittest.TestCase):
         reply, _ = self.generate({"count": 10, "sourceCategory": "SOP"}, reply=flaky)
         self.assertEqual(reply.status_code, 200)
         self.assertEqual(len(reply.get_json()["quiz"]["questions"]), 5)
+
+
+class SeveralArticlesTests(unittest.TestCase):
+    """Ticking several articles in the AI quiz picker (2026-11-26)."""
+
+    rows = [{"article_id": 5, "title": "Opening", "category": "SOP"},
+            {"article_id": 7, "title": "Promotion", "category": "SALES"},
+            {"article_id": 9, "title": "Closing", "category": "SOP"}]
+
+    def generate(self, body, found_rows=None):
+        loader_calls = []
+
+        def loader(category_filter, article_id=None, article_ids=None):
+            loader_calls.append({"article_id": article_id, "article_ids": article_ids})
+            ids = article_ids or ([article_id] if article_id else [])
+            titles = {5: "Opening", 7: "Promotion", 9: "Closing"}
+            return [(titles.get(i, f"A{i}"), f"Body {i}. " * 80) for i in ids] or [("Any", "Body. " * 80)]
+
+        with app_module.app.test_request_context("/api/admin/quizzes/ai-generate", method="POST", json=body), \
+                mock.patch.object(app_module, "load_ai_quiz_articles", side_effect=loader), \
+                mock.patch.object(app_module, "find_quiz_source_articles",
+                                  return_value=self.rows if found_rows is None else found_rows), \
+                mock.patch.object(app_module.ai_provider_service, "generate_ai_reply",
+                                  side_effect=lambda prompt, timeout=None: ai_reply_for(prompt)), \
+                mock.patch.object(app_module, "resolve_generated_quiz_materials",
+                                  side_effect=lambda questions, selected_source_article=None, selected_source_articles=None:
+                                  [{"article_id": r["article_id"], "title": r["title"]} for r in (selected_source_articles or [])]):
+            reply = app_module.app.make_response(app_module.ai_generate_quiz())
+        return reply, loader_calls
+
+    def test_ticked_articles_are_the_only_source_and_all_become_revision_material(self):
+        reply, loader_calls = self.generate({"count": 10, "articleIds": [5, 7, 9]})
+        self.assertEqual(reply.status_code, 200)
+        quiz = reply.get_json()["quiz"]
+        self.assertEqual(loader_calls, [{"article_id": None, "article_ids": [5, 7, 9]}])
+        self.assertEqual(quiz["sourceArticleIds"], [5, 7, 9])
+        self.assertEqual(quiz["sourceArticleId"], 5)
+        self.assertEqual(len(quiz["questions"]), 10)
+
+    def test_one_ticked_article_works_like_choosing_one_article(self):
+        reply, loader_calls = self.generate({"count": 5, "articleIds": [5]}, found_rows=self.rows[:1])
+        self.assertEqual(loader_calls[0]["article_id"], 5)
+
+    def test_at_most_thirty(self):
+        reply, _ = self.generate({"count": 5, "articleIds": list(range(1, 32))})
+        self.assertEqual(reply.status_code, 400)
+        self.assertEqual(reply.get_json()["message"], "Select at most 30 training materials.")
+        self.assertEqual(app_module.QUIZ_MAX_MATERIALS, 30)
+
+    def test_a_deleted_article_is_refused(self):
+        reply, _ = self.generate({"count": 5, "articleIds": [5, 7, 9]}, found_rows=self.rows[:2])
+        self.assertEqual(reply.status_code, 404)
+
+    def test_manual_quizzes_can_link_thirty_articles_too(self):
+        self.assertEqual(len(app_module.normalize_quiz_material_ids(list(range(1, 31)))), 30)
+        with self.assertRaises(ValueError):
+            app_module.normalize_quiz_material_ids(list(range(1, 32)))

@@ -4,6 +4,10 @@ import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../i18n/LanguageContext';
 import { aiTasks, newAiRequestId, useAiTasks } from '../../services/aiTasks';
+import ArticlePicker from '../../components/ArticlePicker';
+
+// Same limit as QUIZ_MAX_MATERIALS in backend/src/app.py.
+const QUIZ_MAX_MATERIALS = 30;
 import './styles/QuizManagement.css';
 import './styles/QuizManagementAIBuild.css';
 
@@ -14,6 +18,9 @@ const emptyQuizForm = {
   status: 'active',
   difficulty: 'Medium',
   source_article_id: '',
+  // Ticked training materials (ids as strings, in the order ticked); the first
+  // one is also sent as source_article_id for older code.
+  source_article_ids: [],
 };
 
 const emptyQuestionForm = {
@@ -32,7 +39,8 @@ const aiSourceCategories = ['All', 'SOP', 'PRODUCT', 'SALES', 'Training', 'Notic
 const emptyAiForm = {
   title: '',
   sourceCategory: 'All',
-  articleId: '',
+  // Ticked source articles (ids as strings). None ticked = a whole category.
+  articleIds: [],
   questionCount: 5,
   difficulty: 'Medium',
 };
@@ -245,9 +253,13 @@ export default function QuizManagement() {
   });
 
   const selectedQuiz = quizzes.find((quiz) => quiz.quiz_id === selectedQuizId);
-  const selectedAiSourceArticle = aiArticles.find(
-    (article) => String(article.article_id) === String(aiForm.articleId)
-  );
+  const selectedAiSourceArticles = aiForm.articleIds
+    .map((id) => aiArticles.find((article) => String(article.article_id) === String(id)))
+    .filter(Boolean);
+  // Exactly one ticked article: shown by its title, as before.
+  const selectedAiSourceArticle = selectedAiSourceArticles.length === 1 ? selectedAiSourceArticles[0] : null;
+  const aiSourceLabel = selectedAiSourceArticle?.title ||
+    (aiForm.articleIds.length > 1 ? t('qm.ai.articlesSelected', { n: aiForm.articleIds.length }) : '');
 
   const filteredQuizzes = useMemo(() => {
     const keyword = searchTerm.trim().toLowerCase();
@@ -417,9 +429,8 @@ export default function QuizManagement() {
 
       const payload = {
         ...quizForm,
-        source_article_ids: quizForm.source_article_id
-          ? [Number(quizForm.source_article_id)]
-          : [],
+        source_article_id: quizForm.source_article_ids[0] || '',
+        source_article_ids: quizForm.source_article_ids.map(Number),
         created_by: user?.id || user?.user_id || null,
       };
 
@@ -458,6 +469,9 @@ export default function QuizManagement() {
       status: quiz.status || 'active',
       difficulty: quiz.difficulty || 'Medium',
       source_article_id: quiz.source_article_id ? String(quiz.source_article_id) : '',
+      source_article_ids: (Array.isArray(quiz.training_materials) && quiz.training_materials.length
+        ? quiz.training_materials.map((material) => material.article_id ?? material.id)
+        : [quiz.source_article_id].filter(Boolean)).map(String),
     });
     setActiveTab('create');
   };
@@ -599,9 +613,7 @@ export default function QuizManagement() {
     if (aiLoading) return;
 
     try {
-      const chosenArticle = aiArticles.find(
-        (article) => String(article.article_id) === String(aiForm.articleId)
-      );
+      const chosenArticle = selectedAiSourceArticle;
 
       const requestId = newAiRequestId();
       // Same request as before plus an optional request_id, run by the
@@ -618,7 +630,7 @@ export default function QuizManagement() {
               aiForm.title.trim() ||
               (chosenArticle ? t('qm.titleSuffix', { title: chosenArticle.title }) : t('qm.defaultAiTitle')),
             sourceCategory: aiForm.sourceCategory,
-            articleId: aiForm.articleId ? Number(aiForm.articleId) : null,
+            articleIds: aiForm.articleIds.map(Number),
             count: requestedQuestionCount,
             difficulty: aiForm.difficulty,
             status: 'inactive',
@@ -1298,30 +1310,24 @@ export default function QuizManagement() {
                   />
                 </label>
 
-                <label className="qm-field qm-field-full">
+                <div className="qm-field qm-field-full">
                   <span>{tOr('qm.form.trainingMaterial', 'Training Material / Knowledge Base Article')}</span>
-                  <select
-                    name="source_article_id"
-                    value={quizForm.source_article_id}
-                    onChange={handleQuizChange}
-                  >
-                    <option value="">
-                      {tOr('qm.form.noTrainingMaterial', 'No linked training material')}
-                    </option>
-                    {aiArticles.map((article) => (
-                      <option key={article.article_id} value={article.article_id}>
-                        {article.title}
-                        {article.category ? ` — ${catLabel(article.category)}` : ''}
-                      </option>
-                    ))}
-                  </select>
+                  <ArticlePicker
+                    articles={aiArticles}
+                    selected={quizForm.source_article_ids}
+                    onChange={(ids) => setQuizForm((prev) => ({ ...prev, source_article_ids: ids }))}
+                    max={QUIZ_MAX_MATERIALS}
+                    t={t}
+                    catLabel={catLabel}
+                    idPrefix="qm-material"
+                  />
                   <small>
                     {tOr(
                       'qm.form.trainingMaterialHint',
                       'Staff can review this Knowledge Base material before attempting the quiz.'
                     )}
                   </small>
-                </label>
+                </div>
 
                 <div className="qm-form-grid">
                   <label className="qm-field">
@@ -1446,33 +1452,31 @@ export default function QuizManagement() {
                     </div>
                   </div>
 
-                  <label className="qm-field qm-field-full">
+                  <div className="qm-field qm-field-full">
                     <span>{t('quiz.gen.article')}</span>
-                    <select
-                      name="articleId"
-                      value={aiForm.articleId}
-                      onChange={handleAiFormChange}
-                    >
-                      <option value="">{t('quiz.gen.allKnowledge')}</option>
-                      {aiArticles.map((article) => (
-                        <option key={article.article_id} value={article.article_id}>
-                          {article.title}
-                          {article.category ? ` — ${catLabel(article.category)}` : ''}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  </div>
+                  <ArticlePicker
+                    articles={aiArticles}
+                    selected={aiForm.articleIds}
+                    onChange={(ids) => setAiForm((prev) => ({ ...prev, articleIds: ids }))}
+                    max={QUIZ_MAX_MATERIALS}
+                    t={t}
+                    catLabel={catLabel}
+                    idPrefix="qm-ai-article"
+                  />
 
-                  {aiForm.articleId ? (
+                  {aiForm.articleIds.length ? (
                     <div className="qm-ai-source-note success">
                       <Icon name="check" size={16} />
                       <span>
-                        <strong>{selectedAiSourceArticle?.title || tOr('qm.ai.articleSelected', 'Article selected')}</strong>
+                        <strong>{aiSourceLabel || tOr('qm.ai.articleSelected', 'Article selected')}</strong>
                         <small>
-                          {tOr(
-                            'qm.ai.revisionLinked',
-                            'This article will also be linked to the quiz as Staff revision material.'
-                          )}
+                          {aiForm.articleIds.length > 1
+                            ? t('qm.ai.articlesLinked')
+                            : tOr(
+                              'qm.ai.revisionLinked',
+                              'This article will also be linked to the quiz as Staff revision material.'
+                            )}
                         </small>
                       </span>
                     </div>
@@ -1611,7 +1615,7 @@ export default function QuizManagement() {
                   <div>
                     <span>{tOr('qm.ai.summarySource', 'Source')}</span>
                     <strong>
-                      {selectedAiSourceArticle?.title ||
+                      {aiSourceLabel ||
                         (aiForm.sourceCategory === 'All'
                           ? tOr('qm.ai.allKnowledge', 'All Knowledge')
                           : catLabel(aiForm.sourceCategory))}
@@ -1702,7 +1706,7 @@ export default function QuizManagement() {
                     <span>{aiForm.questionCount || '—'} {t('quiz.questions')}</span>
                     <span>{tOr(`quiz.difficulty.${aiForm.difficulty}`, aiForm.difficulty)}</span>
                     <span>
-                      {selectedAiSourceArticle
+                      {aiForm.articleIds.length
                         ? tOr('qm.ai.linkedRevision', 'Revision material linked')
                         : tOr('qm.ai.categorySource', 'Category source')}
                     </span>

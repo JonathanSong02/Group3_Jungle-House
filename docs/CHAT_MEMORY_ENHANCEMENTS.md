@@ -261,3 +261,9 @@ lint 仍有既有 36 errors / 10 warnings。三个修改的页面与 HEAD 的诊
 - 拿掉 `build_ai_quiz_questions`（用 SOP 步骤拼出的模板题）。AI 失败时只显示原有的错误讯息，不再偷偷换模板。
 - 新 `quiz_ai_batches.py`：每批约 5 题、最多 4 批同时问 AI，每批 60 秒；哪批失败只重试那批一次。整个分类时文章轮流分给各批，每篇最多读 1,500 字（旧版只读开头 500 字）；单篇长文章切成几段，每批一段。完全一样的题只留一个（只差一个字的题都保留）。题数不够时预览会写"AI 出了 X 题，少于要求的 Y 题"。
 - 测试：`test_quiz_ai_batches.py`（18，含整个出题网址：4 批同时、各批读不同文章、失败不出模板题、AI 未设定直接说明、一批坏了其他照样出）。后端 665、前端 153 全过。
+
+## 2026-11-26 更新：出 quiz 选文章可以搜索、多选（LIONG1934）
+
+- AI Generate 的"Source article"与手动建 quiz 的"Training Material"改用同一个选单（`components/ArticlePicker.jsx`）：搜索标题、分类按钮、打勾多选、"全选目前列出的"，最多 30 篇（手动建 quiz 原本最多 12 篇）。
+- AI Generate：不勾＝整个分类（同以前）；勾一篇＝同以前；勾多篇＝新的 `articleIds`，AI 只从这几篇出题，这几篇都变成复习材料。编辑旧 quiz 会自动勾回已连的文章。
+- 测试：`ArticlePicker.test.js`（6）、`test_quiz_ai_batches.py::SeveralArticlesTests`（5）。后端 670 全过；前端 159 中有 3 个旧测试（EscalationContext、EscalationEvidence、StandardQuestionField，"useState of null"）在没改过的版本上也会失败，不是这次造成。
