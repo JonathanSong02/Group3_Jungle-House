@@ -10,12 +10,72 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
-from flask import Flask, jsonify, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory
 from werkzeug.datastructures import FileStorage
 import message_attachment_service as service
 
 
 class MessageAttachmentsTests(unittest.TestCase):
+    def test_missing_optional_table_leaves_text_messages_readable(self):
+        cursor = Mock()
+        error = RuntimeError("Synthetic missing table")
+        error.errno = 1146
+        cursor.execute.side_effect = error
+        messages = [{"message_id": 1, "message": "Text still works"}]
+        self.assertIs(service.add_attachments(cursor, messages), messages)
+        self.assertEqual(messages[0]["attachments"], [])
+        cursor.fetchall.assert_not_called()
+
+    def test_unrelated_database_errors_are_not_hidden(self):
+        cursor = Mock()
+        error = RuntimeError("Synthetic connection failure")
+        error.errno = 2013
+        cursor.execute.side_effect = error
+        with self.assertRaises(RuntimeError):
+            service.add_attachments(cursor, [{"message_id": 1}])
+
+    def test_missing_table_upload_reports_schema_error_and_cleans_file(self):
+        with tempfile.TemporaryDirectory() as folder:
+            cursor = Mock()
+            error = RuntimeError("Synthetic missing table")
+            error.errno = 1146
+            cursor.execute.side_effect = error
+            with self.assertRaises(service.AttachmentSchemaNotReady):
+                service.save_attachment(cursor, 1,
+                    FileStorage(stream=io.BytesIO(b"test"), filename="x.pdf"), folder, "application/pdf")
+            self.assertEqual(list(Path(folder).iterdir()), [])
+
+    def test_text_send_and_reply_commit_without_attachment_table(self):
+        module = ast.parse(Path(__file__).with_name("app.py").read_text(encoding="utf-8"))
+        for name in ("send_message", "reply_message"):
+            with self.subTest(route=name):
+                cursor = Mock(lastrowid=12)
+                error = RuntimeError("Synthetic missing table")
+                error.errno = 1146
+
+                def execute(sql, params):
+                    if "FROM message_attachments" in sql:
+                        raise error
+
+                cursor.execute.side_effect = execute
+                connection = Mock()
+                connection.cursor.return_value = cursor
+                node = next(node for node in module.body if isinstance(node, ast.FunctionDef) and node.name == name)
+                node.decorator_list = []
+                scope = dict(request=request, jsonify=jsonify, message_attachment_service=service,
+                    get_db_connection=lambda: connection, current_auth_user_id=lambda: 1,
+                    _validate_message_attachment=lambda: (None, None, None),
+                    _message_payload=lambda *_: {"message_id": 12, "message": "Text still works"})
+                exec(compile(ast.Module(body=[node], type_ignores=[]), "app.py", "exec"), scope)
+                with Flask(__name__).test_request_context(json={
+                    "receiver_id": 2, "subject": "Direct message", "message": "Text still works", "thread_id": 10
+                }):
+                    response, status = scope[name]()
+                self.assertEqual(status, 201)
+                self.assertEqual(response.json["sent_message"]["attachments"], [])
+                connection.commit.assert_called_once()
+                connection.rollback.assert_not_called()
+
     def test_save_preserves_display_name_and_uses_random_storage_name(self):
         with tempfile.TemporaryDirectory() as folder:
             cursor = Mock()

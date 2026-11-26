@@ -16686,6 +16686,11 @@ def send_message():
         if saved_attachment:
             saved_attachment.unlink(missing_ok=True)
 
+        if isinstance(error, message_attachment_service.AttachmentSchemaNotReady):
+            return jsonify({
+                "code": "MESSAGE_ATTACHMENT_SCHEMA_NOT_READY",
+                "message": "File attachments are not available yet. Please send text only or contact your administrator."
+            }), 503
         print("MYSQL ERROR /api/messages/send:", error)
         return jsonify({
             "message": "Failed to send message.",
@@ -16945,6 +16950,11 @@ def reply_message():
         if saved_attachment:
             saved_attachment.unlink(missing_ok=True)
 
+        if isinstance(error, message_attachment_service.AttachmentSchemaNotReady):
+            return jsonify({
+                "code": "MESSAGE_ATTACHMENT_SCHEMA_NOT_READY",
+                "message": "File attachments are not available yet. Please send text only or contact your administrator."
+            }), 503
         print("MYSQL ERROR /api/messages/reply:", error)
         return jsonify({
             "message": "Failed to send reply.",
