@@ -3,6 +3,8 @@ import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../i18n/LanguageContext';
 import '../styles/Messages.css';
+import { MessageAttachment, MessageAttachmentPicker } from '../components/MessageAttachment';
+import { messagePayload, pastedImage, validateMessageFile } from '../utils/messageAttachment';
 
 // UI hint only: the backend independently enforces the five-minute rule using MySQL time.
 const MESSAGE_ACTION_WINDOW_MS = 5 * 60 * 1000;
@@ -180,6 +182,8 @@ export default function Messages() {
   const [loading, setLoading] = useState(true);
   const [threadLoading, setThreadLoading] = useState(false);
   const [sending, setSending] = useState(false);
+  const [replyFile, setReplyFile] = useState(null);
+  const [newMessageFile, setNewMessageFile] = useState(null);
   const [messageText, setMessageText] = useState('');
 
   const [threadSearch, setThreadSearch] = useState('');
@@ -334,10 +338,20 @@ export default function Messages() {
     }));
   };
 
+  const selectFile = (file, setter) => {
+    if (sending) return;
+    if (!validateMessageFile(file)) {
+      showToast(tOr('msg.invalidAttachment', 'Choose an image, PDF or Word document under 7MB.'));
+      return;
+    }
+    setter(file);
+  };
+
   const sendMessage = async (event) => {
     event.preventDefault();
 
-    if (!form.receiver_id || !form.message.trim()) {
+    if (sending) return;
+    if (!form.receiver_id || (!form.message.trim() && !newMessageFile)) {
       setMessageText(
         tOr(
           'msg.err.receiverMessageRequired',
@@ -358,11 +372,11 @@ export default function Messages() {
       setSending(true);
       setMessageText('');
 
-      const response = await api.post('/messages/send', {
+      const response = await api.post('/messages/send', messagePayload({
         receiver_id: receiverId,
         subject,
         message,
-      });
+      }, newMessageFile));
 
       const sentMessage = response.data?.sent_message || {
         message_id: response.data?.message_id,
@@ -395,6 +409,7 @@ export default function Messages() {
       setSelectedThread(nextThread);
       setThreadMessages([sentMessage]);
       setForm({ receiver_id: '', subject: '', message: '' });
+      setNewMessageFile(null);
       setNewChatSearch('');
       setShowComposer(false);
     } catch (error) {
@@ -409,11 +424,13 @@ export default function Messages() {
   };
 
   const openThread = async (thread) => {
+    if (sending) return;
     try {
       setSelectedThread(thread);
       setThreadLoading(true);
       setMessageText('');
       setReplyText('');
+      setReplyFile(null);
       setEditingId(null);
       setEditingText('');
       setOpenMenuId(null);
@@ -463,7 +480,9 @@ export default function Messages() {
           return !serverMessages.some((serverItem) => {
             if (
               Number(serverItem.sender_id) !== Number(localItem.sender_id) ||
-              String(serverItem.message || '') !== String(localItem.message || '')
+              String(serverItem.message || '') !== String(localItem.message || '') ||
+              (localItem.file && !serverItem.attachments?.some((attachment) =>
+                attachment.name === localItem.file.name && attachment.size === localItem.file.size))
             ) {
               return false;
             }
@@ -507,6 +526,7 @@ export default function Messages() {
   }, [currentUserId, fetchData, syncOpenThread]);
 
   const chooseNewChatUser = async (person) => {
+    if (sending) return;
     const existingThread = threads.find(
       (thread) => getOtherUserId(thread) === Number(person.user_id)
     );
@@ -552,13 +572,13 @@ export default function Messages() {
     try {
       setSending(true);
 
-      const response = await api.post('/messages/reply', {
+      const response = await api.post('/messages/reply', messagePayload({
         thread_id: optimisticMessage.thread_id,
         parent_message_id: optimisticMessage.parent_message_id || null,
         receiver_id: optimisticMessage.receiver_id,
         subject: optimisticMessage.subject || 'Direct message',
         message: optimisticMessage.message,
-      });
+      }, optimisticMessage.file));
 
       const sentMessage = response.data?.sent_message || {
         ...optimisticMessage,
@@ -624,8 +644,8 @@ export default function Messages() {
   const sendReply = async (event) => {
     event.preventDefault();
 
-    if (!selectedThread || !replyText.trim() || sending) {
-      if (!replyText.trim()) setMessageText(t('msg.err.replyFirst'));
+    if (!selectedThread || (!replyText.trim() && !replyFile) || sending) {
+      if (!replyText.trim() && !replyFile) setMessageText(t('msg.err.replyFirst'));
       return;
     }
 
@@ -652,6 +672,7 @@ export default function Messages() {
       receiver_id: receiverId,
       subject: selectedThread.subject || 'Direct message',
       message,
+      file: replyFile,
       is_read: false,
       created_at: new Date().toISOString(),
       edited_at: null,
@@ -661,6 +682,7 @@ export default function Messages() {
     };
 
     setReplyText('');
+    setReplyFile(null);
     setMessageText('');
 
     if (replyInputRef.current) {
@@ -861,6 +883,7 @@ export default function Messages() {
                 setMessageText('');
                 setNewChatSearch('');
                 setForm({ receiver_id: '', subject: '', message: '' });
+                setNewMessageFile(null);
               }}
               aria-label={
                 showComposer
@@ -935,13 +958,15 @@ export default function Messages() {
                   <button
                     type="button"
                     className="messages-new-recipient"
-                    onClick={() =>
+                    disabled={sending}
+                    onClick={() => {
+                      setNewMessageFile(null);
                       setForm({
                         receiver_id: '',
                         subject: '',
                         message: '',
-                      })
-                    }
+                      });
+                    }}
                   >
                     <BackIcon />
 
@@ -967,15 +992,18 @@ export default function Messages() {
                       rows="5"
                       value={form.message}
                       onChange={handleChange}
+                      onPaste={(event) => pastedImage(event, (file) => selectFile(file, setNewMessageFile))}
                       placeholder={t('msg.writeMessage')}
                       autoFocus
                     />
                   </label>
 
+                  <MessageAttachmentPicker file={newMessageFile} onSelect={(file) => selectFile(file, setNewMessageFile)}
+                    onRemove={() => setNewMessageFile(null)} disabled={sending} />
                   <button
                     type="submit"
                     className="messages-send-new-btn"
-                    disabled={sending || !form.message.trim()}
+                    disabled={sending || (!form.message.trim() && !newMessageFile)}
                   >
                     <SendIcon />
                     <span>
@@ -1048,7 +1076,7 @@ export default function Messages() {
                           <span className="messages-thread-preview-row">
                             <span className="messages-thread-preview">
                               {latestIsMine ? `${t('msg.you')}: ` : ''}
-                              {thread.latest_message}
+                              {thread.latest_message || t('chat.attachFile')}
                             </span>
 
                             {isUnread ? (
@@ -1269,6 +1297,8 @@ export default function Messages() {
                               </div>
                             ) : null}
 
+                            {item.file && <MessageAttachment file={item.file} />}
+                            {item.attachments?.map((attachment) => <MessageAttachment key={attachment.attachment_id} attachment={attachment} />)}
                             {editingId === item.message_id ? (
                               <div className="messages-edit-box">
                                 <textarea
@@ -1388,10 +1418,13 @@ export default function Messages() {
                 className="messages-reply-bar"
                 onSubmit={sendReply}
               >
+                <MessageAttachmentPicker file={replyFile} onSelect={(file) => selectFile(file, setReplyFile)}
+                  onRemove={() => setReplyFile(null)} disabled={sending} />
                 <textarea
                   ref={replyInputRef}
                   rows="1"
                   value={replyText}
+                  onPaste={(event) => pastedImage(event, (file) => selectFile(file, setReplyFile))}
                   onChange={(event) => {
                     setReplyText(event.target.value);
                     event.target.style.height = 'auto';
@@ -1417,7 +1450,7 @@ export default function Messages() {
                 <button
                   type="submit"
                   className="messages-reply-send"
-                  disabled={sending || !replyText.trim()}
+                  disabled={sending || (!replyText.trim() && !replyFile)}
                   aria-label={
                     sending ? t('msg.sending') : t('msg.send')
                   }

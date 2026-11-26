@@ -14,6 +14,11 @@ export const LANGUAGE_OPTIONS = [
 ];
 
 const en = {
+  'msg.removeAttachment': 'Remove attachment',
+  'msg.attachmentHint': 'Paste an image · Images, PDF, Word · Max 7MB',
+  'msg.invalidAttachment': 'Choose an image, PDF or Word document under 7MB.',
+  'msg.imageFile': 'Image',
+  'msg.documentFile': 'Document',
   'esc.evidence.original': 'Original Staff Question',
   'esc.evidence.previous': 'Previous AI Response',
   'esc.evidence.why': 'Why Escalated',
@@ -2022,6 +2027,11 @@ const en = {
 };
 
 const zh = {
+  'msg.removeAttachment': '移除附件',
+  'msg.attachmentHint': '可粘贴图片 · 图片、PDF、Word · 最大 7MB',
+  'msg.invalidAttachment': '请选择 7MB 以内的图片、PDF 或 Word 文档。',
+  'msg.imageFile': '图片',
+  'msg.documentFile': '文档',
   'esc.evidence.original': '员工原始问题',
   'esc.evidence.previous': '先前 AI 回复',
   'esc.evidence.why': '升级原因',
@@ -4018,6 +4028,11 @@ const zh = {
 };
 
 const ms = {
+  'msg.removeAttachment': 'Buang lampiran',
+  'msg.attachmentHint': 'Tampal imej · Imej, PDF, Word · Maks 7MB',
+  'msg.invalidAttachment': 'Pilih imej, PDF atau dokumen Word di bawah 7MB.',
+  'msg.imageFile': 'Imej',
+  'msg.documentFile': 'Dokumen',
   'esc.evidence.original': 'Soalan Asal Kakitangan',
   'esc.evidence.previous': 'Jawapan AI Sebelumnya',
   'esc.evidence.why': 'Sebab Eskalasi',

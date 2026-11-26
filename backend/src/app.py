@@ -22,6 +22,7 @@ import difflib
 import io
 import zipfile
 import chat_attachment_service
+import message_attachment_service
 import hybrid_image_service
 import image_index_service
 import document_text_service
@@ -539,6 +540,7 @@ UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
 
 CHAT_UPLOAD_FOLDER = STATIC_DIR / "uploads" / "chat"
 CHAT_UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
+MESSAGE_UPLOAD_FOLDER = STATIC_DIR / "uploads" / "messages"
 
 SOP_IMAGE_FOLDER = STATIC_DIR / "sop_images"
 SOP_IMAGE_FOLDER.mkdir(parents=True, exist_ok=True)
@@ -606,6 +608,7 @@ def log_chat_timing(response):
 @app.errorhandler(413)
 def handle_file_too_large(_error):
     return jsonify({
+        "message": "This file is too large. Please upload a file under 8MB.",
         "reply": "This file is too large. Please upload a file under 8MB.",
         "answer": "This file is too large. Please upload a file under 8MB.",
         "success": False,
@@ -1553,6 +1556,9 @@ def send_private_static_file(directory, filename):
 
     # Reject symlinks leading outside the upload directory and directories themselves.
     if not resolved_file.is_relative_to(root) or not resolved_file.is_file():
+        return jsonify({"message": "File not found."}), 404
+    # Member files must go through their message visibility check, even via aliases.
+    if resolved_file.is_relative_to(MESSAGE_UPLOAD_FOLDER.resolve()):
         return jsonify({"message": "File not found."}), 404
     return send_from_directory(str(root), relative_name)
 
@@ -16570,22 +16576,77 @@ def get_message_users():
             conn.close()
 
 
+def _validate_message_attachment():
+    files = list(request.files.values(multi=True))
+    if not files:
+        return None, None, None
+    try:
+        if len(files) != 1:
+            raise UploadValidationError("Please attach one file per message.")
+        file = files[0]
+        mime = validate_uploaded_file(file)
+        file.stream.seek(0, 2)
+        size = file.stream.tell()
+        file.stream.seek(0)
+        if size > message_attachment_service.MAX_FILE_BYTES:
+            raise UploadValidationError("Please select a file under 7MB.")
+        return file, mime, None
+    except UploadValidationError as error:
+        return None, None, (jsonify({"message": str(error)}), 400)
+
+
+@app.route("/api/messages/attachments/<reference>", methods=["GET"])
+def get_message_attachment(reference):
+    if not re.fullmatch(r"[a-f0-9]{64}", reference):
+        return jsonify({"message": "Attachment not found."}), 404
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+        user_id = current_auth_user_id()
+        cursor.execute("""SELECT a.* FROM message_attachments a
+            JOIN user_message m ON m.message_id = a.message_id
+            WHERE a.attachment_id = %s AND
+            ((m.sender_id = %s AND m.is_deleted_by_sender = FALSE) OR
+             (m.receiver_id = %s AND m.is_deleted_by_receiver = FALSE))""",
+            (reference, user_id, user_id))
+        row = cursor.fetchone()
+        if not row:
+            return jsonify({"message": "Attachment not found."}), 404
+        response = send_from_directory(str(MESSAGE_UPLOAD_FOLDER), row["storage_name"],
+            mimetype=row["mime_type"], download_name=row["original_name"],
+            as_attachment=not row["mime_type"].startswith("image/"))
+        response.headers["Cache-Control"] = "private, no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
 @app.route("/api/messages/send", methods=["POST"])
 def send_message():
-    data = request.get_json() or {}
+    data = request.form if request.mimetype == "multipart/form-data" else (request.get_json() or {})
+    file, mime, upload_error = _validate_message_attachment()
+    if upload_error:
+        return upload_error
 
     sender_id = current_auth_user_id()
     receiver_id = data.get("receiver_id")
     subject = data.get("subject", "").strip()
     message = data.get("message", "").strip()
 
-    if not sender_id or not receiver_id or not subject or not message:
+    if not sender_id or not receiver_id or not subject or (not message and not file):
         return jsonify({
             "message": "Sender, receiver, subject and message are required."
         }), 400
 
     conn = None
     cursor = None
+    saved_attachment = None
 
     try:
         conn = get_db_connection()
@@ -16605,7 +16666,11 @@ def send_message():
             WHERE message_id = %s
         """, (message_id, message_id))
 
+        if file:
+            saved_attachment = message_attachment_service.save_attachment(
+                cursor, message_id, file, MESSAGE_UPLOAD_FOLDER, mime)
         sent_message = _message_payload(cursor, message_id)
+        message_attachment_service.add_attachments(cursor, [sent_message])
         conn.commit()
 
         return jsonify({
@@ -16618,6 +16683,8 @@ def send_message():
     except Exception as error:
         if conn:
             conn.rollback()
+        if saved_attachment:
+            saved_attachment.unlink(missing_ok=True)
 
         print("MYSQL ERROR /api/messages/send:", error)
         return jsonify({
@@ -16780,6 +16847,7 @@ def get_thread_messages(thread_id, user_id):
         """, (thread_id, user_id, user_id))
 
         messages = cursor.fetchall()
+        message_attachment_service.add_attachments(cursor, messages)
         return jsonify(messages), 200
 
     except Exception as error:
@@ -16801,7 +16869,10 @@ def get_thread_messages(thread_id, user_id):
 
 @app.route("/api/messages/reply", methods=["POST"])
 def reply_message():
-    data = request.get_json() or {}
+    data = request.form if request.mimetype == "multipart/form-data" else (request.get_json() or {})
+    file, mime, upload_error = _validate_message_attachment()
+    if upload_error:
+        return upload_error
 
     thread_id = data.get("thread_id")
     parent_message_id = data.get("parent_message_id")
@@ -16810,13 +16881,14 @@ def reply_message():
     subject = data.get("subject", "").strip()
     message = data.get("message", "").strip()
 
-    if not thread_id or not sender_id or not receiver_id or not message:
+    if not thread_id or not sender_id or not receiver_id or (not message and not file):
         return jsonify({
             "message": "Thread, sender, receiver and message are required."
         }), 400
 
     conn = None
     cursor = None
+    saved_attachment = None
 
     try:
         conn = get_db_connection()
@@ -16853,7 +16925,11 @@ def reply_message():
         ))
 
         message_id = cursor.lastrowid
+        if file:
+            saved_attachment = message_attachment_service.save_attachment(
+                cursor, message_id, file, MESSAGE_UPLOAD_FOLDER, mime)
         sent_message = _message_payload(cursor, message_id)
+        message_attachment_service.add_attachments(cursor, [sent_message])
         conn.commit()
 
         return jsonify({
@@ -16866,6 +16942,8 @@ def reply_message():
     except Exception as error:
         if conn:
             conn.rollback()
+        if saved_attachment:
+            saved_attachment.unlink(missing_ok=True)
 
         print("MYSQL ERROR /api/messages/reply:", error)
         return jsonify({
@@ -17074,6 +17152,8 @@ def delete_message_from_view(message_id):
 
 @app.route("/static/<path:filename>", methods=["GET"])
 def serve_static(filename):
+    if filename.startswith("uploads/messages/"):
+        return jsonify({"message": "Attachment not found."}), 404
     if filename.startswith("uploads/chat/"):
         return serve_chat_upload(filename[len("uploads/chat/"):])
     return send_private_static_file(STATIC_DIR, filename)
