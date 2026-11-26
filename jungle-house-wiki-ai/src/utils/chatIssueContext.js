@@ -108,7 +108,11 @@ export function buildIssueContext(messages, triggerQuestion, conversationId, off
   if (offerId != null) target = turns.find((turn) => turn.messages.some((item) => item.id === String(offerId)));
   if (!target) target = turns.findLast((turn) => text(turn.user.text) === text(triggerQuestion));
   if (!target?.cluster) return null;
-  const selected = target.cluster.turns.flatMap((turn) => turn.messages);
+  // The team lead sees this chat's whole recent transcript, not only the
+  // guessed topic: earlier questions worded differently were being dropped
+  // (e.g. "AEON opening, how many cabinets" before "where is the key").
+  // The topic guess still picks the issue question and description below.
+  const selected = turns.flatMap((turn) => turn.messages);
   const indices = new Set();
   let chars = 0;
   // Preserve the beginning as well as the latest clarification. A short

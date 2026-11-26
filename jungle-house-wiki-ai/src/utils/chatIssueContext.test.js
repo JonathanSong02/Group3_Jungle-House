@@ -8,11 +8,19 @@ const build = (messages, question, offerId) => buildIssueContext(messages, quest
 const discussion = [user(1, 'Where do I store the iPad when closing?'), ai(2, 'Keep the iPad in the cabinet.'),
   user(3, 'Honey shelf life'), ai(4, 'Honey answer'), user(5, 'The iPad cabinet is locked'), ai(6, 'Still unresolved')];
 
-test('returning to iPad includes original discussion and excludes honey', () => {
+test('returning to iPad keeps the iPad issue and sends the whole chat to the team lead', () => {
   const result = build(discussion, 'The iPad cabinet is locked');
-  assert.deepEqual(result.messages.map((item) => item.id), ['1', '2', '5', '6']);
+  assert.deepEqual(result.messages.map((item) => item.id), ['1', '2', '3', '4', '5', '6']);
   assert.equal(result.issue_id, '1');
-  assert(!JSON.stringify(result).includes('Honey'));
+  assert(!result.description.includes('Honey'));
+});
+
+test('earlier questions worded differently still reach the team lead', () => {
+  const messages = [user(1, 'AEON 开店要开几个柜子'), ai(2, '开 3 个柜子'),
+    user(3, '钥匙放在哪里'), ai(4, '放在收银机下面'), user(5, '找不到钥匙怎么办'), ai(6, '我找不到相关资料')];
+  const result = build(messages, messages[4].text);
+  assert.deepEqual(result.messages.map((item) => item.id), ['1', '2', '3', '4', '5', '6']);
+  assert.equal(result.issue_question, messages[4].text);
 });
 
 test('finds an older issue beyond a recent-message window', () => {
@@ -23,18 +31,21 @@ test('finds an older issue beyond a recent-message window', () => {
 test('corrections remain with the issue in order and supplement description', () => {
   const messages = [user(1, 'iPad at Spring'), ai(2, 'Prior answer'), user(3, 'Correction, I mean ST3.'), user(4, 'Honey price'), user(5, 'iPad cabinet locked')];
   const result = build(messages, messages[4].text);
-  assert.deepEqual(result.messages.map((item) => item.id), ['1', '2', '3', '5']);
+  assert.deepEqual(result.messages.map((item) => item.id), ['1', '2', '3', '4', '5']);
   assert(result.description.includes('ST3'));
+  assert(!result.description.includes('Honey'));
 });
 
 test('different subjects sharing an attribute do not merge', () => {
   const result = build([user(1, 'iPad price'), user(2, 'Honey price')], 'Honey price');
-  assert.deepEqual(result.messages.map((item) => item.id), ['2']);
+  assert.equal(result.issue_id, '2');
+  assert.equal(result.description, 'Honey price');
 });
 
 test('explicit standalone topic change is separate', () => {
   const result = build([user(1, 'iPad closing'), user(2, 'What about honey shelf life?')], 'What about honey shelf life?');
-  assert.deepEqual(result.messages.map((item) => item.id), ['2']);
+  assert.equal(result.issue_id, '2');
+  assert(!result.description.includes('iPad'));
 });
 
 test('English deictic follow-up keeps product context', () => {
@@ -44,7 +55,8 @@ test('English deictic follow-up keeps product context', () => {
 
 test('subjectless opening returns to a unique operational issue instead of honey', () => {
   const result = build([user(1, 'ST3 kiosk closing'), user(2, 'Honey shelf life'), user(3, 'How about opening?')], 'How about opening?');
-  assert.deepEqual(result.messages.map((item) => item.id), ['1', '3']);
+  assert.equal(result.issue_id, '1');
+  assert(!result.description.includes('Honey'));
 });
 
 test('Chinese follow-up keeps its issue', () => {
@@ -60,7 +72,7 @@ test('Malay follow-up keeps its issue', () => {
 test('offer anchors the original issue even after another topic', () => {
   const result = build(discussion, discussion[0].text, 2);
   assert.equal(result.issue_id, '1');
-  assert(!JSON.stringify(result.messages).includes('Honey'));
+  assert.equal(result.issue_question, discussion[0].text);
 });
 
 test('old timestamps stay unknown and new timestamps are preserved', () => {
@@ -100,7 +112,9 @@ test('loading, failed responses and stopped output are excluded', () => {
 test('a rejection follows the immediately preceding issue rather than an older answer', () => {
   const result = build([user(1, 'Ice delivery payment how much?'), ai(2, 'Ice answer'),
     user(3, 'Daily Jungle Heart information'), ai(4, 'Daily information'), user(5, 'I think this is not what I want')], 'I think this is not what I want');
-  assert.deepEqual(result.messages.map((item) => item.id), ['3', '4', '5']);
+  assert.equal(result.issue_id, '3');
+  assert.equal(result.issue_question, 'Daily Jungle Heart information');
+  assert.deepEqual(result.messages.map((item) => item.id), ['1', '2', '3', '4', '5']);
 });
 
 test('clarification state is sent only for the same issue, including after another answer', () => {
