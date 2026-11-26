@@ -16577,7 +16577,7 @@ def get_message_users():
 
 
 def _validate_message_attachment():
-    files = list(request.files.values(multi=True))
+    files = [file for _, file in request.files.items(multi=True)]
     if not files:
         return None, None, None
     try:

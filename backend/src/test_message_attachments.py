@@ -11,11 +11,54 @@ from pathlib import Path
 from unittest.mock import Mock
 
 from flask import Flask, jsonify, request, send_from_directory
-from werkzeug.datastructures import FileStorage
+from werkzeug.datastructures import FileStorage, MultiDict
 import message_attachment_service as service
 
 
 class MessageAttachmentsTests(unittest.TestCase):
+    def attachment_validator(self):
+        module = ast.parse(Path(__file__).with_name("app.py").read_text(encoding="utf-8"))
+        node = next(node for node in module.body if isinstance(node, ast.FunctionDef)
+                    and node.name == "_validate_message_attachment")
+        scope = dict(request=request, jsonify=jsonify, message_attachment_service=service,
+                     UploadValidationError=ValueError,
+                     validate_uploaded_file=Mock(return_value="image/png"))
+        exec(compile(ast.Module(body=[node], type_ignores=[]), "app.py", "exec"), scope)
+        return scope["_validate_message_attachment"], scope["validate_uploaded_file"]
+
+    def test_real_attachment_validator_accepts_text_only_requests(self):
+        validator, inspect_file = self.attachment_validator()
+        app = Flask(__name__)
+        with app.test_request_context(json={"message": "Text only"}):
+            self.assertEqual(validator(), (None, None, None))
+        with app.test_request_context(data={"message": "Text only"}, content_type="multipart/form-data"):
+            self.assertEqual(validator(), (None, None, None))
+        inspect_file.assert_not_called()
+
+    def test_real_attachment_validator_accepts_one_file(self):
+        validator, inspect_file = self.attachment_validator()
+        with Flask(__name__).test_request_context(data={
+            "attachment": (io.BytesIO(b"synthetic image"), "image.png"), "message": "Image caption"
+        }):
+            file, mime, error = validator()
+            self.assertIsNone(error)
+            self.assertEqual(file.filename, "image.png")
+            self.assertEqual(file.stream.tell(), 0)
+            self.assertEqual(mime, "image/png")
+            inspect_file.assert_called_once_with(file)
+
+    def test_real_attachment_validator_rejects_multiple_files_including_same_field(self):
+        for keys in (("attachment", "attachment"), ("attachment", "other")):
+            with self.subTest(keys=keys):
+                validator, inspect_file = self.attachment_validator()
+                data = MultiDict((key, (io.BytesIO(b"synthetic"), "image.png")) for key in keys)
+                with Flask(__name__).test_request_context(data=data):
+                    file, mime, error = validator()
+                    self.assertIsNone(file)
+                    self.assertIsNone(mime)
+                    self.assertEqual(error[1], 400)
+                inspect_file.assert_not_called()
+
     def test_missing_optional_table_leaves_text_messages_readable(self):
         cursor = Mock()
         error = RuntimeError("Synthetic missing table")
@@ -64,7 +107,7 @@ class MessageAttachmentsTests(unittest.TestCase):
                 node.decorator_list = []
                 scope = dict(request=request, jsonify=jsonify, message_attachment_service=service,
                     get_db_connection=lambda: connection, current_auth_user_id=lambda: 1,
-                    _validate_message_attachment=lambda: (None, None, None),
+                    _validate_message_attachment=self.attachment_validator()[0],
                     _message_payload=lambda *_: {"message_id": 12, "message": "Text still works"})
                 exec(compile(ast.Module(body=[node], type_ignores=[]), "app.py", "exec"), scope)
                 with Flask(__name__).test_request_context(json={
